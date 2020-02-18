@@ -1,0 +1,22 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+remake.egg-info
+
+# C extensions
+*.so
+
+build/
+dist/
+MANIFEST
+
+# Sphinx documentation
+docs/_build/
+
+# vim
+.*.sw?
+
+# PyCharm
+.idea
