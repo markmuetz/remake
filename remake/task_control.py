@@ -53,6 +53,8 @@ class TaskControl:
         self.running_tasks = []
         self.remaining_tasks = set()
 
+        self._dag_built = False
+
     def add(self, task):
         if self.finalized:
             raise Exception(f'TaskControl already finilized')
@@ -77,10 +79,19 @@ class TaskControl:
         assert self._dag_built
 
         curr_tasks = set(self.input_tasks)
+        all_tasks = set()
         while True:
             next_tasks = set()
             for curr_task in curr_tasks:
-                yield curr_task
+                can_yield = True
+                for prev_task in self.prev_tasks[curr_task]:
+                    if prev_task not in all_tasks:
+                        can_yield = False
+                        break
+                if can_yield and curr_task not in all_tasks:
+                    yield curr_task
+                    all_tasks.add(curr_task)
+
                 for next_task in self.next_tasks[curr_task]:
                     next_tasks.add(next_task)
             if not next_tasks:
@@ -94,23 +105,30 @@ class TaskControl:
         # Fill in self.prev_tasks and self.next_tasks; these hold the information about the
         # task DAG.
         for task in self.tasks:
+            is_input_task = True
             for input_path in task.inputs:
                 if input_path in self.output_task_map:
+                    is_input_task = False
                     # Every output is created by only one task.
                     input_task = self.output_task_map[input_path]
-                    self.prev_tasks[task].append(input_task)
+                    if input_task not in self.prev_tasks[task]:
+                        self.prev_tasks[task].append(input_task)
                 else:
                     # input_path is not going to be created by any tasks; it might still exist though:
                     if not input_path.exists():
                         raise Exception(f'No input file {input_path} exists or will be created for {task}')
                     self.input_paths.add(input_path)
-                    self.input_tasks.add(task)
+            if is_input_task:
+                self.input_tasks.add(task)
 
             for output_path in task.outputs:
                 if output_path in self.input_task_map:
                     # Each input can be used by any number of tasks.
                     output_tasks = self.input_task_map[output_path]
-                    self.next_tasks[task].extend(output_tasks)
+                    for output_task in output_tasks:
+                        if output_task not in self.next_tasks[task]:
+                            self.next_tasks[task].extend(output_tasks)
+
         self._dag_built = True
 
         # Can now perform a topological sort.
@@ -118,6 +136,7 @@ class TaskControl:
         assert len(self.sorted_tasks) == len(self.tasks)
         assert set(self.sorted_tasks) == set(self.tasks)
 
+        # import ipdb; ipdb.set_trace()
         # Assign each task to one of three groups:
         # completed: task has been run and does not need to be rerun.
         # pending: task has been run and needs to be rerun.
