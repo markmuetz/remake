@@ -1,6 +1,10 @@
 from collections import Mapping
+import inspect
 from hashlib import sha1
+from logging import getLogger
 from pathlib import Path
+
+logger = getLogger(__name__)
 
 
 class Task:
@@ -9,6 +13,8 @@ class Task:
         self.func = func
         self.func_args = func_args
         self.func_kwargs = func_kwargs
+        self.func_source = inspect.getsource(self.func)
+
         if not outputs:
             raise Exception('outputs must be set')
 
@@ -76,16 +82,18 @@ class Task:
             raise Exception('Not all files required for task exist')
 
         if self.requires_rerun() or force:
+            logger.debug(f'running: {self}')
             for output_dir in set([o.parent for o in self.outputs]):
                 output_dir.mkdir(parents=True, exist_ok=True)
             inputs = self.inputs_dict if self.inputs_dict else self.inputs
             outputs = self.outputs_dict if self.outputs_dict else self.outputs
             self.result = self.func(inputs, outputs, *self.func_args, **self.func_kwargs)
+            logger.debug(f'run: {self}')
             for output in self.outputs:
                 if not output.exists():
                     raise Exception(f'func {output} not created')
         else:
-            print(f'  Already exist: {self.outputs}')
+            logger.debug(f'already exist: {self.outputs}')
 
         return self
 
