@@ -11,8 +11,8 @@ def worker(task_queue, task_complete_queue):
 
 
 class MultiProcTaskControl(TaskControl):
-    def __init__(self, nproc=2):
-        super().__init__()
+    def __init__(self, enable_file_task_content_checks=False, nproc=2):
+        super().__init__(enable_file_task_content_checks)
         self.nproc = nproc
         self.procs = []
 

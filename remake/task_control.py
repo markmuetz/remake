@@ -1,4 +1,8 @@
 from collections import defaultdict
+import inspect
+import json
+from hashlib import sha1
+from pathlib import Path
 
 try:
     import networkx as nx
@@ -27,8 +31,97 @@ if nx:
         return G
 
 
+def _compare_write_metadata(file_metadata_dir, path):
+    metadata_path = file_metadata_dir.joinpath(*path.parts[1:])
+    existing_metadata = None
+    if metadata_path.exists():
+        existing_metadata = json.loads(metadata_path.read_text())
+    stat = path.stat()
+    metadata = {'st_size': stat.st_size,
+                'st_mtime': stat.st_mtime}
+    need_write = False
+    created = False
+    has_changed = False
+
+    if existing_metadata:
+        if not all([metadata[k] == existing_metadata[k] for k in ['st_size', 'st_mtime']]):
+            need_write = True
+            # Only recalc sha1hex if size or last modified time have changed.
+            sha1hex = sha1(path.read_bytes()).hexdigest()
+            metadata['sha1hex'] = sha1hex
+            if sha1hex != existing_metadata['sha1hex']:
+                print(f'{path} has changed!')
+                has_changed = True
+            else:
+                print(f'{path} properties has changed but contents the same')
+        else:
+            metadata['sha1hex'] = existing_metadata['sha1hex']
+    else:
+        created = True
+        metadata['sha1hex'] = sha1(path.read_bytes()).hexdigest()
+        need_write = True
+
+    if need_write:
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        metadata_path.write_text(json.dumps(metadata, indent=2) + '\n')
+
+    return created, has_changed, metadata['sha1hex']
+
+
+def calc_task_sha1hex(file_metadata_dir, task):
+    task_hash_data = []
+    for path in task.inputs:
+        assert path.is_absolute()
+        if not path.exists():
+            return None, None
+        created, has_changed, sha1hex = _compare_write_metadata(file_metadata_dir, path)
+        task_hash_data.append(sha1hex)
+
+    task_source = inspect.getsource(task.func)
+    task_hash_data.append(task_source)
+    if task.func_args:
+        task_hash_data.append(str(''.join(task.func_args)))
+    if task.func_kwargs:
+        task_hash_data.append(str(''.join([f'{k}{v}' for k, v in task.func_kwargs.items()])))
+    task_sha1hex = sha1(''.join(task_hash_data).encode()).hexdigest()
+    return task_sha1hex, task_source
+
+
+def task_requires_rerun_based_on_contents(file_metadata_dir, task, task_sha1hex, overwrite_task_metadata=False):
+    requires_rerun = False
+    for path in task.outputs:
+        assert path.is_absolute()
+        output_task_metadata_path = file_metadata_dir.joinpath(*(path.parent.parts[1:] + (f'{path.name}.task',)))
+        output_task_metadata = {'task_sha1hex': task_sha1hex}
+        if output_task_metadata_path.exists():
+            existing_output_task_metadata = json.loads(output_task_metadata_path.read_text())
+            if output_task_metadata['task_sha1hex'] != existing_output_task_metadata['task_sha1hex']:
+                requires_rerun = True
+            if overwrite_task_metadata:
+                output_task_metadata_path.write_text(json.dumps(output_task_metadata, indent=2) + '\n')
+        else:
+            output_task_metadata_path.write_text(json.dumps(output_task_metadata, indent=2) + '\n')
+    return requires_rerun
+
+
+def compare_task_with_previous_runs(file_metadata_dir, task_metadata_dir,
+                                    task, overwrite_task_metadata=False):
+    task_sha1hex, task_source = calc_task_sha1hex(file_metadata_dir, task)
+
+    if not task_sha1hex:
+        return True, None
+    task_metadata_path = task_metadata_dir / task_sha1hex
+    if not task_metadata_path.exists():
+        task_metadata_path.write_text(task_source)
+
+    requires_rerun = task_requires_rerun_based_on_contents(file_metadata_dir, task, task_sha1hex,
+                                                           overwrite_task_metadata)
+    return requires_rerun, task_sha1hex
+
+
 class TaskControl:
-    def __init__(self):
+    def __init__(self, enable_file_task_content_checks=False):
+        self.enable_file_task_content_checks = enable_file_task_content_checks
         self.tasks = []
 
         self.finalized = False
@@ -55,9 +148,14 @@ class TaskControl:
 
         self._dag_built = False
 
+        if self.enable_file_task_content_checks:
+            self.file_metadata_dir = Path('.remake/file_metadata')
+            self.task_metadata_dir = Path('.remake/task_metaadata')
+            self.task_metadata_dir.mkdir(parents=True, exist_ok=True)
+
     def add(self, task):
         if self.finalized:
-            raise Exception(f'TaskControl already finilized')
+            raise Exception(f'TaskControl already finalized')
 
         for output in task.outputs:
             if output in self.output_task_map:
@@ -99,7 +197,8 @@ class TaskControl:
             curr_tasks = next_tasks
 
     def finalize(self):
-        assert not self.finalized
+        if self.finalized:
+            raise Exception(f'TaskControl already finalized')
 
         # Work out whether it is possible to create a run schedule and find initial tasks.
         # Fill in self.prev_tasks and self.next_tasks; these hold the information about the
@@ -143,7 +242,14 @@ class TaskControl:
         # remaining: task either needs to be rerun, or has previous tasks that need to be rerun.
         for task in self.sorted_tasks:
             task_state = 'completed'
-            if task.can_run() and task.requires_rerun():
+            if self.enable_file_task_content_checks:
+                requires_rerun = compare_task_with_previous_runs(self.file_metadata_dir,
+                                                                 self.task_metadata_dir,
+                                                                 task)[0]
+            else:
+                requires_rerun = task.requires_rerun()
+
+            if task.can_run() and requires_rerun:
                 task_state = 'pending'
                 for prev_task in self.prev_tasks[task]:
                     if prev_task in self.pending_tasks or prev_task in self.remaining_tasks:
@@ -199,26 +305,45 @@ class TaskControl:
                 self.pending_tasks.append(next_task)
                 self.remaining_tasks.remove(next_task)
 
-    def run(self, force=False):
-        assert self.finalized
-
-        for task in self.get_next_pending():
-            if task is None:
-                raise Exception()
-            task_run_index = len(self.completed_tasks) + len(self.running_tasks)
-            print(f'{task_run_index}/{len(self.tasks)}: {repr(task)}')
-            task.run(force=force)
-            self.task_complete(task)
-
-    def run_one(self, force=False):
-        assert self.finalized
-
-        task = next(self.get_next_pending())
+    def _run_task(self, task, force=False):
         if task is None:
-            raise Exception()
-
+            raise Exception('No task to run')
         task_run_index = len(self.completed_tasks) + len(self.running_tasks)
         print(f'{task_run_index}/{len(self.tasks)}: {repr(task)}')
+        task_sha1hex = None
+        if self.enable_file_task_content_checks:
+            requires_rerun, task_sha1hex = compare_task_with_previous_runs(self.file_metadata_dir,
+                                                                           self.task_metadata_dir,
+                                                                           task, overwrite_task_metadata=False)
+            force = force or requires_rerun
         task.run(force=force)
+
+        if self.enable_file_task_content_checks:
+            task_requires_rerun_based_on_contents(self.file_metadata_dir, task, task_sha1hex, True)
+            requires_rerun = task_requires_rerun_based_on_contents(self.file_metadata_dir, task, task_sha1hex)
+            assert not requires_rerun
         self.task_complete(task)
 
+    def run(self, force=False):
+        if not self.finalized:
+            raise Exception(f'TaskControl not finalized')
+
+        for task in self.get_next_pending():
+            self._run_task(task, force)
+
+    def run_one(self, force=False):
+        if not self.finalized:
+            raise Exception(f'TaskControl not finalized')
+
+        task = next(self.get_next_pending())
+        self._run_task(task, force)
+
+    def rescan_metadata_completed_tasks(self):
+        if not self.finalized:
+            raise Exception(f'TaskControl not finalized')
+
+        for task in self.completed_tasks:
+            requires_rerun = compare_task_with_previous_runs(self.file_metadata_dir, self.task_metadata_dir,
+                                                             task, overwrite_task_metadata=False)[0]
+            if requires_rerun:
+                print(f'{task} requires rerun')
