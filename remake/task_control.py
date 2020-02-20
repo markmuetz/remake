@@ -334,6 +334,7 @@ class TaskControl:
     def print_status(self):
         print(f'completed: {len(self.completed_tasks)}')
         print(f'pending  : {len(self.pending_tasks)}')
+        print(f'running  : {len(self.running_tasks)}')
         print(f'remaining: {len(self.remaining_tasks)}')
         print(f'all      : {len(self.tasks)}')
 
