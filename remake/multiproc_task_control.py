@@ -110,7 +110,7 @@ class MultiProcTaskControl(TaskControl):
                     remote_completed_task = task_complete_queue.get()
                     logger.debug(f'ctrl receieved: {remote_completed_task.hexdigest()} {remote_completed_task}')
                     completed_task, task_sha1hex = running_tasks.pop(remote_completed_task.hexdigest())
-                    print(f'Completed: {task}')
+                    print(f'=> Completed: {completed_task}')
 
                     if self.enable_file_task_content_checks:
                         task_md = self.task_metadata_map[completed_task]
