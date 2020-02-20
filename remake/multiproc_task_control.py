@@ -110,6 +110,7 @@ class MultiProcTaskControl(TaskControl):
                     remote_completed_task = task_complete_queue.get()
                     logger.debug(f'ctrl receieved: {remote_completed_task.hexdigest()} {remote_completed_task}')
                     completed_task, task_sha1hex = running_tasks.pop(remote_completed_task.hexdigest())
+                    print(f'Completed: {task}')
 
                     if self.enable_file_task_content_checks:
                         task_md = self.task_metadata_map[completed_task]
@@ -119,7 +120,6 @@ class MultiProcTaskControl(TaskControl):
                         display_func(self)
                 else:
                     task_run_index = len(self.completed_tasks) + len(self.running_tasks)
-                    logger.debug(f'ctrl submitting {task_run_index}/{len(self.tasks)}: {task.hexdigest()} {task}')
                     print(f'{task_run_index}/{len(self.tasks)}: {task}')
                     task_sha1hex = None
                     if self.enable_file_task_content_checks:
@@ -127,6 +127,7 @@ class MultiProcTaskControl(TaskControl):
                         requires_rerun = self._task_requires_run_with_content_check(task_md)
                         requires_rerun = force or requires_rerun
                         if requires_rerun:
+                            logger.debug(f'ctrl submitting {task_run_index}/{len(self.tasks)}: {task.hexdigest()} {task}')
                             logger.debug(f'running task (force={requires_rerun}) {task}')
                             running_tasks[task.hexdigest()] = (task, task_sha1hex)
                             task_queue.put((task, True))
@@ -136,6 +137,7 @@ class MultiProcTaskControl(TaskControl):
                             logger.debug(f'no longer requires rerun: {task}')
                             self.task_complete(task)
                     else:
+                        logger.debug(f'ctrl submitting {task_run_index}/{len(self.tasks)}: {task.hexdigest()} {task}')
                         running_tasks[task.hexdigest()] = (task, task_sha1hex)
                         task_queue.put((task, force))
                         if display_func:
