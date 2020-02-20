@@ -7,13 +7,19 @@ from pathlib import Path
 logger = getLogger(__name__)
 
 
+def tmp_atomic_path(p):
+    return p.parent / ('.remake.tmp.' + p.name)
+
+
 class Task:
     def __init__(self, func, inputs, outputs,
-                 func_args=[], func_kwargs={}):
+                 func_args=[], func_kwargs={},
+                 *, atomic_write=True):
         self.func = func
         self.func_args = func_args
         self.func_kwargs = func_kwargs
         self.func_source = inspect.getsource(self.func)
+        self.atomic_write = atomic_write
 
         if not outputs:
             raise Exception('outputs must be set')
@@ -34,6 +40,9 @@ class Task:
         self.rerun_on_mtime = True
 
     def __repr__(self):
+        return f'Task({self.func.__code__.co_name}, {self.inputs}, {self.outputs})'
+
+    def __str__(self):
         return f'Task({self.func.__code__.co_name}, {[f.name for f in self.inputs]}, {[f.name for f in self.outputs]})'
 
     def can_run(self):
@@ -86,9 +95,24 @@ class Task:
             for output_dir in set([o.parent for o in self.outputs]):
                 output_dir.mkdir(parents=True, exist_ok=True)
             inputs = self.inputs_dict if self.inputs_dict else self.inputs
-            outputs = self.outputs_dict if self.outputs_dict else self.outputs
+            if self.atomic_write:
+                if self.outputs_dict:
+                    outputs = {k: tmp_atomic_path(v) for k, v in self.output_dict.items()}
+                else:
+                    outputs = [tmp_atomic_path(v) for v in self.outputs]
+            else:
+                outputs = self.outputs_dict if self.outputs_dict else self.outputs
+
             self.result = self.func(inputs, outputs, *self.func_args, **self.func_kwargs)
             logger.debug(f'run: {self}')
+            if self.atomic_write:
+                if self.outputs_dict:
+                    tmp_paths = outputs.values()
+                else:
+                    tmp_paths = outputs
+                for tmp_path, path in zip(tmp_paths, self.outputs):
+                    tmp_path.rename(path)
+
             for output in self.outputs:
                 if not output.exists():
                     raise Exception(f'func {output} not created')
