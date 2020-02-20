@@ -4,6 +4,11 @@ from hashlib import sha1
 from logging import getLogger
 from pathlib import Path
 
+import numpy as np
+import matplotlib.pyplot as plt
+
+from remake.util import sha1sum
+
 logger = getLogger(__name__)
 
 try:
@@ -32,6 +37,21 @@ if nx:
                     G.add_edge(i, o)
         return G
 
+    def display_task_status(task_ctrl):
+        TG = tasks_as_networkx_graph(task_ctrl)
+        pos = {}
+        for level, tasks in task_ctrl.tasks_at_level.items():
+            for i, task in enumerate(tasks):
+                pos[task] = np.array([level, i])
+
+        plt.clf()
+        nx.draw_networkx_nodes(TG, pos, task_ctrl.completed_tasks, node_color='k')
+        nx.draw_networkx_nodes(TG, pos, task_ctrl.running_tasks, node_color='g')
+        nx.draw_networkx_nodes(TG, pos, task_ctrl.pending_tasks, node_color='y')
+        nx.draw_networkx_nodes(TG, pos, task_ctrl.remaining_tasks, node_color='r')
+        nx.draw_networkx_edges(TG, pos)
+        plt.pause(0.01)
+
 
 def _compare_write_metadata(file_metadata_dir, path):
     metadata_path = file_metadata_dir.joinpath(*path.parts[1:])
@@ -49,7 +69,7 @@ def _compare_write_metadata(file_metadata_dir, path):
         if not all([metadata[k] == existing_metadata[k] for k in ['st_size', 'st_mtime']]):
             need_write = True
             # Only recalc sha1hex if size or last modified time have changed.
-            sha1hex = sha1(path.read_bytes()).hexdigest()
+            sha1hex = sha1sum(path)
             metadata['sha1hex'] = sha1hex
             if sha1hex != existing_metadata['sha1hex']:
                 logger.debug(f'{path} has changed!')
@@ -60,7 +80,7 @@ def _compare_write_metadata(file_metadata_dir, path):
             metadata['sha1hex'] = existing_metadata['sha1hex']
     else:
         created = True
-        metadata['sha1hex'] = sha1(path.read_bytes()).hexdigest()
+        metadata['sha1hex'] = sha1sum(path)
         need_write = True
 
     if need_write:
@@ -82,9 +102,9 @@ def calc_task_sha1hex(file_metadata_dir, task):
     task_func_source = task.func_source
     task_hash_data.append(task_func_source)
     if task.func_args:
-        task_hash_data.append(str(''.join(task.func_args)))
+        task_hash_data.append(str(task.func_args))
     if task.func_kwargs:
-        task_hash_data.append(str(''.join([f'{k}{v}' for k, v in task.func_kwargs.items()])))
+        task_hash_data.append(str(task.func_kwargs))
     task_sha1hex = sha1(''.join(task_hash_data).encode()).hexdigest()
     return task_sha1hex, task_func_source
 
@@ -105,6 +125,7 @@ def task_requires_rerun_based_on_contents(file_metadata_dir, task, task_sha1hex,
             if overwrite_task_metadata:
                 output_task_metadata_path.write_text(json.dumps(output_task_metadata, indent=2) + '\n')
         else:
+            output_task_metadata_path.parent.mkdir(parents=True, exist_ok=True)
             output_task_metadata_path.write_text(json.dumps(output_task_metadata, indent=2) + '\n')
     return requires_rerun
 
@@ -161,6 +182,8 @@ class TaskControl:
         self.running_tasks = []
         self.remaining_tasks = set()
 
+        self.tasks_at_level = {}
+
         self._dag_built = False
         return self
 
@@ -187,9 +210,11 @@ class TaskControl:
     def _topogological_tasks(self):
         assert self._dag_built
 
+        level = 0
         curr_tasks = set(self.input_tasks)
         all_tasks = set()
-        while True:
+        while curr_tasks:
+            self.tasks_at_level[level] = sorted(curr_tasks, key=lambda t: t.outputs[0])
             next_tasks = set()
             for curr_task in curr_tasks:
                 can_yield = True
@@ -203,9 +228,8 @@ class TaskControl:
 
                 for next_task in self.next_tasks[curr_task]:
                     next_tasks.add(next_task)
-            if not next_tasks:
-                break
             curr_tasks = next_tasks
+            level += 1
 
     def finalize(self):
         if self.finalized:
@@ -260,7 +284,8 @@ class TaskControl:
                                                                  self.task_metadata_dir,
                                                                  task)[0]
             else:
-                requires_rerun = task.requires_rerun()
+                if task.can_run():
+                    requires_rerun = task.requires_rerun()
 
             if task.can_run() and requires_rerun:
                 task_state = 'pending'
@@ -347,19 +372,23 @@ class TaskControl:
                 assert not requires_rerun
         self.task_complete(task)
 
-    def run(self, force=False):
+    def run(self, force=False, display_func=None):
         if not self.finalized:
             raise Exception(f'TaskControl not finalized')
 
         for task in self.get_next_pending():
             self._run_task(task, force)
+            if display_func:
+                display_func(self)
 
-    def run_one(self, force=False):
+    def run_one(self, force=False, display_func=None):
         if not self.finalized:
             raise Exception(f'TaskControl not finalized')
 
         task = next(self.get_next_pending())
         self._run_task(task, force)
+        if display_func:
+            display_func(self)
 
     def rescan_metadata_completed_tasks(self):
         if not self.finalized:

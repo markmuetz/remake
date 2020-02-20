@@ -64,7 +64,7 @@ class MultiProcTaskControl(TaskControl):
         self.nproc = nproc
         self.procs = []
 
-    def run(self, force=False):
+    def run(self, force=False, display_func=None):
         assert self.finalized
         if not (self.pending_tasks or self.remaining_tasks or self.running_tasks):
             return
@@ -107,6 +107,8 @@ class MultiProcTaskControl(TaskControl):
                                                                                task_sha1hex)
                         assert not requires_rerun
                 self.task_complete(completed_task)
+                if display_func:
+                    display_func(self)
             else:
                 task_run_index = len(self.completed_tasks) + len(self.running_tasks)
                 logger.debug(f'ctrl submitting {task_run_index}/{len(self.tasks)}: {task.hexdigest()} {task}')
@@ -120,6 +122,8 @@ class MultiProcTaskControl(TaskControl):
                     force = force or requires_rerun
                 running_tasks[task.hexdigest()] = (task, task_sha1hex)
                 task_queue.put((task, force))
+                if display_func:
+                    display_func(self)
 
         logger.debug('all tasks complete')
         logger.debug('terminating all procs')
