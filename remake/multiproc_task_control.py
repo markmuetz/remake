@@ -89,10 +89,16 @@ class MultiProcTaskControl(TaskControl):
         try:
             # import ipdb; ipdb.set_trace()
             while self.pending_tasks or self.remaining_tasks or self.running_tasks:
-                try:
-                    task = next(self.get_next_pending())
-                    logger.debug(f'ctrl got task {task}')
-                except StopIteration:
+                if len(self.running_tasks) < self.nproc:
+                    # N.B. get_next_pending totally happy to hand out as many tasks as are pending.
+                    # The only reason for this check is so that the display of running tasks matches expectations;
+                    # there will only be nproc running tasks at any time.
+                    try:
+                        task = next(self.get_next_pending())
+                        logger.debug(f'ctrl got task {task}')
+                    except StopIteration:
+                        task = None
+                else:
                     task = None
 
                 if not error_queue.empty():
@@ -138,7 +144,7 @@ class MultiProcTaskControl(TaskControl):
             logger.debug('all tasks complete')
             logger.debug('terminating all procs')
         except Exception as e:
-            logger.exception()
+            logger.exception(e)
             raise
         finally:
             for proc in self.procs:
