@@ -97,19 +97,19 @@ class Task:
             inputs = self.inputs_dict if self.inputs_dict else self.inputs
             if self.atomic_write:
                 if self.outputs_dict:
-                    outputs = {k: tmp_atomic_path(v) for k, v in self.output_dict.items()}
+                    self.tmp_outputs = {k: tmp_atomic_path(v) for k, v in self.outputs_dict.items()}
                 else:
-                    outputs = [tmp_atomic_path(v) for v in self.outputs]
+                    self.tmp_outputs = [tmp_atomic_path(v) for v in self.outputs]
             else:
-                outputs = self.outputs_dict if self.outputs_dict else self.outputs
+                self.tmp_outputs = self.outputs_dict if self.outputs_dict else self.outputs
 
-            self.result = self.func(inputs, outputs, *self.func_args, **self.func_kwargs)
+            self.result = self.func(inputs, self.tmp_outputs, *self.func_args, **self.func_kwargs)
             logger.debug(f'run: {self}')
             if self.atomic_write:
                 if self.outputs_dict:
-                    tmp_paths = outputs.values()
+                    tmp_paths = self.tmp_outputs.values()
                 else:
-                    tmp_paths = outputs
+                    tmp_paths = self.tmp_outputs
                 for tmp_path, path in zip(tmp_paths, self.outputs):
                     tmp_path.rename(path)
 
