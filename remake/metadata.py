@@ -59,7 +59,7 @@ class TaskMetadata:
             if content_has_changed:
                 self.rerun_reasons.append(('content_has_changed', path))
             if needs_write:
-                input_path_md.write_input()
+                input_path_md.write_input_metadata()
             sha1hex = input_path_md.metadata['sha1hex']
             content_hash_data.append(sha1hex)
 
@@ -87,11 +87,13 @@ class TaskMetadata:
     def write_output_metadata(self):
         self.task_metadata_dir.mkdir(parents=True, exist_ok=True)
         task_metadata_path = self.task_metadata_dir / self.metadata['task_sha1hex']
+        logger.debug(f'write task metadata to {task_metadata_path}')
         if not task_metadata_path.exists():
             task_metadata_path.write_text(self.task.func_source)
 
         self.content_metadata_dir.mkdir(parents=True, exist_ok=True)
         content_metadata_path = self.content_metadata_dir / self.metadata['content_sha1hex']
+        logger.debug(f'write content metadata to {content_metadata_path}')
         if not content_metadata_path.exists():
             content_data = [[str(p) for p in self.task.inputs]]
             content_metadata_path.write_text(json.dumps(content_data, indent=2) + '\n')
@@ -105,7 +107,7 @@ class TaskMetadata:
             content_metadata_path.write_text(json.dumps(content_data, indent=2) + '\n')
 
         for output_path_md in self.outputs_metadata_map.values():
-            output_path_md.write_output()
+            output_path_md.write_output_metadata()
 
 
 class InputPathMetadata:
@@ -146,11 +148,11 @@ class InputPathMetadata:
                 sha1hex = sha1sum(path)
                 self.metadata['sha1hex'] = sha1hex
                 if sha1hex != self.prev_metadata['sha1hex']:
-                    logger.debug(f'{path} has changed!')
+                    logger.debug(f'{path} content has changed')
                     self.changes.append('sha1hex_changed')
                     self.content_has_changed = True
                 else:
-                    logger.debug(f'{path} properties has changed but contents the same')
+                    logger.debug(f'{path} properties have changed but contents the same')
             else:
                 self.metadata['sha1hex'] = self.prev_metadata['sha1hex']
         else:
@@ -160,7 +162,8 @@ class InputPathMetadata:
 
         return self.created, self.content_has_changed, self.need_write
 
-    def write_input(self):
+    def write_input_metadata(self):
+        logger.debug(f'write input metadata to {self.metadata_path}')
         self.metadata_path.parent.mkdir(parents=True, exist_ok=True)
         self.metadata_path.write_text(json.dumps(self.metadata, indent=2) + '\n')
 
@@ -195,7 +198,8 @@ class OutputPathMetadata:
                 self.rerun_reasons.append('content_sha1hex_different')
         return requires_rerun
 
-    def write_output(self):
+    def write_output_metadata(self):
+        logger.debug(f'write output metadata to {self.output_task_metadata_path}')
         self.output_task_metadata_path.parent.mkdir(parents=True, exist_ok=True)
         self.output_task_metadata_path.write_text(json.dumps(self.output_task_metadata, indent=2) + '\n')
 

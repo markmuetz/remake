@@ -4,22 +4,13 @@ import logging.handlers
 from logging import getLogger
 
 from remake.task_control import TaskControl
-from remake.metadata import TaskMetadata
+from remake.setup_logging import setup_stream_logging
 
 logger = getLogger(__name__)
 
 
-def listener_configurer():
-    root = logging.getLogger()
-    h = logging.StreamHandler()
-    f = logging.Formatter('%(asctime)s %(processName)-15s %(name)-40s %(levelname)-8s %(message)s')
-    root.setLevel(logging.INFO)
-    h.setFormatter(f)
-    root.addHandler(h)
-
-
 def log_listener(log_queue):
-    listener_configurer()
+    setup_stream_logging(logging.INFO)
     listener_logger = getLogger(__name__ + '.listener')
     listener_logger.debug('Starting')
     while True:
@@ -102,12 +93,8 @@ class MultiProcTaskControl(TaskControl):
                 completed_task, task_sha1hex = running_tasks.pop(remote_completed_task.hexdigest())
 
                 if self.enable_file_task_content_checks:
-                    logger.debug('performing task file contents checks and writing data')
-                    task_md.generate_metadata()
-                    task_md.write_output_metadata()
-                    if self.extra_checks:
-                        requires_rerun = task_md.task_requires_rerun_based_on_content()
-                        assert not requires_rerun
+                    task_md = self.task_metadata_map[completed_task]
+                    self._post_run_with_content_check(task_md)
                 self.task_complete(completed_task)
                 if display_func:
                     display_func(self)
@@ -117,13 +104,23 @@ class MultiProcTaskControl(TaskControl):
                 print(f'{task_run_index}/{len(self.tasks)}: {task}')
                 task_sha1hex = None
                 if self.enable_file_task_content_checks:
-                    logger.debug('performing task file contents checks')
                     task_md = self.task_metadata_map[task]
-                    force = force or task_md.requires_rerun
-                running_tasks[task.hexdigest()] = (task, task_sha1hex)
-                task_queue.put((task, force))
-                if display_func:
-                    display_func(self)
+                    requires_rerun = self._task_requires_run_with_content_check(task_md)
+                    requires_rerun = force or requires_rerun
+                    if requires_rerun:
+                        logger.debug(f'running task (force={requires_rerun}) {task}')
+                        running_tasks[task.hexdigest()] = (task, task_sha1hex)
+                        task_queue.put((task, True))
+                        if display_func:
+                            display_func(self)
+                    else:
+                        logger.debug(f'no longer requires rerun: {task}')
+                        self.task_complete(task)
+                else:
+                    running_tasks[task.hexdigest()] = (task, task_sha1hex)
+                    task_queue.put((task, force))
+                    if display_func:
+                        display_func(self)
 
         logger.debug('all tasks complete')
         logger.debug('terminating all procs')

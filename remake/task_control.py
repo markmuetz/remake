@@ -263,6 +263,23 @@ class TaskControl:
                 self.pending_tasks.append(next_task)
                 self.remaining_tasks.remove(next_task)
 
+    def _task_requires_run_with_content_check(self, task_md):
+        logger.debug('performing task file contents checks')
+        # N.B. Can't rely on old value of requires_rerun as you need to check task's + task.inputs' contents.
+        requires_rerun = task_md.generate_metadata()
+        if requires_rerun:
+            logger.debug('requires rerun:')
+            for reason in task_md.rerun_reasons:
+                logger.debug(f'  {reason}')
+        return requires_rerun
+
+    def _post_run_with_content_check(self, task_md):
+        task_md.generate_metadata()
+        task_md.write_output_metadata()
+        if self.extra_checks:
+            requires_rerun = task_md.task_requires_rerun_based_on_content()
+            assert not requires_rerun
+
     def _run_task(self, task, force=False):
         if task is None:
             raise Exception('No task to run')
@@ -270,23 +287,13 @@ class TaskControl:
         print(f'{task_run_index}/{len(self.tasks)}: {repr(task)}')
         task_md = None
         if self.enable_file_task_content_checks:
-            logger.debug('performing task file contents checks')
             task_md = self.task_metadata_map[task]
-            # N.B. Can't rely on old value of requires_rerun as you need to check task's + task.inputs' contents.
-            requires_rerun = task_md.generate_metadata()
-            if requires_rerun:
-                logger.debug('requires rerun:')
-                for reason in task_md.rerun_reasons:
-                    logger.debug(f'  {reason}')
+            requires_rerun = self._task_requires_run_with_content_check(task_md)
             force = force or requires_rerun
             if force:
                 logger.debug(f'running task (force={force}) {task}')
                 task.run(force=force)
-                task_md.generate_metadata()
-                task_md.write_output_metadata()
-                if self.extra_checks:
-                    requires_rerun = task_md.task_requires_rerun_based_on_content()
-                    assert not requires_rerun
+                self._post_run_with_content_check(task_md)
             else:
                 logger.debug(f'no longer requires rerun: {task}')
         else:
