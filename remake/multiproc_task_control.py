@@ -1,8 +1,10 @@
 from multiprocessing import Process, Queue, current_process
-from remake.task_control import TaskControl, compare_task_with_previous_runs, task_requires_rerun_based_on_contents
 import logging
 import logging.handlers
 from logging import getLogger
+
+from remake.task_control import TaskControl
+from remake.metadata import TaskMetadata
 
 logger = getLogger(__name__)
 
@@ -101,10 +103,10 @@ class MultiProcTaskControl(TaskControl):
 
                 if self.enable_file_task_content_checks:
                     logger.debug('performing task file contents checks and writing data')
-                    task_requires_rerun_based_on_contents(self.file_metadata_dir, completed_task, task_sha1hex, True)
+                    task_md.generate_metadata()
+                    task_md.write_output_metadata()
                     if self.extra_checks:
-                        requires_rerun = task_requires_rerun_based_on_contents(self.file_metadata_dir, completed_task,
-                                                                               task_sha1hex)
+                        requires_rerun = task_md.task_requires_rerun_based_on_content()
                         assert not requires_rerun
                 self.task_complete(completed_task)
                 if display_func:
@@ -116,10 +118,8 @@ class MultiProcTaskControl(TaskControl):
                 task_sha1hex = None
                 if self.enable_file_task_content_checks:
                     logger.debug('performing task file contents checks')
-                    requires_rerun, task_sha1hex = compare_task_with_previous_runs(self.file_metadata_dir,
-                                                                                   self.task_metadata_dir,
-                                                                                   task, overwrite_task_metadata=False)
-                    force = force or requires_rerun
+                    task_md = self.task_metadata_map[task]
+                    force = force or task_md.requires_rerun
                 running_tasks[task.hexdigest()] = (task, task_sha1hex)
                 task_queue.put((task, force))
                 if display_func:
