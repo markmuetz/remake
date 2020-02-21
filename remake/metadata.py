@@ -19,6 +19,8 @@ class TaskMetadata:
         self.task_metadata_dir = self.dotremake_dir / 'task_metadata'
         self.content_metadata_dir = self.dotremake_dir / 'content_metadata'
         self.rerun_reasons = []
+        self.task_metadata_dir_path = None
+        self.log_path = None
 
     def generate_metadata(self):
         self.rerun_reasons = []
@@ -27,17 +29,21 @@ class TaskMetadata:
                 self.rerun_reasons.append(('input_path_does_not_exist', path))
                 self.requires_rerun = True
                 return True
-        for path in self.task.outputs:
-            if not path.exists():
-                self.rerun_reasons.append(('output_path_does_not_exist', path))
-                self.requires_rerun = True
-                return True
 
         task_sha1hex = self._task_sha1hex()
         content_sha1hex = self._content_sha1hex()
 
         self.metadata['task_sha1hex'] = task_sha1hex
         self.metadata['content_sha1hex'] = content_sha1hex
+        self.task_metadata_dir_path = self.task_metadata_dir / task_sha1hex
+        self.log_path = self.task_metadata_dir_path / f'{content_sha1hex}_task.log'
+        self.task_metadata_dir_path.mkdir(parents=True, exist_ok=True)
+
+        for path in self.task.outputs:
+            if not path.exists():
+                self.rerun_reasons.append(('output_path_does_not_exist', path))
+                self.requires_rerun = True
+                return True
 
         self.requires_rerun = self.task_requires_rerun_based_on_content()
         return self.requires_rerun
@@ -87,11 +93,11 @@ class TaskMetadata:
         return requires_rerun
 
     def write_output_metadata(self):
-        self.task_metadata_dir.mkdir(parents=True, exist_ok=True)
-        task_metadata_path = self.task_metadata_dir / self.metadata['task_sha1hex']
-        logger.debug(f'write task metadata to {task_metadata_path}')
-        if not task_metadata_path.exists():
-            task_metadata_path.write_text(self.task.func_source)
+        # self.task_metadata_dir.mkdir(parents=True, exist_ok=True)
+        task_func_path = self.task_metadata_dir_path / 'func_source.py'
+        logger.debug(f'write task metadata to {task_func_path}')
+        if not task_func_path.exists():
+            task_func_path.write_text(self.task.func_source)
 
         self.content_metadata_dir.mkdir(parents=True, exist_ok=True)
         content_metadata_path = self.content_metadata_dir / self.metadata['content_sha1hex']

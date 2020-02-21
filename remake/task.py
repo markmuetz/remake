@@ -3,6 +3,7 @@ import inspect
 from hashlib import sha1
 from logging import getLogger
 from pathlib import Path
+from timeit import default_timer as timer
 
 logger = getLogger(__name__)
 
@@ -38,6 +39,7 @@ class Task:
             self.outputs = [Path(o).absolute() for o in outputs]
         self.result = None
         self.rerun_on_mtime = True
+        self.tmp_outputs = []
 
     def __repr__(self):
         return f'Task({self.func.__code__.co_name}, {self.inputs}, {self.outputs})'
@@ -87,15 +89,17 @@ class Task:
         return h.hexdigest()
 
     def run(self, force=False):
+        logger.debug(f'running {repr(self)}')
         if not self.can_run():
             raise Exception('Not all files required for task exist')
 
         if self.requires_rerun() or force:
-            logger.debug(f'running: {self}')
+            logger.debug(f'requires_rerun or force')
             for output_dir in set([o.parent for o in self.outputs]):
                 output_dir.mkdir(parents=True, exist_ok=True)
             inputs = self.inputs_dict if self.inputs_dict else self.inputs
             if self.atomic_write:
+                logger.debug(f'atomic_write: make temp paths')
                 if self.outputs_dict:
                     self.tmp_outputs = {k: tmp_atomic_path(v) for k, v in self.outputs_dict.items()}
                 else:
@@ -103,9 +107,13 @@ class Task:
             else:
                 self.tmp_outputs = self.outputs_dict if self.outputs_dict else self.outputs
 
+            logger.debug(f'run func {self.func}, {self.func_args}, {self.func_kwargs}')
+            start = timer()
             self.result = self.func(inputs, self.tmp_outputs, *self.func_args, **self.func_kwargs)
-            logger.debug(f'run: {self}')
+            logger.debug(f'run func {self.func} completed in {timer() - start:.2f}s:'
+                         f' {[o.name for o in self.tmp_outputs]}')
             if self.atomic_write:
+                logger.debug(f'atomic_write: rename temp paths')
                 if self.outputs_dict:
                     tmp_paths = self.tmp_outputs.values()
                 else:

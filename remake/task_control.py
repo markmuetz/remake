@@ -6,6 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from remake.metadata import TaskMetadata
+from remake.setup_logging import add_file_logging, remove_file_logging
 
 
 logger = getLogger(__name__)
@@ -290,8 +291,11 @@ class TaskControl:
             requires_rerun = self._task_requires_run_with_content_check(task_md)
             force = force or requires_rerun
             if force:
-                logger.debug(f'running task (force={force}) {task}')
+                logger.debug(f'running task (force={force}): {repr(task)}')
+                add_file_logging(task_md.log_path)
                 task.run(force=force)
+                remove_file_logging(task_md.log_path)
+                logger.debug(f'run task completed: {repr(task)}')
                 self._post_run_with_content_check(task_md)
             else:
                 logger.debug(f'no longer requires rerun: {task}')
