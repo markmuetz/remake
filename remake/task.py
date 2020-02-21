@@ -111,7 +111,7 @@ class Task:
             start = timer()
             self.result = self.func(inputs, self.tmp_outputs, *self.func_args, **self.func_kwargs)
             logger.debug(f'run func {self.func} completed in {timer() - start:.2f}s:'
-                         f' {[o.name for o in self.tmp_outputs]}')
+                         f' {[o.name for o in self.outputs]}')
             if self.atomic_write:
                 logger.debug(f'atomic_write: rename temp paths')
                 if self.outputs_dict:
