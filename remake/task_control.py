@@ -62,7 +62,7 @@ class TaskControl:
         # Get added to as new tasks are added.
         self.output_task_map = {}
         self.input_task_map = defaultdict(list)
-        self.task_from_hexdigest = {}
+        self.task_from_path_hash_key = {}
 
         self.reset()
 
@@ -101,10 +101,10 @@ class TaskControl:
         for output in task.outputs:
             if output in self.output_task_map:
                 raise Exception(f'Trying to add {output} twice')
-        hexdigest = task.hexdigest()
-        if hexdigest in self.task_from_hexdigest:
+        task_path_hash_key = task.path_hash_key()
+        if task_path_hash_key in self.task_from_path_hash_key:
             raise Exception(f'Trying to add {task} twice')
-        self.task_from_hexdigest[hexdigest] = task
+        self.task_from_path_hash_key[task_path_hash_key] = task
 
         self.tasks.append(task)
         for input_path in task.inputs:
@@ -284,8 +284,7 @@ class TaskControl:
         if task is None:
             raise Exception('No task to run')
         task_run_index = len(self.completed_tasks) + len(self.running_tasks)
-        print(f'{task_run_index}/{len(self.tasks)}: {repr(task)}')
-        task_md = None
+        print(f'{task_run_index}/{len(self.tasks)}: {task}')
         if self.enable_file_task_content_checks:
             task_md = self.task_metadata_map[task]
             requires_rerun = self._task_requires_run_with_content_check(task_md)

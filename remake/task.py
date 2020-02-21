@@ -78,7 +78,7 @@ class Task:
                 return False
         return True
 
-    def hexdigest(self):
+    def path_hash_key(self):
         h = sha1(self.func.__code__.co_name.encode())
         for input_path in self.inputs:
             h.update(str(input_path).encode())

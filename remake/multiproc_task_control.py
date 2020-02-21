@@ -45,9 +45,9 @@ def worker(task_queue, task_complete_queue, error_queue, log_queue):
             if item is None:
                 break
             task, force = item
-            logger.debug(f'worker {current_process().name} running {task.hexdigest()}')
+            logger.debug(f'worker {current_process().name} running {task.path_hash_key()}')
             task.run(force)
-            logger.debug(f'worker {current_process().name} complete {task.hexdigest()}')
+            logger.debug(f'worker {current_process().name} complete {task.path_hash_key()}')
             task_complete_queue.put(task)
         except Exception as e:
             logger.error(e)
@@ -108,8 +108,8 @@ class MultiProcTaskControl(TaskControl):
                 if not task:
                     logger.debug('ctrl no tasks available - wait for completed')
                     remote_completed_task = task_complete_queue.get()
-                    logger.debug(f'ctrl receieved: {remote_completed_task.hexdigest()} {remote_completed_task}')
-                    completed_task, task_sha1hex = running_tasks.pop(remote_completed_task.hexdigest())
+                    logger.debug(f'ctrl receieved: {remote_completed_task.path_hash_key()} {remote_completed_task}')
+                    completed_task, task_sha1hex = running_tasks.pop(remote_completed_task.path_hash_key())
                     print(f'=> Completed: {completed_task}')
 
                     if self.enable_file_task_content_checks:
