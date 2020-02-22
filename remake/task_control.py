@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 
-from remake.metadata import TaskMetadata
+from remake.metadata import TaskMetadata, PathMetadata
 from remake.setup_logging import add_file_logging, remove_file_logging
 
 
@@ -191,6 +191,14 @@ class TaskControl:
             assert len(self.sorted_tasks) == len(self.tasks)
             assert set(self.sorted_tasks) == set(self.tasks)
 
+        if self.enable_file_task_content_checks:
+            # Can now write all metadata for paths (size, mtime and sha1sum).
+            for input_path in self.input_paths:
+                input_md = PathMetadata(self.dotremake_dir, input_path)
+                _, _, needs_write = input_md.compare_path_with_previous()
+                if needs_write:
+                    input_md.write_path_metadata()
+
         # import ipdb; ipdb.set_trace()
         # Assign each task to one of three groups:
         # completed: task has been run and does not need to be rerun.
@@ -292,6 +300,7 @@ class TaskControl:
             force = force or requires_rerun
             if force:
                 logger.debug(f'running task (force={force}): {repr(task)}')
+                task_md.log_path.parent.mkdir(parents=True, exist_ok=True)
                 add_file_logging(task_md.log_path)
                 task.run(force=force)
                 remove_file_logging(task_md.log_path)

@@ -37,7 +37,6 @@ class TaskMetadata:
         self.metadata['content_sha1hex'] = content_sha1hex
         self.task_metadata_dir_path = self.task_metadata_dir / task_sha1hex
         self.log_path = self.task_metadata_dir_path / f'{content_sha1hex}_task.log'
-        self.task_metadata_dir_path.mkdir(parents=True, exist_ok=True)
 
         for path in self.task.outputs:
             if not path.exists():
@@ -67,8 +66,6 @@ class TaskMetadata:
             created, content_has_changed, needs_write = input_path_md.compare_path_with_previous()
             if content_has_changed:
                 self.rerun_reasons.append(('content_has_changed', path))
-            if needs_write:
-                input_path_md.write_path_metadata()
             sha1hex = input_path_md.input_metadata['sha1hex']
             content_hash_data.append(sha1hex)
 
@@ -93,7 +90,7 @@ class TaskMetadata:
         return requires_rerun
 
     def write_output_metadata(self):
-        # self.task_metadata_dir.mkdir(parents=True, exist_ok=True)
+        self.task_metadata_dir_path.mkdir(parents=True, exist_ok=True)
         task_func_path = self.task_metadata_dir_path / 'func_source.py'
         logger.debug(f'write task metadata to {task_func_path}')
         if not task_func_path.exists():
