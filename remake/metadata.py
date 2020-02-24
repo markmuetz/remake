@@ -9,7 +9,7 @@ from remake.util import sha1sum
 
 logger = getLogger(__name__)
 
-
+METADATA_VERSION = 'metadata_v1'
 JSON_READ_RETRIES = 2
 
 
@@ -40,13 +40,14 @@ def try_json_read(path):
 class TaskMetadata:
     def __init__(self, dotremake_dir, task):
         self.dotremake_dir = dotremake_dir
+        self.metadata_dir = dotremake_dir / METADATA_VERSION
         self.task = task
         self.inputs_metadata_map = {}
         self.outputs_metadata_map = {}
         self.metadata = {}
         self.requires_rerun = True
-        self.task_metadata_dir = self.dotremake_dir / 'task_metadata'
-        self.content_metadata_dir = self.dotremake_dir / 'content_metadata'
+        self.task_metadata_dir = self.metadata_dir / 'task_metadata'
+        self.content_metadata_dir = self.metadata_dir / 'content_metadata'
         self.rerun_reasons = []
         self.task_metadata_dir_path = None
         self.log_path = None
@@ -66,7 +67,13 @@ class TaskMetadata:
         self.metadata['task_sha1hex'] = task_sha1hex
         self.metadata['content_sha1hex'] = content_sha1hex
         self.task_metadata_dir_path = self.task_metadata_dir / task_sha1hex
-        self.log_path = self.task_metadata_dir_path / f'{content_sha1hex}_task.log'
+        # TODO: 2 tasks can have identical function and identical content, but still be different and require
+        # TODO: different log dirs. How to handle??
+        # Original:
+        # self.log_path = self.task_metadata_dir_path / f'{content_sha1hex}_task.log'
+        # What about just making the log_path:
+        self.metadata['task_path_hash_key'] = self.task.task_path_hash_key()
+        self.log_path = self.task_metadata_dir_path / f'{self.metadata["task_path_hash_key"]}_task.log'
 
         for path in self.task.outputs:
             if not path.exists():
@@ -91,7 +98,7 @@ class TaskMetadata:
         for path in self.task.inputs:
             assert path.is_absolute()
             # Have already checked that path exists.
-            input_path_md = PathMetadata(self.dotremake_dir, path)
+            input_path_md = PathMetadata(self.metadata_dir, path)
             self.inputs_metadata_map[path] = input_path_md
             created, content_has_changed, needs_write = input_path_md.compare_path_with_previous()
             if content_has_changed:
@@ -109,7 +116,7 @@ class TaskMetadata:
         for path in self.task.outputs:
             assert path.is_absolute()
             # Have already checked that path exists.
-            output_path_md = PathMetadata(self.dotremake_dir, path)
+            output_path_md = PathMetadata(self.metadata_dir, path)
             self.outputs_metadata_map[path] = output_path_md
             requires_rerun = output_path_md.compare_output_with_previous(task_sha1hex, content_sha1hex)
             if requires_rerun:
@@ -137,6 +144,10 @@ class TaskMetadata:
         else:
             # It is possible for the same content data to be used by 2 tasks.
             # Load the data, test whether or not the new content data is in there already, they write it back.
+            # TODO: This introduces a problem.
+            # TODO: Every output file has a link back to the content that created it through its content_sha1hex.
+            # TODO: But in this case it is non-unique -- instead of finding a path it finds a list, any of which could
+            # TODO: be the original content. Granted, they are identical, but still not ideal.
             content_data = try_json_read(content_metadata_path)
             new_content_data = [str(p) for p in self.task.inputs]
             if new_content_data not in content_data:
@@ -153,6 +164,7 @@ class TaskMetadata:
 class PathMetadata:
     def __init__(self, dotremake_dir, path):
         self.dotremake_dir = dotremake_dir
+        self.metadata_dir = dotremake_dir / METADATA_VERSION
         self.path = path
         self.input_metadata = {}
         self.prev_input_metadata = {}
@@ -160,7 +172,7 @@ class PathMetadata:
         self.output_task_metadata = {}
         self.prev_output_task_metadata = {}
 
-        self.file_metadata_dir = self.dotremake_dir / 'file_metadata'
+        self.file_metadata_dir = self.metadata_dir / 'file_metadata'
 
         self.metadata_path = self.file_metadata_dir.joinpath(*self.path.parts[1:])
         self.output_task_metadata_path = self.file_metadata_dir.joinpath(*(path.parent.parts[1:] +
