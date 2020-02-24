@@ -24,6 +24,7 @@ class TaskMetadata:
         self.log_path = None
 
     def generate_metadata(self):
+        logger.debug(f'generate metadata for {self.task}')
         self.rerun_reasons = []
         for path in self.task.inputs:
             if not path.exists():
@@ -88,9 +89,11 @@ class TaskMetadata:
                     self.rerun_reasons.append((reason, path))
                 break
 
+        logger.debug(f'tasks requires rerun {requires_rerun}: {self.task}')
         return requires_rerun
 
     def write_output_metadata(self):
+        logger.debug(f'write output metadata {self.task}')
         self.task_metadata_dir_path.mkdir(parents=True, exist_ok=True)
         task_func_path = self.task_metadata_dir_path / 'func_source.py'
         logger.debug(f'write task metadata to {task_func_path}')
@@ -143,6 +146,7 @@ class PathMetadata:
 
     def compare_path_with_previous(self):
         path = self.path
+        logger.debug(f'comparing with previous: {path}')
 
         self.prev_input_metadata = None
         if self.metadata_path.exists():
@@ -184,6 +188,7 @@ class PathMetadata:
         self.metadata_path.write_text(json.dumps(self.input_metadata, indent=2) + '\n')
 
     def compare_output_with_previous(self, task_sha1hex, content_sha1hex):
+        logger.debug(f'comparing output with previous: {self.path}')
         self.output_task_metadata = {'task_sha1hex': task_sha1hex, 'content_sha1hex': content_sha1hex}
         if not self.path.exists():
             self.rerun_reasons.append('path_does_not_exist')

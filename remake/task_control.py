@@ -155,6 +155,72 @@ class TaskControl:
             raise Exception(f'TaskControl already finalized')
 
         logger.debug('building task DAG')
+        self._build_task_DAG()
+
+        logger.debug('perform topological sort')
+        # Can now perform a topological sort.
+        self.sorted_tasks = list(self._topogological_tasks())
+        if self.extra_checks:
+            logger.debug('performing extra checks on sorted tasks')
+            assert len(self.sorted_tasks) == len(self.tasks)
+            assert set(self.sorted_tasks) == set(self.tasks)
+
+        if self.enable_file_task_content_checks:
+            logger.debug('writing input path metadata')
+            # Can now write all metadata for paths (size, mtime and sha1sum).
+            for input_path in self.input_paths:
+                input_md = PathMetadata(self.dotremake_dir, input_path)
+                _, _, needs_write = input_md.compare_path_with_previous()
+                if needs_write:
+                    input_md.write_path_metadata()
+
+        logger.debug('assigning tasks to groups')
+        self._assign_tasks()
+
+        if self.extra_checks:
+            logger.debug('performing extra checks on groups')
+            all_tasks_assigned = (set(self.completed_tasks) | set(self.pending_tasks) | set(self.remaining_tasks) ==
+                                  set(self.tasks) and
+                                  len(self.completed_tasks) + len(self.pending_tasks) + len(self.remaining_tasks) ==
+                                  len(self.tasks))
+            assert all_tasks_assigned, 'All tasks not assigned.'
+
+        self.output_paths = set(self.output_task_map.keys()) - self.input_paths
+
+        self.finalized = True
+        return self
+
+    def _assign_tasks(self):
+        # Assign each task to one of three groups:
+        # completed: task has been run and does not need to be rerun.
+        # pending: task has been run and needs to be rerun.
+        # remaining: task either needs to be rerun, or has previous tasks that need to be rerun.
+        # import ipdb; ipdb.set_trace()
+        for task in self.sorted_tasks:
+            task_state = 'completed'
+            requires_rerun = self.task_requires_rerun(task)
+
+            if task.can_run() and requires_rerun:
+                task_state = 'pending'
+                for prev_task in self.prev_tasks[task]:
+                    if prev_task in self.pending_tasks or prev_task in self.remaining_tasks:
+                        task_state = 'remaining'
+                        break
+            else:
+                for prev_task in self.prev_tasks[task]:
+                    if prev_task in self.pending_tasks or prev_task in self.remaining_tasks:
+                        task_state = 'remaining'
+                        break
+
+            logger.debug(f'  task status: {task_state} - {task}')
+            if task_state == 'completed':
+                self.completed_tasks.append(task)
+            elif task_state == 'pending':
+                self.pending_tasks.append(task)
+            elif task_state == 'remaining':
+                self.remaining_tasks.add(task)
+
+    def _build_task_DAG(self):
         # Work out whether it is possible to create a run schedule and find initial tasks.
         # Fill in self.prev_tasks and self.next_tasks; these hold the information about the
         # task DAG.
@@ -182,63 +248,7 @@ class TaskControl:
                     for output_task in output_tasks:
                         if output_task not in self.next_tasks[task]:
                             self.next_tasks[task].extend(output_tasks)
-
         self._dag_built = True
-
-        # Can now perform a topological sort.
-        self.sorted_tasks = list(self._topogological_tasks())
-        if self.extra_checks:
-            assert len(self.sorted_tasks) == len(self.tasks)
-            assert set(self.sorted_tasks) == set(self.tasks)
-
-        if self.enable_file_task_content_checks:
-            # Can now write all metadata for paths (size, mtime and sha1sum).
-            for input_path in self.input_paths:
-                input_md = PathMetadata(self.dotremake_dir, input_path)
-                _, _, needs_write = input_md.compare_path_with_previous()
-                if needs_write:
-                    input_md.write_path_metadata()
-
-        # import ipdb; ipdb.set_trace()
-        # Assign each task to one of three groups:
-        # completed: task has been run and does not need to be rerun.
-        # pending: task has been run and needs to be rerun.
-        # remaining: task either needs to be rerun, or has previous tasks that need to be rerun.
-        for task in self.sorted_tasks:
-            task_state = 'completed'
-            requires_rerun = self.task_requires_rerun(task)
-
-            if task.can_run() and requires_rerun:
-                task_state = 'pending'
-                for prev_task in self.prev_tasks[task]:
-                    if prev_task in self.pending_tasks or prev_task in self.remaining_tasks:
-                        task_state = 'remaining'
-                        break
-            else:
-                for prev_task in self.prev_tasks[task]:
-                    if prev_task in self.pending_tasks or prev_task in self.remaining_tasks:
-                        task_state = 'remaining'
-                        break
-
-            logger.debug(f'task status: {task_state} - {task}')
-            if task_state == 'completed':
-                self.completed_tasks.append(task)
-            elif task_state == 'pending':
-                self.pending_tasks.append(task)
-            elif task_state == 'remaining':
-                self.remaining_tasks.add(task)
-
-        if self.extra_checks:
-            all_tasks_assigned = (set(self.completed_tasks) | set(self.pending_tasks) | set(self.remaining_tasks) ==
-                                  set(self.tasks) and
-                                  len(self.completed_tasks) + len(self.pending_tasks) + len(self.remaining_tasks) ==
-                                  len(self.tasks))
-            assert all_tasks_assigned, 'All tasks not assigned.'
-
-        self.output_paths = set(self.output_task_map.keys()) - self.input_paths
-
-        self.finalized = True
-        return self
 
     def get_next_pending(self):
         while self.pending_tasks or self.running_tasks:
@@ -283,9 +293,11 @@ class TaskControl:
         return requires_rerun
 
     def _post_run_with_content_check(self, task_md):
+        logger.debug('post run content checks')
         task_md.generate_metadata()
         task_md.write_output_metadata()
         if self.extra_checks:
+            logger.debug('post run content checks extra_checks')
             # bug: JSONreads
             # This happens just after previous write_output_metadata -- could be that
             # this is causing an issue with the json writes not being flushed in time

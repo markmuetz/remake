@@ -4,13 +4,13 @@ import logging.handlers
 from logging import getLogger
 
 from remake.task_control import TaskControl
-from remake.setup_logging import setup_stream_logging
+from remake.setup_logging import setup_stdout_logging
 
 logger = getLogger(__name__)
 
 
 def log_listener(log_queue):
-    setup_stream_logging(logging.INFO)
+    setup_stdout_logging(logging.INFO)
     listener_logger = getLogger(__name__ + '.listener')
     listener_logger.debug('Starting')
     while True:
