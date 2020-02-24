@@ -10,7 +10,7 @@ from remake.util import sha1sum
 logger = getLogger(__name__)
 
 METADATA_VERSION = 'metadata_v1'
-JSON_READ_RETRIES = 3
+JSON_READ_ATTEMPTS = 3
 
 
 def flush_json_write(obj, path):
@@ -22,19 +22,19 @@ def flush_json_write(obj, path):
 
 
 def try_json_read(path):
-    retries = JSON_READ_RETRIES
+    attempts = 0
 
-    while retries:
-        retries -= 1
+    while True:
         try:
             return json.loads(path.read_text())
         except Exception as e:
+            attempts += 1
             logger.error(e)
             logger.debug(path)
-            logger.debug(f'retries: {retries}')
-            if not retries:
+            logger.debug(f'attempts: {attempts}')
+            if attempts == JSON_READ_ATTEMPTS:
                 raise
-        sleep(5)
+        sleep(attempts * 5)
 
 
 class TaskMetadata:
