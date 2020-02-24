@@ -151,7 +151,9 @@ class PathMetadata:
         self.prev_input_metadata = None
         if self.metadata_path.exists():
             self.prev_input_metadata = json.loads(self.metadata_path.read_text())
-        stat = path.stat()
+        # N.B. lstat dereferences symlinks.
+        # Think using path.stat() was causing JSONreads bug.
+        stat = path.lstat()
         self.input_metadata = {'st_size': stat.st_size, 'st_mtime': stat.st_mtime}
 
         if self.prev_input_metadata:
@@ -210,11 +212,12 @@ class PathMetadata:
         logger.debug(f'write output metadata to {self.output_task_metadata_path}')
         self.output_task_metadata_path.parent.mkdir(parents=True, exist_ok=True)
         # bug: JSONreads
-        # self.output_task_metadata_path.write_text(json.dumps(self.output_task_metadata, indent=2) + '\n')
+        # Don't think flushing is the problem.
+        self.output_task_metadata_path.write_text(json.dumps(self.output_task_metadata, indent=2) + '\n')
 
         # Ensure that writes have been flushed to disk.
-        with self.output_task_metadata_path.open('w') as fp:
-            json.dump(self.output_task_metadata, fp, indent=2)
-            fp.write('\n')
-            fp.flush()
-            os.fsync(fp)
+        # with self.output_task_metadata_path.open('w') as fp:
+        #     json.dump(self.output_task_metadata, fp, indent=2)
+        #     fp.write('\n')
+        #     fp.flush()
+        #     os.fsync(fp)
