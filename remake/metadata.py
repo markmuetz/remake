@@ -24,7 +24,7 @@ class TaskMetadata:
         self.log_path = None
 
     def generate_metadata(self):
-        logger.debug(f'generate metadata for {self.task}')
+        logger.debug(f'generate metadata for {self.task.hexdigest()}')
         self.rerun_reasons = []
         for path in self.task.inputs:
             if not path.exists():
@@ -89,11 +89,11 @@ class TaskMetadata:
                     self.rerun_reasons.append((reason, path))
                 break
 
-        logger.debug(f'tasks requires rerun {requires_rerun}: {self.task}')
+        logger.debug(f'tasks requires rerun {requires_rerun}: {self.task.hexdigest()}')
         return requires_rerun
 
     def write_output_metadata(self):
-        logger.debug(f'write output metadata {self.task}')
+        logger.debug(f'write output metadata {self.task.hexdigest()}')
         self.task_metadata_dir_path.mkdir(parents=True, exist_ok=True)
         task_func_path = self.task_metadata_dir_path / 'func_source.py'
         logger.debug(f'write task metadata to {task_func_path}')
