@@ -2,11 +2,15 @@ import os
 import json
 from hashlib import sha1
 from logging import getLogger
+from time import sleep
 
 from remake.util import sha1sum
 
 
 logger = getLogger(__name__)
+
+
+READ_RETRIES = 2
 
 
 def flush_json_write(obj, path):
@@ -15,6 +19,23 @@ def flush_json_write(obj, path):
         fp.write('\n')
         fp.flush()
         os.fsync(fp)
+
+
+def try_json_read(path):
+    retries = READ_RETRIES
+
+    while retries:
+        retries -= 1
+        try:
+            return json.loads(path.read_text())
+        except Exception as e:
+            logger.error(e)
+            logger.debug(path)
+            logger.debug(f'retries: {retries}')
+            if not retries:
+                raise
+        sleep(2)
+
 
 
 class TaskMetadata:
@@ -118,7 +139,8 @@ class TaskMetadata:
         else:
             # It is possible for the same content data to be used by 2 tasks.
             # Load the data, test whether or not the new content data is in there already, they write it back.
-            content_data = json.loads(content_metadata_path.read_text())
+            content_data = try_json_read(content_metadata_path)
+            # content_data = json.loads(content_metadata_path.read_text())
             new_content_data = [str(p) for p in self.task.inputs]
             if new_content_data not in content_data:
                 content_data.append(new_content_data)
@@ -160,7 +182,8 @@ class PathMetadata:
 
         self.prev_input_metadata = None
         if self.metadata_path.exists():
-            self.prev_input_metadata = json.loads(self.metadata_path.read_text())
+            self.prev_input_metadata = try_json_read(self.metadata_path)
+            # self.prev_input_metadata = json.loads(self.metadata_path.read_text())
         # N.B. lstat dereferences symlinks.
         # Think using path.stat() was causing JSONreads bug.
         stat = path.lstat()
@@ -210,7 +233,8 @@ class PathMetadata:
         requires_rerun = False
         if self.output_task_metadata_path.exists():
             # bug: JSONreads
-            self.prev_output_task_metadata = json.loads(self.output_task_metadata_path.read_text())
+            # self.prev_output_task_metadata = json.loads(self.output_task_metadata_path.read_text())
+            self.prev_output_task_metadata = try_json_read(self.output_task_metadata_path)
             if self.output_task_metadata['task_sha1hex'] != self.prev_output_task_metadata['task_sha1hex']:
                 requires_rerun = True
                 self.rerun_reasons.append('task_sha1hex_different')
