@@ -212,7 +212,7 @@ class TaskControl:
                         task_state = 'remaining'
                         break
 
-            logger.debug(f'  task status: {task_state} - {task}')
+            logger.debug(f'  task status: {task_state} - {task.path_hash_key()}')
             if task_state == 'completed':
                 self.completed_tasks.append(task)
             elif task_state == 'pending':
@@ -262,7 +262,7 @@ class TaskControl:
     def task_complete(self, task):
         assert task in self.running_tasks, 'task not being run'
         assert task.complete(), 'task not complete'
-        logger.debug(f'add completed task: {task}')
+        logger.debug(f'add completed task: {task.path_hash_key()}')
         self.running_tasks.remove(task)
         self.completed_tasks.append(task)
 
@@ -278,7 +278,7 @@ class TaskControl:
             if not self.enable_file_task_content_checks:
                 requires_rerun = requires_rerun or next_task.requires_rerun()
             if requires_rerun:
-                logger.debug(f'adding new pending task: {next_task}')
+                logger.debug(f'adding new pending task: {next_task.path_hash_key()}')
                 self.pending_tasks.append(next_task)
                 self.remaining_tasks.remove(next_task)
 
@@ -323,9 +323,9 @@ class TaskControl:
                 logger.debug(f'run task completed: {repr(task)}')
                 self._post_run_with_content_check(task_md)
             else:
-                logger.debug(f'no longer requires rerun: {task}')
+                logger.debug(f'no longer requires rerun: {repr(task)}')
         else:
-            logger.debug(f'running task (force={force}) {task}')
+            logger.debug(f'running task (force={force}) {repr(task)}')
             task.run(force=force)
 
         self.task_complete(task)
