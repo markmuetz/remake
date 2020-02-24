@@ -9,6 +9,14 @@ from remake.util import sha1sum
 logger = getLogger(__name__)
 
 
+def flush_json_write(obj, path):
+    with path.open('w') as fp:
+        json.dump(obj, fp, indent=2)
+        fp.write('\n')
+        fp.flush()
+        os.fsync(fp)
+
+
 class TaskMetadata:
     def __init__(self, dotremake_dir, task):
         self.dotremake_dir = dotremake_dir
@@ -105,7 +113,8 @@ class TaskMetadata:
         logger.debug(f'write content metadata to {content_metadata_path}')
         if not content_metadata_path.exists():
             content_data = [[str(p) for p in self.task.inputs]]
-            content_metadata_path.write_text(json.dumps(content_data, indent=2) + '\n')
+            flush_json_write(content_data, content_metadata_path)
+            # content_metadata_path.write_text(json.dumps(content_data, indent=2) + '\n')
         else:
             # It is possible for the same content data to be used by 2 tasks.
             # Load the data, test whether or not the new content data is in there already, they write it back.
@@ -113,7 +122,8 @@ class TaskMetadata:
             new_content_data = [str(p) for p in self.task.inputs]
             if new_content_data not in content_data:
                 content_data.append(new_content_data)
-            content_metadata_path.write_text(json.dumps(content_data, indent=2) + '\n')
+            flush_json_write(content_data, content_metadata_path)
+            # content_metadata_path.write_text(json.dumps(content_data, indent=2) + '\n')
 
         for output_path_md in self.outputs_metadata_map.values():
             _, _, needs_write = output_path_md.compare_path_with_previous()
@@ -187,7 +197,8 @@ class PathMetadata:
     def write_path_metadata(self):
         logger.debug(f'write input metadata to {self.metadata_path}')
         self.metadata_path.parent.mkdir(parents=True, exist_ok=True)
-        self.metadata_path.write_text(json.dumps(self.input_metadata, indent=2) + '\n')
+        flush_json_write(self.input_metadata, self.metadata_path)
+        # self.metadata_path.write_text(json.dumps(self.input_metadata, indent=2) + '\n')
 
     def compare_output_with_previous(self, task_sha1hex, content_sha1hex):
         logger.debug(f'comparing output with previous: {self.path}')
@@ -213,7 +224,9 @@ class PathMetadata:
         self.output_task_metadata_path.parent.mkdir(parents=True, exist_ok=True)
         # bug: JSONreads
         # Don't think flushing is the problem.
-        self.output_task_metadata_path.write_text(json.dumps(self.output_task_metadata, indent=2) + '\n')
+        # Or perhaps it is. Do flushed writes for all json.
+        flush_json_write(self.output_task_metadata, self.output_task_metadata_path)
+        # self.output_task_metadata_path.write_text(json.dumps(self.output_task_metadata, indent=2) + '\n')
 
         # Ensure that writes have been flushed to disk.
         # with self.output_task_metadata_path.open('w') as fp:
