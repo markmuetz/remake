@@ -305,7 +305,7 @@ class TaskControl:
             requires_rerun = task_md.task_requires_rerun_based_on_content()
             assert not requires_rerun
 
-    def _run_task(self, task, force=False):
+    def run_task(self, task, force=False):
         if task is None:
             raise Exception('No task to run')
         task_run_index = len(self.completed_tasks) + len(self.running_tasks)
@@ -328,14 +328,14 @@ class TaskControl:
             logger.debug(f'running task (force={force}) {repr(task)}')
             task.run(force=force)
 
-        self.task_complete(task)
-
     def run(self, force=False, display_func=None):
         if not self.finalized:
             raise Exception(f'TaskControl not finalized')
 
         for task in self.get_next_pending():
-            self._run_task(task, force)
+            self.run_task(task, force)
+            self.task_complete(task)
+
             if display_func:
                 display_func(self)
 
@@ -344,7 +344,9 @@ class TaskControl:
             raise Exception(f'TaskControl not finalized')
 
         task = next(self.get_next_pending())
-        self._run_task(task, force)
+        self.run_task(task, force)
+        self.task_complete(task)
+
         if display_func:
             display_func(self)
 
