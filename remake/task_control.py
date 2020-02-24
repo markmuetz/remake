@@ -3,7 +3,6 @@ from logging import getLogger
 from pathlib import Path
 
 import numpy as np
-import matplotlib.pyplot as plt
 
 from remake.metadata import TaskMetadata, PathMetadata
 from remake.setup_logging import add_file_logging, remove_file_logging
@@ -38,6 +37,7 @@ if nx:
         return G
 
     def display_task_status(task_ctrl):
+        import matplotlib.pyplot as plt
         TG = tasks_as_networkx_graph(task_ctrl)
         pos = {}
         for level, tasks in task_ctrl.tasks_at_level.items():
