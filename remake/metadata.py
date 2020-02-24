@@ -10,7 +10,7 @@ from remake.util import sha1sum
 logger = getLogger(__name__)
 
 
-READ_RETRIES = 2
+JSON_READ_RETRIES = 2
 
 
 def flush_json_write(obj, path):
@@ -22,7 +22,7 @@ def flush_json_write(obj, path):
 
 
 def try_json_read(path):
-    retries = READ_RETRIES
+    retries = JSON_READ_RETRIES
 
     while retries:
         retries -= 1
@@ -35,7 +35,6 @@ def try_json_read(path):
             if not retries:
                 raise
         sleep(2)
-
 
 
 class TaskMetadata:
@@ -135,17 +134,14 @@ class TaskMetadata:
         if not content_metadata_path.exists():
             content_data = [[str(p) for p in self.task.inputs]]
             flush_json_write(content_data, content_metadata_path)
-            # content_metadata_path.write_text(json.dumps(content_data, indent=2) + '\n')
         else:
             # It is possible for the same content data to be used by 2 tasks.
             # Load the data, test whether or not the new content data is in there already, they write it back.
             content_data = try_json_read(content_metadata_path)
-            # content_data = json.loads(content_metadata_path.read_text())
             new_content_data = [str(p) for p in self.task.inputs]
             if new_content_data not in content_data:
                 content_data.append(new_content_data)
             flush_json_write(content_data, content_metadata_path)
-            # content_metadata_path.write_text(json.dumps(content_data, indent=2) + '\n')
 
         for output_path_md in self.outputs_metadata_map.values():
             _, _, needs_write = output_path_md.compare_path_with_previous()
@@ -183,7 +179,6 @@ class PathMetadata:
         self.prev_input_metadata = None
         if self.metadata_path.exists():
             self.prev_input_metadata = try_json_read(self.metadata_path)
-            # self.prev_input_metadata = json.loads(self.metadata_path.read_text())
         # N.B. lstat dereferences symlinks.
         # Think using path.stat() was causing JSONreads bug.
         stat = path.lstat()
@@ -221,7 +216,6 @@ class PathMetadata:
         logger.debug(f'write input metadata to {self.metadata_path}')
         self.metadata_path.parent.mkdir(parents=True, exist_ok=True)
         flush_json_write(self.input_metadata, self.metadata_path)
-        # self.metadata_path.write_text(json.dumps(self.input_metadata, indent=2) + '\n')
 
     def compare_output_with_previous(self, task_sha1hex, content_sha1hex):
         logger.debug(f'comparing output with previous: {self.path}')
@@ -233,7 +227,6 @@ class PathMetadata:
         requires_rerun = False
         if self.output_task_metadata_path.exists():
             # bug: JSONreads
-            # self.prev_output_task_metadata = json.loads(self.output_task_metadata_path.read_text())
             self.prev_output_task_metadata = try_json_read(self.output_task_metadata_path)
             if self.output_task_metadata['task_sha1hex'] != self.prev_output_task_metadata['task_sha1hex']:
                 requires_rerun = True
@@ -250,11 +243,3 @@ class PathMetadata:
         # Don't think flushing is the problem.
         # Or perhaps it is. Do flushed writes for all json.
         flush_json_write(self.output_task_metadata, self.output_task_metadata_path)
-        # self.output_task_metadata_path.write_text(json.dumps(self.output_task_metadata, indent=2) + '\n')
-
-        # Ensure that writes have been flushed to disk.
-        # with self.output_task_metadata_path.open('w') as fp:
-        #     json.dump(self.output_task_metadata, fp, indent=2)
-        #     fp.write('\n')
-        #     fp.flush()
-        #     os.fsync(fp)
