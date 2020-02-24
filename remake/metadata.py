@@ -72,7 +72,7 @@ class TaskMetadata:
         # Original:
         # self.log_path = self.task_metadata_dir_path / f'{content_sha1hex}_task.log'
         # What about just making the log_path:
-        self.metadata['task_path_hash_key'] = self.task.task_path_hash_key()
+        self.metadata['task_path_hash_key'] = self.task.path_hash_key()
         self.log_path = self.task_metadata_dir_path / f'{self.metadata["task_path_hash_key"]}_task.log'
 
         for path in self.task.outputs:
@@ -98,7 +98,7 @@ class TaskMetadata:
         for path in self.task.inputs:
             assert path.is_absolute()
             # Have already checked that path exists.
-            input_path_md = PathMetadata(self.metadata_dir, path)
+            input_path_md = PathMetadata(self.dotremake_dir, path)
             self.inputs_metadata_map[path] = input_path_md
             created, content_has_changed, needs_write = input_path_md.compare_path_with_previous()
             if content_has_changed:
@@ -112,13 +112,16 @@ class TaskMetadata:
     def task_requires_rerun_based_on_content(self):
         task_sha1hex = self.metadata['task_sha1hex']
         content_sha1hex = self.metadata['content_sha1hex']
+        task_path_hash_key = self.metadata['task_path_hash_key']
         requires_rerun = False
         for path in self.task.outputs:
             assert path.is_absolute()
             # Have already checked that path exists.
-            output_path_md = PathMetadata(self.metadata_dir, path)
+            output_path_md = PathMetadata(self.dotremake_dir, path)
             self.outputs_metadata_map[path] = output_path_md
-            requires_rerun = output_path_md.compare_output_with_previous(task_sha1hex, content_sha1hex)
+            requires_rerun = output_path_md.compare_output_with_previous(task_sha1hex,
+                                                                         content_sha1hex,
+                                                                         task_path_hash_key)
             if requires_rerun:
                 for reason in output_path_md.rerun_reasons:
                     self.rerun_reasons.append((reason, path))
@@ -186,7 +189,7 @@ class PathMetadata:
 
     def compare_path_with_previous(self):
         path = self.path
-        logger.debug(f'comparing with previous: {path}')
+        logger.debug(f'comparing path with previous: {path}')
 
         self.prev_input_metadata = None
         if self.metadata_path.exists():
@@ -195,16 +198,17 @@ class PathMetadata:
         # Think using path.stat() was causing JSONreads bug.
         stat = path.lstat()
         self.input_metadata = {'st_size': stat.st_size, 'st_mtime': stat.st_mtime}
+        stat_has_changed = False
 
         if self.prev_input_metadata:
             if self.input_metadata['st_size'] != self.prev_input_metadata['st_size']:
-                self.content_has_changed = True
+                stat_has_changed = True
                 self.changes.append('st_size_changed')
             if self.input_metadata['st_mtime'] != self.prev_input_metadata['st_mtime']:
-                self.content_has_changed = True
+                stat_has_changed = True
                 self.changes.append('st_mtime_changed')
 
-            if self.content_has_changed:
+            if stat_has_changed:
                 self.need_write = True
                 # Only recalc sha1hex if size or last modified time have changed.
                 sha1hex = sha1sum(path)
@@ -229,9 +233,13 @@ class PathMetadata:
         self.metadata_path.parent.mkdir(parents=True, exist_ok=True)
         flush_json_write(self.input_metadata, self.metadata_path)
 
-    def compare_output_with_previous(self, task_sha1hex, content_sha1hex):
+    def compare_output_with_previous(self, task_sha1hex, content_sha1hex, task_path_hash_key):
         logger.debug(f'comparing output with previous: {self.path}')
-        self.output_task_metadata = {'task_sha1hex': task_sha1hex, 'content_sha1hex': content_sha1hex}
+        self.output_task_metadata = {
+            'task_sha1hex': task_sha1hex,
+            'content_sha1hex': content_sha1hex,
+            'task_path_hash_key': task_path_hash_key,
+        }
         if not self.path.exists():
             self.rerun_reasons.append('path_does_not_exist')
             return True
