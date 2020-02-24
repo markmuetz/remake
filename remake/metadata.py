@@ -1,3 +1,4 @@
+import os
 import json
 from hashlib import sha1
 from logging import getLogger
@@ -190,6 +191,7 @@ class PathMetadata:
 
         requires_rerun = False
         if self.output_task_metadata_path.exists():
+            # bug: JSONreads
             self.prev_output_task_metadata = json.loads(self.output_task_metadata_path.read_text())
             if self.output_task_metadata['task_sha1hex'] != self.prev_output_task_metadata['task_sha1hex']:
                 requires_rerun = True
@@ -202,6 +204,12 @@ class PathMetadata:
     def write_task_metadata(self):
         logger.debug(f'write output metadata to {self.output_task_metadata_path}')
         self.output_task_metadata_path.parent.mkdir(parents=True, exist_ok=True)
-        self.output_task_metadata_path.write_text(json.dumps(self.output_task_metadata, indent=2) + '\n')
+        # bug: JSONreads
+        # self.output_task_metadata_path.write_text(json.dumps(self.output_task_metadata, indent=2) + '\n')
 
-
+        # Ensure that writes have been flushed to disk.
+        with self.output_task_metadata_path.open('w') as fp:
+            json.dump(self.output_task_metadata, fp, indent=2)
+            fp.write('\n')
+            fp.flush()
+            os.fsync(fp)

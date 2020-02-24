@@ -286,6 +286,10 @@ class TaskControl:
         task_md.generate_metadata()
         task_md.write_output_metadata()
         if self.extra_checks:
+            # bug: JSONreads
+            # This happens just after previous write_output_metadata -- could be that
+            # this is causing an issue with the json writes not being flushed in time
+            # that causes the json not to be read?
             requires_rerun = task_md.task_requires_rerun_based_on_content()
             assert not requires_rerun
 
