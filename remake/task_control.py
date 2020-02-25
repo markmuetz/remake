@@ -143,7 +143,11 @@ class TaskControl:
         requires_rerun = True
         if self.enable_file_task_content_checks:
             task_md = TaskMetadata(self.dotremake_dir, task)
-            requires_rerun = task_md.generate_metadata()
+            generated = task_md.generate_metadata()
+            if generated:
+                requires_rerun = task_md.task_requires_rerun()
+            else:
+                requires_rerun = False
             self.task_metadata_map[task] = task_md
         else:
             if task.can_run():
@@ -155,7 +159,7 @@ class TaskControl:
             raise Exception(f'TaskControl already finalized')
 
         logger.debug('building task DAG')
-        self._build_task_DAG()
+        self.build_task_DAG()
 
         logger.debug('perform topological sort')
         # Can now perform a topological sort.
@@ -170,9 +174,9 @@ class TaskControl:
             # Can now write all metadata for paths (size, mtime and sha1sum).
             for input_path in self.input_paths:
                 input_md = PathMetadata(self.dotremake_dir, input_path)
-                _, _, needs_write = input_md.compare_path_with_previous()
+                _, needs_write = input_md.compare_path_with_previous()
                 if needs_write:
-                    input_md.write_path_metadata()
+                    input_md.write_new_metadata()
 
         logger.debug('assigning tasks to groups')
         self._assign_tasks()
@@ -220,11 +224,17 @@ class TaskControl:
             elif task_state == 'remaining':
                 self.remaining_tasks.add(task)
 
-    def _build_task_DAG(self):
+    def build_task_DAG(self):
+        if self._dag_built:
+            logger.info('DAG already built')
+            return
+
         # Work out whether it is possible to create a run schedule and find initial tasks.
         # Fill in self.prev_tasks and self.next_tasks; these hold the information about the
         # task DAG.
         for task in self.tasks:
+            if self.enable_file_task_content_checks:
+                self.task_metadata_map[task] = TaskMetadata(self.dotremake_dir, task)
             is_input_task = True
             for input_path in task.inputs:
                 if input_path in self.output_task_map:
@@ -285,7 +295,10 @@ class TaskControl:
     def _task_requires_run_with_content_check(self, task_md):
         logger.debug('performing task file contents checks')
         # N.B. Can't rely on old value of requires_rerun as you need to check task's + task.inputs' contents.
-        requires_rerun = task_md.generate_metadata()
+        generated = task_md.generate_metadata()
+        requires_rerun = generated
+        if requires_rerun:
+            requires_rerun = task_md.task_requires_rerun()
         if requires_rerun:
             logger.debug('requires rerun:')
             for reason in task_md.rerun_reasons:
@@ -294,15 +307,13 @@ class TaskControl:
 
     def _post_run_with_content_check(self, task_md):
         logger.debug('post run content checks')
-        task_md.generate_metadata()
+        generated = task_md.generate_metadata()
+        assert generated, f'Could not generate metadata for {task_md.task}'
         task_md.write_output_metadata()
+
         if self.extra_checks:
             logger.debug('post run content checks extra_checks')
-            # bug: JSONreads
-            # This happens just after previous write_output_metadata -- could be that
-            # this is causing an issue with the json writes not being flushed in time
-            # that causes the json not to be read?
-            requires_rerun = task_md.task_requires_rerun_based_on_content()
+            requires_rerun = task_md.task_requires_rerun()
             assert not requires_rerun
 
     def run_task(self, task, force=False):
@@ -350,15 +361,13 @@ class TaskControl:
         if display_func:
             display_func(self)
 
-    def rescan_metadata_completed_tasks(self):
+    def rescan_metadata(self):
         if not self.finalized:
             raise Exception(f'TaskControl not finalized')
 
-        for task in self.completed_tasks:
+        for task in self.tasks:
             task_md = TaskMetadata(self.dotremake_dir, task)
-            requires_rerun = task_md.generate_metadata()
-            if requires_rerun:
-                print(f'{task} requires rerun')
+            task_md.generate_metadata()
             task_md.write_output_metadata()
 
     def print_status(self):
