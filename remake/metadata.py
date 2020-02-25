@@ -1,4 +1,5 @@
 import os
+import datetime as dt
 import json
 from hashlib import sha1
 from logging import getLogger
@@ -58,17 +59,23 @@ class TaskMetadata:
         self.log_path = None
 
         self.task_metadata_dir = self.metadata_dir / 'task_metadata'
-        self.content_metadata_dir = self.metadata_dir / 'content_metadata'
         self.task_metadata_dir_path = self.task_metadata_dir / self.task_path_hash_key
 
         self.task_metadata_path = self.task_metadata_dir_path / 'task.metadata'
         self.log_path = self.task_metadata_dir_path / 'task.log'
+
+        self.task_status_path = self.metadata_dir / 'task_status' / (self.task_path_hash_key + '.status')
 
         for input_path in self.task.inputs:
             self.inputs_metadata_map[input_path] = PathMetadata(self.dotremake_dir, input_path)
 
         for output_path in self.task.outputs:
             self.outputs_metadata_map[output_path] = PathMetadata(self.dotremake_dir, output_path)
+
+    def update_status(self, status):
+        self.task_status_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.task_status_path.open('a') as fp:
+            fp.write(f'{dt.datetime.now()};{status}\n')
 
     def load_metadata(self):
         if self.task_metadata_path.exists():
@@ -173,12 +180,6 @@ class TaskMetadata:
 
         logger.debug(f'write task metadata to {self.task_metadata_path}')
         flush_json_write(self.new_metadata, self.task_metadata_path)
-
-        self.content_metadata_dir.mkdir(parents=True, exist_ok=True)
-        content_metadata_path = self.content_metadata_dir / self.new_metadata['content_sha1hex']
-        logger.debug(f'write content metadata to {content_metadata_path}')
-        content_data = [[str(p) for p in self.task.inputs]]
-        flush_json_write(content_data, content_metadata_path)
 
         for input_path_md in self.inputs_metadata_map.values():
             input_path_md.write_new_used_by_task_metadata(self.task_path_hash_key)

@@ -329,8 +329,16 @@ class TaskControl:
                 logger.debug(f'running task (force={force}): {repr(task)}')
                 task_md.log_path.parent.mkdir(parents=True, exist_ok=True)
                 add_file_logging(task_md.log_path)
-                task.run(force=force)
-                remove_file_logging(task_md.log_path)
+                task_md.update_status('RUNNING')
+                try:
+                    task.run(force=force)
+                    task_md.update_status('COMPLETE')
+                except Exception as e:
+                    logger.error(e)
+                    task_md.update_status('ERROR')
+                    raise
+                finally:
+                    remove_file_logging(task_md.log_path)
                 logger.debug(f'run task completed: {repr(task)}')
                 self._post_run_with_content_check(task_md)
             else:
