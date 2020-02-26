@@ -240,6 +240,9 @@ class PathMetadata:
         self.task_metadata = {}
 
         self.changes = []
+        self.content_has_changed = False
+        self.need_write = False
+        self._already_compared = False
 
     def load_metadata(self):
         if self.metadata_path.exists():
@@ -248,10 +251,13 @@ class PathMetadata:
             raise NoMetadata(f'No metadata for {self.path}')
 
     def compare_path_with_previous(self):
+        if self._already_compared:
+            return self.content_has_changed, self.need_write
+
         path = self.path
         logger.debug(f'comparing path with previous: {path}')
-        content_has_changed = False
-        need_write = False
+        self.content_has_changed = False
+        self.need_write = False
 
         if self.metadata_path.exists():
             self.load_metadata()
@@ -270,22 +276,23 @@ class PathMetadata:
                 self.changes.append('st_mtime_changed')
 
             if stat_has_changed:
-                need_write = True
+                self.need_write = True
                 # Only recalc sha1hex if size or last modified time have changed.
                 sha1hex = sha1sum(path)
                 self.new_metadata['sha1hex'] = sha1hex
                 if sha1hex != self.metadata['sha1hex']:
                     logger.debug(f'{path} content has changed')
                     self.changes.append('sha1hex_changed')
-                    content_has_changed = True
+                    self.content_has_changed = True
                 else:
                     logger.debug(f'{path} properties have changed but contents the same')
             else:
                 self.new_metadata['sha1hex'] = self.metadata['sha1hex']
         else:
-            need_write = True
+            self.need_write = True
 
-        return content_has_changed, need_write
+        self._already_compared = True
+        return self.content_has_changed, self.need_write
 
     def compare_task_with_previous(self, task_path_hash_key):
         logger.debug(f'comparing task with previous: {self.path}')
@@ -309,6 +316,7 @@ class PathMetadata:
         logger.debug(f'write new path metadata to {self.metadata_path}')
         self.metadata_path.parent.mkdir(parents=True, exist_ok=True)
         flush_json_write(self.new_metadata, self.metadata_path)
+        self._already_compared = False
 
     def write_new_used_by_task_metadata(self, task_path_hash_key):
         used_by_name = f'{self.path.name}.used_by.{task_path_hash_key}.task'
