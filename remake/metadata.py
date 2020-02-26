@@ -10,7 +10,7 @@ from remake.util import sha1sum
 
 logger = getLogger(__name__)
 
-METADATA_VERSION = 'metadata_v2'
+METADATA_VERSION = 'metadata_v3'
 JSON_READ_ATTEMPTS = 3
 
 
@@ -42,15 +42,51 @@ class NoMetadata(Exception):
     pass
 
 
+class MetadataManager:
+    """Creates and stores maps of PathMetadata and TaskMetadata"""
+    # Needed because it keeps track of all PathMetadata objs, and stops there being duplicate ones for inputs.
+    def __init__(self, dotremake_dir, *, full_tracking=False):
+        self.dotremake_dir = dotremake_dir
+        self.full_tracking = full_tracking
+        self.path_metadata_map = {}
+        self.task_metadata_map = {}
+
+    def create_task_metadata(self, task):
+        task_inputs_metadata_map = {}
+        task_outputs_metadata_map = {}
+        for input_path in task.inputs:
+            if input_path not in self.path_metadata_map:
+                input_md = self.create_path_metadata(input_path)
+            else:
+                input_md = self.path_metadata_map[input_path]
+            task_inputs_metadata_map[input_path] = input_md
+
+        for output_path in task.outputs:
+            output_md = self.create_path_metadata(output_path)
+            task_outputs_metadata_map[output_path] = output_md
+        task_md = TaskMetadata(self.dotremake_dir, task, task_inputs_metadata_map, task_outputs_metadata_map,
+                               full_tracking=self.full_tracking)
+        self.task_metadata_map[task] = task_md
+        return task_md
+
+    def create_path_metadata(self, path):
+        assert path not in self.path_metadata_map, f'path already tracked: {path}'
+        path_md = PathMetadata(self.dotremake_dir, path)
+        self.path_metadata_map[path] = path_md
+        return path_md
+
+
 class TaskMetadata:
-    def __init__(self, dotremake_dir, task):
+    def __init__(self, dotremake_dir, task, inputs_metadata_map, outputs_metadata_map, *, full_tracking=False):
         self.dotremake_dir = dotremake_dir
         self.metadata_dir = dotremake_dir / METADATA_VERSION
         self.task = task
+        self.inputs_metadata_map = inputs_metadata_map
+        self.outputs_metadata_map = outputs_metadata_map
+
+        self.full_tracking = full_tracking
         self.task_path_hash_key = self.task.path_hash_key()
 
-        self.inputs_metadata_map = {}
-        self.outputs_metadata_map = {}
         self.metadata = {}
         self.new_metadata = {}
         self.requires_rerun = True
@@ -59,18 +95,12 @@ class TaskMetadata:
         self.log_path = None
 
         self.task_metadata_dir = self.metadata_dir / 'task_metadata'
-        self.task_metadata_dir_path = self.task_metadata_dir / self.task_path_hash_key
+        self.task_metadata_dir_path = self.task_metadata_dir / self.task_path_hash_key[:2] / self.task_path_hash_key[2:]
 
         self.task_metadata_path = self.task_metadata_dir_path / 'task.metadata'
         self.log_path = self.task_metadata_dir_path / 'task.log'
 
         self.task_status_path = self.metadata_dir / 'task_status' / (self.task_path_hash_key + '.status')
-
-        for input_path in self.task.inputs:
-            self.inputs_metadata_map[input_path] = PathMetadata(self.dotremake_dir, input_path)
-
-        for output_path in self.task.outputs:
-            self.outputs_metadata_map[output_path] = PathMetadata(self.dotremake_dir, output_path)
 
     def update_status(self, status):
         self.task_status_path.parent.mkdir(parents=True, exist_ok=True)
@@ -164,33 +194,33 @@ class TaskMetadata:
         logger.debug(f'task requires rerun {self.requires_rerun}: {self.task_path_hash_key}')
         return self.requires_rerun
 
-    def write_output_metadata(self):
-        logger.debug(f'write output metadata {self.task_path_hash_key}')
+    def write_task_metadata(self):
+        logger.debug(f'write task metadata {self.task_path_hash_key} to {self.task_metadata_path}')
+
         self.task_metadata_dir_path.mkdir(parents=True, exist_ok=True)
-        task_func_path = self.task_metadata_dir_path / 'func_source.py'
+        # Minimize the number of writes to file.
+        self.new_metadata['func_source'] = self.task.func_source
 
-        logger.debug(f'write task source to {task_func_path}')
-        task_func_path.write_text(self.task.func_source)
-
-        inputs_outputs_path = self.task_metadata_dir_path / 'inputs_outputs'
-        task_inputs = [str(p) for p in self.task.inputs]
-        task_outputs = [str(p) for p in self.task.outputs]
-        logger.debug(f'write inputs/outputs to {inputs_outputs_path}')
-        flush_json_write({'inputs': task_inputs, 'outputs': task_outputs}, inputs_outputs_path)
-
-        logger.debug(f'write task metadata to {self.task_metadata_path}')
         flush_json_write(self.new_metadata, self.task_metadata_path)
 
-        for input_path_md in self.inputs_metadata_map.values():
-            input_path_md.write_new_used_by_task_metadata(self.task_path_hash_key)
+        if self.full_tracking:
+            # Not absolutely needed.
+            inputs_outputs_path = self.task_metadata_dir_path / 'inputs_outputs'
+            task_inputs = [str(p) for p in self.task.inputs]
+            task_outputs = [str(p) for p in self.task.outputs]
+            logger.debug(f'write inputs/outputs to {inputs_outputs_path}')
+            flush_json_write({'inputs': task_inputs, 'outputs': task_outputs}, inputs_outputs_path)
+
+            for input_path_md in self.inputs_metadata_map.values():
+                input_path_md.write_new_used_by_task_metadata(self.task_path_hash_key)
 
         for output_path_md in self.outputs_metadata_map.values():
             _, needs_write = output_path_md.compare_path_with_previous()
             if needs_write:
                 output_path_md.write_new_metadata()
-            _, needs_write = output_path_md.compare_task_with_previous(self.task_path_hash_key)
-            if needs_write:
-                output_path_md.write_new_task_metadata()
+            if self.full_tracking:
+                # Not absolutely needed.
+                output_path_md.compare_task_with_previous(self.task_path_hash_key)
 
 
 class PathMetadata:
@@ -203,18 +233,13 @@ class PathMetadata:
         self.metadata_path = self.file_metadata_dir.joinpath(*(path.parent.parts[1:] +
                                                                (f'{path.name}.metadata',)))
         self.task_metadata_path = self.file_metadata_dir.joinpath(*(path.parent.parts[1:] +
-                                                                    (f'{path.name}.created_by_task',)))
+                                                                    (f'{path.name}.created_by.task',)))
 
         self.metadata = {}
         self.new_metadata = {}
         self.task_metadata = {}
-        self.new_task_metadata = {}
 
         self.changes = []
-
-        self.content_has_changed = False
-        self.task_has_changed = False
-        self.need_write = False
 
     def load_metadata(self):
         if self.metadata_path.exists():
@@ -222,15 +247,11 @@ class PathMetadata:
         else:
             raise NoMetadata(f'No metadata for {self.path}')
 
-    def load_task_metadata(self):
-        if self.task_metadata_path.exists():
-            self.task_metadata = try_json_read(self.task_metadata_path)
-        else:
-            raise NoMetadata(f'No task metadata for: {self.path}')
-
     def compare_path_with_previous(self):
         path = self.path
         logger.debug(f'comparing path with previous: {path}')
+        content_has_changed = False
+        need_write = False
 
         if self.metadata_path.exists():
             self.load_metadata()
@@ -249,42 +270,43 @@ class PathMetadata:
                 self.changes.append('st_mtime_changed')
 
             if stat_has_changed:
-                self.need_write = True
+                need_write = True
                 # Only recalc sha1hex if size or last modified time have changed.
                 sha1hex = sha1sum(path)
                 self.new_metadata['sha1hex'] = sha1hex
                 if sha1hex != self.metadata['sha1hex']:
                     logger.debug(f'{path} content has changed')
                     self.changes.append('sha1hex_changed')
-                    self.content_has_changed = True
+                    content_has_changed = True
                 else:
                     logger.debug(f'{path} properties have changed but contents the same')
             else:
                 self.new_metadata['sha1hex'] = self.metadata['sha1hex']
         else:
-            self.need_write = True
+            need_write = True
 
-        return self.content_has_changed, self.need_write
+        return content_has_changed, need_write
 
     def compare_task_with_previous(self, task_path_hash_key):
         logger.debug(f'comparing task with previous: {self.path}')
 
-        if self.task_metadata_path.exists():
-            self.load_task_metadata()
-            if self.task_metadata['task_path_hash_key'] != task_path_hash_key:
-                self.changes.append('task_path_hash_key_changed')
-                self.task_has_changed = True
-                self.need_write = True
-        else:
-            self.need_write = True
-        self.new_task_metadata['task_path_hash_key'] = task_path_hash_key
+        created_by_name_glob = f'{self.path.name}.created_by.*.task'
+        created_by_name_paths = list(self.metadata_path.parent.glob(created_by_name_glob))
 
-        return self.task_has_changed, self.need_write
+        if created_by_name_paths:
+            assert len(created_by_name_paths), 'more than one created_by_task found.'
+            created_by_name_path = created_by_name_paths[0]
+            created_by_task_path_hash_key = created_by_name_path.name.split('.')[-2]
+            if created_by_task_path_hash_key != task_path_hash_key:
+                created_by_name_path.unlink()
+                self.write_new_task_metadata(task_path_hash_key)
+        else:
+            self.write_new_task_metadata(task_path_hash_key)
 
     def write_new_metadata(self):
         if 'sha1hex' not in self.new_metadata:
             self.new_metadata['sha1hex'] = sha1sum(self.path)
-        logger.debug(f'write input metadata to {self.metadata_path}')
+        logger.debug(f'write new path metadata to {self.metadata_path}')
         self.metadata_path.parent.mkdir(parents=True, exist_ok=True)
         flush_json_write(self.new_metadata, self.metadata_path)
 
@@ -293,10 +315,11 @@ class PathMetadata:
         used_by_task_metadata_path = self.metadata_path.parent / used_by_name
         logger.debug(f'write input task metadata to {used_by_task_metadata_path}')
         used_by_task_metadata_path.parent.mkdir(parents=True, exist_ok=True)
-        flush_json_write({'task': task_path_hash_key}, used_by_task_metadata_path)
+        used_by_task_metadata_path.touch()
 
-    def write_new_task_metadata(self):
-        assert 'task_path_hash_key' in self.new_task_metadata
+    def write_new_task_metadata(self, task_path_hash_key):
         logger.debug(f'write output task metadata to {self.task_metadata_path}')
-        self.task_metadata_path.parent.mkdir(parents=True, exist_ok=True)
-        flush_json_write(self.new_task_metadata, self.task_metadata_path)
+        created_by_name = f'{self.path.name}.created_by.{task_path_hash_key}.task'
+        created_by_task_metadata_path = self.metadata_path.parent / created_by_name
+        created_by_task_metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        created_by_task_metadata_path.touch()
