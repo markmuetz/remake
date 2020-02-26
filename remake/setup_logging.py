@@ -1,5 +1,6 @@
 import sys
 import logging
+from pathlib import Path
 
 
 def setup_stdout_logging(level):
@@ -15,6 +16,7 @@ def setup_stdout_logging(level):
 
 
 def add_file_logging(log_path):
+    log_path = Path(log_path)
     remake_root = logging.getLogger('remake')
     remake_root.setLevel(logging.DEBUG)
 
@@ -28,6 +30,7 @@ def add_file_logging(log_path):
 
 
 def remove_file_logging(log_path):
+    log_path = Path(log_path)
     remake_root = logging.getLogger('remake')
     handlers = [h for h in remake_root.handlers
                 if isinstance(h, logging.FileHandler) and h.baseFilename == str(log_path.absolute())]
