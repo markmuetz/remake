@@ -13,13 +13,20 @@ def tmp_atomic_path(p):
 
 
 class Task:
-    def __init__(self, func, inputs, outputs,
-                 func_args=[], func_kwargs={},
-                 *, atomic_write=True):
+    def __init__(self, func, inputs, outputs, func_args=[], func_kwargs={},
+                 *, atomic_write=True, use_source=False):
         self.func = func
         self.func_args = func_args
         self.func_kwargs = func_kwargs
-        self.func_source = inspect.getsource(self.func)
+        self.use_source = use_source
+        if use_source:
+            self.func_source = inspect.getsource(self.func)
+        else:
+            # This is quite a lot faster.
+            # It means that the task's function will be stored as bytecode.
+            # This means that e.g. adding comments or spaces to func will not cause a rerun.
+            # Perhaps this is desirable?
+            self.func_source = str(self.func.__code__.co_code)
         self.atomic_write = atomic_write
 
         if not outputs:
