@@ -16,7 +16,7 @@ def read(fname):
 
 setup(
     name='remake',
-    version='0.2',
+    version='0.3',
     description='',
     long_description=read('README.md'),
     author='Mark Muetzelfeldt',
