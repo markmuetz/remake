@@ -13,20 +13,30 @@ def tmp_atomic_path(p):
 
 
 class Task:
+    task_func_cache = {}
+
     def __init__(self, func, inputs, outputs, func_args=[], func_kwargs={},
-                 *, atomic_write=True, use_source=False):
+                 *, atomic_write=True, use_source=True):
         self.func = func
         self.func_args = func_args
         self.func_kwargs = func_kwargs
         self.use_source = use_source
         if use_source:
-            self.func_source = inspect.getsource(self.func)
+            if self.func in Task.task_func_cache:
+                self.func_source = Task.task_func_cache[self.func]
+            else:
+                self.func_source = inspect.getsource(self.func)
+                Task.task_func_cache[self.func] = self.func_source
         else:
             # This is quite a lot faster.
             # It means that the task's function will be stored as bytecode.
             # This means that e.g. adding comments or spaces to func will not cause a rerun.
             # Perhaps this is desirable?
-            self.func_source = str(self.func.__code__.co_code)
+            if self.func in Task.task_func_cache:
+                self.func_source = Task.task_func_cache[self.func]
+            else:
+                self.func_source = str(self.func.__code__.co_code)
+                Task.task_func_cache[self.func] = self.func_source
         self.atomic_write = atomic_write
 
         if not outputs:
