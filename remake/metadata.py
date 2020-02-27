@@ -62,7 +62,10 @@ class MetadataManager:
             task_inputs_metadata_map[input_path] = input_md
 
         for output_path in task.outputs:
-            output_md = self.create_path_metadata(output_path)
+            if output_path not in self.path_metadata_map:
+                output_md = self.create_path_metadata(output_path)
+            else:
+                output_md = self.path_metadata_map[output_path]
             task_outputs_metadata_map[output_path] = output_md
         task_md = TaskMetadata(self.dotremake_dir, task, task_inputs_metadata_map, task_outputs_metadata_map,
                                full_tracking=self.full_tracking)
