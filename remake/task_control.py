@@ -159,6 +159,13 @@ class TaskControl:
         logger.debug('building task DAG')
         self.build_task_DAG()
 
+        missing_paths = [p for p in self.input_paths if not p.exists()]
+        if missing_paths:
+            for input_path in missing_paths:
+                tasks = self.input_task_map[input_path]
+                logger.error(f'No input file {input_path} exists or will be created (needed by {len(tasks)} tasks)')
+            raise Exception(f'Not all input paths exist: {len(missing_paths)} missing')
+
         logger.debug('perform topological sort')
         # Can now perform a topological sort.
         self.sorted_tasks = list(self._topogological_tasks())
@@ -243,9 +250,6 @@ class TaskControl:
                     if input_task not in self.prev_tasks[task]:
                         self.prev_tasks[task].append(input_task)
                 else:
-                    # input_path is not going to be created by any tasks; it might still exist though:
-                    if not input_path.exists():
-                        raise Exception(f'No input file {input_path} exists or will be created for {task}')
                     self.input_paths.add(input_path)
             if is_input_task:
                 self.input_tasks.add(task)
