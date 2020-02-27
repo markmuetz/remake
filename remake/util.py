@@ -8,6 +8,13 @@ logger = getLogger(__name__)
 SHA1_BUF_SIZE = 65536  # lets read stuff in 64kb chunks!
 
 
+def tmp_to_actual_path(path: Path) -> Path:
+    if not path.name[:12] == '.remake.tmp.':
+        raise ValueError(f'Path must be a remake tmp path (start with ".remake.tmp."): {path}')
+
+    return path.parent / path.name[12:]
+
+
 def sha1sum(path: Path, buf_size: int = SHA1_BUF_SIZE) -> str:
     logger.debug(f'calc sha1sum for {path}')
     sha1 = hashlib.sha1()

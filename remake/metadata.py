@@ -200,6 +200,7 @@ class TaskMetadata:
         self.task_metadata_dir_path.mkdir(parents=True, exist_ok=True)
         # Minimize the number of writes to file.
         self.new_metadata['func_source'] = self.task.func_source
+        self.new_metadata['func_bytecode'] = str(self.task.func_bytecode)
 
         flush_json_write(self.new_metadata, self.task_metadata_path)
 
@@ -215,6 +216,8 @@ class TaskMetadata:
                 input_path_md.write_new_used_by_task_metadata(self.task_path_hash_key)
 
         for output_path_md in self.outputs_metadata_map.values():
+            if not output_path_md.path.exists():
+                continue
             _, needs_write = output_path_md.compare_path_with_previous()
             if needs_write:
                 output_path_md.write_new_metadata()

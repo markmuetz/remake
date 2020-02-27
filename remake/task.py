@@ -16,27 +16,17 @@ class Task:
     task_func_cache = {}
 
     def __init__(self, func, inputs, outputs, func_args=[], func_kwargs={},
-                 *, atomic_write=True, use_source=True):
+                 *, atomic_write=True):
         self.func = func
         self.func_args = func_args
         self.func_kwargs = func_kwargs
-        self.use_source = use_source
-        if use_source:
-            if self.func in Task.task_func_cache:
-                self.func_source = Task.task_func_cache[self.func]
-            else:
-                self.func_source = inspect.getsource(self.func)
-                Task.task_func_cache[self.func] = self.func_source
+        if self.func in Task.task_func_cache:
+            self.func_source = Task.task_func_cache[self.func]
         else:
-            # This is quite a lot faster.
-            # It means that the task's function will be stored as bytecode.
-            # This means that e.g. adding comments or spaces to func will not cause a rerun.
-            # Perhaps this is desirable?
-            if self.func in Task.task_func_cache:
-                self.func_source = Task.task_func_cache[self.func]
-            else:
-                self.func_source = str(self.func.__code__.co_code)
-                Task.task_func_cache[self.func] = self.func_source
+            self.func_source = inspect.getsource(self.func)
+            Task.task_func_cache[self.func] = self.func_source
+        # Faster; no need to cache.
+        self.func_bytecode = self.func.__code__.co_code
         self.atomic_write = atomic_write
 
         if not outputs:
@@ -59,10 +49,11 @@ class Task:
         self.tmp_outputs = []
 
     def __repr__(self):
-        return f'Task({self.func.__code__.co_name}, {self.inputs}, {self.outputs})'
+        return f'{self.__class__}({self.func.__code__.co_name}, {self.inputs}, {self.outputs})'
 
     def __str__(self):
-        return f'Task({self.func.__code__.co_name}, {[f.name for f in self.inputs]}, {[f.name for f in self.outputs]})'
+        return f'{self.__class__.__name__}' \
+               f'({self.func.__code__.co_name}, {[f.name for f in self.inputs]}, {[f.name for f in self.outputs]})'
 
     def can_run(self):
         can_run = True

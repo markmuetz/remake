@@ -55,7 +55,7 @@ if nx:
 
 # noinspection PyAttributeOutsideInit
 class TaskControl:
-    def __init__(self, enable_file_task_content_checks=False):
+    def __init__(self, *, enable_file_task_content_checks=False, dotremake_dir='.remake'):
         self.enable_file_task_content_checks = enable_file_task_content_checks
         self.extra_checks = True
         self.tasks = []
@@ -65,7 +65,7 @@ class TaskControl:
         self.input_task_map = defaultdict(list)
         self.task_from_path_hash_key = {}
         if self.enable_file_task_content_checks:
-            self.dotremake_dir = Path('.remake/')
+            self.dotremake_dir = Path(dotremake_dir)
             self.dotremake_dir.mkdir(parents=True, exist_ok=True)
 
         self.reset()
@@ -263,12 +263,22 @@ class TaskControl:
                             self.next_tasks[task].extend(output_tasks)
         self._dag_built = True
 
-    def get_next_pending(self):
+    def get_next_pending(self, task_func=None):
         while self.pending_tasks or self.running_tasks:
             if not self.pending_tasks:
                 yield None
             else:
-                task = self.pending_tasks.pop(0)
+                if task_func:
+                    task = None
+                    for loop_task in self.pending_tasks:
+                        if loop_task.func == task_func:
+                            self.pending_tasks.remove(loop_task)
+                            task = loop_task
+                            break
+                    if not task:
+                        break
+                else:
+                    task = self.pending_tasks.pop(0)
                 self.running_tasks.append(task)
                 yield task
 
@@ -350,22 +360,22 @@ class TaskControl:
             logger.debug(f'running task (force={force}) {repr(task)}')
             task.run(force=force)
 
-    def run(self, force=False, display_func=None):
+    def run(self, task_func=None, *, force=False, display_func=None):
         if not self.finalized:
             raise Exception(f'TaskControl not finalized')
 
-        for task in self.get_next_pending():
+        for task in self.get_next_pending(task_func):
             self.run_task(task, force)
             self.task_complete(task)
 
             if display_func:
                 display_func(self)
 
-    def run_one(self, force=False, display_func=None):
+    def run_one(self, task_func=None, *, force=False, display_func=None):
         if not self.finalized:
             raise Exception(f'TaskControl not finalized')
 
-        task = next(self.get_next_pending())
+        task = next(self.get_next_pending(task_func))
         self.run_task(task, force)
         self.task_complete(task)
 
