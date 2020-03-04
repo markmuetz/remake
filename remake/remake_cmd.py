@@ -35,6 +35,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     run_parser = subparsers.add_parser('run', help='Run remake')
     run_parser.add_argument('filenames', nargs='*')
+    run_parser.add_argument('--force', '-f', action='store_true')
 
     # version
     version_parser = subparsers.add_parser('version', help='Print remake version')
@@ -62,12 +63,12 @@ def remake_cmd(argv: List[str] = sys.argv) -> None:
     # N.B. args should always be dereferenced at this point,
     # not passed into any subsequent functions.
     if args.subcmd_name == 'run':
-        remake_run(args.filenames)
+        remake_run(args.filenames, args.force)
     elif args.subcmd_name == 'version':
         print(get_version(form='long' if args.long else 'short'))
 
 
-def remake_run(filenames):
+def remake_run(filenames, force):
     for filename in filenames:
         task_ctrl_module = load_module(filename)
         if not hasattr(task_ctrl_module, 'REMAKE_TASK_CTRL_FUNC'):
@@ -87,7 +88,6 @@ def remake_run(filenames):
         logger.debug(f'created TaskControl: {task_ctrl}')
         task_ctrl.finalize()
 
-        if not task_ctrl.pending_tasks:
+        if not task_ctrl.pending_tasks and not force:
             print(f'{filename}: {len(task_ctrl.completed_tasks)} tasks already run')
-        else:
-            task_ctrl.run()
+        task_ctrl.run(force=force)

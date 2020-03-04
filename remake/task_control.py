@@ -364,12 +364,26 @@ class TaskControl:
         if not self.finalized:
             raise Exception(f'TaskControl not finalized')
 
-        for task in self.get_next_pending(task_func):
-            self.run_task(task, force)
-            self.task_complete(task)
+        if force:
+            if task_func:
+                tasks = [t for t in self.sorted_tasks if t.func == task_func]
+            else:
+                tasks = [t for t in self.sorted_tasks]
 
-            if display_func:
-                display_func(self)
+            for task in tasks:
+                self.running_tasks.append(task)
+                self.run_task(task, force)
+                self.task_complete(task)
+
+                if display_func:
+                    display_func(self)
+        else:
+            for task in self.get_next_pending(task_func):
+                self.run_task(task, force)
+                self.task_complete(task)
+
+                if display_func:
+                    display_func(self)
 
     def run_one(self, task_func=None, *, force=False, display_func=None):
         if not self.finalized:
