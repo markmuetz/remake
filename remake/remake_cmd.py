@@ -27,7 +27,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # name of subparser ends up in subcmd_name -- use for command dispatch.
 
     run_parser = subparsers.add_parser('run', help='Run remake')
-    run_parser.add_argument('filename', nargs='?')
+    run_parser.add_argument('filenames', nargs='*')
 
     # version
     version_parser = subparsers.add_parser('version', help='Print remake version')
@@ -54,26 +54,26 @@ def remake_cmd(argv: List[str] = sys.argv) -> None:
     # N.B. args should always be dereferenced at this point,
     # not passed into any subsequent functions.
     if args.subcmd_name == 'run':
-        remake_run(args.filename)
+        remake_run(args.filenames)
     elif args.subcmd_name == 'version':
         print(0.3)
 
 
-def remake_run(filename):
-    task_ctrl_module = load_module(filename)
-    if not hasattr(task_ctrl_module, 'REMAKE_TASK_CTRL_FUNC'):
-        raise Exception(f'No REMAKE_TASK_CTRL_FUNC defined in {filename}')
+def remake_run(filenames):
+    for filename in filenames:
+        task_ctrl_module = load_module(filename)
+        if not hasattr(task_ctrl_module, 'REMAKE_TASK_CTRL_FUNC'):
+            raise Exception(f'No REMAKE_TASK_CTRL_FUNC defined in {filename}')
 
-    task_ctrl_func_name = task_ctrl_module.REMAKE_TASK_CTRL_FUNC
-    if not hasattr(task_ctrl_module, task_ctrl_func_name):
-        raise Exception(f'No function {task_ctrl_func_name} defined in {filename}')
+        task_ctrl_func_name = task_ctrl_module.REMAKE_TASK_CTRL_FUNC
+        if not hasattr(task_ctrl_module, task_ctrl_func_name):
+            raise Exception(f'No function {task_ctrl_func_name} defined in {filename}')
 
-    task_ctrl_func = getattr(task_ctrl_module, task_ctrl_func_name)
-    logger.debug(f'got task_ctrl_func: {task_ctrl_func}')
-    task_ctrl = task_ctrl_func()
-    task_ctrl.finalize()
-    if not task_ctrl.pending_tasks:
-        print('No tasks to run')
-    else:
-        task_ctrl.run()
-
+        task_ctrl_func = getattr(task_ctrl_module, task_ctrl_func_name)
+        logger.debug(f'got task_ctrl_func: {task_ctrl_func}')
+        task_ctrl = task_ctrl_func()
+        task_ctrl.finalize()
+        if not task_ctrl.pending_tasks:
+            print(f'{filename}: {len(task_ctrl.completed_tasks)} tasks already run')
+        else:
+            task_ctrl.run()
