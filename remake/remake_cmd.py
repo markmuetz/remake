@@ -4,16 +4,23 @@ from logging import getLogger
 from typing import List
 
 from remake.setup_logging import setup_stdout_logging
+from remake.version import get_version
 from remake.util import load_module
+from remake.task_control import TaskControl
 
 logger = getLogger(__name__)
 
 
 def exception_info(ex_type, value, tb):
-    import ipdb
+    try:
+        # Might not be installed.
+        import ipdb as debug
+    except ImportError:
+        import pdb as debug
+
     import traceback
     traceback.print_exception(ex_type, value, tb)
-    ipdb.pm()
+    debug.pm()
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -48,6 +55,7 @@ def remake_cmd(argv: List[str] = sys.argv) -> None:
     setup_stdout_logging(loglevel)
 
     if args.debug_exception:
+        # Handle top level exceptions with a debugger.
         sys.excepthook = exception_info
 
     # Dispatch command.
@@ -56,7 +64,7 @@ def remake_cmd(argv: List[str] = sys.argv) -> None:
     if args.subcmd_name == 'run':
         remake_run(args.filenames)
     elif args.subcmd_name == 'version':
-        print(0.3)
+        print(get_version(form='long' if args.long else 'short'))
 
 
 def remake_run(filenames):
@@ -71,8 +79,14 @@ def remake_run(filenames):
 
         task_ctrl_func = getattr(task_ctrl_module, task_ctrl_func_name)
         logger.debug(f'got task_ctrl_func: {task_ctrl_func}')
+
         task_ctrl = task_ctrl_func()
+        if not isinstance(task_ctrl, TaskControl):
+            raise Exception(f'{task_ctrl} is not a TaskControl')
+
+        logger.debug(f'created TaskControl: {task_ctrl}')
         task_ctrl.finalize()
+
         if not task_ctrl.pending_tasks:
             print(f'{filename}: {len(task_ctrl.completed_tasks)} tasks already run')
         else:

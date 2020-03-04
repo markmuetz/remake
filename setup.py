@@ -1,23 +1,25 @@
 #!/usr/bin/env python
-import os
+from pathlib import Path
 
 try:
     from setuptools import setup, Extension
 except ImportError:
     from distutils.core import setup, Extension
 
+from remake.version import get_version
+
 
 def read(fname):
     try:
-        return open(os.path.join(os.path.dirname(__file__), fname)).read()
-    except:
+        return (Path(__file__) / fname).read_text()
+    except (IOError, OSError, FileNotFoundError):
         return ''
 
 
 setup(
     name='remake',
-    version='0.3',
-    description='',
+    version=get_version(),
+    description='Smart remake tool',
     long_description=read('README.md'),
     author='Mark Muetzelfeldt',
     author_email='mark.muetzelfeldt@reading.ac.uk',
@@ -26,11 +28,12 @@ setup(
     packages=[
         'remake',
         ],
-    scripts=[
-        ],
     python_requires='>=3.6',
     install_requires=[
         ],
+    extras_require={
+        'debug': ['ipdb'],
+    },
     entry_points={
         'console_scripts': [
             'remake=remake.remake_cmd:remake_cmd'
