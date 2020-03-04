@@ -3,30 +3,31 @@ import logging
 from pathlib import Path
 
 
-def setup_stdout_logging(level):
+def setup_stdout_logging(level='INFO'):
     remake_root = logging.getLogger('remake')
     if getattr(remake_root, 'is_setup_stream_logging', False):
         return
-    h = logging.StreamHandler(sys.stdout)
-    f = logging.Formatter('%(asctime)s %(processName)-15s %(name)-40s %(levelname)-8s %(message)s')
+    handler = logging.StreamHandler(sys.stdout)
+    formatter = logging.Formatter('%(asctime)s %(name)-30s %(levelname)-8s %(message)s')
     remake_root.setLevel(level)
-    h.setFormatter(f)
-    remake_root.addHandler(h)
+    handler.setLevel(level)
+    handler.setFormatter(formatter)
+    remake_root.addHandler(handler)
     setattr(remake_root, 'is_setup_stream_logging', True)
 
 
-def add_file_logging(log_path):
+def add_file_logging(log_path, level='INFO'):
     log_path = Path(log_path)
     remake_root = logging.getLogger('remake')
-    remake_root.setLevel(logging.DEBUG)
+    remake_root.setLevel(level)
 
     remake_root.debug(f'Adding file handler {log_path}')
-    file_formatter = logging.Formatter('%(asctime)s %(processName)-15s %(name)-40s %(levelname)-8s %(message)s')
-    fileHandler = logging.FileHandler(str(log_path.absolute()), mode='a')
-    fileHandler.setFormatter(file_formatter)
-    fileHandler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s %(processName)-15s %(name)-40s %(levelname)-8s %(message)s')
+    handler = logging.FileHandler(str(log_path.absolute()), mode='a')
+    handler.setFormatter(formatter)
+    handler.setLevel(level)
 
-    remake_root.addHandler(fileHandler)
+    remake_root.addHandler(handler)
 
 
 def remove_file_logging(log_path):
