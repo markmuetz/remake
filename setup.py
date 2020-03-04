@@ -31,6 +31,11 @@ setup(
     python_requires='>=3.6',
     install_requires=[
         ],
+    entry_points={
+        'console_scripts': [
+            'remake=remake.remake_cmd:remake_cmd'
+        ]
+    },
     classifiers=[
         'Environment :: Console',
         'Intended Audience :: Science/Research',
