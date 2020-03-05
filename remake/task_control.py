@@ -334,7 +334,7 @@ class TaskControl:
         if task is None:
             raise Exception('No task to run')
         task_run_index = len(self.completed_tasks) + len(self.running_tasks)
-        print(f'{task_run_index}/{len(self.tasks)}: {task}')
+        print(f'{task_run_index}/{len(self.tasks)}: {task.path_hash_key()} {task}')
         if self.enable_file_task_content_checks:
             task_md = self.metadata_manager.task_metadata_map[task]
             requires_rerun = self._task_requires_run_with_content_check(task_md)
