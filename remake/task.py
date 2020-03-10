@@ -15,8 +15,32 @@ def tmp_atomic_path(p):
 class Task:
     task_func_cache = {}
 
-    def __init__(self, func, inputs, outputs, func_args=[], func_kwargs={},
-                 *, atomic_write=True):
+    def __init__(self, func, inputs, outputs, func_args=tuple(), func_kwargs=None,
+                 *, atomic_write=True, depends_on=tuple()):
+        if func_kwargs is None:
+            func_kwargs = {}
+        if hasattr(func, 'is_remake_wrapped') and func.is_remake_wrapped:
+            self.remake_required = func
+            depends_on = func.depends_on
+            self.remake_on_func_change = func.remake_on_func_change
+            func = func.remake_func
+        else:
+            self.remake_required = False
+            self.remake_on_func_change = True
+        self.depends_on_sources = []
+        for depend_obj in depends_on:
+            if depend_obj in Task.task_func_cache:
+                self.depends_on_sources.append(Task.task_func_cache[depend_obj])
+            else:
+                depend_func_source = inspect.getsource(depend_obj)
+                self.depends_on_sources.append(depend_func_source)
+                Task.task_func_cache[depend_obj] = depend_func_source
+
+        self.depends_on = depends_on
+
+        if not callable(func):
+            raise ValueError(f'{func} is not callable')
+
         self.func = func
         self.func_args = func_args
         self.func_kwargs = func_kwargs
@@ -26,7 +50,11 @@ class Task:
             self.func_source = inspect.getsource(self.func)
             Task.task_func_cache[self.func] = self.func_source
         # Faster; no need to cache.
-        self.func_bytecode = self.func.__code__.co_code
+        try:
+            self.func_bytecode = self.func.__code__.co_code
+        except AttributeError:
+            # Will be hit if func is a callable class.
+            self.func_bytecode = None
         self.atomic_write = atomic_write
 
         if not outputs:

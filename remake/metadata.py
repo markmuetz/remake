@@ -139,6 +139,9 @@ class TaskMetadata:
             task_hash_data.append(str(self.task.func_args))
         if self.task.func_kwargs:
             task_hash_data.append(str(self.task.func_kwargs))
+        for depend_on_source in self.task.depends_on_sources:
+            task_hash_data.append(depend_on_source)
+
         task_sha1hex = sha1(''.join(task_hash_data).encode()).hexdigest()
         return task_sha1hex
 

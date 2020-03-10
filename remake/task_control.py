@@ -55,7 +55,11 @@ if nx:
 
 # noinspection PyAttributeOutsideInit
 class TaskControl:
-    def __init__(self, *, enable_file_task_content_checks=False, dotremake_dir='.remake'):
+    # def __init__(self, *, enable_file_task_content_checks=False, dotremake_dir='.remake'):
+    def __init__(self, filename, *, enable_file_task_content_checks=True, dotremake_dir='.remake'):
+        self.filename = filename
+        self.path = Path(filename).absolute()
+        self.name = self.path.stem
         self.enable_file_task_content_checks = enable_file_task_content_checks
         self.extra_checks = True
         self.tasks = []
@@ -143,11 +147,20 @@ class TaskControl:
         requires_rerun = True
         if self.enable_file_task_content_checks:
             task_md = self.metadata_manager.task_metadata_map[task]
+            logger.debug('performing task file contents checks')
+            if task_md.task.remake_required and not task_md.task.remake_on_func_change:
+                logger.debug('task.remake_on_func_change == False')
+                return False
+
             generated = task_md.generate_metadata()
             if generated:
                 requires_rerun = task_md.task_requires_rerun()
             else:
                 requires_rerun = False
+            if requires_rerun:
+                logger.debug('requires rerun:')
+                for reason in task_md.rerun_reasons:
+                    logger.debug(f'  {reason}')
         else:
             if task.can_run():
                 requires_rerun = task.requires_rerun()
@@ -306,19 +319,6 @@ class TaskControl:
                 self.pending_tasks.append(next_task)
                 self.remaining_tasks.remove(next_task)
 
-    def _task_requires_run_with_content_check(self, task_md):
-        logger.debug('performing task file contents checks')
-        # N.B. Can't rely on old value of requires_rerun as you need to check task's + task.inputs' contents.
-        generated = task_md.generate_metadata()
-        requires_rerun = generated
-        if requires_rerun:
-            requires_rerun = task_md.task_requires_rerun()
-        if requires_rerun:
-            logger.debug('requires rerun:')
-            for reason in task_md.rerun_reasons:
-                logger.debug(f'  {reason}')
-        return requires_rerun
-
     def _post_run_with_content_check(self, task_md):
         logger.debug('post run content checks')
         generated = task_md.generate_metadata()
@@ -337,7 +337,8 @@ class TaskControl:
         print(f'{task_run_index}/{len(self.tasks)}: {task.path_hash_key()} {task}')
         if self.enable_file_task_content_checks:
             task_md = self.metadata_manager.task_metadata_map[task]
-            requires_rerun = self._task_requires_run_with_content_check(task_md)
+            requires_rerun = self.task_requires_rerun(task)
+            # requires_rerun = self._task_requires_run_with_content_check(task_md)
             force = force or requires_rerun
             if force:
                 logger.debug(f'running task (force={force}): {repr(task)}')
