@@ -204,13 +204,13 @@ class TaskMetadata:
         if not (self.requires_rerun & RemakeOn.NO_TASK_METADATA):
             if self.new_metadata['task_source_sha1hex'] != self.metadata['task_source_sha1hex']:
                 self.requires_rerun |= RemakeOn.TASK_SOURCE_CHANGED
-                self.rerun_reasons.append('task_sha1hex_different')
+                self.rerun_reasons.append('task_source_sha1hex_different')
             if self.new_metadata['task_bytecode_sha1hex'] != self.metadata['task_bytecode_sha1hex']:
                 self.requires_rerun |= RemakeOn.TASK_BYTECODE_CHANGED
-                self.rerun_reasons.append('task_sha1hex_different')
+                self.rerun_reasons.append('task_bytecode_sha1hex_different')
             if self.new_metadata['task_depends_on_sha1hex'] != self.metadata['task_depends_on_sha1hex']:
                 self.requires_rerun |= RemakeOn.DEPENDS_SOURCE_CHANGED
-                self.rerun_reasons.append('task_sha1hex_different')
+                self.rerun_reasons.append('task_depends_on_sha1hex_different')
             if self.new_metadata['content_sha1hex'] != self.metadata['content_sha1hex']:
                 self.requires_rerun |= RemakeOn.INPUTS_CHANGED
                 self.rerun_reasons.append('content_sha1hex_different')
