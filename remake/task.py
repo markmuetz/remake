@@ -5,6 +5,8 @@ from logging import getLogger
 from pathlib import Path
 from timeit import default_timer as timer
 
+from remake.flags import RemakeOn
+
 logger = getLogger(__name__)
 
 
@@ -16,23 +18,31 @@ class Task:
     task_func_cache = {}
 
     def __init__(self, func, inputs, outputs, func_args=tuple(), func_kwargs=None,
-                 *, atomic_write=True, depends_on=tuple()):
+                 *, atomic_write=True):
         if func_kwargs is None:
             func_kwargs = {}
         if hasattr(func, 'is_remake_wrapped') and func.is_remake_wrapped:
             self.remake_required = func
             depends_on = func.depends_on
-            self.remake_on_func_change = func.remake_on_func_change
+            self.remake_on = func.remake_on
             func = func.remake_func
         else:
             self.remake_required = False
-            self.remake_on_func_change = True
+            self.remake_on = True
+            depends_on = []
         self.depends_on_sources = []
         for depend_obj in depends_on:
+            # depends_on can be any object which inspect.getsource can handle
+            # class, method, functions are the most likely to be used.
+            # Note, you cannot get bytecode of classes.
             if depend_obj in Task.task_func_cache:
                 self.depends_on_sources.append(Task.task_func_cache[depend_obj])
             else:
-                depend_func_source = inspect.getsource(depend_obj)
+                try:
+                    depend_func_source = inspect.getsource(depend_obj)
+                except OSError:
+                    logger.error(f'Cannot retrieve source for {depend_obj}')
+                    raise
                 self.depends_on_sources.append(depend_func_source)
                 Task.task_func_cache[depend_obj] = depend_func_source
 
@@ -47,14 +57,28 @@ class Task:
         if self.func in Task.task_func_cache:
             self.func_source = Task.task_func_cache[self.func]
         else:
-            self.func_source = inspect.getsource(self.func)
+            all_func_source_lines, _ = inspect.getsourcelines(self.func)
+            # Ignore any decorators.
+            # Even after unwrapping the decorated function, the decorator line(s) are returned by
+            # inspect.getsource...
+            # Filter them out by discarding any lines that start with '@'.
+            func_source_lines = []
+            for line in all_func_source_lines:
+                if not line.lstrip():
+                    func_source_lines.append(line)
+                elif line.lstrip()[0] != '@':
+                    func_source_lines.append(line)
+
+            self.func_source = ''.join(func_source_lines)
             Task.task_func_cache[self.func] = self.func_source
+
         # Faster; no need to cache.
         try:
             self.func_bytecode = self.func.__code__.co_code
         except AttributeError:
             # Will be hit if func is a callable class.
-            self.func_bytecode = None
+            assert inspect.isclass(self.func), f'{self.func} not a class'
+            self.func_bytecode = self.func.__call__.__code__.co_code
         self.atomic_write = atomic_write
 
         if not outputs:
@@ -92,11 +116,11 @@ class Task:
         return can_run
 
     def requires_rerun(self):
-        rerun = False
+        rerun = RemakeOn.NOT_NEEDED
         earliest_output_path_mtime = float('inf')
         for output in self.outputs:
             if not Path(output).exists():
-                rerun = True
+                rerun |= RemakeOn.MISSING_OUTPUT
                 break
             earliest_output_path_mtime = min(earliest_output_path_mtime,
                                              output.stat().st_mtime)
@@ -106,7 +130,7 @@ class Task:
                 latest_input_path_mtime = max(latest_input_path_mtime,
                                               input_path.stat().st_mtime)
             if latest_input_path_mtime > earliest_output_path_mtime:
-                rerun = True
+                rerun |= RemakeOn.OLDER_OUTPUT
 
         return rerun
 

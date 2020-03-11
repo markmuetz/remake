@@ -5,12 +5,13 @@ from hashlib import sha1
 from logging import getLogger
 from time import sleep
 
+from remake.flags import RemakeOn
 from remake.util import sha1sum
 
 
 logger = getLogger(__name__)
 
-METADATA_VERSION = 'metadata_v3'
+METADATA_VERSION = 'metadata_v4'
 JSON_READ_ATTEMPTS = 3
 
 
@@ -45,7 +46,8 @@ class NoMetadata(Exception):
 class MetadataManager:
     """Creates and stores maps of PathMetadata and TaskMetadata"""
     # Needed because it keeps track of all PathMetadata objs, and stops there being duplicate ones for inputs.
-    def __init__(self, dotremake_dir, *, full_tracking=False):
+    def __init__(self, task_control_name, dotremake_dir, *, full_tracking=False):
+        self.task_control_name = task_control_name
         self.dotremake_dir = dotremake_dir
         self.full_tracking = full_tracking
         self.path_metadata_map = {}
@@ -67,20 +69,23 @@ class MetadataManager:
             else:
                 output_md = self.path_metadata_map[output_path]
             task_outputs_metadata_map[output_path] = output_md
-        task_md = TaskMetadata(self.dotremake_dir, task, task_inputs_metadata_map, task_outputs_metadata_map,
+        task_md = TaskMetadata(self.task_control_name, self.dotremake_dir,
+                               task, task_inputs_metadata_map, task_outputs_metadata_map,
                                full_tracking=self.full_tracking)
         self.task_metadata_map[task] = task_md
         return task_md
 
     def create_path_metadata(self, path):
         assert path not in self.path_metadata_map, f'path already tracked: {path}'
-        path_md = PathMetadata(self.dotremake_dir, path)
+        path_md = PathMetadata(self.task_control_name, self.dotremake_dir, path)
         self.path_metadata_map[path] = path_md
         return path_md
 
 
 class TaskMetadata:
-    def __init__(self, dotremake_dir, task, inputs_metadata_map, outputs_metadata_map, *, full_tracking=False):
+    def __init__(self, task_control_name, dotremake_dir, task, inputs_metadata_map, outputs_metadata_map,
+                 *, full_tracking=False):
+        self.task_control_name = task_control_name
         self.dotremake_dir = dotremake_dir
         self.metadata_dir = dotremake_dir / METADATA_VERSION
         self.task = task
@@ -91,7 +96,7 @@ class TaskMetadata:
         self.task_path_hash_key = self.task.path_hash_key()
 
         self.metadata = {}
-        self.new_metadata = {}
+        self.new_metadata = {'task_control_name': task_control_name}
         self.requires_rerun = True
         self.rerun_reasons = []
         self.task_metadata_dir_path = None
@@ -122,28 +127,37 @@ class TaskMetadata:
     def generate_metadata(self):
         logger.debug(f'generate metadata for {self.task_path_hash_key}')
 
-        task_sha1hex = self._task_sha1hex()
+        task_source_sha1hex, task_bytecode_sha1hex, task_depends_on_sha1hex = self._task_sha1hex()
         content_sha1hex = self._content_sha1hex()
         if content_sha1hex is None:
             logger.debug(f'no existing content')
             self.rerun_reasons.append(('no_existing_input_paths', None))
             return False
 
-        self.new_metadata['task_sha1hex'] = task_sha1hex
+        self.new_metadata['task_source_sha1hex'] = task_source_sha1hex
+        self.new_metadata['task_bytecode_sha1hex'] = task_bytecode_sha1hex
+        self.new_metadata['task_depends_on_sha1hex'] = task_depends_on_sha1hex
         self.new_metadata['content_sha1hex'] = content_sha1hex
         return True
 
     def _task_sha1hex(self):
         task_hash_data = [self.task.func_source]
+        task_args_data = []
         if self.task.func_args:
-            task_hash_data.append(str(self.task.func_args))
+            task_args_data.append(str(self.task.func_args))
         if self.task.func_kwargs:
-            task_hash_data.append(str(self.task.func_kwargs))
+            task_args_data.append(str(self.task.func_kwargs))
+        task_source_sha1hex = sha1(''.join(task_hash_data + task_args_data).encode()).hexdigest()
+
+        task_hash_data = [str(self.task.func_bytecode)]
+        task_bytecode_sha1hex = sha1(''.join(task_hash_data + task_args_data).encode()).hexdigest()
+
+        task_hash_data = []
         for depend_on_source in self.task.depends_on_sources:
             task_hash_data.append(depend_on_source)
+        task_depends_on_sha1hex = sha1(''.join(task_hash_data).encode()).hexdigest()
 
-        task_sha1hex = sha1(''.join(task_hash_data).encode()).hexdigest()
-        return task_sha1hex
+        return task_source_sha1hex, task_bytecode_sha1hex, task_depends_on_sha1hex
 
     def _content_sha1hex(self):
         content_hash_data = []
@@ -167,34 +181,38 @@ class TaskMetadata:
     def task_requires_rerun(self):
         assert self.new_metadata
 
-        self.requires_rerun = False
+        self.requires_rerun = RemakeOn.NOT_NEEDED
         self.rerun_reasons = []
         try:
             self.load_metadata()
         except NoMetadata:
             self.rerun_reasons.append(('task_has_not_been_run', None))
-            self.requires_rerun = True
+            self.requires_rerun |= RemakeOn.NO_TASK_METADATA
 
-        if not self.requires_rerun:
-            for path in self.task.inputs:
-                if not path.exists():
-                    self.rerun_reasons.append(('input_path_does_not_exist', path))
-                    self.requires_rerun = True
-                    break
+        for path in self.task.inputs:
+            if not path.exists():
+                self.rerun_reasons.append(('input_path_does_not_exist', path))
+                self.requires_rerun |= RemakeOn.MISSING_INPUT
+                break
 
-        if not self.requires_rerun:
-            for path in self.task.outputs:
-                if not path.exists():
-                    self.rerun_reasons.append(('output_path_does_not_exist', path))
-                    self.requires_rerun = True
-                    break
+        for path in self.task.outputs:
+            if not path.exists():
+                self.rerun_reasons.append(('output_path_does_not_exist', path))
+                self.requires_rerun |= RemakeOn.MISSING_OUTPUT
+                break
 
-        if not self.requires_rerun:
-            if self.new_metadata['task_sha1hex'] != self.metadata['task_sha1hex']:
-                self.requires_rerun = True
+        if not (self.requires_rerun & RemakeOn.NO_TASK_METADATA):
+            if self.new_metadata['task_source_sha1hex'] != self.metadata['task_source_sha1hex']:
+                self.requires_rerun |= RemakeOn.TASK_SOURCE_CHANGED
+                self.rerun_reasons.append('task_sha1hex_different')
+            if self.new_metadata['task_bytecode_sha1hex'] != self.metadata['task_bytecode_sha1hex']:
+                self.requires_rerun |= RemakeOn.TASK_BYTECODE_CHANGED
+                self.rerun_reasons.append('task_sha1hex_different')
+            if self.new_metadata['task_depends_on_sha1hex'] != self.metadata['task_depends_on_sha1hex']:
+                self.requires_rerun |= RemakeOn.DEPENDS_SOURCE_CHANGED
                 self.rerun_reasons.append('task_sha1hex_different')
             if self.new_metadata['content_sha1hex'] != self.metadata['content_sha1hex']:
-                self.requires_rerun = True
+                self.requires_rerun |= RemakeOn.INPUTS_CHANGED
                 self.rerun_reasons.append('content_sha1hex_different')
 
         logger.debug(f'task requires rerun {self.requires_rerun}: {self.task_path_hash_key}')
@@ -233,7 +251,8 @@ class TaskMetadata:
 
 
 class PathMetadata:
-    def __init__(self, dotremake_dir, path):
+    def __init__(self, task_control_name, dotremake_dir, path):
+        self.task_control_name = task_control_name
         self.dotremake_dir = dotremake_dir
         self.path = path
         self.metadata_dir = dotremake_dir / METADATA_VERSION
@@ -245,7 +264,7 @@ class PathMetadata:
                                                                     (f'{path.name}.created_by.task',)))
 
         self.metadata = {}
-        self.new_metadata = {}
+        self.new_metadata = {'task_control_name': task_control_name}
         self.task_metadata = {}
 
         self.changes = []
@@ -273,7 +292,7 @@ class PathMetadata:
 
         # N.B. lstat dereferences symlinks.
         stat = path.lstat()
-        self.new_metadata = {'st_size': stat.st_size, 'st_mtime': stat.st_mtime}
+        self.new_metadata.update({'st_size': stat.st_size, 'st_mtime': stat.st_mtime})
         stat_has_changed = False
 
         if self.metadata:
