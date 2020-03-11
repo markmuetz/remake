@@ -1,12 +1,14 @@
 import sys
 import argparse
 from logging import getLogger
+from pathlib import Path
 from typing import List
 
 from remake.setup_logging import setup_stdout_logging
 from remake.version import get_version
 from remake.util import load_module
 from remake.task_control import TaskControl
+from remake.metadata import try_json_read
 
 logger = getLogger(__name__)
 
@@ -38,6 +40,10 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument('--force', '-f', action='store_true')
     run_parser.add_argument('--tasks', '-t', nargs='*')
 
+    file_info_parser = subparsers.add_parser('file-info', help='Information about the given file')
+    file_info_parser.add_argument('filenames', nargs='*')
+    file_info_parser.add_argument('--remake-dir', '-r', nargs='?')
+
     # version
     version_parser = subparsers.add_parser('version', help='Print remake version')
     version_parser.add_argument('--long', '-l', action='store_true', help='long version')
@@ -67,24 +73,38 @@ def remake_cmd(argv: List[str] = sys.argv) -> None:
         remake_run(args.filenames, args.force, args.tasks)
     elif args.subcmd_name == 'version':
         print(get_version(form='long' if args.long else 'short'))
+    elif args.subcmd_name == 'file-info':
+        file_info(args.remake_dir, args.filenames)
+
+
+def file_info(remake_dir, filenames):
+    # Very rough, but it demonstrates how to get information from a path, going through the medatadata dir.
+    remake_dir = Path(remake_dir).absolute()
+    dotremake_dir = remake_dir / '.remake'
+    file_metadata_dir = dotremake_dir / 'metadata_v4' / 'file_metadata'
+    for path in (Path(fn).absolute() for fn in filenames):
+        if not path.exists():
+            raise Exception(f'No file: {path}')
+        file_metadata_path = file_metadata_dir.joinpath(*path.parent.parts[1:]) / (path.name + '.metadata')
+        if not file_metadata_path.exists():
+            print(f'No metadata for {path}')
+            continue
+        print(file_metadata_path.read_text())
+        file_metadata = try_json_read(file_metadata_path)
+        remake_task_ctrl_path = remake_dir / (file_metadata['task_control_name'] + '.py')
+        task_ctrl_module = load_module(remake_task_ctrl_path)
+        task_ctrl = _load_task_ctrl(remake_task_ctrl_path, task_ctrl_module)
+        task_ctrl.build_task_DAG()
+        path_md = task_ctrl.metadata_manager.path_metadata_map[path]
+        task = task_ctrl.output_task_map[path]
+        print(path_md)
+        print(task)
 
 
 def remake_run(filenames, force, tasks):
     for filename in filenames:
         task_ctrl_module = load_module(filename)
-        if not hasattr(task_ctrl_module, 'REMAKE_TASK_CTRL_FUNC'):
-            raise Exception(f'No REMAKE_TASK_CTRL_FUNC defined in {filename}')
-
-        task_ctrl_func_name = task_ctrl_module.REMAKE_TASK_CTRL_FUNC
-        if not hasattr(task_ctrl_module, task_ctrl_func_name):
-            raise Exception(f'No function {task_ctrl_func_name} defined in {filename}')
-
-        task_ctrl_func = getattr(task_ctrl_module, task_ctrl_func_name)
-        logger.debug(f'got task_ctrl_func: {task_ctrl_func}')
-
-        task_ctrl = task_ctrl_func()
-        if not isinstance(task_ctrl, TaskControl):
-            raise Exception(f'{task_ctrl} is not a TaskControl')
+        task_ctrl = _load_task_ctrl(filename, task_ctrl_module)
 
         logger.debug(f'created TaskControl: {task_ctrl}')
         task_ctrl.finalize()
@@ -99,3 +119,17 @@ def remake_run(filenames, force, tasks):
                 task_ctrl.running_tasks.append(task)
                 task_ctrl.run_task(task, force)
                 task_ctrl.task_complete(task)
+
+
+def _load_task_ctrl(filename, task_ctrl_module):
+    if not hasattr(task_ctrl_module, 'REMAKE_TASK_CTRL_FUNC'):
+        raise Exception(f'No REMAKE_TASK_CTRL_FUNC defined in {filename}')
+    task_ctrl_func_name = task_ctrl_module.REMAKE_TASK_CTRL_FUNC
+    if not hasattr(task_ctrl_module, task_ctrl_func_name):
+        raise Exception(f'No function {task_ctrl_func_name} defined in {filename}')
+    task_ctrl_func = getattr(task_ctrl_module, task_ctrl_func_name)
+    logger.debug(f'got task_ctrl_func: {task_ctrl_func}')
+    task_ctrl = task_ctrl_func()
+    if not isinstance(task_ctrl, TaskControl):
+        raise Exception(f'{task_ctrl} is not a TaskControl')
+    return task_ctrl
