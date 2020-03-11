@@ -57,13 +57,13 @@ if nx:
 # noinspection PyAttributeOutsideInit
 class TaskControl:
     def __init__(self, filename, *,
-                 remake_on=RemakeOn.ANY_METADATA_CHANGE,
+                 remake_on=RemakeOn.ANY_STANDARD_CHANGE,
                  dotremake_dir='.remake'):
         self.filename = filename
         self.path = Path(filename).absolute()
         self.name = self.path.stem
         self.remake_on = remake_on
-        if self.remake_on | RemakeOn.ANY_METADATA_CHANGE:
+        if self.remake_on & RemakeOn.ANY_METADATA_CHANGE:
             self.enable_file_task_content_checks = True
         self.extra_checks = True
         self.tasks = []
