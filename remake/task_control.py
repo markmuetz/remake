@@ -408,8 +408,9 @@ class TaskControl:
 
         for task in self.tasks:
             task_md = self.metadata_manager.task_metadata_map[task]
-            task_md.generate_metadata()
-            task_md.write_task_metadata()
+            generated = task_md.generate_metadata()
+            if generated:
+                task_md.write_task_metadata()
 
     def print_status(self):
         print(f'completed: {len(self.completed_tasks)}')
