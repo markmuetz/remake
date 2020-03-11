@@ -176,6 +176,9 @@ class TaskControl:
         if self.finalized:
             raise Exception(f'TaskControl already finalized')
 
+        if not self.tasks:
+            raise Exception('No tasks have been added')
+
         logger.debug('building task DAG')
         self.build_task_DAG()
 
@@ -185,6 +188,9 @@ class TaskControl:
                 tasks = self.input_task_map[input_path]
                 logger.error(f'No input file {input_path} exists or will be created (needed by {len(tasks)} tasks)')
             raise Exception(f'Not all input paths exist: {len(missing_paths)} missing')
+
+        if not self.input_tasks:
+            raise Exception('No input tasks defined (do you have a circular dependency?)')
 
         logger.debug('perform topological sort')
         # Can now perform a topological sort.
