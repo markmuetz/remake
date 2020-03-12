@@ -73,12 +73,14 @@ class Task:
             Task.task_func_cache[self.func] = self.func_source
 
         # Faster; no need to cache.
-        try:
+        if inspect.isfunction(self.func):
             self.func_bytecode = self.func.__code__.co_code
-        except AttributeError:
-            # Will be hit if func is a callable class.
-            assert inspect.isclass(self.func), f'{self.func} not a class'
-            self.func_bytecode = self.func.__call__.__code__.co_code
+        elif inspect.ismethod(self.func):
+            self.func_bytecode = self.func.__func__.__code__.co_code
+        elif inspect.isclass(self.func):
+            self.func_bytecode = self.func.__call__.__func__.__code__.co_code
+        else:
+            raise Exception(f'func is not a function, method or class: {self.func} -- type: {type(self.func)}')
         self.atomic_write = atomic_write
 
         if not outputs:
