@@ -1,4 +1,5 @@
 from collections import defaultdict
+import functools
 from logging import getLogger
 from pathlib import Path
 
@@ -54,6 +55,17 @@ if nx:
         plt.pause(0.01)
 
 
+def check_finalized(finalized=True):
+    def _check_finalized(method):
+        @functools.wraps(method)
+        def wrapper(task_ctrl, *args, **kwargs):
+            if task_ctrl.finalized != finalized:
+                raise Exception(f'Call {method} when TaskControl finalized={finalized}')
+            return method(task_ctrl, *args, **kwargs)
+        return wrapper
+    return _check_finalized
+
+
 # noinspection PyAttributeOutsideInit
 class TaskControl:
     def __init__(self, filename, *,
@@ -103,10 +115,8 @@ class TaskControl:
         self._dag_built = False
         return self
 
+    @check_finalized(False)
     def add(self, task):
-        if self.finalized:
-            raise Exception(f'TaskControl already finalized')
-
         for output in task.outputs:
             if output in self.output_task_map:
                 raise Exception(f'Trying to add {output} twice')
@@ -172,10 +182,8 @@ class TaskControl:
                 requires_rerun = task.requires_rerun()
         return requires_rerun
 
+    @check_finalized(False)
     def finalize(self):
-        if self.finalized:
-            raise Exception(f'TaskControl already finalized')
-
         if not self.tasks:
             raise Exception('No tasks have been added')
 
@@ -372,10 +380,8 @@ class TaskControl:
             logger.debug(f'running task (force={force}) {repr(task)}')
             task.run(force=force)
 
+    @check_finalized
     def run(self, task_func=None, *, force=False, display_func=None):
-        if not self.finalized:
-            raise Exception(f'TaskControl not finalized')
-
         if force:
             if task_func:
                 tasks = [t for t in self.sorted_tasks if t.func == task_func]
@@ -397,10 +403,8 @@ class TaskControl:
                 if display_func:
                     display_func(self)
 
+    @check_finalized
     def run_one(self, task_func=None, *, force=False, display_func=None):
-        if not self.finalized:
-            raise Exception(f'TaskControl not finalized')
-
         task = next(self.get_next_pending(task_func))
         self.run_task(task, force)
         self.task_complete(task)
@@ -408,20 +412,20 @@ class TaskControl:
         if display_func:
             display_func(self)
 
+    @check_finalized
     def rescan_metadata(self):
-        if not self.finalized:
-            raise Exception(f'TaskControl not finalized')
-
         for task in self.tasks:
             task_md = self.metadata_manager.task_metadata_map[task]
             generated = task_md.generate_metadata()
             if generated:
                 task_md.write_task_metadata()
 
+    @check_finalized
     def print_status(self):
-        print(f'completed: {len(self.completed_tasks)}')
-        print(f'pending  : {len(self.pending_tasks)}')
-        print(f'running  : {len(self.running_tasks)}')
-        print(f'remaining: {len(self.remaining_tasks)}')
-        print(f'all      : {len(self.tasks)}')
+        print(f'{self.name}')
+        print(f'  completed: {len(self.completed_tasks)}')
+        print(f'  pending  : {len(self.pending_tasks)}')
+        print(f'  running  : {len(self.running_tasks)}')
+        print(f'  remaining: {len(self.remaining_tasks)}')
+        print(f'  all      : {len(self.tasks)}')
 
