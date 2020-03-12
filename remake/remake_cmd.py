@@ -4,6 +4,9 @@ from logging import getLogger
 from pathlib import Path
 from typing import List
 
+import numpy as np
+from tabulate import tabulate
+
 from remake.setup_logging import setup_stdout_logging
 from remake.version import get_version
 from remake.util import load_module
@@ -129,11 +132,20 @@ def task_info(filename, output_format, task_path_hash_key):
 
 
 def task_control_info(filenames, output_format='medium'):
+    if output_format == 'short':
+        rows = []
     for filename in filenames:
         task_ctrl_module = load_module(filename)
         task_ctrl = _load_task_ctrl(filename, task_ctrl_module)
         task_ctrl.finalize()
-        if output_format == 'medium':
+        if output_format == 'short':
+            rows.append([task_ctrl.name,
+                         len(task_ctrl.completed_tasks),
+                         len(task_ctrl.pending_tasks),
+                         len(task_ctrl.remaining_tasks),
+                         len(task_ctrl.tasks),
+                         ])
+        elif output_format == 'medium':
             task_ctrl.print_status()
         elif output_format == 'long':
             print(f'{task_ctrl.name}')
@@ -146,6 +158,11 @@ def task_control_info(filenames, output_format='medium'):
                 elif task in task_ctrl.remaining_tasks:
                     task_status = 'remaining'
                 print(f'{i + 1}/{len(task_ctrl.tasks)}, {task_status}: {task.path_hash_key()} {task.short_str()}')
+
+    if output_format == 'short':
+        totals = list(np.array([r[1:] for r in rows]).sum(axis=0))
+        rows.append(['Total'] + totals)
+        print(tabulate(rows, headers=('Name', 'completed', 'pending', 'remaining', 'total')))
 
 
 def remake_run(filenames, force, one, tasks):
