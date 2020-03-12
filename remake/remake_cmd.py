@@ -35,6 +35,7 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest='subcmd_name', required=True)
     # name of subparser ends up in subcmd_name -- use for command dispatch.
 
+    # TODO: API is different for each command!
     run_parser = subparsers.add_parser('run', help='Run remake')
     run_parser.add_argument('filenames', nargs='*')
     run_parser.add_argument('--force', '-f', action='store_true')
@@ -43,6 +44,16 @@ def _build_parser() -> argparse.ArgumentParser:
     file_info_parser = subparsers.add_parser('file-info', help='Information about the given file')
     file_info_parser.add_argument('filenames', nargs='*')
     file_info_parser.add_argument('--remake-dir', '-r', nargs='?')
+
+    task_control_info_parser = subparsers.add_parser('task-control-info',
+                                                     help='Information about the given task control')
+    task_control_info_parser.add_argument('filenames', nargs='*')
+    task_control_info_parser.add_argument('--format', '-f', default='medium', choices=['short', 'medium', 'long'])
+
+    task_info_parser = subparsers.add_parser('task-info', help='Information about the given task')
+    task_info_parser.add_argument('--task', nargs=1)
+    task_info_parser.add_argument('filename', nargs=1)
+    task_info_parser.add_argument('--format', '-f', default='medium', choices=['short', 'medium', 'long'])
 
     # version
     version_parser = subparsers.add_parser('version', help='Print remake version')
@@ -75,6 +86,12 @@ def remake_cmd(argv: List[str] = sys.argv) -> None:
         print(get_version(form='long' if args.long else 'short'))
     elif args.subcmd_name == 'file-info':
         file_info(args.remake_dir, args.filenames)
+    elif args.subcmd_name == 'task-control-info':
+        task_control_info(args.filenames, args.format)
+    elif args.subcmd_name == 'task-info':
+        task_info(args.filename[0], args.format, args.task[0])
+    else:
+        assert False, f'Subcommand {args.subcmd_name} not recognized'
 
 
 def file_info(remake_dir, filenames):
@@ -99,6 +116,34 @@ def file_info(remake_dir, filenames):
         task = task_ctrl.output_task_map[path]
         print(path_md)
         print(task)
+
+
+def task_info(filename, output_format, task_path_hash_key):
+    task_ctrl_module = load_module(filename)
+    task_ctrl = _load_task_ctrl(filename, task_ctrl_module)
+    task_ctrl.finalize()
+    task = task_ctrl.task_from_path_hash_key[task_path_hash_key]
+    print(repr(task))
+
+
+def task_control_info(filenames, output_format='medium'):
+    for filename in filenames:
+        task_ctrl_module = load_module(filename)
+        task_ctrl = _load_task_ctrl(filename, task_ctrl_module)
+        task_ctrl.finalize()
+        if output_format == 'medium':
+            task_ctrl.print_status()
+        elif output_format == 'long':
+            print(f'{task_ctrl.name}')
+            for i, task in enumerate(task_ctrl.sorted_tasks):
+                task_status = ''
+                if task in task_ctrl.completed_tasks:
+                    task_status = 'completed'
+                elif task in task_ctrl.pending_tasks:
+                    task_status = 'pending  '
+                elif task in task_ctrl.remaining_tasks:
+                    task_status = 'remaining'
+                print(f'{i + 1}/{len(task_ctrl.tasks)}, {task_status}: {task.path_hash_key()} {task.short_str()}')
 
 
 def remake_run(filenames, force, tasks):

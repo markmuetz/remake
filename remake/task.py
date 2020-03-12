@@ -1,4 +1,4 @@
-from collections import Mapping
+from collections import Counter, Mapping
 import inspect
 from hashlib import sha1
 from logging import getLogger
@@ -103,9 +103,19 @@ class Task:
     def __repr__(self):
         return f'{self.__class__}({self.func.__code__.co_name}, {self.inputs}, {self.outputs})'
 
-    def __str__(self):
+    def short_str(self, input_paths_to_show=1, output_paths_to_show=2):
+        def short_paths(paths, paths_to_show):
+            if len(paths) <= paths_to_show:
+                return f'{[p.name for p in paths]}'
+            else:
+                return f'{Counter(p.suffix for p in paths).most_common()}'
+        short_inputs = short_paths(self.inputs, input_paths_to_show)
+        short_outputs = short_paths(self.outputs, output_paths_to_show)
         return f'{self.__class__.__name__}' \
-               f'({self.func.__code__.co_name}, {[f.name for f in self.inputs]}, {[f.name for f in self.outputs]})'
+               f'({self.func.__code__.co_name}, {short_inputs}, {short_outputs})'
+
+    def __str__(self):
+        return self.short_str(10, 10)
 
     def can_run(self):
         can_run = True
