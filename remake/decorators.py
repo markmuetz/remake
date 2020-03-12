@@ -3,6 +3,10 @@ from remake.flags import RemakeOn
 
 
 def remake_required(*, remake_on=RemakeOn.ANY_METADATA_CHANGE, depends_on=tuple()):
+    """Decorator to add extra information to a function
+
+    Note, if neither of the keyword arguments is given, this will raise an Exception.
+    See e.g. https://stackoverflow.com/questions/653368 for why."""
     def wrapped(func):
         @functools.wraps(func)
         def wrapped_inner(*args, **kwargs):

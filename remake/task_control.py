@@ -3,8 +3,6 @@ import functools
 from logging import getLogger
 from pathlib import Path
 
-import numpy as np
-
 from remake.metadata import MetadataManager
 from remake.setup_logging import add_file_logging, remove_file_logging
 from remake.flags import RemakeOn
@@ -12,50 +10,8 @@ from remake.flags import RemakeOn
 
 logger = getLogger(__name__)
 
-try:
-    import networkx as nx
-except NameError:
-    nx = None
 
-
-if nx:
-    def tasks_as_networkx_graph(task_ctrl):
-        assert task_ctrl.finalized
-        G = nx.DiGraph()
-        for task in task_ctrl.tasks:
-            G.add_node(task)
-
-            for prev_task in task_ctrl.prev_tasks[task]:
-                G.add_edge(prev_task, task)
-        return G
-
-    def files_as_networkx_graph(task_ctrl):
-        assert task_ctrl.finalized
-        G = nx.DiGraph()
-        for task in task_ctrl.tasks:
-            for i in task.inputs:
-                for o in task.outputs:
-                    G.add_edge(i, o)
-        return G
-
-    def display_task_status(task_ctrl):
-        import matplotlib.pyplot as plt
-        TG = tasks_as_networkx_graph(task_ctrl)
-        pos = {}
-        for level, tasks in task_ctrl.tasks_at_level.items():
-            for i, task in enumerate(tasks):
-                pos[task] = np.array([level, i])
-
-        plt.clf()
-        nx.draw_networkx_nodes(TG, pos, task_ctrl.completed_tasks, node_color='k')
-        nx.draw_networkx_nodes(TG, pos, task_ctrl.running_tasks, node_color='g')
-        nx.draw_networkx_nodes(TG, pos, task_ctrl.pending_tasks, node_color='y')
-        nx.draw_networkx_nodes(TG, pos, task_ctrl.remaining_tasks, node_color='r')
-        nx.draw_networkx_edges(TG, pos)
-        plt.pause(0.01)
-
-
-def check_finalized(finalized=True):
+def check_finalized(finalized):
     def _check_finalized(method):
         @functools.wraps(method)
         def wrapper(task_ctrl, *args, **kwargs):
@@ -337,7 +293,9 @@ class TaskControl:
             if requires_rerun:
                 logger.debug(f'adding new pending task: {next_task.path_hash_key()}')
                 self.pending_tasks.append(next_task)
-                self.remaining_tasks.remove(next_task)
+                if next_task in self.remaining_tasks:
+                    # N.B. happens if run(force=True) is used.
+                    self.remaining_tasks.remove(next_task)
 
     def _post_run_with_content_check(self, task_md):
         logger.debug('post run content checks')
@@ -354,7 +312,10 @@ class TaskControl:
         if task is None:
             raise Exception('No task to run')
         task_run_index = len(self.completed_tasks) + len(self.running_tasks)
-        print(f'{task_run_index}/{len(self.tasks)}: {task.path_hash_key()} {task}')
+        if force:
+            print(f'{self.sorted_tasks.index(task) + 1}/{len(self.tasks)}: {task.path_hash_key()} {task}')
+        else:
+            print(f'{task_run_index}/{len(self.tasks)}: {task.path_hash_key()} {task}')
         if self.enable_file_task_content_checks:
             task_md = self.metadata_manager.task_metadata_map[task]
             requires_rerun = self.task_requires_rerun(task)
@@ -380,7 +341,7 @@ class TaskControl:
             logger.debug(f'running task (force={force}) {repr(task)}')
             task.run(force=force)
 
-    @check_finalized
+    @check_finalized(True)
     def run(self, task_func=None, *, force=False, display_func=None):
         if force:
             if task_func:
@@ -403,7 +364,7 @@ class TaskControl:
                 if display_func:
                     display_func(self)
 
-    @check_finalized
+    @check_finalized(True)
     def run_one(self, task_func=None, *, force=False, display_func=None):
         task = next(self.get_next_pending(task_func))
         self.run_task(task, force)
@@ -412,7 +373,7 @@ class TaskControl:
         if display_func:
             display_func(self)
 
-    @check_finalized
+    @check_finalized(True)
     def rescan_metadata(self):
         for task in self.tasks:
             task_md = self.metadata_manager.task_metadata_map[task]
@@ -420,7 +381,7 @@ class TaskControl:
             if generated:
                 task_md.write_task_metadata()
 
-    @check_finalized
+    @check_finalized(True)
     def print_status(self):
         print(f'{self.name}')
         print(f'  completed: {len(self.completed_tasks)}')
