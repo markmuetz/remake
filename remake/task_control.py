@@ -328,6 +328,7 @@ class TaskControl:
                     task.run(force=True)
                     task_md.update_status('COMPLETE')
                 except Exception as e:
+                    logger.error(f'TaskControl: {self.name}')
                     logger.error(e)
                     task_md.update_status('ERROR')
                     raise
