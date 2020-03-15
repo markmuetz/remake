@@ -167,6 +167,8 @@ def task_control_info(filenames, output_format='medium'):
 
 def remake_run(filenames, force, one, tasks):
     if len(filenames) > 1:
+        # TODO: Naive -- need to add something like add_subtask_ctrl()
+        # TODO: otherwise will get wrong filename as here.
         uber_task_ctrl = TaskControl(__file__)
         for filename in filenames:
             task_ctrl_module = load_module(filename)
