@@ -166,26 +166,36 @@ def task_control_info(filenames, output_format='medium'):
 
 
 def remake_run(filenames, force, one, tasks):
-    for filename in filenames:
-        task_ctrl_module = load_module(filename)
-        task_ctrl = _load_task_ctrl(filename, task_ctrl_module)
+    if len(filenames) > 1:
+        uber_task_ctrl = TaskControl(__file__)
+        for filename in filenames:
+            task_ctrl_module = load_module(filename)
+            task_ctrl = _load_task_ctrl(filename, task_ctrl_module)
+            logger.debug(f'created TaskControl: {task_ctrl}')
+            for task in task_ctrl.tasks:
+                uber_task_ctrl.add(task)
+    elif len(filenames) == 1:
+        task_ctrl_module = load_module(filenames[0])
+        uber_task_ctrl = _load_task_ctrl(filenames[0], task_ctrl_module)
+        logger.debug(f'created TaskControl: {uber_task_ctrl}')
+    else:
+        assert False, 'Should be one or more filenames'
 
-        logger.debug(f'created TaskControl: {task_ctrl}')
-        task_ctrl.finalize()
+    uber_task_ctrl.finalize()
 
-        if not task_ctrl.pending_tasks and not force:
-            print(f'{filename}: {len(task_ctrl.completed_tasks)} tasks already run')
-        if not tasks:
-            if one:
-                task_ctrl.run_one(force=force)
-            else:
-                task_ctrl.run(force=force)
+    if not uber_task_ctrl.pending_tasks and not force:
+        print(f'{len(uber_task_ctrl.completed_tasks)} tasks already run')
+    if not tasks:
+        if one:
+            uber_task_ctrl.run_one(force=force)
         else:
-            for task_hash_key in tasks:
-                task = task_ctrl.task_from_path_hash_key[task_hash_key]
-                task_ctrl.running_tasks.append(task)
-                task_ctrl.run_task(task, force)
-                task_ctrl.task_complete(task)
+            uber_task_ctrl.run(force=force)
+    else:
+        for task_hash_key in tasks:
+            task = uber_task_ctrl.task_from_path_hash_key[task_hash_key]
+            uber_task_ctrl.running_tasks.append(task)
+            uber_task_ctrl.run_task(task, force)
+            uber_task_ctrl.task_complete(task)
 
 
 def _load_task_ctrl(filename, task_ctrl_module):
