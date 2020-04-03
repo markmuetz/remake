@@ -1,5 +1,6 @@
 import sys
 import argparse
+import inspect
 from logging import getLogger
 from pathlib import Path
 from typing import List
@@ -40,7 +41,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # TODO: API is different for each command!
     run_parser = subparsers.add_parser('run', help='Run remake')
-    run_parser.add_argument('filenames', nargs='*')
+    run_parser.add_argument('filenames', nargs='*', default=['remakefile.py'])
     run_parser.add_argument('--force', '-f', action='store_true')
     # run_parser.add_argument('--func', nargs=1, help)
     run_parser.add_argument('--one', '-o', action='store_true')
@@ -170,9 +171,9 @@ def remake_run(filenames, force, one, tasks):
     if len(filenames) > 1:
         for filename in filenames:
             task_ctrl_module = load_module(filename)
-            task_ctrl = _load_task_ctrl(filename, task_ctrl_module)
-            logger.debug(f'created TaskControl: {task_ctrl}')
-            task_ctrls.append(task_ctrl)
+            loaded_task_ctrls = _load_task_ctrls(filename, task_ctrl_module)
+            logger.debug(f'created TaskControls: {loaded_task_ctrls}')
+            task_ctrls.extend(loaded_task_ctrls)
         # Naive -- need to add something like add_task_ctrl()
         # otherwise will get wrong filename as here.
         # uber_task_ctrl = TaskControl(__file__)
@@ -184,9 +185,9 @@ def remake_run(filenames, force, one, tasks):
         #         uber_task_ctrl.add(task)
     elif len(filenames) == 1:
         task_ctrl_module = load_module(filenames[0])
-        task_ctrl = _load_task_ctrl(filenames[0], task_ctrl_module)
-        logger.debug(f'created TaskControl: {task_ctrl}')
-        task_ctrls.append(task_ctrl)
+        loaded_task_ctrls = _load_task_ctrls(filenames[0], task_ctrl_module)
+        logger.debug(f'created TaskControls: {loaded_task_ctrls}')
+        task_ctrls.extend(loaded_task_ctrls)
     else:
         assert False, 'Should be one or more filenames'
 
@@ -207,7 +208,21 @@ def remake_run(filenames, force, one, tasks):
                 task_ctrl.task_complete(task)
 
 
-def _load_task_ctrl(filename, task_ctrl_module):
+def _load_task_ctrls(filename, task_ctrl_module):
+    task_ctrls = []
+    functions = [o for o in [getattr(task_ctrl_module, m) for m in dir(task_ctrl_module)]
+                 if inspect.isfunction(o)]
+    for func in functions:
+        if hasattr(func, 'is_remake_task_control') and func.is_remake_task_control:
+            task_ctrl = func()
+            if not isinstance(task_ctrl, TaskControl):
+                raise Exception(f'{task_ctrl} is not a TaskControl (defined in {func})')
+            task_ctrls.append(task_ctrl)
+    if not task_ctrls:
+        raise Exception(f'No task controls defined in {filename}')
+
+    return task_ctrls
+
     if not hasattr(task_ctrl_module, 'REMAKE_TASK_CTRL_FUNC'):
         raise Exception(f'No REMAKE_TASK_CTRL_FUNC defined in {filename}')
     task_ctrl_func_name = task_ctrl_module.REMAKE_TASK_CTRL_FUNC

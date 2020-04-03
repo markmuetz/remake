@@ -2,6 +2,15 @@ import functools
 from remake.flags import RemakeOn
 
 
+def remake_task_control(func):
+    @functools.wraps(func)
+    def wrapped(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    wrapped.is_remake_task_control = True
+    return wrapped
+
+
 def remake_required(*, remake_on=RemakeOn.ANY_METADATA_CHANGE, depends_on=tuple()):
     """Decorator to add extra information to a function
 
