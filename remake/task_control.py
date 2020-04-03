@@ -322,7 +322,8 @@ class TaskControl:
             if force or requires_rerun & self.remake_on:
                 logger.debug(f'running task (force={force}, requires_rerun={requires_rerun}): {repr(task)}')
                 task_md.log_path.parent.mkdir(parents=True, exist_ok=True)
-                add_file_logging(task_md.log_path)
+                # TODO: adding file logging is disabling other logging.
+                # add_file_logging(task_md.log_path)
                 task_md.update_status('RUNNING')
                 try:
                     task.run(force=True)
@@ -333,7 +334,8 @@ class TaskControl:
                     task_md.update_status('ERROR')
                     raise
                 finally:
-                    remove_file_logging(task_md.log_path)
+                    # remove_file_logging(task_md.log_path)
+                    pass
                 logger.debug(f'run task completed: {repr(task)}')
                 self._post_run_with_content_check(task_md)
             else:
