@@ -116,7 +116,7 @@ def file_info(remake_dir, filenames):
         file_metadata = try_json_read(file_metadata_path)
         remake_task_ctrl_path = remake_dir / (file_metadata['task_control_name'] + '.py')
         task_ctrl_module = load_module(remake_task_ctrl_path)
-        task_ctrl = _load_task_ctrl(remake_task_ctrl_path, task_ctrl_module)
+        task_ctrl = _load_task_ctrls(remake_task_ctrl_path, task_ctrl_module)[0]
         task_ctrl.build_task_DAG()
         path_md = task_ctrl.metadata_manager.path_metadata_map[path]
         task = task_ctrl.output_task_map[path]
@@ -126,7 +126,7 @@ def file_info(remake_dir, filenames):
 
 def task_info(filename, output_format, task_path_hash_key):
     task_ctrl_module = load_module(filename)
-    task_ctrl = _load_task_ctrl(filename, task_ctrl_module)
+    task_ctrl = _load_task_ctrls(filename, task_ctrl_module)[0]
     task_ctrl.finalize()
     task = task_ctrl.task_from_path_hash_key[task_path_hash_key]
     print(repr(task))
@@ -137,7 +137,7 @@ def task_control_info(filenames, output_format='medium'):
         rows = []
     for filename in filenames:
         task_ctrl_module = load_module(filename)
-        task_ctrl = _load_task_ctrl(filename, task_ctrl_module)
+        task_ctrl = _load_task_ctrls(filename, task_ctrl_module)[0]
         task_ctrl.finalize()
         if output_format == 'short':
             rows.append([task_ctrl.name,
