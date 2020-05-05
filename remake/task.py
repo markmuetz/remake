@@ -18,7 +18,7 @@ class Task:
     task_func_cache = {}
 
     def __init__(self, func, inputs, outputs, func_args=tuple(), func_kwargs=None,
-                 *, atomic_write=True):
+                 *, atomic_write=True, force=False):
         if func_kwargs is None:
             func_kwargs = {}
         if hasattr(func, 'is_remake_wrapped') and func.is_remake_wrapped:
@@ -82,6 +82,7 @@ class Task:
         else:
             raise Exception(f'func is not a function, method or class: {self.func} -- type: {type(self.func)}')
         self.atomic_write = atomic_write
+        self.force = force
 
         if not outputs:
             raise Exception('outputs must be set')
@@ -165,7 +166,7 @@ class Task:
         if not self.can_run():
             raise Exception('Not all files required for task exist')
 
-        if self.requires_rerun() or force:
+        if self.requires_rerun() or force or self.force:
             logger.debug(f'requires_rerun or force')
             for output_dir in set([o.parent for o in self.outputs]):
                 output_dir.mkdir(parents=True, exist_ok=True)

@@ -200,7 +200,7 @@ class TaskControl:
             task_state = 'completed'
             requires_rerun = self.task_requires_rerun(task)
 
-            if task.can_run() and requires_rerun & self.remake_on:
+            if task.can_run() and (requires_rerun & self.remake_on) or task.force:
                 task_state = 'pending'
                 for prev_task in self.prev_tasks[task]:
                     if prev_task in self.pending_tasks or prev_task in self.remaining_tasks:
@@ -319,7 +319,7 @@ class TaskControl:
         if self.enable_file_task_content_checks:
             task_md = self.metadata_manager.task_metadata_map[task]
             requires_rerun = self.task_requires_rerun(task)
-            if force or requires_rerun & self.remake_on:
+            if force or task.force or requires_rerun & self.remake_on:
                 logger.debug(f'running task (force={force}, requires_rerun={requires_rerun}): {repr(task)}')
                 task_md.log_path.parent.mkdir(parents=True, exist_ok=True)
                 # TODO: adding file logging is disabling other logging.
