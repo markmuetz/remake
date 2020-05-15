@@ -3,6 +3,7 @@ import functools
 from logging import getLogger
 from pathlib import Path
 
+from remake.task import Task
 from remake.metadata import MetadataManager
 from remake.setup_logging import add_file_logging, remove_file_logging
 from remake.flags import RemakeOn
@@ -45,6 +46,15 @@ class TaskControl:
             self.dotremake_dir.mkdir(parents=True, exist_ok=True)
 
         self.reset()
+
+    @classmethod
+    def from_list(cls, filename, task_tuples, *,
+                  remake_on=RemakeOn.ANY_STANDARD_CHANGE,
+                  dotremake_dir='.remake'):
+        task_ctrl = cls(filename, remake_on=remake_on, dotremake_dir=dotremake_dir)
+        for task_tuple in task_tuples:
+            task_ctrl.add(Task(*task_tuple))
+        return task_ctrl
 
     def reset(self):
         if self.enable_file_task_content_checks:
