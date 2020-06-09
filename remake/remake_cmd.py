@@ -1,6 +1,5 @@
 import sys
 import argparse
-import inspect
 from logging import getLogger
 from pathlib import Path
 from typing import List
@@ -10,8 +9,7 @@ from tabulate import tabulate
 
 from remake.setup_logging import setup_stdout_logging
 from remake.version import get_version
-from remake.util import load_module
-from remake.task_control import TaskControl
+from remake.util import load_module, load_task_ctrls
 from remake.metadata import try_json_read
 
 logger = getLogger(__name__)
@@ -115,8 +113,7 @@ def file_info(remake_dir, filenames):
         print(file_metadata_path.read_text())
         file_metadata = try_json_read(file_metadata_path)
         remake_task_ctrl_path = remake_dir / (file_metadata['task_control_name'] + '.py')
-        task_ctrl_module = load_module(remake_task_ctrl_path)
-        task_ctrl = _load_task_ctrls(remake_task_ctrl_path, task_ctrl_module)[0]
+        task_ctrl = load_task_ctrls(remake_task_ctrl_path)[0]
         task_ctrl.build_task_DAG()
         path_md = task_ctrl.metadata_manager.path_metadata_map[path]
         task = task_ctrl.output_task_map[path]
@@ -125,8 +122,7 @@ def file_info(remake_dir, filenames):
 
 
 def task_info(filename, output_format, task_path_hash_key):
-    task_ctrl_module = load_module(filename)
-    task_ctrl = _load_task_ctrls(filename, task_ctrl_module)[0]
+    task_ctrl = load_task_ctrls(filename)[0]
     task_ctrl.finalize()
     task = task_ctrl.task_from_path_hash_key[task_path_hash_key]
     print(repr(task))
@@ -136,8 +132,7 @@ def task_control_info(filenames, output_format='medium'):
     if output_format == 'short':
         rows = []
     for filename in filenames:
-        task_ctrl_module = load_module(filename)
-        task_ctrl = _load_task_ctrls(filename, task_ctrl_module)[0]
+        task_ctrl = load_task_ctrls(filename)[0]
         task_ctrl.finalize()
         if output_format == 'short':
             rows.append([task_ctrl.name,
@@ -170,22 +165,19 @@ def remake_run(filenames, force, one, tasks):
     task_ctrls = []
     if len(filenames) > 1:
         for filename in filenames:
-            task_ctrl_module = load_module(filename)
-            loaded_task_ctrls = _load_task_ctrls(filename, task_ctrl_module)
+            loaded_task_ctrls = load_task_ctrls(filename)
             logger.debug(f'created TaskControls: {loaded_task_ctrls}')
             task_ctrls.extend(loaded_task_ctrls)
         # Naive -- need to add something like add_task_ctrl()
         # otherwise will get wrong filename as here.
         # uber_task_ctrl = TaskControl(__file__)
         # for filename in filenames:
-        #     task_ctrl_module = load_module(filename)
-        #     task_ctrl = _load_task_ctrl(filename, task_ctrl_module)
+        #     task_ctrl = load_task_ctrl(filename)
         #     logger.debug(f'created TaskControl: {task_ctrl}')
         #     for task in task_ctrl.tasks:
         #         uber_task_ctrl.add(task)
     elif len(filenames) == 1:
-        task_ctrl_module = load_module(filenames[0])
-        loaded_task_ctrls = _load_task_ctrls(filenames[0], task_ctrl_module)
+        loaded_task_ctrls = load_task_ctrls(filenames[0])
         logger.debug(f'created TaskControls: {loaded_task_ctrls}')
         task_ctrls.extend(loaded_task_ctrls)
     else:
@@ -208,29 +200,3 @@ def remake_run(filenames, force, one, tasks):
                 task_ctrl.task_complete(task)
 
 
-def _load_task_ctrls(filename, task_ctrl_module):
-    task_ctrls = []
-    functions = [o for o in [getattr(task_ctrl_module, m) for m in dir(task_ctrl_module)]
-                 if inspect.isfunction(o)]
-    for func in functions:
-        if hasattr(func, 'is_remake_task_control') and func.is_remake_task_control:
-            task_ctrl = func()
-            if not isinstance(task_ctrl, TaskControl):
-                raise Exception(f'{task_ctrl} is not a TaskControl (defined in {func})')
-            task_ctrls.append(task_ctrl)
-    if not task_ctrls:
-        raise Exception(f'No task controls defined in {filename}')
-
-    return task_ctrls
-
-    if not hasattr(task_ctrl_module, 'REMAKE_TASK_CTRL_FUNC'):
-        raise Exception(f'No REMAKE_TASK_CTRL_FUNC defined in {filename}')
-    task_ctrl_func_name = task_ctrl_module.REMAKE_TASK_CTRL_FUNC
-    if not hasattr(task_ctrl_module, task_ctrl_func_name):
-        raise Exception(f'No function {task_ctrl_func_name} defined in {filename}')
-    task_ctrl_func = getattr(task_ctrl_module, task_ctrl_func_name)
-    logger.debug(f'got task_ctrl_func: {task_ctrl_func}')
-    task_ctrl = task_ctrl_func()
-    if not isinstance(task_ctrl, TaskControl):
-        raise Exception(f'{task_ctrl} is not a TaskControl')
-    return task_ctrl
