@@ -9,7 +9,8 @@ from tabulate import tabulate
 
 from remake.setup_logging import setup_stdout_logging
 from remake.version import get_version
-from remake.util import load_module, load_task_ctrls
+from remake.util import load_module
+from remake.task_control import load_task_ctrls
 from remake.metadata import try_json_read
 
 logger = getLogger(__name__)
