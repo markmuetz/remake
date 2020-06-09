@@ -4,8 +4,6 @@ import hashlib
 from logging import getLogger
 from pathlib import Path
 
-from remake.remake_cmd import logger
-
 logger = getLogger(__name__)
 
 # BUF_SIZE is totally arbitrary, change for your app!
