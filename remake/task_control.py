@@ -3,6 +3,7 @@ from collections import defaultdict
 import functools
 from logging import getLogger
 from pathlib import Path
+from typing import List
 
 from remake.task import Task
 from remake.metadata import MetadataManager
@@ -26,10 +27,11 @@ def check_finalized(finalized):
 
 # noinspection PyAttributeOutsideInit
 class TaskControl:
-    def __init__(self, filename, *,
-                 remake_on=RemakeOn.ANY_STANDARD_CHANGE,
+    def __init__(self, filename: str, dependencies: List['TaskControl'] = None, *,
+                 remake_on: RemakeOn = RemakeOn.ANY_STANDARD_CHANGE,
                  dotremake_dir='.remake'):
         self.filename = filename
+        self.dependencies = dependencies
         self.path = Path(filename).absolute()
         self.name = self.path.stem
         self.remake_on = remake_on
@@ -153,6 +155,12 @@ class TaskControl:
     def finalize(self):
         if not self.tasks:
             raise Exception('No tasks have been added')
+
+        if self.dependencies:
+            for dep in self.dependencies:
+                dep.finalize()
+                if not dep.tasks == dep.completed_tasks:
+                    raise Exception(f'Dependency task control {dep.name} is not complete')
 
         logger.debug('building task DAG')
         self.build_task_DAG()
