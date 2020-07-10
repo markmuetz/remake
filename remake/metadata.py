@@ -168,7 +168,9 @@ class TaskMetadata:
                 logger.debug(f'no path exists: {path}')
                 return None
             input_path_md = self.inputs_metadata_map[path]
-            content_has_changed, _ = input_path_md.compare_path_with_previous()
+            content_has_changed, needs_write = input_path_md.compare_path_with_previous()
+            if needs_write:
+                input_path_md.write_new_metadata()
             if content_has_changed:
                 self.rerun_reasons.append(('content_has_changed', path))
             if 'sha1hex' not in input_path_md.new_metadata:
