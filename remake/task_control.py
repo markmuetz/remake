@@ -1,4 +1,5 @@
 import inspect
+import itertools
 from collections import defaultdict
 import functools
 from logging import getLogger
@@ -9,7 +10,7 @@ from remake.task import Task
 from remake.metadata import MetadataManager
 from remake.setup_logging import add_file_logging, remove_file_logging
 from remake.flags import RemakeOn
-from remake.util import load_module
+from remake.util import load_module, fmtp
 
 logger = getLogger(__name__)
 
@@ -57,6 +58,29 @@ class TaskControl:
         task_ctrl = cls(filename, remake_on=remake_on, dotremake_dir=dotremake_dir)
         for task_tuple in task_tuples:
             task_ctrl.add(Task(*task_tuple))
+        return task_ctrl
+
+    @classmethod
+    def from_declaration(cls, filename, tasks_dec, *,
+                  remake_on=RemakeOn.ANY_STANDARD_CHANGE,
+                  dotremake_dir='.remake'):
+        task_ctrl = cls(filename, remake_on=remake_on, dotremake_dir=dotremake_dir)
+
+        for task_dec in tasks_dec:
+            if 'loop_over' in task_dec:
+                loop_over = task_dec['loop_over']
+                for loop_vars in itertools.product(*loop_over.values()):
+                    fmt_dict = {k: v for k, v in zip(loop_over.keys(), loop_vars)}
+                    resolved_inputs = {k: fmtp(v, **fmt_dict) for k, v in task_dec['inputs'].items()}
+                    resolved_outputs = {k: fmtp(v, **fmt_dict) for k, v in task_dec['outputs'].items()}
+                    task_ctrl.add(Task(task_dec['func'],
+                                resolved_inputs,
+                                resolved_outputs))
+            else:
+                task_ctrl.add(Task(task_dec['func'],
+                            task_dec['inputs'],
+                            task_dec['outputs']))
+
         return task_ctrl
 
     def reset(self):
