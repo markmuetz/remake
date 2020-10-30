@@ -210,7 +210,7 @@ class TaskControl:
         if self.enable_file_task_content_checks:
             logger.debug('writing input path metadata')
             # Can now write all metadata for paths (size, mtime and sha1sum).
-            for input_path in self.input_paths:
+            for input_path in sorted(self.input_paths):
                 # N.B. already created in self.build_task_DAG()
                 input_md = self.metadata_manager.path_metadata_map[input_path]
                 _, needs_write = input_md.compare_path_with_previous()
