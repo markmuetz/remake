@@ -3,6 +3,7 @@ import importlib.util
 import hashlib
 from logging import getLogger
 from pathlib import Path
+from typing import Union
 
 logger = getLogger(__name__)
 
@@ -49,3 +50,8 @@ def load_module(local_filename):
         raise
 
     return module
+
+
+def fmtp(path: Union[Path, str], **kwargs) -> Path:
+    """Format a Path"""
+    return Path(str(path).format(**kwargs))
