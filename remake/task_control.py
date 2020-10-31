@@ -14,6 +14,18 @@ from remake.util import load_module, fmtp
 
 logger = getLogger(__name__)
 
+def task_declaration(func, inputs, outputs,
+                     loop_over=None, func_args=tuple(), func_kwargs=None, pass_loop_vars=False):
+        task_dec = {}
+        task_dec['func'] = func
+        task_dec['inputs'] = inputs
+        task_dec['outputs'] = outputs
+        task_dec['loop_over'] = loop_over
+        task_dec['func_args'] = func_args
+        task_dec['func_kwargs'] = func_kwargs
+        task_dec['pass_loop_vars'] = pass_loop_vars
+        return task_dec
+
 
 def check_finalized(finalized):
     def _check_finalized(method):
@@ -62,53 +74,41 @@ class TaskControl:
 
     @classmethod
     def from_declaration(cls, filename, tasks_dec, *,
-                  remake_on=RemakeOn.ANY_STANDARD_CHANGE,
-                  dotremake_dir='.remake'):
+                         remake_on=RemakeOn.ANY_STANDARD_CHANGE,
+                         dotremake_dir='.remake'):
         task_ctrl = cls(filename, remake_on=remake_on, dotremake_dir=dotremake_dir)
 
+        # import ipdb; ipdb.set_trace()
         for task_dec in tasks_dec:
-            if not isinstance(task_dec, Mapping):
-                # Allow concise tuple representation:
-                # ((f1, inputs, outputs), (, ), {}, False)
-                new_task_dec = {}
-                new_task_dec['func'] = task_dec[0][0]
-                new_task_dec['inputs'] = task_dec[0][1]
-                new_task_dec['outputs'] = task_dec[0][2]
-                if len(task_dec[0]) == 4:
-                    new_task_dec['loop_over'] = task_dec[0][3]
-                if len(task_dec) >= 2:
-                    new_task_dec['func_args'] = task_dec[1]
-                if len(task_dec) >= 3:
-                    new_task_dec['func_kwargs'] = task_dec[2]
-                if len(task_dec) >= 4:
-                    new_task_dec['pass_loop_vars'] = task_dec[3]
-                task_dec = new_task_dec
-
-            if 'loop_over' in task_dec:
+            if 'loop_over' in task_dec and task_dec['loop_over']:
                 loop_over = task_dec['loop_over']
                 for loop_vars in itertools.product(*loop_over.values()):
                     task_kwargs = {
                         'func': task_dec['func'],
                         'func_args': task_dec.get('func_args', tuple()),
-                        'func_kwargs': task_dec.get('func_kwargs', {}),
+                        'func_kwargs': task_dec.get('func_kwargs', None),
                     }
                     fmt_dict = {k: v for k, v in zip(loop_over.keys(), loop_vars)}
                     if task_dec.get('pass_loop_vars', False):
+                        if not task_kwargs['func_kwargs']:
+                            task_kwargs['func_kwargs'] = {}
                         task_kwargs['func_kwargs'].update(fmt_dict)
                     if isinstance(task_dec['inputs'], Mapping):
-                        task_kwargs['inputs'] = {k: fmtp(v, **fmt_dict)
+                        task_kwargs['inputs'] = {k.format(**fmt_dict): fmtp(v, **fmt_dict)
                                                  for k, v in task_dec['inputs'].items()}
                     else:
                         task_kwargs['inputs'] = [fmtp(v, **fmt_dict) for v in task_dec['inputs']]
 
                     if isinstance(task_dec['outputs'], Mapping):
-                        task_kwargs['outputs'] = {k: fmtp(v, **fmt_dict)
+                        task_kwargs['outputs'] = {k.format(**fmt_dict): fmtp(v, **fmt_dict)
                                                  for k, v in task_dec['outputs'].items()}
                     else:
                         task_kwargs['outputs'] = [fmtp(v, **fmt_dict) for v in task_dec['outputs']]
 
                     task_ctrl.add(Task(**task_kwargs))
             else:
+                assert not task_dec.pop('loop_over')
+                assert not task_dec.pop('pass_loop_vars')
                 task_ctrl.add(Task(**task_dec))
 
         return task_ctrl
