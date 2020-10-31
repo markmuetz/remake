@@ -68,16 +68,20 @@ class TaskControl:
 
         for task_dec in tasks_dec:
             if not isinstance(task_dec, Mapping):
+                # Allow concise tuple representation:
+                # ((f1, inputs, outputs), (, ), {}, False)
                 new_task_dec = {}
-                new_task_dec['func'] = task_dec[0]
-                new_task_dec['inputs'] = task_dec[1]
-                new_task_dec['outputs'] = task_dec[2]
+                new_task_dec['func'] = task_dec[0][0]
+                new_task_dec['inputs'] = task_dec[0][1]
+                new_task_dec['outputs'] = task_dec[0][2]
+                if len(task_dec[0]) == 4:
+                    new_task_dec['loop_over'] = task_dec[0][3]
+                if len(task_dec) >= 2:
+                    new_task_dec['func_args'] = task_dec[1]
+                if len(task_dec) >= 3:
+                    new_task_dec['func_kwargs'] = task_dec[2]
                 if len(task_dec) >= 4:
-                    new_task_dec['loop_over'] = task_dec[3]
-                if len(task_dec) >= 5:
-                    new_task_dec['func_args'] = task_dec[4]
-                if len(task_dec) >= 6:
-                    new_task_dec['func_kwargs'] = task_dec[5]
+                    new_task_dec['pass_loop_vars'] = task_dec[3]
                 task_dec = new_task_dec
 
             if 'loop_over' in task_dec:
@@ -86,9 +90,11 @@ class TaskControl:
                     task_kwargs = {
                         'func': task_dec['func'],
                         'func_args': task_dec.get('func_args', tuple()),
-                        'func_kwargs': task_dec.get('func_kwargs', None),
+                        'func_kwargs': task_dec.get('func_kwargs', {}),
                     }
                     fmt_dict = {k: v for k, v in zip(loop_over.keys(), loop_vars)}
+                    if task_dec.get('pass_loop_vars', False):
+                        task_kwargs['func_kwargs'].update(fmt_dict)
                     if isinstance(task_dec['inputs'], Mapping):
                         task_kwargs['inputs'] = {k: fmtp(v, **fmt_dict)
                                                  for k, v in task_dec['inputs'].items()}
