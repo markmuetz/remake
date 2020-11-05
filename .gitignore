@@ -20,3 +20,7 @@ docs/_build/
 
 # PyCharm
 .idea
+
+# Remake dirs.
+examples/.remake
+

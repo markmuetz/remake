@@ -27,6 +27,7 @@ if __name__ == '__main__':
     else:
         TaskControl = task_control.TaskControl
         tc_kwargs = {}
+    tc_kwargs['filename'] = __file__
     tcs = []
 
     tc1 = TaskControl(**tc_kwargs)

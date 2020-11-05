@@ -59,7 +59,9 @@ def worker(task_queue, task_complete_queue, error_queue, log_queue):
 
 
 class MultiProcTaskControl(TaskControl):
-    def __init__(self, enable_file_task_content_checks=False, nproc=2):
+    def __init__(self, filename: str, dependencies: List['TaskControl'] = None, *,
+                 remake_on: RemakeOn = RemakeOn.ANY_STANDARD_CHANGE,
+                 dotremake_dir='.remake', enable_file_task_content_checks=False, nproc=2):
         super().__init__(enable_file_task_content_checks)
         self.nproc = nproc
         self.procs = []
