@@ -21,6 +21,6 @@ docs/_build/
 # PyCharm
 .idea
 
-# Remake dirs.
+# Examples dirs.
 examples/.remake
-
+examples/data/outputs/
