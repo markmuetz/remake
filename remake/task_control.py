@@ -8,23 +8,17 @@ from typing import List
 
 from remake.task import Task
 from remake.metadata import MetadataManager
-from remake.setup_logging import add_file_logging, remove_file_logging
 from remake.flags import RemakeOn
 from remake.util import load_module, fmtp
 
 logger = getLogger(__name__)
 
+
 def task_declaration(func, inputs, outputs,
                      loop_over=None, func_args=tuple(), func_kwargs=None, pass_loop_vars=False):
-        task_dec = {}
-        task_dec['func'] = func
-        task_dec['inputs'] = inputs
-        task_dec['outputs'] = outputs
-        task_dec['loop_over'] = loop_over
-        task_dec['func_args'] = func_args
-        task_dec['func_kwargs'] = func_kwargs
-        task_dec['pass_loop_vars'] = pass_loop_vars
-        return task_dec
+    task_dec = {'func': func, 'inputs': inputs, 'outputs': outputs, 'loop_over': loop_over, 'func_args': func_args,
+                'func_kwargs': func_kwargs, 'pass_loop_vars': pass_loop_vars}
+    return task_dec
 
 
 def check_finalized(finalized):
@@ -101,7 +95,7 @@ class TaskControl:
 
                     if isinstance(task_dec['outputs'], Mapping):
                         task_kwargs['outputs'] = {k.format(**fmt_dict): fmtp(v, **fmt_dict)
-                                                 for k, v in task_dec['outputs'].items()}
+                                                  for k, v in task_dec['outputs'].items()}
                     else:
                         task_kwargs['outputs'] = [fmtp(v, **fmt_dict) for v in task_dec['outputs']]
 
