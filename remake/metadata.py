@@ -282,9 +282,13 @@ class PathMetadata:
             raise NoMetadata(f'No metadata for {self.path}')
 
     def compare_path_with_previous(self):
-        if self._already_compared:
-            return self.content_has_changed, self.need_write
-
+        # I put the commented out lines to try to be smarter about when to check for changes.
+        # Unfortunately they break the following:
+        # t1 < in1 > out1
+        # t2 < out1 > out2
+        # modify in1 -> only t1 runs on remake (should be t1 and t2 if out1 gets modified)
+        # if self._already_compared:
+        #     return self.content_has_changed, self.need_write
         path = self.path
         logger.debug(f'comparing path with previous: {path}')
         self.content_has_changed = False
