@@ -3,6 +3,7 @@ from remake import TaskControl, Task, remake_task_control
 
 def f1(inputs, outputs):
     print(inputs)
+    assert len(inputs) == len(outputs)
     for i, o in zip(inputs, outputs):
         o.write_text('\n'.join([f'f1 {l}' for l in i.read_text().split('\n')[:-1]]) + '\n')
 
