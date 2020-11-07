@@ -2,7 +2,6 @@ from remake import TaskControl, Task, remake_task_control
 
 
 def f1(inputs, outputs):
-    print(inputs)
     assert len(inputs) == len(outputs)
 
     for i, o in zip(inputs, outputs):
@@ -10,7 +9,6 @@ def f1(inputs, outputs):
 
 
 def f2(inputs, outputs):
-    print(inputs)
     assert len(inputs) == len(outputs)
 
     for i, o in zip(inputs, outputs):
@@ -19,6 +17,11 @@ def f2(inputs, outputs):
 
 @remake_task_control
 def gen_task_ctrl():
+    """Basic task control which takes in1.txt -> out1.txt -> out2.txt
+
+    Uses different function for both steps.
+    :return: task_ctrl
+    """
     task_ctrl = TaskControl(__file__)
 
     task_ctrl.add(Task(f1, ['data/inputs/in1.txt'], ['data/outputs/ex2/out1.txt']))

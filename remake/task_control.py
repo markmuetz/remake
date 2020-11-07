@@ -36,7 +36,8 @@ def check_finalized(finalized):
 class TaskControl:
     def __init__(self, filename: str, dependencies: List['TaskControl'] = None, *,
                  remake_on: RemakeOn = RemakeOn.ANY_STANDARD_CHANGE,
-                 dotremake_dir='.remake'):
+                 dotremake_dir='.remake',
+                 print_reasons=False):
         self.filename = filename
         self.dependencies = dependencies
         self.path = Path(filename).absolute()
@@ -44,6 +45,7 @@ class TaskControl:
         self.remake_on = remake_on
         if self.remake_on & RemakeOn.ANY_METADATA_CHANGE:
             self.enable_file_task_content_checks = True
+        self.print_reasons = print_reasons
         self.extra_checks = True
         self.tasks = []
 
@@ -174,7 +176,7 @@ class TaskControl:
             curr_tasks = next_tasks
             level += 1
 
-    def task_requires_rerun(self, task):
+    def task_requires_rerun(self, task, print_reasons=False):
         requires_rerun = RemakeOn.NOT_NEEDED
         if self.enable_file_task_content_checks:
             task_md = self.metadata_manager.task_metadata_map[task]
@@ -189,14 +191,20 @@ class TaskControl:
             if not requires_rerun & RemakeOn.MISSING_OUTPUT and \
                     task_md.task.remake_required and not task_md.task.remake_on & requires_rerun:
                 logger.debug(f'{task_md.task.remake_on} not in {requires_rerun}')
+                if print_reasons:
+                    print(f'  --reason: not needed')
                 return RemakeOn.NOT_NEEDED
             if requires_rerun:
                 logger.debug(f'requires rerun: {requires_rerun}')
                 for reason in task_md.rerun_reasons:
                     logger.debug(f'  {reason}')
+                    if print_reasons:
+                        print(f'  --reason: {reason}')
         else:
             if task.can_run():
                 requires_rerun = task.requires_rerun()
+        if print_reasons and not requires_rerun:
+            print(f'  --reason: not needed')
         return requires_rerun
 
     @check_finalized(False)
@@ -385,7 +393,7 @@ class TaskControl:
             print(f'{task_run_index}/{len(self.tasks)}: {task.path_hash_key()} {task}')
         if self.enable_file_task_content_checks:
             task_md = self.metadata_manager.task_metadata_map[task]
-            requires_rerun = self.task_requires_rerun(task)
+            requires_rerun = self.task_requires_rerun(task, print_reasons=self.print_reasons)
             if force or task.force or requires_rerun & self.remake_on:
                 logger.debug(f'running task (force={force}, requires_rerun={requires_rerun}): {repr(task)}')
                 task_md.log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -395,6 +403,7 @@ class TaskControl:
                 try:
                     task.run(force=True)
                     task_md.update_status('COMPLETE')
+                    print(f'  -> task complete')
                 except Exception as e:
                     logger.error(f'TaskControl: {self.name}')
                     logger.error(e)
@@ -407,6 +416,7 @@ class TaskControl:
                 self._post_run_with_content_check(task_md)
             else:
                 logger.debug(f'no longer requires rerun: {repr(task)}')
+                print(f'  -> task run not needed')
         else:
             logger.debug(f'running task (force={force}) {repr(task)}')
             task.run(force=force)

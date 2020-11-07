@@ -44,6 +44,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument('--force', '-f', action='store_true')
     # run_parser.add_argument('--func', nargs=1, help)
     run_parser.add_argument('--one', '-o', action='store_true')
+    run_parser.add_argument('--reasons', '-R', action='store_true')
     run_parser.add_argument('--tasks', '-t', nargs='*')
 
     file_info_parser = subparsers.add_parser('file-info', help='Information about the given file')
@@ -86,7 +87,7 @@ def remake_cmd(argv: List[str] = sys.argv) -> None:
     # N.B. args should always be dereferenced at this point,
     # not passed into any subsequent functions.
     if args.subcmd_name == 'run':
-        remake_run(args.filenames, args.force, args.one, args.tasks)
+        remake_run(args.filenames, args.force, args.one, args.tasks, args.reasons)
     elif args.subcmd_name == 'version':
         print(get_version(form='long' if args.long else 'short'))
     elif args.subcmd_name == 'file-info':
@@ -162,7 +163,7 @@ def task_control_info(filenames, output_format='medium'):
         print(tabulate(rows, headers=('Name', 'completed', 'pending', 'remaining', 'total')))
 
 
-def remake_run(filenames, force, one, tasks):
+def remake_run(filenames, force, one, tasks, print_reasons):
     task_ctrls = []
     if len(filenames) > 1:
         for filename in filenames:
@@ -186,6 +187,7 @@ def remake_run(filenames, force, one, tasks):
 
     for task_ctrl in task_ctrls:
         task_ctrl.finalize()
+        task_ctrl.print_reasons = print_reasons
         if not task_ctrl.pending_tasks and not force:
             print(f'{task_ctrl.name}: {len(task_ctrl.completed_tasks)} tasks already run')
         if not tasks:
@@ -199,5 +201,3 @@ def remake_run(filenames, force, one, tasks):
                 task_ctrl.running_tasks.append(task)
                 task_ctrl.run_task(task, force)
                 task_ctrl.task_complete(task)
-
-
