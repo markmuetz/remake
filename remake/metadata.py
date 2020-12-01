@@ -58,14 +58,14 @@ class MetadataManager:
         task_outputs_metadata_map = {}
         for input_path in task.inputs:
             if input_path not in self.path_metadata_map:
-                input_md = self.create_path_metadata(input_path)
+                input_md = self._create_path_metadata(input_path)
             else:
                 input_md = self.path_metadata_map[input_path]
             task_inputs_metadata_map[input_path] = input_md
 
         for output_path in task.outputs:
             if output_path not in self.path_metadata_map:
-                output_md = self.create_path_metadata(output_path)
+                output_md = self._create_path_metadata(output_path)
             else:
                 output_md = self.path_metadata_map[output_path]
             task_outputs_metadata_map[output_path] = output_md
@@ -75,7 +75,7 @@ class MetadataManager:
         self.task_metadata_map[task] = task_md
         return task_md
 
-    def create_path_metadata(self, path):
+    def _create_path_metadata(self, path):
         assert path not in self.path_metadata_map, f'path already tracked: {path}'
         path_md = PathMetadata(self.task_control_name, self.dotremake_dir, path)
         self.path_metadata_map[path] = path_md
@@ -116,7 +116,7 @@ class TaskMetadata:
         with self.task_status_path.open('a') as fp:
             fp.write(f'{dt.datetime.now()};{status}\n')
 
-    def load_metadata(self):
+    def _load_metadata(self):
         if self.task_metadata_path.exists():
             self.metadata = try_json_read(self.task_metadata_path)
         else:
@@ -187,7 +187,7 @@ class TaskMetadata:
         self.requires_rerun = RemakeOn.NOT_NEEDED
         self.rerun_reasons = []
         try:
-            self.load_metadata()
+            self._load_metadata()
         except NoMetadata:
             self.rerun_reasons.append(('task_has_not_been_run', None))
             self.requires_rerun |= RemakeOn.NO_TASK_METADATA
@@ -275,7 +275,7 @@ class PathMetadata:
         self.need_write = False
         self._already_compared = False
 
-    def load_metadata(self):
+    def _load_metadata(self):
         if self.metadata_path.exists():
             self.metadata = try_json_read(self.metadata_path)
         else:
@@ -295,7 +295,7 @@ class PathMetadata:
         self.need_write = False
 
         if self.metadata_path.exists():
-            self.load_metadata()
+            self._load_metadata()
 
         # N.B. lstat dereferences symlinks.
         stat = path.lstat()
