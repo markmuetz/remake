@@ -9,8 +9,7 @@ from tabulate import tabulate
 
 from remake.setup_logging import setup_stdout_logging
 from remake.version import get_version
-from remake.util import load_module
-from remake.task_control import load_task_ctrls
+from remake.load_task_ctrls import load_task_ctrls
 from remake.metadata import try_json_read
 
 logger = getLogger(__name__)
@@ -186,7 +185,8 @@ def remake_run(filenames, force, one, tasks, print_reasons):
         assert False, 'Should be one or more filenames'
 
     for task_ctrl in task_ctrls:
-        task_ctrl.finalize()
+        if not task_ctrl.finalized:
+            task_ctrl.finalize()
         task_ctrl.print_reasons = print_reasons
         if not task_ctrl.pending_tasks and not force:
             print(f'{task_ctrl.name}: {len(task_ctrl.completed_tasks)} tasks already run')

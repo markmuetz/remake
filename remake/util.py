@@ -55,3 +55,5 @@ def load_module(local_filename):
 def fmtp(path: Union[Path, str], **kwargs) -> Path:
     """Format a Path"""
     return Path(str(path).format(**kwargs))
+
+

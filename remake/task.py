@@ -84,6 +84,7 @@ class Task:
         self.atomic_write = atomic_write
         self.force = force
         self.is_task_rule = is_task_rule
+        # self.task_ctrl = None
 
         if not outputs:
             raise Exception('outputs must be set')
@@ -162,6 +163,32 @@ class Task:
             h.update(str(output_path).encode())
         return h.hexdigest()
 
+    def run_task_rule(self, force=False):
+        assert self.is_task_rule
+        self.task_ctrl.run_task(self, force=force)
+
+    @property
+    def status(self):
+        assert self.is_task_rule
+        if self in self.task_ctrl.completed_tasks:
+            return 'completed'
+        elif self in self.task_ctrl.pending_tasks:
+            return 'pending'
+        elif self in self.task_ctrl.running_tasks:
+            return 'running'
+        elif self in self.task_ctrl.remaining_tasks:
+            return 'remaining'
+
+    @property
+    def next_tasks(self):
+        assert self.is_task_rule
+        return self.task_ctrl.next_tasks[self]
+
+    @property
+    def prev_tasks(self):
+        assert self.is_task_rule
+        return self.task_ctrl.prev_tasks[self]
+
     def run(self, force=False):
         logger.debug(f'running {repr(self)}')
         if not self.can_run():
@@ -184,20 +211,25 @@ class Task:
             logger.debug(f'run func {self.func}, {self.func_args}, {self.func_kwargs}')
             start = timer()
             if self.is_task_rule:
-                self.actual_outputs = self.outputs
+                actual_outputs = self.outputs
                 self.outputs = self.tmp_outputs
 
                 self.result = self.func(self)
 
-                self.outputs = self.actual_outputs
+                self.outputs = actual_outputs
             else:
                 self.result = self.func(inputs, self.tmp_outputs, *self.func_args, **self.func_kwargs)
             logger.debug(f'run func {self.func} completed in {timer() - start:.2f}s:'
                          f' {[o.name for o in self.outputs]}')
             if self.atomic_write:
-                for output in self.tmp_outputs.values():
-                    if not output.exists():
-                        raise Exception(f'func {output} not created')
+                if self.outputs_dict:
+                    for output in self.tmp_outputs.values():
+                        if not output.exists():
+                            raise Exception(f'func {output} not created')
+                else:
+                    for output in self.tmp_outputs:
+                        if not output.exists():
+                            raise Exception(f'func {output} not created')
                 logger.debug(f'atomic_write: rename temp paths')
                 if self.outputs_dict:
                     tmp_paths = self.tmp_outputs.values()

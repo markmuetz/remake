@@ -1,4 +1,3 @@
-import inspect
 import itertools
 from collections import defaultdict, Mapping
 import functools
@@ -9,7 +8,7 @@ from typing import List
 from remake.task import Task
 from remake.metadata import MetadataManager
 from remake.flags import RemakeOn
-from remake.util import load_module, fmtp
+from remake.util import fmtp
 
 logger = getLogger(__name__)
 
@@ -422,7 +421,7 @@ class TaskControl:
             task.run(force=force)
 
     @check_finalized(True)
-    def run(self, task_func=None, *, force=False, display_func=None):
+    def run(self, task_func=None, *, requested_tasks=None, force=False, display_func=None):
         if force:
             if task_func:
                 tasks = [t for t in self.sorted_tasks if t.func == task_func]
@@ -437,12 +436,30 @@ class TaskControl:
                 if display_func:
                     display_func(self)
         else:
-            for task in self.get_next_pending(task_func):
-                self.run_task(task, force)
-                self.task_complete(task)
+            if not requested_tasks:
+                for task in self.get_next_pending(task_func):
+                    self.run_task(task, force)
+                    self.task_complete(task)
 
-                if display_func:
-                    display_func(self)
+                    if display_func:
+                        display_func(self)
+            else:
+                # raise NotImplementedError('Do not trust this to work')
+                # Problem is that pending tasks needs to be recalculated every time!
+                sorted_requested_tasks = sorted(requested_tasks, key=lambda x: self.sorted_tasks.index(x))
+                for task in sorted_requested_tasks:
+                    assert (task in self.pending_tasks) or (task in self.completed_tasks)
+                    if task in self.pending_tasks:
+                        self.pending_tasks.remove(task)
+                    elif task in self.completed_tasks:
+                        self.completed_tasks.remove(task)
+
+                    self.running_tasks.append(task)
+                    self.run_task(task, force)
+                    self.task_complete(task)
+
+                    if display_func:
+                        display_func(self)
 
     @check_finalized(True)
     def run_one(self, task_func=None, *, force=False, display_func=None):
@@ -469,33 +486,3 @@ class TaskControl:
         print(f'  running  : {len(self.running_tasks)}')
         print(f'  remaining: {len(self.remaining_tasks)}')
         print(f'  all      : {len(self.tasks)}')
-
-
-def load_task_ctrls(filename):
-    task_ctrl_module = load_module(filename)
-    task_ctrls = []
-    functions = [o for o in [getattr(task_ctrl_module, m) for m in dir(task_ctrl_module)]
-                 if inspect.isfunction(o)]
-    for func in functions:
-        if hasattr(func, 'is_remake_task_control') and func.is_remake_task_control:
-            task_ctrl = func()
-            if not isinstance(task_ctrl, TaskControl):
-                raise Exception(f'{task_ctrl} is not a TaskControl (defined in {func})')
-            task_ctrls.append(task_ctrl)
-    if not task_ctrls:
-        raise Exception(f'No task controls defined in {filename}')
-
-    return task_ctrls
-
-    # TODO: delete.
-    # if not hasattr(task_ctrl_module, 'REMAKE_TASK_CTRL_FUNC'):
-    #     raise Exception(f'No REMAKE_TASK_CTRL_FUNC defined in {filename}')
-    # task_ctrl_func_name = task_ctrl_module.REMAKE_TASK_CTRL_FUNC
-    # if not hasattr(task_ctrl_module, task_ctrl_func_name):
-    #     raise Exception(f'No function {task_ctrl_func_name} defined in {filename}')
-    # task_ctrl_func = getattr(task_ctrl_module, task_ctrl_func_name)
-    # logger.debug(f'got task_ctrl_func: {task_ctrl_func}')
-    # task_ctrl = task_ctrl_func()
-    # if not isinstance(task_ctrl, TaskControl):
-    #     raise Exception(f'{task_ctrl} is not a TaskControl')
-    # return task_ctrl

@@ -1,5 +1,8 @@
 """Examples using TaskRule"""
-from remake import remake_task_control, TaskRule, Config
+from remake import Remake, TaskRule, Config
+
+
+Remake.init()
 
 
 class MyConfig(Config):
@@ -9,8 +12,9 @@ class MyConfig(Config):
 class MyRuleMatrix(TaskRule):
     rule_inputs = {'a{i}{j}': 'data/inputs/a.{i}{j}.in'}
     rule_outputs = {'a{i}{j}': 'data/outputs/a.{i}{j}.out'}
-    var_matrix = {'i': range(1),
-                  'j': range(2)}
+    var_matrix = {'i': range(2),
+                  'j': range(3)}
+    group = 'matrix'
 
     def rule_run(self):
         for o in self.outputs.values():
@@ -20,8 +24,9 @@ class MyRuleMatrix(TaskRule):
 class MyRuleMatrix2(TaskRule):
     rule_inputs = MyRuleMatrix.rule_outputs
     rule_outputs = {'a{i}{j}': 'data/outputs/a.{i}{j}.out2'}
-    var_matrix = {'i': range(1),
-                  'j': range(2)}
+    var_matrix = {'i': range(2),
+                  'j': range(3)}
+    group = 'matrix'
 
     def rule_run(self):
         for o in self.outputs.values():
@@ -35,7 +40,3 @@ class MyRule(TaskRule):
     def rule_run(self):
         for o in self.outputs.values():
             o.touch()
-
-@remake_task_control
-def gen_task_ctrl():
-    return TaskRule.task_ctrl
