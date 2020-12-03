@@ -18,7 +18,7 @@ class Task:
     task_func_cache = {}
 
     def __init__(self, func, inputs, outputs, func_args=tuple(), func_kwargs=None,
-                 *, atomic_write=True, force=False):
+                 *, atomic_write=True, force=False, is_task_rule=False):
         if func_kwargs is None:
             func_kwargs = {}
         if hasattr(func, 'is_remake_wrapped') and func.is_remake_wrapped:
@@ -83,6 +83,7 @@ class Task:
             raise Exception(f'func is not a function, method or class: {self.func} -- type: {type(self.func)}')
         self.atomic_write = atomic_write
         self.force = force
+        self.is_task_rule = is_task_rule
 
         if not outputs:
             raise Exception('outputs must be set')
@@ -182,10 +183,21 @@ class Task:
 
             logger.debug(f'run func {self.func}, {self.func_args}, {self.func_kwargs}')
             start = timer()
-            self.result = self.func(inputs, self.tmp_outputs, *self.func_args, **self.func_kwargs)
+            if self.is_task_rule:
+                self.actual_outputs = self.outputs
+                self.outputs = self.tmp_outputs
+
+                self.result = self.func(self)
+
+                self.outputs = self.actual_outputs
+            else:
+                self.result = self.func(inputs, self.tmp_outputs, *self.func_args, **self.func_kwargs)
             logger.debug(f'run func {self.func} completed in {timer() - start:.2f}s:'
                          f' {[o.name for o in self.outputs]}')
             if self.atomic_write:
+                for output in self.tmp_outputs.values():
+                    if not output.exists():
+                        raise Exception(f'func {output} not created')
                 logger.debug(f'atomic_write: rename temp paths')
                 if self.outputs_dict:
                     tmp_paths = self.tmp_outputs.values()
@@ -193,10 +205,11 @@ class Task:
                     tmp_paths = self.tmp_outputs
                 for tmp_path, path in zip(tmp_paths, self.outputs):
                     tmp_path.rename(path)
+            else:
+                for output in self.outputs:
+                    if not output.exists():
+                        raise Exception(f'func {output} not created')
 
-            for output in self.outputs:
-                if not output.exists():
-                    raise Exception(f'func {output} not created')
         else:
             logger.debug(f'already exist: {self.outputs}')
 
