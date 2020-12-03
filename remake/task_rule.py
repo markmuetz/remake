@@ -2,6 +2,7 @@ import itertools
 
 from remake import TaskControl, Task
 
+
 # Can still create a TaskRule() i.e. it's not abstract.
 # class RemakeMetaclass(ABCMeta):
 class RemakeMetaclass(type):
@@ -9,7 +10,7 @@ class RemakeMetaclass(type):
     config = None
     task_ctrl = TaskControl(__file__)
 
-    def __new__(cls, clsname, bases, attrs):
+    def __new__(mcs, clsname, bases, attrs):
         # print(f'creating {clsname}')
         if clsname not in ['TaskRule', 'Config']:
             if 'TaskRule' in [b.__name__ for b in bases]:
@@ -26,8 +27,8 @@ class RemakeMetaclass(type):
         else:
             pass
 
-        newcls = super(RemakeMetaclass, cls).__new__(
-            cls, clsname, bases, attrs)
+        newcls = super(RemakeMetaclass, mcs).__new__(
+            mcs, clsname, bases, attrs)
 
         if 'Config' in [b.__name__ for b in bases]:
             RemakeMetaclass.config = newcls
@@ -39,9 +40,9 @@ class RemakeMetaclass(type):
                     for loop_vars in itertools.product(*loop_over.values()):
                         fmt_dict = {k: v for k, v in zip(loop_over.keys(), loop_vars)}
                         inputs = {k.format(**fmt_dict): v.format(**fmt_dict)
-                                                 for k, v in attrs['rule_inputs'].items()}
+                                  for k, v in attrs['rule_inputs'].items()}
                         outputs = {k.format(**fmt_dict): v.format(**fmt_dict)
-                                                  for k, v in attrs['rule_outputs'].items()}
+                                   for k, v in attrs['rule_outputs'].items()}
                         rule_obj = newcls(attrs['rule_run'], inputs, outputs,
                                           is_task_rule=True)
                         newcls.tasks.append(rule_obj)
@@ -55,11 +56,12 @@ class RemakeMetaclass(type):
                 RemakeMetaclass.all_tasks.extend(newcls.tasks)
         return newcls
 
+
 # metaclass conflict
 # class TaskRule(ABC, metaclass=RemakeMetaclass):
 class TaskRule(Task, metaclass=RemakeMetaclass):
     pass
 
+
 class Config(metaclass=RemakeMetaclass):
     pass
-
