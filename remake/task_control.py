@@ -13,13 +13,6 @@ from remake.util import fmtp
 logger = getLogger(__name__)
 
 
-def task_declaration(func, inputs, outputs,
-                     loop_over=None, func_args=tuple(), func_kwargs=None, pass_loop_vars=False):
-    task_dec = {'func': func, 'inputs': inputs, 'outputs': outputs, 'loop_over': loop_over, 'func_args': func_args,
-                'func_kwargs': func_kwargs, 'pass_loop_vars': pass_loop_vars}
-    return task_dec
-
-
 def check_finalized(finalized):
     def _check_finalized(method):
         @functools.wraps(method)
@@ -58,56 +51,6 @@ class TaskControl:
 
         self.reset()
 
-    @classmethod
-    def from_list(cls, filename, task_tuples, *,
-                  remake_on=RemakeOn.ANY_STANDARD_CHANGE,
-                  dotremake_dir='.remake'):
-        task_ctrl = cls(filename, remake_on=remake_on, dotremake_dir=dotremake_dir)
-        for task_tuple in task_tuples:
-            task_ctrl.add(Task(*task_tuple))
-        return task_ctrl
-
-    @classmethod
-    def from_declaration(cls, filename, tasks_dec, *,
-                         remake_on=RemakeOn.ANY_STANDARD_CHANGE,
-                         dotremake_dir='.remake'):
-        task_ctrl = cls(filename, remake_on=remake_on, dotremake_dir=dotremake_dir)
-
-        # import ipdb; ipdb.set_trace()
-        for task_dec in tasks_dec:
-            if 'loop_over' in task_dec and task_dec['loop_over']:
-                loop_over = task_dec['loop_over']
-                for loop_vars in itertools.product(*loop_over.values()):
-                    task_kwargs = {
-                        'func': task_dec['func'],
-                        'func_args': task_dec.get('func_args', tuple()),
-                        'func_kwargs': task_dec.get('func_kwargs', None),
-                    }
-                    fmt_dict = {k: v for k, v in zip(loop_over.keys(), loop_vars)}
-                    if task_dec.get('pass_loop_vars', False):
-                        if not task_kwargs['func_kwargs']:
-                            task_kwargs['func_kwargs'] = {}
-                        task_kwargs['func_kwargs'].update(fmt_dict)
-                    if isinstance(task_dec['inputs'], Mapping):
-                        task_kwargs['inputs'] = {k.format(**fmt_dict): fmtp(v, **fmt_dict)
-                                                 for k, v in task_dec['inputs'].items()}
-                    else:
-                        task_kwargs['inputs'] = [fmtp(v, **fmt_dict) for v in task_dec['inputs']]
-
-                    if isinstance(task_dec['outputs'], Mapping):
-                        task_kwargs['outputs'] = {k.format(**fmt_dict): fmtp(v, **fmt_dict)
-                                                  for k, v in task_dec['outputs'].items()}
-                    else:
-                        task_kwargs['outputs'] = [fmtp(v, **fmt_dict) for v in task_dec['outputs']]
-
-                    task_ctrl.add(Task(**task_kwargs))
-            else:
-                assert not task_dec.pop('loop_over')
-                assert not task_dec.pop('pass_loop_vars')
-                task_ctrl.add(Task(**task_dec))
-
-        return task_ctrl
-
     def reset(self):
         if self.enable_file_task_content_checks:
             self.metadata_manager = MetadataManager(self.name, self.dotremake_dir)
@@ -135,7 +78,7 @@ class TaskControl:
 
     @check_finalized(False)
     def add(self, task):
-        for output in task.outputs:
+        for output in task.outputs.values():
             if output in self.output_task_map:
                 raise Exception(f'Trying to add {output} twice')
         task_path_hash_key = task.path_hash_key()
@@ -144,9 +87,9 @@ class TaskControl:
         self.task_from_path_hash_key[task_path_hash_key] = task
 
         self.tasks.append(task)
-        for input_path in task.inputs:
+        for input_path in task.inputs.values():
             self.input_task_map[input_path].append(task)
-        for output in task.outputs:
+        for output in task.outputs.values():
             self.output_task_map[output] = task
 
         return task
@@ -158,9 +101,9 @@ class TaskControl:
         curr_tasks = set(self.input_tasks)
         all_tasks = set()
         while curr_tasks:
-            self.tasks_at_level[level] = sorted(curr_tasks, key=lambda t: t.outputs[0])
+            self.tasks_at_level[level] = sorted(curr_tasks, key=lambda t: list(t.outputs.values())[0])
             next_tasks = set()
-            for curr_task in sorted(curr_tasks, key=lambda t: t.outputs[0]):
+            for curr_task in sorted(curr_tasks, key=lambda t: list(t.outputs.values())[0]):
                 can_yield = True
                 for prev_task in self.prev_tasks[curr_task]:
                     if prev_task not in all_tasks:
@@ -306,51 +249,38 @@ class TaskControl:
             if self.enable_file_task_content_checks:
                 self.metadata_manager.create_task_metadata(task)
             is_input_task = True
-            for input_path in task.inputs:
+            for input_path in task.inputs.values():
                 if input_path in self.output_task_map:
                     is_input_task = False
                     # Every output is created by only one task.
                     input_task = self.output_task_map[input_path]
                     if input_task not in self.prev_tasks[task]:
                         self.prev_tasks[task].append(input_task)
-                        if task.is_task_rule and input_task.is_task_rule:
-                            task.__class__.prev_rules.add(input_task.__class__)
-                            input_task.__class__.next_rules.add(task.__class__)
+                        task.__class__.prev_rules.add(input_task.__class__)
+                        input_task.__class__.next_rules.add(task.__class__)
 
                 else:
                     self.input_paths.add(input_path)
             if is_input_task:
                 self.input_tasks.add(task)
 
-            for output_path in task.outputs:
+            for output_path in task.outputs.values():
                 if output_path in self.input_task_map:
                     # Each input can be used by any number of tasks.
                     output_tasks = self.input_task_map[output_path]
                     for output_task in output_tasks:
                         if output_task not in self.next_tasks[task]:
                             self.next_tasks[task].extend(output_tasks)
-                            if task.is_task_rule and output_task.is_task_rule:
-                                task.__class__.next_rules.add(output_task.__class__)
-                                output_task.__class__.prev_rules.add(task.__class__)
+                            task.__class__.next_rules.add(output_task.__class__)
+                            output_task.__class__.prev_rules.add(task.__class__)
         self._dag_built = True
 
-    def get_next_pending(self, task_func=None):
+    def get_next_pending(self):
         while self.pending_tasks or self.running_tasks:
             if not self.pending_tasks:
                 yield None
             else:
-                if task_func:
-                    task = None
-                    for loop_task in self.pending_tasks:
-                        if loop_task.func == task_func:
-                            self.pending_tasks.remove(loop_task)
-                            task = loop_task
-                            break
-                    if not task:
-                        break
-                else:
-                    task = self.pending_tasks.pop(0)
-                self.running_tasks.append(task)
+                task = self.pending_tasks.pop(0)
                 yield task
 
     def task_complete(self, task):
@@ -392,11 +322,6 @@ class TaskControl:
     def run_task(self, task, force=False):
         if task is None:
             raise Exception('No task to run')
-        task_run_index = len(self.completed_tasks) + len(self.running_tasks)
-        if force:
-            print(f'{self.sorted_tasks.index(task) + 1}/{len(self.tasks)}: {task.path_hash_key()} {task}')
-        else:
-            print(f'{task_run_index}/{len(self.tasks)}: {task.path_hash_key()} {task}')
         if self.enable_file_task_content_checks:
             task_md = self.metadata_manager.task_metadata_map[task]
             requires_rerun = self.task_requires_rerun(task, print_reasons=self.print_reasons)
@@ -428,40 +353,45 @@ class TaskControl:
             task.run(force=force)
 
     @check_finalized(True)
-    def run(self, task_func=None, *, requested_tasks=None, force=False, display_func=None):
+    def run(self,  *, requested_tasks=None, force=False, display_func=None):
         if force:
-            if task_func:
-                tasks = [t for t in self.sorted_tasks if t.func == task_func]
+            if requested_tasks:
+                tasks = sorted(requested_tasks, key=lambda x: self.sorted_tasks.index(x))
             else:
                 tasks = [t for t in self.sorted_tasks]
 
             for task in tasks:
                 self.running_tasks.append(task)
-                self.run_task(task, force)
+                print(f'{self.sorted_tasks.index(task) + 1}/{len(self.tasks)}: {task.path_hash_key()} {task}')
+                self.run_task(task, True)
                 self.task_complete(task)
 
                 if display_func:
                     display_func(self)
         else:
             if not requested_tasks:
-                for task in self.get_next_pending(task_func):
+                for task in self.get_next_pending():
+                    self.running_tasks.append(task)
+                    task_run_index = len(self.completed_tasks) + len(self.running_tasks)
+                    print(f'{task_run_index}/{len(self.tasks)}: {task.path_hash_key()} {task}')
                     self.run_task(task, force)
                     self.task_complete(task)
 
                     if display_func:
                         display_func(self)
             else:
-                # raise NotImplementedError('Do not trust this to work')
-                # Problem is that pending tasks needs to be recalculated every time!
                 sorted_requested_tasks = sorted(requested_tasks, key=lambda x: self.sorted_tasks.index(x))
                 for task in sorted_requested_tasks:
-                    assert (task in self.pending_tasks) or (task in self.completed_tasks)
                     if task in self.pending_tasks:
                         self.pending_tasks.remove(task)
                     elif task in self.completed_tasks:
                         self.completed_tasks.remove(task)
+                    elif task in self.remaining_tasks:
+                        self.remaining_tasks.remove(task)
 
                     self.running_tasks.append(task)
+                    print(f'{sorted_requested_tasks.index(task) + 1}/{len(sorted_requested_tasks)}:'
+                          f' {task.path_hash_key()} {task}')
                     self.run_task(task, force)
                     self.task_complete(task)
 
@@ -469,8 +399,11 @@ class TaskControl:
                         display_func(self)
 
     @check_finalized(True)
-    def run_one(self, task_func=None, *, force=False, display_func=None):
-        task = next(self.get_next_pending(task_func))
+    def run_one(self,  *, force=False, display_func=None):
+        task = next(self.get_next_pending())
+        self.running_tasks.append(task)
+        task_run_index = len(self.completed_tasks) + len(self.running_tasks)
+        print(f'{task_run_index}/{len(self.tasks)}: {task.path_hash_key()} {task}')
         self.run_task(task, force)
         self.task_complete(task)
 

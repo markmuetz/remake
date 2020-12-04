@@ -34,7 +34,7 @@ class RemakeMetaclass(type):
         if clsname not in ['TaskRule', 'Config']:
             if 'TaskRule' in [b.__name__ for b in bases]:
                 var_matrix = attrs.get('var_matrix', None)
-                depends_on = attrs.get('depends_on', None)
+                depends_on = attrs.get('depends_on', tuple())
                 if var_matrix:
                     for loop_vars in itertools.product(*var_matrix.values()):
                         fmt_dict = {k: v for k, v in zip(var_matrix.keys(), loop_vars)}
@@ -56,15 +56,15 @@ class RemakeMetaclass(type):
                         else:
                             outputs = {k.format(**fmt_dict): v.format(**fmt_dict)
                                        for k, v in attrs['rule_outputs'].items()}
-                        rule_obj = newcls(attrs['rule_run'], inputs, outputs,
-                                          is_task_rule=True, depends_on=depends_on)
+                        rule_obj = newcls(Remake.task_ctrl, attrs['rule_run'], inputs, outputs,
+                                          depends_on=depends_on)
                         newcls.tasks.append(rule_obj)
                         Remake.task_ctrl.add(rule_obj)
                         for k, v in zip(var_matrix.keys(), loop_vars):
                             setattr(rule_obj, k, v)
                 else:
-                    rule_obj = newcls(attrs['rule_run'], attrs['inputs'], attrs['outputs'],
-                                      is_task_rule=True, depends_on=depends_on)
+                    rule_obj = newcls(Remake.task_ctrl, attrs['rule_run'], attrs['inputs'], attrs['outputs'],
+                                      depends_on=depends_on)
                     newcls.tasks.append(rule_obj)
                     Remake.task_ctrl.add(rule_obj)
 

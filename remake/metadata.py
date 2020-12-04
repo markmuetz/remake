@@ -56,14 +56,14 @@ class MetadataManager:
     def create_task_metadata(self, task):
         task_inputs_metadata_map = {}
         task_outputs_metadata_map = {}
-        for input_path in task.inputs:
+        for input_path in task.inputs.values():
             if input_path not in self.path_metadata_map:
                 input_md = self._create_path_metadata(input_path)
             else:
                 input_md = self.path_metadata_map[input_path]
             task_inputs_metadata_map[input_path] = input_md
 
-        for output_path in task.outputs:
+        for output_path in task.outputs.values():
             if output_path not in self.path_metadata_map:
                 output_md = self._create_path_metadata(output_path)
             else:
@@ -144,10 +144,6 @@ class TaskMetadata:
     def _task_sha1hex(self):
         task_hash_data = [self.task.func_source]
         task_args_data = []
-        if self.task.func_args:
-            task_args_data.append(str(self.task.func_args))
-        if self.task.func_kwargs:
-            task_args_data.append(str(self.task.func_kwargs))
         task_source_sha1hex = sha1(''.join(task_hash_data + task_args_data).encode()).hexdigest()
 
         task_hash_data = [str(self.task.func_bytecode)]
@@ -162,7 +158,7 @@ class TaskMetadata:
 
     def _content_sha1hex(self):
         content_hash_data = []
-        for path in self.task.inputs:
+        for path in self.task.inputs.values():
             assert path.is_absolute()
             if not path.exists():
                 logger.debug(f'no path exists: {path}')
@@ -192,13 +188,13 @@ class TaskMetadata:
             self.rerun_reasons.append(('task_has_not_been_run', None))
             self.requires_rerun |= RemakeOn.NO_TASK_METADATA
 
-        for path in self.task.inputs:
+        for path in self.task.inputs.values():
             if not path.exists():
                 self.rerun_reasons.append(('input_path_does_not_exist', path))
                 self.requires_rerun |= RemakeOn.MISSING_INPUT
                 break
 
-        for path in self.task.outputs:
+        for path in self.task.outputs.values():
             if not path.exists():
                 self.rerun_reasons.append(('output_path_does_not_exist', path))
                 self.requires_rerun |= RemakeOn.MISSING_OUTPUT
@@ -234,8 +230,8 @@ class TaskMetadata:
         if self.full_tracking:
             # Not absolutely needed.
             inputs_outputs_path = self.task_metadata_dir_path / 'inputs_outputs'
-            task_inputs = [str(p) for p in self.task.inputs]
-            task_outputs = [str(p) for p in self.task.outputs]
+            task_inputs = [str(p) for p in self.task.inputs.values()]
+            task_outputs = [str(p) for p in self.task.outputs.values()]
             logger.debug(f'write inputs/outputs to {inputs_outputs_path}')
             flush_json_write({'inputs': task_inputs, 'outputs': task_outputs}, inputs_outputs_path)
 
