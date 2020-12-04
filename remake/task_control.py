@@ -291,6 +291,8 @@ class TaskControl:
         self.completed_tasks.append(task)
 
         for next_task in self.next_tasks[task]:
+            if next_task in self.completed_tasks:
+                continue
             requires_rerun = True
             # Make sure all previous tasks have been run.
             for prev_tasks in self.prev_tasks[next_task]:
@@ -361,6 +363,12 @@ class TaskControl:
                 tasks = [t for t in self.sorted_tasks]
 
             for task in tasks:
+                if task in self.pending_tasks:
+                    self.pending_tasks.remove(task)
+                elif task in self.completed_tasks:
+                    self.completed_tasks.remove(task)
+                elif task in self.remaining_tasks:
+                    self.remaining_tasks.remove(task)
                 self.running_tasks.append(task)
                 print(f'{tasks.index(task) + 1}/{len(tasks)}: {task.path_hash_key()} {task}')
                 self.run_task(task, True)
