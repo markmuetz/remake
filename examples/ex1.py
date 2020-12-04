@@ -1,23 +1,25 @@
-from remake import TaskControl, Task, remake_task_control
+"""Basic definition which takes in1.txt -> out1.txt -> out2.txt
+"""
+from remake import Remake, TaskRule
+
+Remake.init()
 
 
-def f1(inputs, outputs):
-    assert len(inputs) == len(outputs)
-    for i, o in zip(inputs, outputs):
-        o.write_text('\n'.join([f'f1 {l}' for l in i.read_text().split('\n')[:-1]]) + '\n')
+class Basic1(TaskRule):
+    inputs = {'in': 'data/inputs/in1.txt'}
+    outputs = {'out': 'data/outputs/ex1/out1.txt'}
+
+    def rule_run(self):
+        assert len(self.inputs) == len(self.outputs)
+        for i, o in zip(self.inputs.values(), self.outputs.values()):
+            o.write_text('\n'.join([f'Basic1 {l}' for l in i.read_text().split('\n')[:-1]]) + '\n')
 
 
-@remake_task_control
-def gen_task_ctrl():
-    """Basic task control which takes in1.txt -> out1.txt -> out2.txt
+class Basic2(TaskRule):
+    inputs = Basic1.outputs
+    outputs = {'out': 'data/outputs/ex1/out2.txt'}
 
-    Uses same function for both steps.
-    :return: task_ctrl
-    """
-    task_ctrl = TaskControl(__file__)
-
-    task_ctrl.add(Task(f1, ['data/inputs/in1.txt'], ['data/outputs/ex1/out1.txt']))
-    task_ctrl.add(Task(f1, ['data/outputs/ex1/out1.txt'], ['data/outputs/ex1/out2.txt']))
-
-    return task_ctrl
-
+    def rule_run(self):
+        assert len(self.inputs) == len(self.outputs)
+        for i, o in zip(self.inputs.values(), self.outputs.values()):
+            o.write_text('\n'.join([f'f1 {l}' for l in i.read_text().split('\n')[:-1]]) + '\n')

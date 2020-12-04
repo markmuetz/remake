@@ -18,7 +18,7 @@ class Task:
     task_func_cache = {}
 
     def __init__(self, func, inputs, outputs, func_args=tuple(), func_kwargs=None,
-                 *, atomic_write=True, force=False, is_task_rule=False):
+                 *, atomic_write=True, force=False, is_task_rule=False, depends_on=None):
         if func_kwargs is None:
             func_kwargs = {}
         if hasattr(func, 'is_remake_wrapped') and func.is_remake_wrapped:
@@ -29,7 +29,8 @@ class Task:
         else:
             self.remake_required = False
             self.remake_on = True
-            depends_on = []
+            if not depends_on:
+                depends_on = []
         self.depends_on_sources = []
         for depend_obj in depends_on:
             # depends_on can be any object which inspect.getsource can handle
@@ -211,11 +212,14 @@ class Task:
             logger.debug(f'run func {self.func}, {self.func_args}, {self.func_kwargs}')
             start = timer()
             if self.is_task_rule:
+                actual_inputs = self.inputs
                 actual_outputs = self.outputs
+                self.inputs = self.inputs_dict
                 self.outputs = self.tmp_outputs
 
                 self.result = self.func(self)
 
+                self.inputs = actual_inputs
                 self.outputs = actual_outputs
             else:
                 self.result = self.func(inputs, self.tmp_outputs, *self.func_args, **self.func_kwargs)

@@ -18,6 +18,8 @@ class RemakeMetaclass(type):
                 if RemakeMetaclass.config:
                     attrs['config'] = RemakeMetaclass.config
                 attrs['task_ctrl'] = Remake.task_ctrl
+                attrs['next_rules'] = set()
+                attrs['prev_rules'] = set()
             elif 'Config' in [b.__name__ for b in bases]:
                 pass
         else:
@@ -32,22 +34,37 @@ class RemakeMetaclass(type):
         if clsname not in ['TaskRule', 'Config']:
             if 'TaskRule' in [b.__name__ for b in bases]:
                 var_matrix = attrs.get('var_matrix', None)
+                depends_on = attrs.get('depends_on', None)
                 if var_matrix:
                     for loop_vars in itertools.product(*var_matrix.values()):
                         fmt_dict = {k: v for k, v in zip(var_matrix.keys(), loop_vars)}
-                        inputs = {k.format(**fmt_dict): v.format(**fmt_dict)
-                                  for k, v in attrs['rule_inputs'].items()}
-                        outputs = {k.format(**fmt_dict): v.format(**fmt_dict)
-                                   for k, v in attrs['rule_outputs'].items()}
+                        # This is a little gnarly.
+                        # See: https://stackoverflow.com/questions/41921255/staticmethod-object-is-not-callable
+                        # Method has not been bound yet, but you can call it using its __func__ attr.
+                        # N.B. both are possible, if e.g. a second rule uses a first rule's method.
+                        if hasattr(attrs['rule_inputs'], '__func__'):
+                            inputs = attrs['rule_inputs'].__func__(**fmt_dict)
+                        elif callable(attrs['rule_inputs']):
+                            inputs = attrs['rule_inputs'](**fmt_dict)
+                        else:
+                            inputs = {k.format(**fmt_dict): v.format(**fmt_dict)
+                                      for k, v in attrs['rule_inputs'].items()}
+                        if hasattr(attrs['rule_outputs'], '__func__'):
+                            outputs = attrs['rule_outputs'].__func__(**fmt_dict)
+                        elif callable(attrs['rule_outputs']):
+                            outputs = attrs['rule_outputs'](**fmt_dict)
+                        else:
+                            outputs = {k.format(**fmt_dict): v.format(**fmt_dict)
+                                       for k, v in attrs['rule_outputs'].items()}
                         rule_obj = newcls(attrs['rule_run'], inputs, outputs,
-                                          is_task_rule=True)
+                                          is_task_rule=True, depends_on=depends_on)
                         newcls.tasks.append(rule_obj)
                         Remake.task_ctrl.add(rule_obj)
                         for k, v in zip(var_matrix.keys(), loop_vars):
                             setattr(rule_obj, k, v)
                 else:
                     rule_obj = newcls(attrs['rule_run'], attrs['inputs'], attrs['outputs'],
-                                      is_task_rule=True)
+                                      is_task_rule=True, depends_on=depends_on)
                     newcls.tasks.append(rule_obj)
                     Remake.task_ctrl.add(rule_obj)
 

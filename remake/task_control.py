@@ -160,7 +160,7 @@ class TaskControl:
         while curr_tasks:
             self.tasks_at_level[level] = sorted(curr_tasks, key=lambda t: t.outputs[0])
             next_tasks = set()
-            for curr_task in curr_tasks:
+            for curr_task in sorted(curr_tasks, key=lambda t: t.outputs[0]):
                 can_yield = True
                 for prev_task in self.prev_tasks[curr_task]:
                     if prev_task not in all_tasks:
@@ -313,6 +313,10 @@ class TaskControl:
                     input_task = self.output_task_map[input_path]
                     if input_task not in self.prev_tasks[task]:
                         self.prev_tasks[task].append(input_task)
+                        if task.is_task_rule and input_task.is_task_rule:
+                            task.__class__.prev_rules.add(input_task.__class__)
+                            input_task.__class__.next_rules.add(task.__class__)
+
                 else:
                     self.input_paths.add(input_path)
             if is_input_task:
@@ -325,6 +329,9 @@ class TaskControl:
                     for output_task in output_tasks:
                         if output_task not in self.next_tasks[task]:
                             self.next_tasks[task].extend(output_tasks)
+                            if task.is_task_rule and output_task.is_task_rule:
+                                task.__class__.next_rules.add(output_task.__class__)
+                                output_task.__class__.prev_rules.add(task.__class__)
         self._dag_built = True
 
     def get_next_pending(self, task_func=None):
