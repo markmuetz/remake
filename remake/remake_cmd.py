@@ -46,16 +46,16 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument('--reasons', '-R', action='store_true')
     run_parser.add_argument('--tasks', '-t', nargs='*')
 
-    file_info_parser = subparsers.add_parser('file-info', help='Information about the given file')
+    file_info_parser = subparsers.add_parser('file-info', help='Information about file')
     file_info_parser.add_argument('filenames', nargs='*')
     file_info_parser.add_argument('--remake-dir', '-r', nargs='?')
 
-    task_control_info_parser = subparsers.add_parser('task-control-info',
-                                                     help='Information about the given task control')
+    task_control_info_parser = subparsers.add_parser('remakefile-info',
+                                                     help='Information about remakefile')
     task_control_info_parser.add_argument('filenames', nargs='*')
     task_control_info_parser.add_argument('--format', '-f', default='medium', choices=['short', 'medium', 'long'])
 
-    task_info_parser = subparsers.add_parser('task-info', help='Information about the given task')
+    task_info_parser = subparsers.add_parser('task-info', help='Information about task')
     task_info_parser.add_argument('--task', nargs=1)
     task_info_parser.add_argument('filename', nargs=1)
     task_info_parser.add_argument('--format', '-f', default='medium', choices=['short', 'medium', 'long'])
@@ -91,7 +91,7 @@ def remake_cmd(argv: List[str] = sys.argv) -> None:
         print(get_version(form='long' if args.long else 'short'))
     elif args.subcmd_name == 'file-info':
         file_info(args.remake_dir, args.filenames)
-    elif args.subcmd_name == 'task-control-info':
+    elif args.subcmd_name == 'remakefile-info':
         task_control_info(args.filenames, args.format)
     elif args.subcmd_name == 'task-info':
         task_info(args.filename[0], args.format, args.task[0])

@@ -362,7 +362,7 @@ class TaskControl:
 
             for task in tasks:
                 self.running_tasks.append(task)
-                print(f'{self.sorted_tasks.index(task) + 1}/{len(self.tasks)}: {task.path_hash_key()} {task}')
+                print(f'{tasks.index(task) + 1}/{len(tasks)}: {task.path_hash_key()} {task}')
                 self.run_task(task, True)
                 self.task_complete(task)
 
