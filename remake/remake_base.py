@@ -5,6 +5,7 @@ from remake.task_query_set import TaskQuerySet
 
 
 class Remake:
+    config = None
     task_ctrl = None
     rules = None
     tasks = None

@@ -6,17 +6,14 @@ from remake.task_query_set import TaskQuerySet
 
 
 class RemakeMetaclass(type):
-    config = None
-
     def __new__(mcs, clsname, bases, attrs):
-        # print(f'creating {clsname}')
         if clsname not in ['TaskRule', 'Config']:
             if 'TaskRule' in [b.__name__ for b in bases]:
                 assert 'rule_inputs' in attrs or 'inputs' in attrs
                 assert 'rule_outputs' in attrs or 'outputs' in attrs
                 attrs['tasks'] = TaskQuerySet(task_ctrl=Remake.task_ctrl)
-                if RemakeMetaclass.config:
-                    attrs['config'] = RemakeMetaclass.config
+                if Remake.config:
+                    attrs['config'] = Remake.config
                 attrs['task_ctrl'] = Remake.task_ctrl
                 attrs['next_rules'] = set()
                 attrs['prev_rules'] = set()
@@ -29,7 +26,7 @@ class RemakeMetaclass(type):
             mcs, clsname, bases, attrs)
 
         if 'Config' in [b.__name__ for b in bases]:
-            RemakeMetaclass.config = newcls
+            Remake.config = newcls
 
         if clsname not in ['TaskRule', 'Config']:
             if 'TaskRule' in [b.__name__ for b in bases]:
