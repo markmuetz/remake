@@ -66,5 +66,5 @@ class TaskQuerySet(list):
             raise Exception('No task found')
         return self[-1]
 
-    def run_all(self, force=False):
+    def run(self, force=False):
         self.task_ctrl.run(requested_tasks=self, force=force)

@@ -6,7 +6,8 @@ from remake.task_query_set import TaskQuerySet
 
 class Remake:
     task_ctrl = None
-    all_tasks = None
+    rules = None
+    tasks = None
 
     @classmethod
     def init(cls, filename=None):
@@ -16,7 +17,8 @@ class Remake:
             filename = frame.f_globals['__file__']
 
         cls.task_ctrl = TaskControl(filename)
-        cls.all_tasks = TaskQuerySet(task_ctrl=cls.task_ctrl)
+        cls.rules = []
+        cls.tasks = TaskQuerySet(task_ctrl=cls.task_ctrl)
 
     @classmethod
     def finalize(cls):

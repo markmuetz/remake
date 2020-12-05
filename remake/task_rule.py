@@ -33,6 +33,7 @@ class RemakeMetaclass(type):
 
         if clsname not in ['TaskRule', 'Config']:
             if 'TaskRule' in [b.__name__ for b in bases]:
+                Remake.rules.append(newcls)
                 var_matrix = attrs.get('var_matrix', None)
                 depends_on = attrs.get('depends_on', tuple())
                 if var_matrix:
@@ -68,7 +69,7 @@ class RemakeMetaclass(type):
                     newcls.tasks.append(rule_obj)
                     Remake.task_ctrl.add(rule_obj)
 
-                Remake.all_tasks.extend(newcls.tasks)
+                Remake.tasks.extend(newcls.tasks)
         return newcls
 
 
