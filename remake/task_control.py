@@ -1,16 +1,77 @@
-import itertools
-from collections import defaultdict, Mapping
+from collections import defaultdict
 import functools
 from logging import getLogger
 from pathlib import Path
 from typing import List
 
-from remake.task import Task
+import networkx as nx
+
 from remake.metadata import MetadataManager
 from remake.flags import RemakeOn
-from remake.util import fmtp
 
 logger = getLogger(__name__)
+
+
+class TaskStatuses:
+    def __init__(self):
+        self._completed_tasks = set()
+        self._pending_tasks = set()
+        self._ordered_pending_tasks = []
+        self._running_tasks = set()
+        self._remaining_tasks = set()
+        self._task_status = {}
+
+    def reset(self):
+        self.__init__()
+
+    def add_task(self, task, status):
+        getattr(self, f'_{status}_tasks').add(task)
+        if status == 'pending':
+            self._ordered_pending_tasks.append(task)
+        self._task_status[task] = status
+
+    def update_task(self, task, old_status, new_status):
+        old_tasks = getattr(self, f'_{old_status}_tasks')
+        new_tasks = getattr(self, f'_{new_status}_tasks')
+        assert task in old_tasks
+        assert self._task_status[task] in old_status
+        old_tasks.remove(task)
+        new_tasks.add(task)
+        if old_status == 'pending':
+            self._ordered_pending_tasks.remove(task)
+        if new_status == 'pending':
+            self._ordered_pending_tasks.append(task)
+        self._task_status[task] = new_status
+
+    def task_status(self, task):
+        return self._task_status[task]
+
+    @property
+    def completed_tasks(self):
+        return self._completed_tasks
+
+    @property
+    def pending_tasks(self):
+        return self._pending_tasks
+
+    @property
+    def ordered_pending_tasks(self):
+        return self._ordered_pending_tasks
+
+    @property
+    def running_tasks(self):
+        return self._running_tasks
+
+    @property
+    def remaining_tasks(self):
+        return self._remaining_tasks
+
+    def print_status(self):
+        print(f'  completed: {len(self.completed_tasks)}')
+        print(f'  pending  : {len(self.pending_tasks)}')
+        print(f'  running  : {len(self.running_tasks)}')
+        print(f'  remaining: {len(self.remaining_tasks)}')
+        print(f'  all      : {len(self._task_status)}')
 
 
 def check_finalized(finalized):
@@ -61,20 +122,31 @@ class TaskControl:
         self.output_paths = set()
         self.input_tasks = set()
 
-        self.prev_tasks = defaultdict(list)
-        self.next_tasks = defaultdict(list)
-
+        self.task_dag = nx.DiGraph()
         self.sorted_tasks = []
 
-        self.completed_tasks = []
-        self.pending_tasks = []
-        self.running_tasks = []
-        self.remaining_tasks = set()
+        self.statuses = TaskStatuses()
 
         self.tasks_at_level = {}
 
         self._dag_built = False
         return self
+
+    @property
+    def completed_tasks(self):
+        return self.statuses.completed_tasks
+
+    @property
+    def pending_tasks(self):
+        return self.statuses.pending_tasks
+
+    @property
+    def running_tasks(self):
+        return self.statuses.running_tasks
+
+    @property
+    def remaining_tasks(self):
+        return self.statuses.remaining_tasks
 
     @check_finalized(False)
     def add(self, task):
@@ -99,13 +171,26 @@ class TaskControl:
 
         level = 0
         curr_tasks = set(self.input_tasks)
+        visited = set()
         all_tasks = set()
         while curr_tasks:
             self.tasks_at_level[level] = sorted(curr_tasks, key=lambda t: list(t.outputs.values())[0])
             next_tasks = set()
             for curr_task in sorted(curr_tasks, key=lambda t: list(t.outputs.values())[0]):
+                if curr_task in visited:
+                    # Cylce detected. Find offending tasks (there may be more cycles than these).
+                    input_tasks = []
+                    for task in self.tasks:
+                        for input_path in task.inputs.values():
+                            if input_path in curr_task.outputs.values():
+                                input_tasks.append(task)
+
+                    raise Exception(f'cycle detected in DAG:\n  {curr_task} produces input for\n  >' +
+                                    '\n  >'.join([str(t) for t in input_tasks]) + '\n')
+                visited.add(curr_task)
                 can_yield = True
-                for prev_task in self.prev_tasks[curr_task]:
+                # for prev_task in self.prev_tasks[curr_task]:
+                for prev_task in self.task_dag.predecessors(curr_task):
                     if prev_task not in all_tasks:
                         can_yield = False
                         break
@@ -113,7 +198,8 @@ class TaskControl:
                     yield curr_task
                     all_tasks.add(curr_task)
 
-                for next_task in self.next_tasks[curr_task]:
+                # for next_task in self.next_tasks[curr_task]:
+                for next_task in self.task_dag.successors(curr_task):
                     next_tasks.add(next_task)
             curr_tasks = next_tasks
             level += 1
@@ -170,12 +256,11 @@ class TaskControl:
                 logger.error(f'No input file {input_path} exists or will be created (needed by {len(tasks)} tasks)')
             raise Exception(f'Not all input paths exist: {len(missing_paths)} missing')
 
-        if not self.input_tasks:
-            raise Exception('No input tasks defined (do you have a circular dependency?)')
-
         logger.debug('perform topological sort')
         # Can now perform a topological sort.
         self.sorted_tasks = list(self._topogological_tasks())
+        # N.B. provides nicer ordering of tasks than using self.task_dag.
+        # self.sorted_tasks = list(nx.topological_sort(self.task_dag))
         if self.extra_checks:
             logger.debug('performing extra checks on sorted tasks')
             assert len(self.sorted_tasks) == len(self.tasks)
@@ -196,7 +281,7 @@ class TaskControl:
 
         if self.extra_checks:
             logger.debug('performing extra checks on groups')
-            all_tasks_assigned = (set(self.completed_tasks) | set(self.pending_tasks) | set(self.remaining_tasks) ==
+            all_tasks_assigned = (self.completed_tasks | self.pending_tasks | self.remaining_tasks ==
                                   set(self.tasks) and
                                   len(self.completed_tasks) + len(self.pending_tasks) + len(self.remaining_tasks) ==
                                   len(self.tasks))
@@ -214,28 +299,23 @@ class TaskControl:
         # remaining: task either needs to be rerun, or has previous tasks that need to be rerun.
         # import ipdb; ipdb.set_trace()
         for task in self.sorted_tasks:
-            task_state = 'completed'
+            status = 'completed'
             requires_rerun = self.task_requires_rerun(task)
 
             if task.can_run() and (requires_rerun & self.remake_on) or task.force:
-                task_state = 'pending'
-                for prev_task in self.prev_tasks[task]:
+                status = 'pending'
+                for prev_task in self.task_dag.predecessors(task):
                     if prev_task in self.pending_tasks or prev_task in self.remaining_tasks:
-                        task_state = 'remaining'
+                        status = 'remaining'
                         break
             else:
-                for prev_task in self.prev_tasks[task]:
+                for prev_task in self.task_dag.predecessors(task):
                     if prev_task in self.pending_tasks or prev_task in self.remaining_tasks:
-                        task_state = 'remaining'
+                        status = 'remaining'
                         break
 
-            logger.debug(f'  task status: {task_state} - {task.path_hash_key()}')
-            if task_state == 'completed':
-                self.completed_tasks.append(task)
-            elif task_state == 'pending':
-                self.pending_tasks.append(task)
-            elif task_state == 'remaining':
-                self.remaining_tasks.add(task)
+            logger.debug(f'  task status: {status} - {task.path_hash_key()}')
+            self.statuses.add_task(task, status)
 
     def build_task_DAG(self):
         if self._dag_built:
@@ -249,30 +329,33 @@ class TaskControl:
             if self.enable_file_task_content_checks:
                 self.metadata_manager.create_task_metadata(task)
             is_input_task = True
+            self.task_dag.add_node(task)
+
             for input_path in task.inputs.values():
                 if input_path in self.output_task_map:
                     is_input_task = False
                     # Every output is created by only one task.
                     input_task = self.output_task_map[input_path]
-                    if input_task not in self.prev_tasks[task]:
-                        self.prev_tasks[task].append(input_task)
+                    self.task_dag.add_edge(input_task, task)
+                    if input_task not in self.task_dag.predecessors(task):
                         task.__class__.prev_rules.add(input_task.__class__)
                         input_task.__class__.next_rules.add(task.__class__)
-
                 else:
                     self.input_paths.add(input_path)
             if is_input_task:
                 self.input_tasks.add(task)
 
-            for output_path in task.outputs.values():
-                if output_path in self.input_task_map:
-                    # Each input can be used by any number of tasks.
-                    output_tasks = self.input_task_map[output_path]
-                    for output_task in output_tasks:
-                        if output_task not in self.next_tasks[task]:
-                            self.next_tasks[task].extend(output_tasks)
-                            task.__class__.next_rules.add(output_task.__class__)
-                            output_task.__class__.prev_rules.add(task.__class__)
+            # for output_path in task.outputs.values():
+            #     if output_path in self.input_task_map:
+            #         # Each input can be used by any number of tasks.
+            #         output_tasks = self.input_task_map[output_path]
+            #         for output_task in output_tasks:
+            #             if output_task not in self.next_tasks[task]:
+            #                 self.next_tasks[task].extend(output_tasks)
+            #                 task.__class__.next_rules.add(output_task.__class__)
+            #                 output_task.__class__.prev_rules.add(task.__class__)
+        if not nx.is_directed_acyclic_graph(self.task_dag):
+            raise Exception('Not a DAG')
         self._dag_built = True
 
     def get_next_pending(self):
@@ -280,22 +363,20 @@ class TaskControl:
             if not self.pending_tasks:
                 yield None
             else:
-                task = self.pending_tasks.pop(0)
-                yield task
+                yield self.statuses.ordered_pending_tasks[0]
 
     def task_complete(self, task):
         assert task in self.running_tasks, 'task not being run'
         assert task.complete(), 'task not complete'
         logger.debug(f'add completed task: {task.path_hash_key()}')
-        self.running_tasks.remove(task)
-        self.completed_tasks.append(task)
+        self.statuses.update_task(task, 'running', 'completed')
 
-        for next_task in self.next_tasks[task]:
+        for next_task in self.task_dag.successors(task):
             if next_task in self.completed_tasks:
                 continue
             requires_rerun = True
             # Make sure all previous tasks have been run.
-            for prev_tasks in self.prev_tasks[next_task]:
+            for prev_tasks in self.task_dag.predecessors(next_task):
                 if prev_tasks not in self.completed_tasks:
                     requires_rerun = False
                     break
@@ -305,7 +386,7 @@ class TaskControl:
                 requires_rerun = requires_rerun or next_task.requires_rerun()
             if requires_rerun:
                 logger.debug(f'adding new pending task: {next_task.path_hash_key()}')
-                self.pending_tasks.append(next_task)
+                self.statuses.update_task(next_task, self.statuses.task_status(next_task), 'pending')
                 if next_task in self.remaining_tasks:
                     # N.B. happens if run(force=True) is used.
                     self.remaining_tasks.remove(next_task)
@@ -363,13 +444,8 @@ class TaskControl:
                 tasks = [t for t in self.sorted_tasks]
 
             for task in tasks:
-                if task in self.pending_tasks:
-                    self.pending_tasks.remove(task)
-                elif task in self.completed_tasks:
-                    self.completed_tasks.remove(task)
-                elif task in self.remaining_tasks:
-                    self.remaining_tasks.remove(task)
-                self.running_tasks.append(task)
+                status = self.statuses.task_status(task)
+                self.statuses.update_task(task, status, 'running')
                 print(f'{tasks.index(task) + 1}/{len(tasks)}: {task.path_hash_key()} {task}')
                 self.run_task(task, True)
                 self.task_complete(task)
@@ -378,26 +454,16 @@ class TaskControl:
                     display_func(self)
         else:
             if not requested_tasks:
-                for task in self.get_next_pending():
-                    self.running_tasks.append(task)
-                    task_run_index = len(self.completed_tasks) + len(self.running_tasks)
-                    print(f'{task_run_index}/{len(self.tasks)}: {task.path_hash_key()} {task}')
-                    self.run_task(task, force)
-                    self.task_complete(task)
-
-                    if display_func:
-                        display_func(self)
+                while True:
+                    try:
+                        self.run_one(force=force, display_func=display_func)
+                    except StopIteration:
+                        break
             else:
                 sorted_requested_tasks = sorted(requested_tasks, key=lambda x: self.sorted_tasks.index(x))
                 for task in sorted_requested_tasks:
-                    if task in self.pending_tasks:
-                        self.pending_tasks.remove(task)
-                    elif task in self.completed_tasks:
-                        self.completed_tasks.remove(task)
-                    elif task in self.remaining_tasks:
-                        self.remaining_tasks.remove(task)
-
-                    self.running_tasks.append(task)
+                    status = self.statuses.task_status(task)
+                    self.statuses.update_task(task, status, 'running')
                     print(f'{sorted_requested_tasks.index(task) + 1}/{len(sorted_requested_tasks)}:'
                           f' {task.path_hash_key()} {task}')
                     self.run_task(task, force)
@@ -409,7 +475,7 @@ class TaskControl:
     @check_finalized(True)
     def run_one(self,  *, force=False, display_func=None):
         task = next(self.get_next_pending())
-        self.running_tasks.append(task)
+        self.statuses.update_task(task, 'pending', 'running')
         task_run_index = len(self.completed_tasks) + len(self.running_tasks)
         print(f'{task_run_index}/{len(self.tasks)}: {task.path_hash_key()} {task}')
         self.run_task(task, force)
@@ -429,8 +495,4 @@ class TaskControl:
     @check_finalized(True)
     def print_status(self):
         print(f'{self.name}')
-        print(f'  completed: {len(self.completed_tasks)}')
-        print(f'  pending  : {len(self.pending_tasks)}')
-        print(f'  running  : {len(self.running_tasks)}')
-        print(f'  remaining: {len(self.remaining_tasks)}')
-        print(f'  all      : {len(self.tasks)}')
+        self.statuses.print_status()

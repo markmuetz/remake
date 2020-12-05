@@ -2,7 +2,6 @@ import networkx as nx
 import numpy as np
 
 
-
 def tasks_as_networkx_graph(task_ctrl):
     assert task_ctrl.finalized
     G = nx.DiGraph()
