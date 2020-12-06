@@ -10,7 +10,7 @@ from tabulate import tabulate
 from remake.setup_logging import setup_stdout_logging
 from remake.version import get_version
 from remake.load_task_ctrls import load_task_ctrls
-from remake.metadata import try_json_read
+from remake.remake_base import Remake
 
 logger = getLogger(__name__)
 
@@ -39,7 +39,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # TODO: API is different for each command!
     run_parser = subparsers.add_parser('run', help='Run remake')
-    run_parser.add_argument('filenames', nargs='*', default=['remakefile.py'])
+    run_parser.add_argument('remakefiles', nargs='*', default=['remakefile.py'])
     run_parser.add_argument('--force', '-f', action='store_true')
     # run_parser.add_argument('--func', nargs=1, help)
     run_parser.add_argument('--one', '-o', action='store_true')
@@ -47,17 +47,17 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument('--tasks', '-t', nargs='*')
 
     file_info_parser = subparsers.add_parser('file-info', help='Information about file')
+    file_info_parser.add_argument('remakefile')
     file_info_parser.add_argument('filenames', nargs='*')
-    file_info_parser.add_argument('--remake-dir', '-r', nargs='?')
 
     task_control_info_parser = subparsers.add_parser('remakefile-info',
                                                      help='Information about remakefile')
-    task_control_info_parser.add_argument('filenames', nargs='*')
+    task_control_info_parser.add_argument('remakefiles', nargs='*')
     task_control_info_parser.add_argument('--format', '-f', default='medium', choices=['short', 'medium', 'long'])
 
     task_info_parser = subparsers.add_parser('task-info', help='Information about task')
     task_info_parser.add_argument('--task', nargs=1)
-    task_info_parser.add_argument('filename', nargs=1)
+    task_info_parser.add_argument('remakefile', nargs=1)
     task_info_parser.add_argument('--format', '-f', default='medium', choices=['short', 'medium', 'long'])
 
     # version
@@ -86,54 +86,65 @@ def remake_cmd(argv: List[str] = sys.argv) -> None:
     # N.B. args should always be dereferenced at this point,
     # not passed into any subsequent functions.
     if args.subcmd_name == 'run':
-        remake_run(args.filenames, args.force, args.one, args.tasks, args.reasons)
+        remake_run(args.remakefiles, args.force, args.one, args.tasks, args.reasons)
     elif args.subcmd_name == 'version':
         print(get_version(form='long' if args.long else 'short'))
     elif args.subcmd_name == 'file-info':
-        file_info(args.remake_dir, args.filenames)
+        file_info(args.remakefile, args.filenames)
     elif args.subcmd_name == 'remakefile-info':
-        task_control_info(args.filenames, args.format)
+        remakefile_info(args.remakefiles, args.format)
     elif args.subcmd_name == 'task-info':
-        task_info(args.filename[0], args.format, args.task[0])
+        task_info(args.remakefile[0], args.format, args.task[0])
     else:
         assert False, f'Subcommand {args.subcmd_name} not recognized'
 
 
-def file_info(remake_dir, filenames):
-    # Very rough, but it demonstrates how to get information from a path, going through the medatadata dir.
-    remake_dir = Path(remake_dir).absolute()
-    dotremake_dir = remake_dir / '.remake'
-    file_metadata_dir = dotremake_dir / 'metadata_v4' / 'file_metadata'
+def file_info(remakefile, filenames):
+    loaded_task_ctrl = load_task_ctrls(remakefile)[0]
+    Remake.finalize()
+
     for path in (Path(fn).absolute() for fn in filenames):
         if not path.exists():
             raise Exception(f'No file: {path}')
-        file_metadata_path = file_metadata_dir.joinpath(*path.parent.parts[1:]) / (path.name + '.metadata')
-        if not file_metadata_path.exists():
-            print(f'No metadata for {path}')
+        print(path)
+        path_md, used_by_tasks, produced_by_task = Remake.file_info(path)
+        if not path_md:
+            print(f'Path not found in {Remake.task_ctrl.name}')
+            print()
             continue
-        print(file_metadata_path.read_text())
-        file_metadata = try_json_read(file_metadata_path)
-        remake_task_ctrl_path = remake_dir / (file_metadata['task_control_name'] + '.py')
-        task_ctrl = load_task_ctrls(remake_task_ctrl_path)[0]
-        task_ctrl.build_task_DAG()
-        path_md = task_ctrl.metadata_manager.path_metadata_map[path]
-        task = task_ctrl.output_task_map[path]
-        print(path_md)
-        print(task)
+        changed, needs_write = path_md.compare_path_with_previous()
+        if changed:
+            print('Path contents has changed since last use')
+        else:
+            print('Path contents unchanged')
+        if needs_write:
+            print('Path metadata is out of date')
+        else:
+            print('Path metadata is up to date')
+        if produced_by_task:
+            print('Produced by:')
+            print('  ' + str(produced_by_task))
+        if used_by_tasks:
+            print('Used by:')
+            for task in used_by_tasks:
+                print('  ' + str(task))
+        print()
 
 
-def task_info(filename, output_format, task_path_hash_key):
-    task_ctrl = load_task_ctrls(filename)[0]
+def task_info(remakefile, output_format, task_path_hash_key):
+    task_ctrl = load_task_ctrls(remakefile)[0]
     task_ctrl.finalize()
     task = task_ctrl.task_from_path_hash_key[task_path_hash_key]
     print(repr(task))
+    task_md = task_ctrl.metadata_manager.task_metadata_map[task]
+    print(task_md.task_requires_rerun())
 
 
-def task_control_info(filenames, output_format='medium'):
+def remakefile_info(remakefiles, output_format='medium'):
     if output_format == 'short':
         rows = []
-    for filename in filenames:
-        task_ctrl = load_task_ctrls(filename)[0]
+    for remakefile in remakefiles:
+        task_ctrl = load_task_ctrls(remakefile)[0]
         task_ctrl.finalize()
         if output_format == 'short':
             rows.append([task_ctrl.name,
@@ -147,13 +158,7 @@ def task_control_info(filenames, output_format='medium'):
         elif output_format == 'long':
             print(f'{task_ctrl.name}')
             for i, task in enumerate(task_ctrl.sorted_tasks):
-                task_status = ''
-                if task in task_ctrl.completed_tasks:
-                    task_status = 'completed'
-                elif task in task_ctrl.pending_tasks:
-                    task_status = 'pending  '
-                elif task in task_ctrl.remaining_tasks:
-                    task_status = 'remaining'
+                task_status = task_ctrl.statuses.task_status(task)
                 print(f'{i + 1}/{len(task_ctrl.tasks)}, {task_status}: {task.path_hash_key()} {task.short_str()}')
 
     if output_format == 'short':
@@ -162,27 +167,27 @@ def task_control_info(filenames, output_format='medium'):
         print(tabulate(rows, headers=('Name', 'completed', 'pending', 'remaining', 'total')))
 
 
-def remake_run(filenames, force, one, tasks, print_reasons):
+def remake_run(remakefiles, force, one, task_hash_keys, print_reasons):
     task_ctrls = []
-    if len(filenames) > 1:
-        for filename in filenames:
-            loaded_task_ctrls = load_task_ctrls(filename)
+    if len(remakefiles) > 1:
+        for remakefile in remakefiles:
+            loaded_task_ctrls = load_task_ctrls(remakefile)
             logger.debug(f'created TaskControls: {loaded_task_ctrls}')
             task_ctrls.extend(loaded_task_ctrls)
         # Naive -- need to add something like add_task_ctrl()
-        # otherwise will get wrong filename as here.
+        # otherwise will get wrong remakefile as here.
         # uber_task_ctrl = TaskControl(__file__)
-        # for filename in filenames:
-        #     task_ctrl = load_task_ctrl(filename)
+        # for remakefile in remakefiles:
+        #     task_ctrl = load_task_ctrl(remakefile)
         #     logger.debug(f'created TaskControl: {task_ctrl}')
         #     for task in task_ctrl.tasks:
         #         uber_task_ctrl.add(task)
-    elif len(filenames) == 1:
-        loaded_task_ctrls = load_task_ctrls(filenames[0])
+    elif len(remakefiles) == 1:
+        loaded_task_ctrls = load_task_ctrls(remakefiles[0])
         logger.debug(f'created TaskControls: {loaded_task_ctrls}')
         task_ctrls.extend(loaded_task_ctrls)
     else:
-        assert False, 'Should be one or more filenames'
+        assert False, 'Should be one or more remakefiles'
 
     for task_ctrl in task_ctrls:
         if not task_ctrl.finalized:
@@ -190,14 +195,11 @@ def remake_run(filenames, force, one, tasks, print_reasons):
         task_ctrl.print_reasons = print_reasons
         if not task_ctrl.pending_tasks and not force:
             print(f'{task_ctrl.name}: {len(task_ctrl.completed_tasks)} tasks already run')
-        if not tasks:
+        if not task_hash_keys:
             if one:
                 task_ctrl.run_one(force=force)
             else:
                 task_ctrl.run(force=force)
         else:
-            for task_hash_key in tasks:
-                task = task_ctrl.task_from_path_hash_key[task_hash_key]
-                task_ctrl.running_tasks.append(task)
-                task_ctrl.run_task(task, force)
-                task_ctrl.task_complete(task)
+            tasks = [task_ctrl.task_from_path_hash_key[t] for t in task_hash_keys]
+            task_ctrl.run(requested_tasks=tasks, force=force)
