@@ -6,9 +6,11 @@ from typing import List
 
 import networkx as nx
 
-from remake.task import Task, RescanFileTask
+from remake.task import RescanFileTask
 from remake.metadata import MetadataManager
 from remake.flags import RemakeOn
+from remake.executor.singleproc_executor import SingleprocExecutor
+from remake.executor.multiproc_executor import MultiprocExecutor
 
 logger = getLogger(__name__)
 
@@ -107,6 +109,7 @@ class TaskControl:
         self.task_from_path_hash_key = {}
         self.dotremake_dir = Path(dotremake_dir)
         self.dotremake_dir.mkdir(parents=True, exist_ok=True)
+        self.set_executor('singleproc')
 
         self.reset()
 
@@ -129,6 +132,16 @@ class TaskControl:
 
         self._dag_built = False
         return self
+
+    def set_executor(self, executor):
+        if executor == 'singleproc':
+            self.executor = SingleprocExecutor()
+        else:
+            logger.warning('MULTIPROC EXECUTOR DOES NOT WORK AND MAY SLOW YOUR COMPUTER!')
+            r = input('PRESS y to continue: ')
+            if r != 'y':
+                raise Exception('Fix MultiprocExecutor')
+            self.executor = MultiprocExecutor(self)
 
     @property
     def completed_tasks(self):
@@ -373,8 +386,8 @@ class TaskControl:
             # add_file_logging(task_md.log_path)
             task_md.update_status('RUNNING')
             try:
-                # self.executor.enqueue_task(task)
-                task.run(force=True)
+                self.executor.enqueue_task(task)
+                # task.run(force=True)
                 task_md.update_status('COMPLETE')
                 print(f'  -> task complete')
             except Exception as e:
@@ -446,14 +459,21 @@ class TaskControl:
                 # if self.executor.handles_dependencies:
                 # # Work here is done, just enqueue all pending and remaining tasks:
                 #
-                # for task in self.get_next_pending()
-                #     if task:
-                #         self.executor.enqueue_task(task) # think this might be all that's needed?
-                #         # self.run_task(task)
-                #     else:
-                #         task = self.executor.get_completed_task()
-                #         self.task_complete(task)
-                while True:
+                for task in self.get_next_pending():
+                    if task and self.executor.can_accept_task():
+                        if not isinstance(task, RescanFileTask):
+                            self.statuses.update_task(task, 'pending', 'running')
+                            task_run_index = len(self.completed_tasks) + len(self.running_tasks)
+                            print(f'{task_run_index}/{len(self.tasks)}: {task.path_hash_key()} {task}')
+                        else:
+                            print(f'Rescanning: {task.inputs["filepath"]}')
+
+                        self.run_task(task, force)
+                    else:
+                        task = self.executor.get_completed_task()
+                        self.task_complete(task)
+                # while True:
+                while False:
                     try:
                         self.run_one(force=force, display_func=display_func)
                     except StopIteration:

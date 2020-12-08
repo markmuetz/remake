@@ -44,6 +44,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # run_parser.add_argument('--func', nargs=1, help)
     run_parser.add_argument('--one', '-o', action='store_true')
     run_parser.add_argument('--reasons', '-R', action='store_true')
+    run_parser.add_argument('--executor', '-E', default='singleproc')
     run_parser.add_argument('--tasks', '-t', nargs='*')
 
     file_info_parser = subparsers.add_parser('file-info', help='Information about file')
@@ -86,7 +87,7 @@ def remake_cmd(argv: List[str] = sys.argv) -> None:
     # N.B. args should always be dereferenced at this point,
     # not passed into any subsequent functions.
     if args.subcmd_name == 'run':
-        remake_run(args.remakefiles, args.force, args.one, args.tasks, args.reasons)
+        remake_run(args.remakefiles, args.force, args.one, args.tasks, args.reasons, args.executor)
     elif args.subcmd_name == 'version':
         print(get_version(form='long' if args.long else 'short'))
     elif args.subcmd_name == 'file-info':
@@ -167,7 +168,7 @@ def remakefile_info(remakefiles, output_format='medium'):
         print(tabulate(rows, headers=('Name', 'completed', 'pending', 'remaining', 'total')))
 
 
-def remake_run(remakefiles, force, one, task_hash_keys, print_reasons):
+def remake_run(remakefiles, force, one, task_hash_keys, print_reasons, executor):
     task_ctrls = []
     if len(remakefiles) > 1:
         for remakefile in remakefiles:
@@ -193,6 +194,7 @@ def remake_run(remakefiles, force, one, task_hash_keys, print_reasons):
         if not task_ctrl.finalized:
             task_ctrl.finalize()
         task_ctrl.print_reasons = print_reasons
+        task_ctrl.set_executor(executor)
         if (not task_ctrl.rescan_tasks) and  (not task_ctrl.pending_tasks) and (not force):
             print(f'{task_ctrl.name}: {len(task_ctrl.completed_tasks)} tasks already run')
         if not task_hash_keys:

@@ -247,7 +247,7 @@ class RescanFileTask(BaseTask):
         metadata_has_changed = self.path_md.compare_path_with_previous()
         assert metadata_has_changed
         self.path_md.gen_sha1hex()
-        if self.path_md.metadata['sha1hex'] != self.path_md.new_metadata['sha1hex']:
+        if self.path_md.metadata and self.path_md.metadata['sha1hex'] != self.path_md.new_metadata['sha1hex']:
             if self.pathtype == 'inout':
                 # TODO: this needs to be overridable with a config option.
                 raise Exception(f'Content changed of inout: {self.path_md.path}')
