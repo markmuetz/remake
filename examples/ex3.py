@@ -17,7 +17,7 @@ class VariableNumberOutput(TaskRule):
     @staticmethod
     def rule_outputs(year, month):
         days_in_month = calendar.monthrange(year, month)[1]
-        return {f'day{d}': f'data/outputs/ex_task_rule3/{year}.{month:02}.{d:02}'
+        return {f'day{d}': f'data/outputs/ex3/{year}.{month:02}.{d:02}'
                 for d in range(1, days_in_month + 1)}
 
     var_matrix = YEARS_MONTHS
@@ -30,7 +30,7 @@ class VariableNumberOutput(TaskRule):
 
 class VariableNumberOutput2(TaskRule):
     rule_inputs = VariableNumberOutput.rule_outputs
-    rule_outputs = {'out': 'data/outputs/ex_task_rule3/{year}.{month:02}.out'}
+    rule_outputs = {'out': 'data/outputs/ex3/{year}.{month:02}.out'}
     var_matrix = YEARS_MONTHS
 
     def rule_run(self):

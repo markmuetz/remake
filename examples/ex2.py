@@ -11,7 +11,7 @@ VAR_MATRIX = {'i': range(10),
 
 class FanOut(TaskRule):
     rule_inputs = {}
-    rule_outputs = {'a{i},{j}': 'data/outputs/ex_task_rule2/fan_out.{i}.{j}.out'}
+    rule_outputs = {'a{i},{j}': 'data/outputs/ex2/fan_out.{i}.{j}.out'}
     var_matrix = VAR_MATRIX
 
     def rule_run(self):
@@ -22,7 +22,7 @@ class FanOut(TaskRule):
 
 class Process(TaskRule):
     rule_inputs = FanOut.rule_outputs
-    rule_outputs = {'a{i},{j}': 'data/outputs/ex_task_rule2/process.{i}.{j}.out'}
+    rule_outputs = {'a{i},{j}': 'data/outputs/ex2/process.{i}.{j}.out'}
     var_matrix = VAR_MATRIX
 
     def rule_run(self):
@@ -33,7 +33,7 @@ class Process(TaskRule):
 
 class Reduce1(TaskRule):
     rule_inputs = dict_exp(Process.rule_outputs, j=VAR_MATRIX['j'])
-    rule_outputs = {'a{i}': 'data/outputs/ex_task_rule2/reduce1.{i}.out'}
+    rule_outputs = {'a{i}': 'data/outputs/ex2/reduce1.{i}.out'}
     var_matrix = {'i': VAR_MATRIX['i']}
 
     def rule_run(self):
@@ -45,7 +45,7 @@ class Reduce1(TaskRule):
 
 class Reduce2(TaskRule):
     inputs = dict_exp(Reduce1.rule_outputs, i=VAR_MATRIX['i'])
-    outputs = {'a': 'data/outputs/ex_task_rule2/reduce2.out'}
+    outputs = {'a': 'data/outputs/ex2/reduce2.out'}
 
     def rule_run(self):
         payload = f'{self.__class__.__name__}'

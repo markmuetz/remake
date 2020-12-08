@@ -3,6 +3,7 @@ import traceback
 
 from remake.task_control import TaskControl
 from remake.task_query_set import TaskQuerySet
+from remake.setup_logging import setup_stdout_logging
 
 
 class Remake:
@@ -13,6 +14,7 @@ class Remake:
 
     @classmethod
     def init(cls, filename=None):
+        setup_stdout_logging('INFO', colour=True)
         if not filename:
             stack = next(traceback.walk_stack(None))
             frame = stack[0]

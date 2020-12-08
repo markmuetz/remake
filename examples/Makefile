@@ -1,4 +1,8 @@
 # No Makefile dependencies -- just a concise way of bundling some commands.
+#
+
+run_ex1:
+	remake run --reasons ex1.py
 
 run_examples:
 	remake run --reasons ex1.py ex2.py ex3.py ex4.py

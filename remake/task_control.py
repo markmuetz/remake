@@ -403,10 +403,12 @@ class TaskControl:
                 # remove_file_logging(task_md.log_path)
                 pass
             logger.debug(f'run task completed: {repr(task)}')
+            return True
         else:
             logger.debug(f'no longer requires rerun: {repr(task)}')
             logger.info(f'  -> task run not needed')
             # TODO: at this point the DAG could be rescanned, and any downstream tasks could be marked as completed.
+            return False
 
     def task_complete(self, task):
         if not isinstance(task, RescanFileTask):
@@ -469,7 +471,9 @@ class TaskControl:
                         logger.info(f'{task_index(task) + 1}/{len_tasks}: {task.path_hash_key()} {task}')
                     else:
                         logger.info(f'Rescanning: {task.inputs["filepath"]}')
-                    self.run_task(task, force=force)
+                    task_run = self.run_task(task, force=force)
+                    if not task_run:
+                        self.task_complete(task)
                 else:
                     task = self.executor.get_completed_task()
                     self.task_complete(task)

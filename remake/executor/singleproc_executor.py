@@ -13,6 +13,7 @@ class SingleprocExecutor:
 
     def get_completed_task(self):
         completed_task = self.completed_task
+        assert completed_task is not None, 'completed_task is None'
         self.completed_task = None
         return completed_task
 
