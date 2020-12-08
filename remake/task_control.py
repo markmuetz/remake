@@ -6,7 +6,7 @@ from typing import List
 
 import networkx as nx
 
-from remake.task import RescanFileTask
+from remake.task import Task, RescanFileTask
 from remake.metadata import MetadataManager
 from remake.flags import RemakeOn
 from remake.executor.singleproc_executor import SingleprocExecutor
@@ -85,7 +85,9 @@ def check_finalized(finalized):
             if task_ctrl.finalized != finalized:
                 raise Exception(f'Call {method} when TaskControl finalized={finalized}')
             return method(task_ctrl, *args, **kwargs)
+
         return wrapper
+
     return _check_finalized
 
 
@@ -428,73 +430,55 @@ class TaskControl:
                 self.statuses.update_task(next_task, self.statuses.task_status(next_task), 'pending')
 
     @check_finalized(True)
-    def run(self,  *, requested_tasks=None, force=False, display_func=None):
-        if force:
+    def run(self, *, requested_tasks=None, force=False):
+        if self.executor.handles_dependencies:
+            # Work here is done, just enqueue all pending and remaining tasks:
             if requested_tasks:
-                tasks = sorted(requested_tasks, key=lambda x: self.sorted_tasks.index(x))
+                tasks = requested_tasks
             else:
-                tasks = [t for t in self.sorted_tasks]
+                remaining_tasks = sorted(self.remaining_tasks, key=lambda t: self.sorted_tasks.index(t))
+                tasks = self.rescan_tasks + self.statuses.ordered_pending_tasks + remaining_tasks
 
             for task in tasks:
-                status = self.statuses.task_status(task)
-                self.statuses.update_task(task, status, 'running')
-                logger.info(f'{tasks.index(task) + 1}/{len(tasks)}: {task.path_hash_key()} {task}')
-                self.run_task(task, True)
-                self.task_complete(task)
-
-                if display_func:
-                    display_func(self)
+                self.executor.enqueue_task(task)
         else:
-            if not requested_tasks:
-                # TODO:
-                if self.executor.handles_dependencies:
-                    # Work here is done, just enqueue all pending and remaining tasks:
-                    for task in self.rescan_tasks + self.statuses.ordered_pending_tasks + sorted(self.remaining_tasks):
-                        self.executor.enqueue_task(task)
+            if force:
+                if requested_tasks:
+                    tasks = sorted(requested_tasks, key=lambda x: self.sorted_tasks.index(x))
+                    len_tasks = len([t for t in tasks if isinstance(t, Task)])
+                    def task_index(t): return tasks.index(t)
                 else:
-                    for task in self.get_next_pending():
-                        if task and self.executor.can_accept_task():
-                            if not isinstance(task, RescanFileTask):
-                                self.statuses.update_task(task, 'pending', 'running')
-                                task_run_index = len(self.completed_tasks) + len(self.running_tasks)
-                                logger.info(f'{task_run_index}/{len(self.tasks)}: {task.path_hash_key()} {task}')
-                            else:
-                                logger.info(f'Rescanning: {task.inputs["filepath"]}')
-
-                            self.run_task(task, force)
-                        else:
-                            task = self.executor.get_completed_task()
-                            self.task_complete(task)
+                    tasks = [t for t in self.rescan_tasks + self.sorted_tasks]
+                    len_tasks = len(self.sorted_tasks)
+                    def task_index(t): return tasks.index(t)
             else:
-                sorted_requested_tasks = sorted(requested_tasks, key=lambda x: self.sorted_tasks.index(x))
-                for task in sorted_requested_tasks:
-                    status = self.statuses.task_status(task)
-                    self.statuses.update_task(task, status, 'running')
-                    logger.info(f'{sorted_requested_tasks.index(task) + 1}/{len(sorted_requested_tasks)}:'
-                                f' {task.path_hash_key()} {task}')
-                    self.run_task(task, force)
+                if requested_tasks:
+                    tasks = sorted(requested_tasks, key=lambda x: self.sorted_tasks.index(x))
+                    len_tasks = len(requested_tasks)
+                    def task_index(t): return tasks.index(t)
+                else:
+                    tasks = self.get_next_pending()
+                    len_tasks = len(self.sorted_tasks)
+                    def task_index(t): return self.sorted_tasks.index(t)
+
+            for task in tasks:
+                if task and self.executor.can_accept_task():
+                    if not isinstance(task, RescanFileTask):
+                        status = self.statuses.task_status(task)
+                        self.statuses.update_task(task, status, 'running')
+                        logger.info(f'{task_index(task) + 1}/{len_tasks}: {task.path_hash_key()} {task}')
+                    else:
+                        logger.info(f'Rescanning: {task.inputs["filepath"]}')
+                    self.run_task(task, force=force)
+                else:
+                    task = self.executor.get_completed_task()
                     self.task_complete(task)
-
-                    if display_func:
-                        display_func(self)
-
         self.executor.finish()
 
     @check_finalized(True)
-    def run_one(self,  *, force=False, display_func=None):
+    def run_one(self, *, force=False, display_func=None):
         task = next(self.get_next_pending())
-        if not isinstance(task, RescanFileTask):
-            self.statuses.update_task(task, 'pending', 'running')
-            task_run_index = len(self.completed_tasks) + len(self.running_tasks)
-            logger.info(f'{task_run_index}/{len(self.tasks)}: {task.path_hash_key()} {task}')
-        else:
-            logger.info(f'Rescanning: {task.inputs["filepath"]}')
-
-        self.run_task(task, force)
-        self.task_complete(task)
-
-        if display_func:
-            display_func(self)
+        self.run(requested_tasks=[task])
 
     @check_finalized(True)
     def print_status(self):
