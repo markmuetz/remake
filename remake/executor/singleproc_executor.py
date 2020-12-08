@@ -1,4 +1,6 @@
 class SingleprocExecutor:
+    handles_dependencies = False
+
     def __init__(self):
         self.completed_task = None
 

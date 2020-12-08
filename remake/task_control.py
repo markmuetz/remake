@@ -11,6 +11,7 @@ from remake.metadata import MetadataManager
 from remake.flags import RemakeOn
 from remake.executor.singleproc_executor import SingleprocExecutor
 from remake.executor.multiproc_executor import MultiprocExecutor
+from remake.executor.slurm_executor import SlurmExecutor
 
 logger = getLogger(__name__)
 
@@ -136,6 +137,8 @@ class TaskControl:
     def set_executor(self, executor):
         if executor == 'singleproc':
             self.executor = SingleprocExecutor()
+        elif executor == 'slurm':
+            self.executor = SlurmExecutor(self)
         else:
             logger.warning('MULTIPROC EXECUTOR DOES NOT WORK AND MAY SLOW YOUR COMPUTER!')
             r = input('PRESS y to continue: ')
@@ -231,7 +234,10 @@ class TaskControl:
         for path in task.inputs.values():
             if not path.exists():
                 continue
-            self.gen_rescan_task(path)
+            path_md = self.metadata_manager.path_metadata_map[path]
+            metadata_has_changed = path_md.compare_path_with_previous()
+            if metadata_has_changed:
+                self.gen_rescan_task(path)
 
         task_md = self.metadata_manager.task_metadata_map[task]
         task_md.generate_metadata()
@@ -248,21 +254,21 @@ class TaskControl:
         return requires_rerun
 
     def gen_rescan_task(self, path):
+        path = Path(path)
+        path_md = self.metadata_manager.path_metadata_map[path]
         if path in self.input_task_map and path in self.output_task_map:
             pathtype = 'inout'
         elif path in self.input_task_map:
             pathtype = 'in'
         else:
             raise Exception('gen_rescan_task should never be called on output only path')
-        path_md = self.metadata_manager.path_metadata_map[path]
-        metadata_has_changed = path_md.compare_path_with_previous()
-        if metadata_has_changed:
-            rescan_task = RescanFileTask(self, path_md.path, path_md, pathtype)
-            self.metadata_manager.create_task_metadata(rescan_task)
-            self.rescan_tasks.append(rescan_task)
-            for next_task in self.input_task_map[path]:
-                if next_task is not rescan_task:
-                    self.task_dag.add_edge(rescan_task, next_task)
+        rescan_task = RescanFileTask(self, path_md.path, path_md, pathtype)
+        self.metadata_manager.create_task_metadata(rescan_task)
+        self.rescan_tasks.append(rescan_task)
+        for next_task in self.input_task_map[path]:
+            if next_task is not rescan_task:
+                self.task_dag.add_edge(rescan_task, next_task)
+        return rescan_task
 
     @check_finalized(False)
     def finalize(self):
@@ -456,28 +462,24 @@ class TaskControl:
         else:
             if not requested_tasks:
                 # TODO:
-                # if self.executor.handles_dependencies:
-                # # Work here is done, just enqueue all pending and remaining tasks:
-                #
-                for task in self.get_next_pending():
-                    if task and self.executor.can_accept_task():
-                        if not isinstance(task, RescanFileTask):
-                            self.statuses.update_task(task, 'pending', 'running')
-                            task_run_index = len(self.completed_tasks) + len(self.running_tasks)
-                            print(f'{task_run_index}/{len(self.tasks)}: {task.path_hash_key()} {task}')
-                        else:
-                            print(f'Rescanning: {task.inputs["filepath"]}')
+                if self.executor.handles_dependencies:
+                    # Work here is done, just enqueue all pending and remaining tasks:
+                    for task in self.rescan_tasks + self.statuses.ordered_pending_tasks + sorted(self.remaining_tasks):
+                        self.executor.enqueue_task(task)
+                else:
+                    for task in self.get_next_pending():
+                        if task and self.executor.can_accept_task():
+                            if not isinstance(task, RescanFileTask):
+                                self.statuses.update_task(task, 'pending', 'running')
+                                task_run_index = len(self.completed_tasks) + len(self.running_tasks)
+                                print(f'{task_run_index}/{len(self.tasks)}: {task.path_hash_key()} {task}')
+                            else:
+                                print(f'Rescanning: {task.inputs["filepath"]}')
 
-                        self.run_task(task, force)
-                    else:
-                        task = self.executor.get_completed_task()
-                        self.task_complete(task)
-                # while True:
-                while False:
-                    try:
-                        self.run_one(force=force, display_func=display_func)
-                    except StopIteration:
-                        break
+                            self.run_task(task, force)
+                        else:
+                            task = self.executor.get_completed_task()
+                            self.task_complete(task)
             else:
                 sorted_requested_tasks = sorted(requested_tasks, key=lambda x: self.sorted_tasks.index(x))
                 for task in sorted_requested_tasks:
@@ -490,8 +492,8 @@ class TaskControl:
 
                     if display_func:
                         display_func(self)
-        # TODO:
-        # self.executor.finish()
+
+        self.executor.finish()
 
     @check_finalized(True)
     def run_one(self,  *, force=False, display_func=None):

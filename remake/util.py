@@ -4,6 +4,7 @@ import hashlib
 from logging import getLogger
 from pathlib import Path
 from typing import Union
+import subprocess as sp
 
 logger = getLogger(__name__)
 
@@ -57,3 +58,9 @@ def fmtp(path: Union[Path, str], **kwargs) -> Path:
     return Path(str(path).format(**kwargs))
 
 
+def sysrun(cmd):
+    """Run a system command, returns a CompletedProcess
+
+    raises CalledProcessError if cmd is bad.
+    to access output: sysrun(cmd).stdout"""
+    return sp.run(cmd, check=True, shell=True, stdout=sp.PIPE, stderr=sp.PIPE, encoding='utf8')

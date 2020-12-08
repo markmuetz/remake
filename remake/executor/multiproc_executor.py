@@ -61,6 +61,8 @@ def worker(task_ctrl_name, task_queue, task_complete_queue, error_queue, log_que
 
 
 class MultiprocExecutor:
+    handles_dependencies = False
+
     def __init__(self, task_ctrl, nproc=2):
         self.task_ctrl = task_ctrl
         self.nproc = nproc
