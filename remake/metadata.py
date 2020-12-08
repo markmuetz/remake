@@ -130,28 +130,29 @@ class TaskMetadata:
 
         task_source_sha1hex, task_bytecode_sha1hex, task_depends_on_sha1hex = self._task_sha1hex()
         content_sha1hex = self._content_sha1hex()
-        if content_sha1hex is None:
-            logger.debug(f'no existing content')
-            self.rerun_reasons.append(('no_existing_input_paths', None))
-            return False
-
         self.new_metadata['task_source_sha1hex'] = task_source_sha1hex
         self.new_metadata['task_bytecode_sha1hex'] = task_bytecode_sha1hex
         self.new_metadata['task_depends_on_sha1hex'] = task_depends_on_sha1hex
         self.new_metadata['content_sha1hex'] = content_sha1hex
-        return True
 
     def _task_sha1hex(self):
-        task_hash_data = [self.task.func_source]
+        if hasattr(self.task, 'func_source'):
+            task_hash_data = [self.task.func_source]
+        else:
+            task_hash_data = []
         task_args_data = []
         task_source_sha1hex = sha1(''.join(task_hash_data + task_args_data).encode()).hexdigest()
 
-        task_hash_data = [str(self.task.func_bytecode)]
+        if hasattr(self.task, 'func_bytecode'):
+            task_hash_data = [str(self.task.func_bytecode)]
+        else:
+            task_hash_data = []
         task_bytecode_sha1hex = sha1(''.join(task_hash_data + task_args_data).encode()).hexdigest()
 
         task_hash_data = []
-        for depend_on_source in self.task.depends_on_sources:
-            task_hash_data.append(depend_on_source)
+        if hasattr(self.task, 'depends_on_sources'):
+            for depend_on_source in self.task.depends_on_sources:
+                task_hash_data.append(depend_on_source)
         task_depends_on_sha1hex = sha1(''.join(task_hash_data).encode()).hexdigest()
 
         return task_source_sha1hex, task_bytecode_sha1hex, task_depends_on_sha1hex
@@ -162,16 +163,17 @@ class TaskMetadata:
             assert path.is_absolute()
             if not path.exists():
                 logger.debug(f'no path exists: {path}')
-                return None
+                return ''
             input_path_md = self.inputs_metadata_map[path]
-            content_has_changed, needs_write = input_path_md.compare_path_with_previous()
-            if needs_write:
-                input_path_md.write_new_metadata()
-            if content_has_changed:
-                self.rerun_reasons.append(('content_has_changed', path))
-            if 'sha1hex' not in input_path_md.new_metadata:
-                return None
-            sha1hex = input_path_md.new_metadata['sha1hex']
+            # Ensures metadata is loaded.
+            try:
+                input_path_md._load_metadata()
+            except NoMetadata:
+                pass
+            # input_path_md.compare_path_with_previous()
+            if 'sha1hex' not in input_path_md.metadata:
+                return ''
+            sha1hex = input_path_md.metadata['sha1hex']
             content_hash_data.append(sha1hex)
 
         content_sha1hex = sha1(''.join(content_hash_data).encode()).hexdigest()
@@ -193,6 +195,10 @@ class TaskMetadata:
                 self.rerun_reasons.append(('input_path_does_not_exist', path))
                 self.requires_rerun |= RemakeOn.MISSING_INPUT
                 break
+            path_md = self.inputs_metadata_map[path]
+            if path_md.compare_path_with_previous():
+                self.rerun_reasons.append(('input_path_metadata_has_changed', path))
+                self.requires_rerun |= RemakeOn.INPUTS_CHANGED
 
         for path in self.task.outputs.values():
             if not path.exists():
@@ -222,8 +228,9 @@ class TaskMetadata:
 
         self.task_metadata_dir_path.mkdir(parents=True, exist_ok=True)
         # Minimize the number of writes to file.
-        self.new_metadata['func_source'] = self.task.func_source
-        self.new_metadata['func_bytecode'] = str(self.task.func_bytecode)
+        if hasattr(self.task, 'func_source') and hasattr(self.task, 'func_bytecode'):
+            self.new_metadata['func_source'] = self.task.func_source
+            self.new_metadata['func_bytecode'] = str(self.task.func_bytecode)
 
         flush_json_write(self.new_metadata, self.task_metadata_path)
 
@@ -241,8 +248,8 @@ class TaskMetadata:
         for output_path_md in self.outputs_metadata_map.values():
             if not output_path_md.path.exists():
                 continue
-            _, needs_write = output_path_md.compare_path_with_previous()
-            if needs_write:
+            metadata_has_changed = output_path_md.compare_path_with_previous()
+            if metadata_has_changed:
                 output_path_md.write_new_metadata()
             if self.full_tracking:
                 # Not absolutely needed.
@@ -267,9 +274,8 @@ class PathMetadata:
         self.task_metadata = {}
 
         self.changes = []
-        self.content_has_changed = False
+        self.metadata_has_changed = False
         self.need_write = False
-        self._already_compared = False
 
     def _load_metadata(self):
         if self.metadata_path.exists():
@@ -278,17 +284,8 @@ class PathMetadata:
             raise NoMetadata(f'No metadata for {self.path}')
 
     def compare_path_with_previous(self):
-        # I put the commented out lines to try to be smarter about when to check for changes.
-        # Unfortunately they break the following:
-        # t1 < in1 > out1
-        # t2 < out1 > out2
-        # modify in1 -> only t1 runs on remake (should be t1 and t2 if out1 gets modified)
-        # if self._already_compared:
-        #     return self.content_has_changed, self.need_write
         path = self.path
         logger.debug(f'comparing path with previous: {path}')
-        self.content_has_changed = False
-        self.need_write = False
 
         if self.metadata_path.exists():
             self._load_metadata()
@@ -296,34 +293,19 @@ class PathMetadata:
         # N.B. lstat dereferences symlinks.
         stat = path.lstat()
         self.new_metadata.update({'st_size': stat.st_size, 'st_mtime': stat.st_mtime})
-        stat_has_changed = False
 
+        metadata_has_changed = False
         if self.metadata:
             if self.new_metadata['st_size'] != self.metadata['st_size']:
-                stat_has_changed = True
+                metadata_has_changed = True
                 self.changes.append('st_size_changed')
             if self.new_metadata['st_mtime'] != self.metadata['st_mtime']:
-                stat_has_changed = True
+                metadata_has_changed = True
                 self.changes.append('st_mtime_changed')
-
-            if stat_has_changed:
-                self.need_write = True
-                # Only recalc sha1hex if size or last modified time have changed.
-                sha1hex = sha1sum(path)
-                self.new_metadata['sha1hex'] = sha1hex
-                if sha1hex != self.metadata['sha1hex']:
-                    logger.debug(f'{path} content has changed')
-                    self.changes.append('sha1hex_changed')
-                    self.content_has_changed = True
-                else:
-                    logger.debug(f'{path} properties have changed but contents the same')
-            else:
-                self.new_metadata['sha1hex'] = self.metadata['sha1hex']
         else:
-            self.need_write = True
+            metadata_has_changed = True
 
-        self._already_compared = True
-        return self.content_has_changed, self.need_write
+        return metadata_has_changed
 
     def compare_task_with_previous(self, task_path_hash_key):
         logger.debug(f'comparing task with previous: {self.path}')
@@ -341,13 +323,15 @@ class PathMetadata:
         else:
             self.write_new_task_metadata(task_path_hash_key)
 
+    def gen_sha1hex(self):
+        self.new_metadata['sha1hex'] = sha1sum(self.path)
+
     def write_new_metadata(self):
         if 'sha1hex' not in self.new_metadata:
             self.new_metadata['sha1hex'] = sha1sum(self.path)
         logger.debug(f'write new path metadata to {self.metadata_path}')
         self.metadata_path.parent.mkdir(parents=True, exist_ok=True)
         flush_json_write(self.new_metadata, self.metadata_path)
-        self._already_compared = False
 
     def write_new_used_by_task_metadata(self, task_path_hash_key):
         used_by_name = f'{self.path.name}.used_by.{task_path_hash_key}.task'

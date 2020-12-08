@@ -14,14 +14,37 @@ def tmp_atomic_path(p):
     return p.parent / ('.remake.tmp.' + p.name)
 
 
-class Task:
+class BaseTask:
+    def __init__(self, task_ctrl):
+        self.task_ctrl = task_ctrl
+
+    @property
+    def status(self):
+        if self in self.task_ctrl.completed_tasks:
+            return 'completed'
+        elif self in self.task_ctrl.pending_tasks:
+            return 'pending'
+        elif self in self.task_ctrl.running_tasks:
+            return 'running'
+        elif self in self.task_ctrl.remaining_tasks:
+            return 'remaining'
+
+    @property
+    def next_tasks(self):
+        return self.task_ctrl.next_tasks[self]
+
+    @property
+    def prev_tasks(self):
+        return self.task_ctrl.prev_tasks[self]
+
+
+class Task(BaseTask):
     task_func_cache = {}
 
     def __init__(self, task_ctrl, func, inputs, outputs,
                  *, atomic_write=True, force=False, depends_on=tuple()):
-        self.task_ctrl = task_ctrl
-        self.remake_required = False
-        self.remake_on = True
+        super().__init__(task_ctrl)
+        # self.remake_on = True
         self.depends_on_sources = []
         for depend_obj in depends_on:
             # depends_on can be any object which inspect.getsource can handle
@@ -144,25 +167,6 @@ class Task:
     def run_task_rule(self, force=False):
         self.task_ctrl.run_task(self, force=force)
 
-    @property
-    def status(self):
-        if self in self.task_ctrl.completed_tasks:
-            return 'completed'
-        elif self in self.task_ctrl.pending_tasks:
-            return 'pending'
-        elif self in self.task_ctrl.running_tasks:
-            return 'running'
-        elif self in self.task_ctrl.remaining_tasks:
-            return 'remaining'
-
-    @property
-    def next_tasks(self):
-        return self.task_ctrl.next_tasks[self]
-
-    @property
-    def prev_tasks(self):
-        return self.task_ctrl.prev_tasks[self]
-
     def run(self, force=False):
         logger.debug(f'running {repr(self)}')
         if not self.can_run():
@@ -205,3 +209,51 @@ class Task:
             logger.debug(f'already exist: {self.outputs}')
 
         return self
+
+
+class RescanFileTask(BaseTask):
+    def __init__(self, task_ctrl, filepath, path_md, pathtype):
+        super().__init__(task_ctrl)
+        self.filepath = filepath
+        self.path_md = path_md
+        self.pathtype = pathtype
+        self.inputs = {'filepath': Path(filepath).absolute()}
+        self.outputs = {}
+        self.force = False
+
+    def can_run(self):
+        can_run = True
+        for input_path in self.inputs.values():
+            if not input_path.exists():
+                can_run = False
+                break
+        return can_run
+
+    def requires_rerun(self):
+        rerun = RemakeOn.MISSING_OUTPUT
+        return rerun
+
+    def complete(self):
+        metadata_has_changed = self.path_md.compare_path_with_previous()
+        return not metadata_has_changed
+
+    def path_hash_key(self):
+        h = sha1()
+        for input_path in self.inputs.values():
+            h.update(str(input_path).encode())
+        return h.hexdigest()
+
+    def run(self, force=False):
+        metadata_has_changed = self.path_md.compare_path_with_previous()
+        assert metadata_has_changed
+        self.path_md.gen_sha1hex()
+        if self.path_md.metadata['sha1hex'] != self.path_md.new_metadata['sha1hex']:
+            if self.pathtype == 'inout':
+                # TODO: this needs to be overridable with a config option.
+                raise Exception(f'Content changed of inout: {self.path_md.path}')
+            else:
+                logger.debug(f'Content changed of in: {self.path_md.path}')
+
+        self.path_md.write_new_metadata()
+
+

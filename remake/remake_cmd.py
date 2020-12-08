@@ -193,7 +193,7 @@ def remake_run(remakefiles, force, one, task_hash_keys, print_reasons):
         if not task_ctrl.finalized:
             task_ctrl.finalize()
         task_ctrl.print_reasons = print_reasons
-        if not task_ctrl.pending_tasks and not force:
+        if (not task_ctrl.rescan_tasks) and  (not task_ctrl.pending_tasks) and (not force):
             print(f'{task_ctrl.name}: {len(task_ctrl.completed_tasks)} tasks already run')
         if not task_hash_keys:
             if one:
