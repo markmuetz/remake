@@ -1,3 +1,4 @@
+from pathlib import Path
 import inspect
 
 # from remake import Remake
@@ -5,6 +6,8 @@ from remake.util import load_module
 
 
 def load_task_ctrls(filename):
+    if not Path(filename).suffix:
+        filename = Path(filename).with_suffix('.py')
     task_ctrl_module = load_module(filename)
     task_ctrls = []
     functions = [o for o in [getattr(task_ctrl_module, m) for m in dir(task_ctrl_module)]
