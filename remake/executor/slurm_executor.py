@@ -21,11 +21,9 @@ SLURM_SCRIPT_TPL = """#!/bin/bash
 #SBATCH --mem={mem}
 {dependencies}
 
-python {script_path} {remakefile_path} {remakefile_path_hash} {task_key}
+python {script_path} {remakefile_path} {remakefile_path_hash} {task_type} {task_key}
 """
 
-logging.basicConfig(stream=sys.stdout, level=os.getenv('REMAKE_LOGLEVEL', 'INFO'),
-                    format='%(asctime)s %(levelname)8s: %(message)s')
 logger = logging.getLogger(__name__)
 
 
@@ -39,10 +37,9 @@ def _parse_jobid(output):
 
 def _submit_slurm_script(slurm_script_path):
     try:
-        output = slurm_script_path.read_text()
-        # comp_proc = sysrun(f'sbatch {slurm_script_path}')
-        # output = comp_proc.stdout
-        logger.info(output)
+        comp_proc = sysrun(f'sbatch {slurm_script_path}')
+        output = comp_proc.stdout
+        logger.info(output.strip())
     except sp.CalledProcessError as cpe:
         logger.error(f'Error submitting {slurm_script_path}')
         logger.error(cpe)
@@ -94,7 +91,7 @@ class SlurmExecutor:
 
         if isinstance(task, Task):
             task_type = 'task'
-            task_key = task.path_hash_key(),
+            task_key = task.path_hash_key()
         elif isinstance(task, RescanFileTask):
             task_type = 'rescan'
             task_key = str(task.inputs['filepath'])
@@ -136,7 +133,7 @@ class SlurmExecutor:
             self._submit_task(task)
 
 
-def main(remakefile, remakefile_hash, task_type, task_key):
+def run_job(remakefile, remakefile_hash, task_type, task_key):
     setup_stdout_logging('DEBUG')
 
     remakefile = Path(remakefile).absolute()
@@ -151,6 +148,8 @@ def main(remakefile, remakefile_hash, task_type, task_key):
     # when this is called, and finalize can be trying to read it at the same time.
     # Can perhaps fix if instead Task is responsible for working out if rerun needed,
     # and removing finalize here.
+    # But the task DAG needs to be build.
+    task_ctrl.build_task_DAG()
     if task_type == 'task':
         task = task_ctrl.task_from_path_hash_key[task_key]
     elif task_type == 'rescan':
@@ -160,6 +159,5 @@ def main(remakefile, remakefile_hash, task_type, task_key):
 
 if __name__ == '__main__':
     print(sys.argv)
-    main(*sys.argv[1:])
-
+    run_job(*sys.argv[1:])
 

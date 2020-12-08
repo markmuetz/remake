@@ -281,7 +281,7 @@ class TaskControl:
                 if not dep.tasks == dep.completed_tasks:
                     raise Exception(f'Dependency task control {dep.name} is not complete')
 
-        logger.info('building task DAG')
+        logger.info('Build task DAG')
         self.build_task_DAG()
 
         missing_paths = [p for p in self.input_paths if not p.exists()]
@@ -291,7 +291,7 @@ class TaskControl:
                 logger.error(f'No input file {input_path} exists or will be created (needed by {len(tasks)} tasks)')
             raise Exception(f'Not all input paths exist: {len(missing_paths)} missing')
 
-        logger.info('perform topological sort')
+        logger.info('Perform topological sort')
         # Can now perform a topological sort.
         self.sorted_tasks = list(self._topogological_tasks())
         # N.B. provides nicer ordering of tasks than using self.task_dag.
@@ -301,7 +301,7 @@ class TaskControl:
             assert len(self.sorted_tasks) == len(self.tasks)
             assert set(self.sorted_tasks) == set(self.tasks)
 
-        logger.info('assigning tasks to groups')
+        logger.info('Assign status to tasks')
         self._assign_tasks()
 
         if self.extra_checks:
