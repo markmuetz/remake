@@ -178,6 +178,9 @@ class TaskControl:
         for output in task.outputs.values():
             self.output_task_map[output] = task
 
+        task_md = self.metadata_manager.create_task_metadata(task)
+        task.add_metadata(task_md)
+
         return task
 
     def _topogological_tasks(self):
@@ -248,9 +251,9 @@ class TaskControl:
             for reason in task_md.rerun_reasons:
                 logger.debug(f'  {reason}')
                 if print_reasons:
-                    print(f'  --reason: {reason}')
+                    logger.info(f'  --reason: {reason}')
         if print_reasons and not requires_rerun:
-            print(f'  --reason: not needed')
+            logger.info(f'  --reason: not needed')
         return requires_rerun
 
     def gen_rescan_task(self, path):
@@ -263,7 +266,8 @@ class TaskControl:
         else:
             raise Exception('gen_rescan_task should never be called on output only path')
         rescan_task = RescanFileTask(self, path_md.path, path_md, pathtype)
-        self.metadata_manager.create_task_metadata(rescan_task)
+        task_md = self.metadata_manager.create_task_metadata(rescan_task)
+        rescan_task.add_metadata(task_md)
         self.rescan_tasks.append(rescan_task)
         for next_task in self.input_task_map[path]:
             if next_task is not rescan_task:
@@ -351,7 +355,6 @@ class TaskControl:
         # Fill in self.prev_tasks and self.next_tasks; these hold the information about the
         # task DAG.
         for task in self.tasks:
-            self.metadata_manager.create_task_metadata(task)
             is_input_task = True
             self.task_dag.add_node(task)
 
@@ -383,43 +386,25 @@ class TaskControl:
     def run_task(self, task, force=False):
         if task is None:
             raise Exception('No task to run')
-        task_md = self.metadata_manager.task_metadata_map[task]
         requires_rerun = self.task_requires_rerun(task, print_reasons=self.print_reasons)
         if force or task.force or requires_rerun & self.remake_on:
             logger.debug(f'running task (force={force}, requires_rerun={requires_rerun}): {repr(task)}')
-            task_md.log_path.parent.mkdir(parents=True, exist_ok=True)
-            # TODO: adding file logging is disabling other logging.
-            # add_file_logging(task_md.log_path)
-            task_md.update_status('RUNNING')
+
             try:
                 self.executor.enqueue_task(task)
-                # task.run(force=True)
-                task_md.update_status('COMPLETE')
-                print(f'  -> task complete')
             except Exception as e:
                 logger.error(f'TaskControl: {self.name}')
                 logger.error(e)
-                task_md.update_status('ERROR')
+                task.task_md.update_status('ERROR')
                 raise
             finally:
                 # remove_file_logging(task_md.log_path)
                 pass
             logger.debug(f'run task completed: {repr(task)}')
-            self._post_run_with_content_check(task_md)
         else:
             logger.debug(f'no longer requires rerun: {repr(task)}')
-            print(f'  -> task run not needed')
+            logger.info(f'  -> task run not needed')
             # TODO: at this point the DAG could be rescanned, and any downstream tasks could be marked as completed.
-
-    def _post_run_with_content_check(self, task_md):
-        logger.debug('post run content checks')
-        task_md.generate_metadata()
-        task_md.write_task_metadata()
-
-        if self.extra_checks:
-            logger.debug('post run content checks extra_checks')
-            requires_rerun = task_md.task_requires_rerun()
-            assert not requires_rerun
 
     def task_complete(self, task):
         if not isinstance(task, RescanFileTask):
@@ -453,7 +438,7 @@ class TaskControl:
             for task in tasks:
                 status = self.statuses.task_status(task)
                 self.statuses.update_task(task, status, 'running')
-                print(f'{tasks.index(task) + 1}/{len(tasks)}: {task.path_hash_key()} {task}')
+                logger.info(f'{tasks.index(task) + 1}/{len(tasks)}: {task.path_hash_key()} {task}')
                 self.run_task(task, True)
                 self.task_complete(task)
 
@@ -472,9 +457,9 @@ class TaskControl:
                             if not isinstance(task, RescanFileTask):
                                 self.statuses.update_task(task, 'pending', 'running')
                                 task_run_index = len(self.completed_tasks) + len(self.running_tasks)
-                                print(f'{task_run_index}/{len(self.tasks)}: {task.path_hash_key()} {task}')
+                                logger.info(f'{task_run_index}/{len(self.tasks)}: {task.path_hash_key()} {task}')
                             else:
-                                print(f'Rescanning: {task.inputs["filepath"]}')
+                                logger.info(f'Rescanning: {task.inputs["filepath"]}')
 
                             self.run_task(task, force)
                         else:
@@ -485,8 +470,8 @@ class TaskControl:
                 for task in sorted_requested_tasks:
                     status = self.statuses.task_status(task)
                     self.statuses.update_task(task, status, 'running')
-                    print(f'{sorted_requested_tasks.index(task) + 1}/{len(sorted_requested_tasks)}:'
-                          f' {task.path_hash_key()} {task}')
+                    logger.info(f'{sorted_requested_tasks.index(task) + 1}/{len(sorted_requested_tasks)}:'
+                                f' {task.path_hash_key()} {task}')
                     self.run_task(task, force)
                     self.task_complete(task)
 
@@ -501,9 +486,9 @@ class TaskControl:
         if not isinstance(task, RescanFileTask):
             self.statuses.update_task(task, 'pending', 'running')
             task_run_index = len(self.completed_tasks) + len(self.running_tasks)
-            print(f'{task_run_index}/{len(self.tasks)}: {task.path_hash_key()} {task}')
+            logger.info(f'{task_run_index}/{len(self.tasks)}: {task.path_hash_key()} {task}')
         else:
-            print(f'Rescanning: {task.inputs["filepath"]}')
+            logger.info(f'Rescanning: {task.inputs["filepath"]}')
 
         self.run_task(task, force)
         self.task_complete(task)

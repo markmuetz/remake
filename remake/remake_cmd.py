@@ -1,3 +1,4 @@
+import os
 import sys
 import argparse
 from logging import getLogger
@@ -32,7 +33,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # Top-level arguments.
     parser.add_argument('--debug', '-D', help='Enable debug logging', action='store_true')
+    parser.add_argument('--warning', '-W', help='Warning logging only', action='store_true')
     parser.add_argument('--debug-exception', '-X', help='Launch ipdb on exception', action='store_true')
+    parser.add_argument('--no-colour', '-B', help='Black and white logging', action='store_true')
 
     subparsers = parser.add_subparsers(dest='subcmd_name', required=True)
     # name of subparser ends up in subcmd_name -- use for command dispatch.
@@ -76,8 +79,17 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
 
 def remake_cmd(argv: List[str] = sys.argv) -> None:
     args = _parse_args(argv)
-    loglevel = 'DEBUG' if args.debug else 'INFO'
-    setup_stdout_logging(loglevel)
+
+    loglevel = os.getenv('REMAKE_LOGLEVEL', None)
+    if loglevel is None:
+        if args.debug:
+            loglevel = 'DEBUG'
+        elif args.warning:
+            loglevel = 'WARNING'
+        else:
+            loglevel = 'INFO'
+    colour = not args.no_colour
+    setup_stdout_logging(loglevel, colour=colour)
 
     if args.debug_exception:
         # Handle top level exceptions with a debugger.
@@ -196,7 +208,7 @@ def remake_run(remakefiles, force, one, task_hash_keys, print_reasons, executor)
         task_ctrl.print_reasons = print_reasons
         task_ctrl.set_executor(executor)
         if (not task_ctrl.rescan_tasks) and  (not task_ctrl.pending_tasks) and (not force):
-            print(f'{task_ctrl.name}: {len(task_ctrl.completed_tasks)} tasks already run')
+            logger.info(f'{task_ctrl.name}: {len(task_ctrl.completed_tasks)} tasks already run')
         if not task_hash_keys:
             if one:
                 task_ctrl.run_one(force=force)

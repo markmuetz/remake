@@ -17,6 +17,10 @@ def tmp_atomic_path(p):
 class BaseTask:
     def __init__(self, task_ctrl):
         self.task_ctrl = task_ctrl
+        self.task_md = None
+
+    def add_metadata(self, task_md):
+        self.task_md = task_md
 
     @property
     def status(self):
@@ -172,6 +176,11 @@ class Task(BaseTask):
         if not self.can_run():
             raise Exception('Not all files required for task exist')
 
+        self.task_md.log_path.parent.mkdir(parents=True, exist_ok=True)
+        # TODO: adding file logging is disabling other logging.
+        # add_file_logging(task_md.log_path)
+        self.task_md.update_status('RUNNING')
+
         if self.requires_rerun() or force or self.force:
             logger.debug(f'requires_rerun or force')
             for output_dir in set([o.parent for o in self.outputs.values()]):
@@ -208,7 +217,20 @@ class Task(BaseTask):
         else:
             logger.debug(f'already exist: {self.outputs}')
 
+        self.task_md.update_status('COMPLETE')
+        self._post_run_with_content_check()
+
         return self
+
+    def _post_run_with_content_check(self):
+        logger.debug('post run content checks')
+        self.task_md.generate_metadata()
+        self.task_md.write_task_metadata()
+
+        logger.debug('post run content checks extra_checks')
+        requires_rerun = self.task_md.task_requires_rerun()
+        assert not requires_rerun
+
 
 
 class RescanFileTask(BaseTask):

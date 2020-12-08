@@ -134,7 +134,7 @@ class SlurmExecutor:
 
 
 def run_job(remakefile, remakefile_hash, task_type, task_key):
-    setup_stdout_logging('DEBUG')
+    setup_stdout_logging('DEBUG', colour=False, detailed=True)
 
     remakefile = Path(remakefile).absolute()
     curr_remakefile_hash = sha1(remakefile.read_bytes()).hexdigest()
