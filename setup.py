@@ -27,9 +27,12 @@ setup(
     maintainer_email='mark.muetzelfeldt@reading.ac.uk',
     packages=[
         'remake',
+        'remake.executor',
         ],
     python_requires='>=3.6',
     install_requires=[
+        'networkx',
+        'tabulate',
         ],
     extras_require={
         'debug': ['ipdb'],

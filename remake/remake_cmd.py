@@ -5,7 +5,6 @@ from logging import getLogger
 from pathlib import Path
 from typing import List
 
-import numpy as np
 from tabulate import tabulate
 
 from remake.setup_logging import setup_stdout_logging
@@ -175,7 +174,9 @@ def remakefile_info(remakefiles, output_format='medium'):
                 print(f'{i + 1}/{len(task_ctrl.tasks)}, {task_status}: {task.path_hash_key()} {task.short_str()}')
 
     if output_format == 'short':
-        totals = list(np.array([r[1:] for r in rows]).sum(axis=0))
+        # totals = list(np.array([r[1:] for r in rows]).sum(axis=0))
+        # Same thing without numpy.
+        totals = [sum(col) for col in list(zip(*rows))[1:]]
         rows.append(['Total'] + totals)
         print(tabulate(rows, headers=('Name', 'completed', 'pending', 'remaining', 'total')))
 
