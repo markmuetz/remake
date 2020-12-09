@@ -129,11 +129,11 @@ class TaskMetadata:
         logger.debug(f'generate metadata for {self.task_path_hash_key}')
 
         task_source_sha1hex, task_bytecode_sha1hex, task_depends_on_sha1hex = self._task_sha1hex()
-        content_sha1hex = self._content_sha1hex()
+        task_content_sha1hex = self._content_sha1hex()
         self.new_metadata['task_source_sha1hex'] = task_source_sha1hex
         self.new_metadata['task_bytecode_sha1hex'] = task_bytecode_sha1hex
         self.new_metadata['task_depends_on_sha1hex'] = task_depends_on_sha1hex
-        self.new_metadata['content_sha1hex'] = content_sha1hex
+        self.new_metadata['task_content_sha1hex'] = task_content_sha1hex
 
     def _task_sha1hex(self):
         if hasattr(self.task, 'func_source'):
@@ -172,12 +172,14 @@ class TaskMetadata:
                 pass
             # input_path_md.compare_path_with_previous()
             if 'sha1hex' not in input_path_md.metadata:
-                return ''
-            sha1hex = input_path_md.metadata['sha1hex']
-            content_hash_data.append(sha1hex)
+                return None
+            content_hash_data.append(input_path_md.metadata['sha1hex'])
+            # Note1, (see below) you CANNOT put things like task_source_sha1hex in here.
+            # Why not? Because if you do, ANY change to source, even one that does not affect
+            # the output will cause subsequent tasks to run.
 
-        content_sha1hex = sha1(''.join(content_hash_data).encode()).hexdigest()
-        return content_sha1hex
+        task_content_sha1hex = sha1(''.join(content_hash_data).encode()).hexdigest()
+        return task_content_sha1hex
 
     def task_requires_rerun(self):
         assert self.new_metadata
@@ -216,9 +218,9 @@ class TaskMetadata:
             if self.new_metadata['task_depends_on_sha1hex'] != self.metadata['task_depends_on_sha1hex']:
                 self.requires_rerun |= RemakeOn.DEPENDS_SOURCE_CHANGED
                 self.rerun_reasons.append(('task_depends_on_sha1hex_different', None))
-            if self.new_metadata['content_sha1hex'] != self.metadata['content_sha1hex']:
+            if self.new_metadata['task_content_sha1hex'] != self.metadata['task_content_sha1hex']:
                 self.requires_rerun |= RemakeOn.INPUTS_CHANGED
-                self.rerun_reasons.append(('content_sha1hex_different', None))
+                self.rerun_reasons.append(('task_content_sha1hex_different', None))
 
         logger.debug(f'task requires rerun {self.requires_rerun}: {self.task_path_hash_key}')
         return self.requires_rerun
@@ -329,6 +331,13 @@ class PathMetadata:
     def write_new_metadata(self):
         if 'sha1hex' not in self.new_metadata:
             self.new_metadata['sha1hex'] = sha1sum(self.path)
+        # Note1, (see above) you CANNOT put things like task_source_sha1hex in here.
+        # Why not? Because if you do, ANY change to source, even one that does not affect
+        # the output will cause subsequent tasks to run.
+        # You cannot even put task_content_sha1hex in here. The reason being that if you do,
+        # a task will have a different value for it if any of its inputs changed. If the task then runs
+        # it will definitely set off a chain of runs in its downstream tasks, even though it may not be needed.
+        # This is probably a bit of an edge case.
         logger.debug(f'write new path metadata to {self.metadata_path}')
         self.metadata_path.parent.mkdir(parents=True, exist_ok=True)
         flush_json_write(self.new_metadata, self.metadata_path)

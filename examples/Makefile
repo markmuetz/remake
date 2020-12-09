@@ -1,5 +1,6 @@
 # No Makefile dependencies -- just a concise way of bundling some commands.
-#
+
+all: run_examples
 
 run_ex1:
 	remake run --reasons ex1.py
@@ -28,10 +29,15 @@ test_ex1: reset
 	remake run --reasons ex1.py || true
 
 run_examples:
-	remake run --reasons ex1.py ex2.py ex3.py ex4.py
+	remake remakefile-info --format short ex1.py ex2.py ex3.py ex4.py
+	remake run --reasons ex1.py
+	remake run --reasons ex2.py
+	remake run --reasons ex3.py
+	remake run --reasons ex4.py
+	remake remakefile-info --format short ex1.py ex2.py ex3.py ex4.py
 
-task_control_info:
-	remake task-control-info --format short ex1.py ex2.py ex3.py ex4.py
+remakefile_info:
+	remake remakefile-info --format short ex1.py ex2.py ex3.py ex4.py
 
 reset: clean
 	git checkout -- data/inputs
