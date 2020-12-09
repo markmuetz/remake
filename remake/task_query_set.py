@@ -8,14 +8,18 @@ class TaskQuerySet(list):
     def all(self):
         return self
 
-    def filter(self, **kwargs):
-        return TaskQuerySet(self._filter(**kwargs), task_ctrl=self.task_ctrl)
+    def filter(self, cast_to_str=False, **kwargs):
+        return TaskQuerySet(self._filter(cast_to_str, **kwargs), task_ctrl=self.task_ctrl)
 
-    def _filter(self, **kwargs):
+    def _filter(self, cast_to_str=False, **kwargs):
         for task in self:
             for k, v in kwargs.items():
-                if getattr(task, k, None) == v:
-                    yield task
+                if cast_to_str:
+                    if str(getattr(task, k, None)) == str(v):
+                        yield task
+                else:
+                    if getattr(task, k, None) == v:
+                        yield task
 
     def filter_on_inputs(self, inputs):
         return TaskQuerySet(self._filter_on_inputs(inputs), task_ctrl=self.task_ctrl)

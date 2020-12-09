@@ -278,6 +278,7 @@ class TaskControl:
 
     @check_finalized(False)
     def finalize(self):
+        logger.info(f'==={self.name}===')
         if not self.tasks:
             raise Exception('No tasks have been added')
 
