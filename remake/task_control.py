@@ -464,19 +464,23 @@ class TaskControl:
 
             try:
                 for task in tasks:
-                    if task and self.executor.can_accept_task():
-                        if not isinstance(task, RescanFileTask):
-                            status = self.statuses.task_status(task)
-                            self.statuses.update_task(task, status, 'running')
-                            logger.info(f'{task_index(task) + 1}/{len_tasks}: {task.path_hash_key()} {task}')
+                    task_to_run = task
+                    while task_to_run:
+                        if task_to_run and self.executor.can_accept_task():
+                            if not isinstance(task_to_run, RescanFileTask):
+                                status = self.statuses.task_status(task_to_run)
+                                self.statuses.update_task(task_to_run, status, 'running')
+                                logger.info(f'{task_index(task_to_run) + 1}/{len_tasks}:'
+                                            f' {task_to_run.path_hash_key()} {task_to_run}')
+                            else:
+                                logger.info(f'Rescanning: {task_to_run.inputs["filepath"]}')
+                            task_enqueued = self.enqueue_task(task_to_run, force=force)
+                            if not task_enqueued:
+                                self.task_complete(task_to_run)
+                            task_to_run = None
                         else:
-                            logger.info(f'Rescanning: {task.inputs["filepath"]}')
-                        task_enqueued = self.enqueue_task(task, force=force)
-                        if not task_enqueued:
-                            self.task_complete(task)
-                    else:
-                        task = self.executor.get_completed_task()
-                        self.task_complete(task)
+                            completed_task = self.executor.get_completed_task()
+                            self.task_complete(completed_task)
                 while not self.executor.has_finished():
                     logger.debug('waiting for remaining tasks')
                     task = self.executor.get_completed_task()

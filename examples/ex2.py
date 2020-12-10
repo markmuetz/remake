@@ -27,7 +27,7 @@ class Process(TaskRule):
 
     def rule_run(self):
         # Arbitrary CPU-bound calculation that slows down this task.
-        total = sum(range(int(1e8) + self.i + self.j))
+        total = sum(range(int(1e2) + self.i + self.j))
         payload = f'{self.__class__.__name__} ({self.i}, {self.j}) {total}'
         for i, o in zip(self.inputs.values(), self.outputs.values()):
             o.write_text(i.read_text() + payload)
@@ -54,4 +54,3 @@ class Reduce2(TaskRule):
         payload += ', '.join([i.read_text() for i in self.inputs.values()])
         for o in self.outputs.values():
             o.write_text(payload)
-

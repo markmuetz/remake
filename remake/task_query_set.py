@@ -4,6 +4,9 @@ class TaskQuerySet(list):
         if not iterable:
             iterable = []
         super().__init__(iterable)
+        
+    def __getitem__(self, i):
+        return TaskQuerySet(list.__getitem__(self, i), self.task_ctrl)
 
     def all(self):
         return self
