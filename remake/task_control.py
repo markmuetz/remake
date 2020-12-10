@@ -386,12 +386,12 @@ class TaskControl:
             else:
                 yield self.statuses.ordered_pending_tasks[0]
 
-    def run_task(self, task, force=False):
+    def enqueue_task(self, task, force=False):
         if task is None:
-            raise Exception('No task to run')
+            raise Exception('No task to enqueue')
         requires_rerun = self.task_requires_rerun(task, print_reasons=self.print_reasons)
         if force or task.force or requires_rerun & self.remake_on:
-            logger.debug(f'running task (force={force}, requires_rerun={requires_rerun}): {repr(task)}')
+            logger.debug(f'enqueue task (force={force}, requires_rerun={requires_rerun}): {task}')
 
             try:
                 self.executor.enqueue_task(task)
@@ -403,10 +403,10 @@ class TaskControl:
             finally:
                 # remove_file_logging(task_md.log_path)
                 pass
-            logger.debug(f'enqueued task: {repr(task)}')
+            logger.debug(f'enqueued task: {task}')
             return True
         else:
-            logger.debug(f'no longer requires rerun: {repr(task)}')
+            logger.debug(f'no longer requires enqueued: {task}')
             logger.info(f'  -> task run not needed')
             # TODO: at this point the DAG could be rescanned, and any downstream tasks could be marked as completed.
             return False
@@ -474,8 +474,8 @@ class TaskControl:
                             logger.info(f'{task_index(task) + 1}/{len_tasks}: {task.path_hash_key()} {task}')
                         else:
                             logger.info(f'Rescanning: {task.inputs["filepath"]}')
-                        task_run = self.run_task(task, force=force)
-                        if not task_run:
+                        task_enqueued = self.enqueue_task(task, force=force)
+                        if not task_enqueued:
                             self.task_complete(task)
                     else:
                         task = self.executor.get_completed_task()

@@ -118,14 +118,14 @@ class Task(BaseTask):
             if len(paths) <= paths_to_show:
                 return f'{[p.name for p in paths]}'
             else:
-                return f'{Counter(p.suffix for p in paths).most_common()}'
-        short_inputs = short_paths(self.inputs.values(), input_paths_to_show)
-        short_outputs = short_paths(self.outputs.values(), output_paths_to_show)
+                return f'{len(paths)}'
+        inputs = short_paths(self.inputs.values(), input_paths_to_show)
+        outputs = short_paths(self.outputs.values(), output_paths_to_show)
         return f'{self.__class__.__name__}' \
-               f'({self.func.__code__.co_name}, {short_inputs}, {short_outputs})'
+               f'({self.func.__code__.co_name}, {inputs=}, {outputs=})'
 
     def __str__(self):
-        return self.short_str(10, 10)
+        return self.short_str(3, 3)
 
     def can_run(self):
         can_run = True
