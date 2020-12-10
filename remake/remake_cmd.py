@@ -76,6 +76,7 @@ def _build_parser() -> argparse.ArgumentParser:
     group.add_argument('--input-only', action='store_true')
     group.add_argument('--output-only', action='store_true')
     group.add_argument('--inout', action='store_true')
+    ls_files_parser.add_argument('--exists', action='store_true')
     ls_files_parser.add_argument('remakefile')
 
     # version
@@ -143,7 +144,7 @@ def remake_cmd(argv: List[str] = sys.argv) -> None:
         else:
             filetype = None
 
-        ls_files(args.remakefile, filetype)
+        ls_files(args.remakefile, filetype, args.exists)
     elif args.subcmd_name == 'ls-tasks':
         ls_tasks(args.remakefile, args.filter)
     else:
@@ -189,7 +190,7 @@ def task_info(remakefile, output_format, task_path_hash_key):
     print(task_md.task_requires_rerun())
 
 
-def ls_files(remakefile, filetype=None):
+def ls_files(remakefile, filetype=None, exists=False):
     load_task_ctrls(remakefile)
     if filetype is None:
         files = sorted(set(Remake.task_ctrl.input_task_map.keys()) | set(Remake.task_ctrl.output_task_map.keys()))
@@ -203,6 +204,8 @@ def ls_files(remakefile, filetype=None):
         files = sorted(set(Remake.task_ctrl.output_task_map.keys()) - set(Remake.task_ctrl.input_task_map.keys()))
     elif filetype == 'inout':
         files = sorted(set(Remake.task_ctrl.output_task_map.keys()) & set(Remake.task_ctrl.input_task_map.keys()))
+    if exists:
+        files = [f for f in files if f.exists()]
     for file in files:
         print(file)
 
