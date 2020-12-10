@@ -154,7 +154,11 @@ def run_job(remakefile, remakefile_hash, task_type, task_key):
         task = task_ctrl.task_from_path_hash_key[task_key]
     elif task_type == 'rescan':
         task = task_ctrl.gen_rescan_task(task_key)
-    task_ctrl.run_task(task)
+    force = False
+    # Task might not be required anymore -- find out.
+    requires_rerun = task_ctrl.task_requires_rerun(task, print_reasons=True)
+    if force or task.force or requires_rerun & task_ctrl.remake_on:
+        task_ctrl.run_task(task)
 
 
 if __name__ == '__main__':

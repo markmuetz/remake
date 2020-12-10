@@ -400,9 +400,6 @@ class TaskControl:
                 logger.error(e)
                 task.task_md.update_status('ERROR')
                 raise
-            finally:
-                # remove_file_logging(task_md.log_path)
-                pass
             logger.debug(f'enqueued task: {task}')
             return True
         else:
