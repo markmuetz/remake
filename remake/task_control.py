@@ -143,9 +143,9 @@ class TaskControl:
             self.executor = SlurmExecutor(self)
         else:
             logger.warning('MULTIPROC EXECUTOR DOES NOT WORK AND MAY SLOW YOUR COMPUTER!')
-            r = input('PRESS y to continue: ')
-            if r != 'y':
-                raise Exception('Fix MultiprocExecutor')
+            # r = input('PRESS y to continue: ')
+            # if r != 'y':
+            #     raise Exception('Fix MultiprocExecutor')
             self.executor = MultiprocExecutor(self)
 
     @property
@@ -403,7 +403,7 @@ class TaskControl:
             finally:
                 # remove_file_logging(task_md.log_path)
                 pass
-            logger.debug(f'run task completed: {repr(task)}')
+            logger.debug(f'enqueued task: {repr(task)}')
             return True
         else:
             logger.debug(f'no longer requires rerun: {repr(task)}')
@@ -444,6 +444,7 @@ class TaskControl:
 
             for task in tasks:
                 self.executor.enqueue_task(task)
+            self.executor.finish()
         else:
             if force:
                 if requested_tasks:
@@ -464,21 +465,27 @@ class TaskControl:
                     len_tasks = len(self.sorted_tasks)
                     def task_index(t): return self.sorted_tasks.index(t)
 
-            for task in tasks:
-                if task and self.executor.can_accept_task():
-                    if not isinstance(task, RescanFileTask):
-                        status = self.statuses.task_status(task)
-                        self.statuses.update_task(task, status, 'running')
-                        logger.info(f'{task_index(task) + 1}/{len_tasks}: {task.path_hash_key()} {task}')
+            try:
+                for task in tasks:
+                    if task and self.executor.can_accept_task():
+                        if not isinstance(task, RescanFileTask):
+                            status = self.statuses.task_status(task)
+                            self.statuses.update_task(task, status, 'running')
+                            logger.info(f'{task_index(task) + 1}/{len_tasks}: {task.path_hash_key()} {task}')
+                        else:
+                            logger.info(f'Rescanning: {task.inputs["filepath"]}')
+                        task_run = self.run_task(task, force=force)
+                        if not task_run:
+                            self.task_complete(task)
                     else:
-                        logger.info(f'Rescanning: {task.inputs["filepath"]}')
-                    task_run = self.run_task(task, force=force)
-                    if not task_run:
+                        task = self.executor.get_completed_task()
                         self.task_complete(task)
-                else:
+                while not self.executor.has_finished():
+                    logger.debug('waiting for remaining tasks')
                     task = self.executor.get_completed_task()
                     self.task_complete(task)
-        self.executor.finish()
+            finally:
+                self.executor.finish()
 
     @check_finalized(True)
     def run_one(self, *, force=False, display_func=None):

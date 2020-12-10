@@ -17,5 +17,8 @@ class SingleprocExecutor:
         self.completed_task = None
         return completed_task
 
+    def has_finished(self):
+        return not self.completed_task
+
     def finish(self):
         pass

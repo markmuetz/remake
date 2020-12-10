@@ -5,8 +5,8 @@ from remake.formatter import remake_dict_expand as dict_exp
 
 Remake.init()
 
-VAR_MATRIX = {'i': range(10),
-              'j': range(10)}
+VAR_MATRIX = {'i': range(4),
+              'j': range(4)}
 
 
 class FanOut(TaskRule):
@@ -26,7 +26,9 @@ class Process(TaskRule):
     var_matrix = VAR_MATRIX
 
     def rule_run(self):
-        payload = f'{self.__class__.__name__} ({self.i}, {self.j})'
+        # Arbitrary CPU-bound calculation that slows down this task.
+        total = sum(range(int(1e8) + self.i + self.j))
+        payload = f'{self.__class__.__name__} ({self.i}, {self.j}) {total}'
         for i, o in zip(self.inputs.values(), self.outputs.values()):
             o.write_text(i.read_text() + payload)
 
