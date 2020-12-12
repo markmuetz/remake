@@ -76,3 +76,4 @@ class Remake:
 
     def finalize(self):
         self.task_ctrl.finalize()
+        return self
