@@ -2,7 +2,7 @@
 """
 from remake import Remake, TaskRule
 
-Remake.init()
+ex4 = Remake()
 
 
 def join_lines(path, prepend_text):

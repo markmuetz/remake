@@ -3,7 +3,7 @@ from remake import Remake, TaskRule
 from remake.formatter import remake_dict_expand as dict_exp
 
 
-Remake.init()
+ex2 = Remake()
 
 VAR_MATRIX = {'i': range(4),
               'j': range(4)}

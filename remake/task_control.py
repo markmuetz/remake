@@ -391,6 +391,9 @@ class TaskControl:
             raise Exception('No task to enqueue')
         requires_rerun = self.task_requires_rerun(task, print_reasons=self.print_reasons)
         if force or task.force or requires_rerun & self.remake_on:
+            if not isinstance(task, RescanFileTask):
+                status = self.statuses.task_status(task)
+                self.statuses.update_task(task, status, 'running')
             logger.debug(f'enqueue task (force={force}, requires_rerun={requires_rerun}): {task}')
 
             try:
@@ -399,6 +402,7 @@ class TaskControl:
                 logger.error(f'TaskControl: {self.name}')
                 logger.error(e)
                 task.task_md.update_status('ERROR')
+                self.statuses.update_task(task, 'running', status)
                 raise
             logger.debug(f'enqueued task: {task}')
             return True
@@ -409,11 +413,9 @@ class TaskControl:
             return False
 
     def task_complete(self, task):
-        if not isinstance(task, RescanFileTask):
-            assert task in self.running_tasks, 'task not being run'
         assert task.complete(), 'task not complete'
         logger.debug(f'add completed task: {task.path_hash_key()}')
-        if not isinstance(task, RescanFileTask):
+        if not isinstance(task, RescanFileTask) and task in self.running_tasks:
             self.statuses.update_task(task, 'running', 'completed')
 
         for next_task in self.task_dag.successors(task):
@@ -465,11 +467,15 @@ class TaskControl:
             try:
                 for task in tasks:
                     task_to_run = task
-                    while task_to_run:
+                    # Getting this working for both requested_tasks and normal is tricky!
+                    # This works, but the logic is not easy to follow. It has to work for both
+                    # tasks = self.get_next_pending() and a list-like obj.
+                    # It has to work for different executor types.
+                    # Maybe it would be clearer if I split this into 2 methods, one for requested_tasks
+                    # and one for get_next_pending.
+                    while task_to_run or not self.executor.can_accept_task():
                         if task_to_run and self.executor.can_accept_task():
                             if not isinstance(task_to_run, RescanFileTask):
-                                status = self.statuses.task_status(task_to_run)
-                                self.statuses.update_task(task_to_run, status, 'running')
                                 logger.info(f'{task_index(task_to_run) + 1}/{len_tasks}:'
                                             f' {task_to_run.path_hash_key()} {task_to_run}')
                             else:

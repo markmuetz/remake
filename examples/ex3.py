@@ -3,7 +3,7 @@ import calendar
 from remake import Remake, TaskRule
 
 
-Remake.init()
+ex3 = Remake()
 
 YEARS_MONTHS = {
     'year': range(2015, 2021),

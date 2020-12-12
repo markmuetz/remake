@@ -153,16 +153,16 @@ def remake_cmd(argv: List[str] = sys.argv) -> None:
 
 def file_info(remakefile, filenames):
     loaded_task_ctrl = load_task_ctrls(remakefile)[0]
-    Remake.finalize()
+    Remake.current_remake.finalize()
 
     for path in (Path(fn).absolute() for fn in filenames):
         if path.exists():
             print(f'exists: {path}')
         else:
             print(f'does not exist: {path}')
-        path_md, used_by_tasks, produced_by_task = Remake.file_info(path)
+        path_md, used_by_tasks, produced_by_task = Remake.current_remake.file_info(path)
         if not path_md:
-            print(f'Path not found in {Remake.task_ctrl.name}')
+            print(f'Path not found in {Remake.current_remake.task_ctrl.name}')
             print()
             continue
         if produced_by_task:
@@ -193,17 +193,17 @@ def task_info(remakefile, output_format, task_path_hash_key):
 def ls_files(remakefile, filetype=None, exists=False):
     load_task_ctrls(remakefile)
     if filetype is None:
-        files = sorted(set(Remake.task_ctrl.input_task_map.keys()) | set(Remake.task_ctrl.output_task_map.keys()))
+        files = sorted(set(Remake.current_remake.task_ctrl.input_task_map.keys()) | set(Remake.current_remake.task_ctrl.output_task_map.keys()))
     elif filetype == 'input':
-        files = sorted(Remake.task_ctrl.input_task_map.keys())
+        files = sorted(Remake.current_remake.task_ctrl.input_task_map.keys())
     elif filetype == 'output':
-        files = sorted(Remake.task_ctrl.input_task_map.keys())
+        files = sorted(Remake.current_remake.task_ctrl.input_task_map.keys())
     elif filetype == 'input_only':
-        files = sorted(set(Remake.task_ctrl.input_task_map.keys()) - set(Remake.task_ctrl.output_task_map.keys()))
+        files = sorted(set(Remake.current_remake.task_ctrl.input_task_map.keys()) - set(Remake.current_remake.task_ctrl.output_task_map.keys()))
     elif filetype == 'output_only':
-        files = sorted(set(Remake.task_ctrl.output_task_map.keys()) - set(Remake.task_ctrl.input_task_map.keys()))
+        files = sorted(set(Remake.current_remake.task_ctrl.output_task_map.keys()) - set(Remake.current_remake.task_ctrl.input_task_map.keys()))
     elif filetype == 'inout':
-        files = sorted(set(Remake.task_ctrl.output_task_map.keys()) & set(Remake.task_ctrl.input_task_map.keys()))
+        files = sorted(set(Remake.current_remake.task_ctrl.output_task_map.keys()) & set(Remake.current_remake.task_ctrl.input_task_map.keys()))
     if exists:
         files = [f for f in files if f.exists()]
     for file in files:
@@ -213,11 +213,11 @@ def ls_files(remakefile, filetype=None, exists=False):
 def ls_tasks(remakefile, tfilter):
     load_task_ctrls(remakefile)
     if not tfilter:
-        for task in Remake.tasks:
+        for task in Remake.current_remake.tasks:
             print(task)
     else:
         filter_kwargs = dict([kv.split('=') for kv in tfilter.split(',')])
-        for task in Remake.tasks.filter(cast_to_str=True, **filter_kwargs):
+        for task in Remake.current_remake.tasks.filter(cast_to_str=True, **filter_kwargs):
             print(task)
 
 

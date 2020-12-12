@@ -2,7 +2,7 @@
 """
 from remake import Remake, TaskRule
 
-Remake.init()
+ex1 = Remake()
 
 
 class Basic1(TaskRule):
