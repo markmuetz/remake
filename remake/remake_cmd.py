@@ -14,7 +14,7 @@ from tabulate import tabulate
 
 from remake.setup_logging import setup_stdout_logging
 from remake.version import get_version
-from remake.load_task_ctrls import load_task_ctrls
+from remake.load_task_ctrls import load_task_ctrls, load_remake
 from remake.remake_base import Remake
 
 logger = getLogger(__name__)
@@ -251,39 +251,22 @@ def remakefile_info(remakefiles, output_format='medium'):
 
 
 def remake_run(remakefiles, force, one, task_hash_keys, print_reasons, executor):
-    task_ctrls = []
-    if len(remakefiles) > 1:
-        for remakefile in remakefiles:
-            loaded_task_ctrls = load_task_ctrls(remakefile)
-            logger.debug(f'created TaskControls: {loaded_task_ctrls}')
-            task_ctrls.extend(loaded_task_ctrls)
-        # Naive -- need to add something like add_task_ctrl()
-        # otherwise will get wrong remakefile as here.
-        # uber_task_ctrl = TaskControl(__file__)
-        # for remakefile in remakefiles:
-        #     task_ctrl = load_task_ctrl(remakefile)
-        #     logger.debug(f'created TaskControl: {task_ctrl}')
-        #     for task in task_ctrl.tasks:
-        #         uber_task_ctrl.add(task)
-    elif len(remakefiles) == 1:
-        loaded_task_ctrls = load_task_ctrls(remakefiles[0])
-        logger.debug(f'created TaskControls: {loaded_task_ctrls}')
-        task_ctrls.extend(loaded_task_ctrls)
-    else:
-        assert False, 'Should be one or more remakefiles'
+    remakes = []
+    for remakefile in remakefiles:
+        remakes.append(load_remake(remakefile))
 
-    for task_ctrl in task_ctrls:
-        if not task_ctrl.finalized:
-            task_ctrl.finalize()
-        task_ctrl.print_reasons = print_reasons
-        task_ctrl.set_executor(executor)
-        if (not task_ctrl.rescan_tasks) and  (not task_ctrl.pending_tasks) and (not force):
-            logger.info(f'{task_ctrl.name}: {len(task_ctrl.completed_tasks)} tasks already run')
+    for remake in remakes:
+        if not remake.finalized:
+            remake.finalize()
+        remake.task_ctrl.print_reasons = print_reasons
+        remake.task_ctrl.set_executor(executor)
+        if (not remake.task_ctrl.rescan_tasks) and (not remake.task_ctrl.pending_tasks) and (not force):
+            logger.info(f'{remake.task_ctrl.name}: {len(remake.task_ctrl.completed_tasks)} tasks already run')
         if not task_hash_keys:
             if one:
-                task_ctrl.run_one(force=force)
+                remake.run_one(force=force)
             else:
-                task_ctrl.run(force=force)
+                remake.run_all(force=force)
         else:
-            tasks = [task_ctrl.task_from_path_hash_key[t] for t in task_hash_keys]
-            task_ctrl.run(requested_tasks=tasks, force=force)
+            tasks = [remake.task_ctrl.task_from_path_hash_key[t] for t in task_hash_keys]
+            remake.run_requested(requested_tasks=tasks, force=force)

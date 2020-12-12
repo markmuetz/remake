@@ -1,4 +1,5 @@
 import itertools
+import multiprocessing
 
 from remake.task import Task
 from remake.remake_base import Remake
@@ -17,8 +18,8 @@ class LoopVar:
 
 class RemakeMetaclass(type):
     def __new__(mcs, clsname, bases, attrs):
-        remake = Remake.current_remake
         if clsname not in ['TaskRule', 'Config']:
+            remake = Remake.current_remake[multiprocessing.current_process().name]
             if 'TaskRule' in [b.__name__ for b in bases]:
                 assert 'rule_inputs' in attrs or 'inputs' in attrs
                 assert 'rule_outputs' in attrs or 'outputs' in attrs

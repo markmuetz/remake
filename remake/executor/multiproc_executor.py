@@ -1,6 +1,7 @@
 from multiprocessing import Process, Queue, current_process
 import logging
 import logging.handlers
+
 from logging import getLogger
 
 from remake.setup_logging import setup_stdout_logging
@@ -31,10 +32,10 @@ def log_listener(log_queue):
 
 def sender_log_configurer(log_queue):
     h = logging.handlers.QueueHandler(log_queue)  # Just the one handler needed
-    root = logging.getLogger()
-    root.addHandler(h)
+    remake_root = logging.getLogger('remake')
+    remake_root.addHandler(h)
     # send all messages, for demo; no other level or filter logic applied.
-    root.setLevel(logging.INFO)
+    # remake_root.setLevel(logging.INFO)
 
 
 def worker(task_ctrl_name, task_queue, task_complete_queue, error_queue, log_queue):
@@ -74,15 +75,25 @@ def worker(task_ctrl_name, task_queue, task_complete_queue, error_queue, log_que
 class MultiprocExecutor:
     handles_dependencies = False
 
-    def __init__(self, task_ctrl, nproc=4):
+    def __init__(self, task_ctrl, nproc=8):
         self.task_ctrl = task_ctrl
         self.nproc = nproc
         self.procs = []
+
+        self.pending_tasks = []
+        self.running_tasks = {}
+        self.task_queue = None
+        self.task_complete_queue = None
+        self.error_queue = None
+        self.log_queue = None
+        self.listener = None
+
+    def init(self):
+        logger.debug('initializing')
         self.task_queue = Queue()
         self.task_complete_queue = Queue()
         self.error_queue = Queue()
         self.log_queue = Queue()
-
         self.listener = Process(target=log_listener, args=(self.log_queue,))
         self.listener.start()
 
@@ -98,9 +109,6 @@ class MultiprocExecutor:
             self.procs.append(proc)
 
         sender_log_configurer(self.log_queue)
-
-        self.pending_tasks = []
-        self.running_tasks = {}
 
     def _run_task(self, task):
         # N.B. Cannot send Tasks that are build from rules as they do not pickle.
@@ -141,7 +149,7 @@ class MultiprocExecutor:
         return (not self.pending_tasks) and (not self.running_tasks)
 
     def finish(self):
-        logger.debug('Finalizing all workers')
+        logger.debug('finalizing all workers')
         for proc in self.procs:
             self.task_queue.put_nowait(None)
 

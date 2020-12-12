@@ -27,6 +27,7 @@ test_ex1: reset
 	echo newline >> data/outputs/ex1/out1.txt
 	remake run --reasons ex1.py || true
 	remake run --reasons ex1.py || true
+	echo "All tasks SUCCESSFUL"
 
 run_examples:
 	remake remakefile-info --format short ex1.py ex2.py ex3.py ex4.py

@@ -74,4 +74,4 @@ class TaskQuerySet(list):
         return self[-1]
 
     def run(self, force=False):
-        self.task_ctrl.run(requested_tasks=self, force=force)
+        self.task_ctrl.run_requested(requested_tasks=self, force=force)

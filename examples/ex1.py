@@ -10,9 +10,11 @@ class Basic1(TaskRule):
     outputs = {'out': 'data/outputs/ex1/out1.txt'}
 
     def rule_run(self):
+        # Changed!
+        print('changed')
         assert len(self.inputs) == len(self.outputs)
         for i, o in zip(self.inputs.values(), self.outputs.values()):
-            o.write_text('\n'.join([f'Basic1 {l}' for l in i.read_text().split('\n')[:-1]]) + '\n')
+            o.write_text('\n'.join([f'changed output {l}' for l in i.read_text().split('\n')[:-1]]) + '\n')
 
 
 class Basic2(TaskRule):
@@ -24,3 +26,7 @@ class Basic2(TaskRule):
         assert len(self.inputs) == len(self.outputs)
         for i, o in zip(self.inputs.values(), self.outputs.values()):
             o.write_text('\n'.join([f'f1 {l}' for l in i.read_text().split('\n')[:-1]]) + '\n')
+
+
+if __name__ == '__main__':
+    ex1.finalize()
