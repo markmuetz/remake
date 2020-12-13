@@ -1,7 +1,9 @@
-class SingleprocExecutor:
-    handles_dependencies = False
+from remake.executor.base_executor import Executor
 
-    def __init__(self):
+
+class SingleprocExecutor(Executor):
+    def __init__(self, task_ctrl):
+        super().__init__(task_ctrl)
         self.completed_task = None
 
     def can_accept_task(self):
@@ -19,6 +21,3 @@ class SingleprocExecutor:
 
     def has_finished(self):
         return not self.completed_task
-
-    def finish(self):
-        pass

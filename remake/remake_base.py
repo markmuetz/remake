@@ -20,15 +20,16 @@ class Remake:
             stack = next(traceback.walk_stack(None))
             frame = stack[0]
             name = frame.f_globals['__file__']
+        # This is needed for when MultiprocExecutor makes its own Remakes in worker procs.
         if multiprocessing.current_process().name == 'MainProcess':
             if name in Remake.remakes:
                 # Can happen on ipython run remakefile.
                 logger.info(f'Remake {name} added twice')
             Remake.remakes[name] = self
         else:
-            logger.info(f'Process {multiprocessing.current_process().name}')
-            logger.info(Remake.current_remake)
-            logger.info(Remake.remakes)
+            logger.debug(f'Process {multiprocessing.current_process().name}')
+            logger.debug(Remake.current_remake)
+            logger.debug(Remake.remakes)
 
         Remake.current_remake[multiprocessing.current_process().name] = self
 

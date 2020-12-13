@@ -11,6 +11,9 @@ class TaskQuerySet(list):
     def all(self):
         return self
 
+    def in_rule(self, rule):
+        return TaskQuerySet([t for t in self if t.__class__.__name__ == rule], self.task_ctrl)
+
     def filter(self, cast_to_str=False, **kwargs):
         return TaskQuerySet(self._filter(cast_to_str, **kwargs), task_ctrl=self.task_ctrl)
 

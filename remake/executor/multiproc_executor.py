@@ -7,6 +7,7 @@ from logging import getLogger
 from remake.setup_logging import setup_stdout_logging
 from remake.load_task_ctrls import load_task_ctrls
 from remake.task import RescanFileTask
+from remake.executor.base_executor import Executor
 
 logger = getLogger(__name__)
 
@@ -72,11 +73,11 @@ def worker(task_ctrl_name, task_queue, task_complete_queue, error_queue, log_que
     logger.debug('stopping')
 
 
-class MultiprocExecutor:
+class MultiprocExecutor(Executor):
     handles_dependencies = False
 
     def __init__(self, task_ctrl, nproc=8):
-        self.task_ctrl = task_ctrl
+        super().__init__(task_ctrl)
         self.nproc = nproc
         self.procs = []
 
@@ -88,8 +89,10 @@ class MultiprocExecutor:
         self.log_queue = None
         self.listener = None
 
-    def init(self):
-        logger.debug('initializing')
+    def __enter__(self):
+        super().__enter__()
+
+        logger.debug('initializing queues')
         self.task_queue = Queue()
         self.task_complete_queue = Queue()
         self.error_queue = Queue()
@@ -97,7 +100,7 @@ class MultiprocExecutor:
         self.listener = Process(target=log_listener, args=(self.log_queue,))
         self.listener.start()
 
-        logger.debug(f'Creating {self.nproc} workers')
+        logger.debug(f'creating {self.nproc} workers')
         for i in range(self.nproc):
             proc = Process(target=worker, args=(self.task_ctrl.name,
                                                 self.task_queue,
@@ -109,6 +112,20 @@ class MultiprocExecutor:
             self.procs.append(proc)
 
         sender_log_configurer(self.log_queue)
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        super().__exit__(exc_type, exc_val, exc_tb)
+        logger.debug('finalizing all workers')
+        for proc in self.procs:
+            self.task_queue.put_nowait(None)
+
+        for proc in self.procs:
+            proc.terminate()
+
+        self.log_queue.put_nowait(None)
+        # listener.terminate()
+        # self.listener.join(5)
+        self.listener.terminate()
 
     def _run_task(self, task):
         # N.B. Cannot send Tasks that are build from rules as they do not pickle.
@@ -148,15 +165,3 @@ class MultiprocExecutor:
     def has_finished(self):
         return (not self.pending_tasks) and (not self.running_tasks)
 
-    def finish(self):
-        logger.debug('finalizing all workers')
-        for proc in self.procs:
-            self.task_queue.put_nowait(None)
-
-        for proc in self.procs:
-            proc.terminate()
-
-        self.log_queue.put_nowait(None)
-        # listener.terminate()
-        # self.listener.join(5)
-        self.listener.terminate()

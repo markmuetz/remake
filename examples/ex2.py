@@ -18,7 +18,7 @@ class FanOut(TaskRule):
     var_matrix = VAR_MATRIX
 
     def rule_run(self):
-        sleep(random.randint(1, 5))
+        sleep(random.randint(0, 3))
         payload = f'{self.__class__.__name__} ({self.i}, {self.j})'
         for o in self.outputs.values():
             o.write_text(payload)
@@ -30,7 +30,7 @@ class Process(TaskRule):
     var_matrix = VAR_MATRIX
 
     def rule_run(self):
-        sleep(random.randint(1, 11))
+        sleep(random.randint(1, 4))
         # Arbitrary CPU-bound calculation that slows down this task.
         total = sum(range(int(1e2) + self.i + self.j))
         payload = f'{self.__class__.__name__} ({self.i}, {self.j}) {total}'

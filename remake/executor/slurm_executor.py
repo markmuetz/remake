@@ -10,6 +10,7 @@ from remake.util import sysrun
 from remake.setup_logging import setup_stdout_logging
 from remake.load_task_ctrls import load_task_ctrls
 from remake.task import Task, RescanFileTask
+from remake.executor.base_executor import Executor
 
 
 SLURM_SCRIPT_TPL = """#!/bin/bash
@@ -50,10 +51,11 @@ def _submit_slurm_script(slurm_script_path):
     return output
 
 
-class SlurmExecutor:
+class SlurmExecutor(Executor):
     handles_dependencies = True
 
     def __init__(self, task_ctrl):
+        super().__init__(task_ctrl)
         slurm_kwargs = {'queue': 'short-serial',
                         'max_runtime': '04:00:00',
                         'mem': 16000}
@@ -65,11 +67,15 @@ class SlurmExecutor:
 
         self.slurm_dir = slurm_dir
         self.remakefile_path = Path(task_ctrl.name + '.py').absolute()
-        self.task_ctrl = task_ctrl
         self.slurm_kwargs = slurm_kwargs
         self.task_jobid_map = {}
         self.remakefile_path_hash = sha1(self.remakefile_path.read_bytes()).hexdigest()
         self.pending_tasks = []
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        super().__exit__(exc_type, exc_val, exc_tb)
+        for task in self.pending_tasks:
+            self._submit_task(task)
 
     def _write_submit_script(self, task):
         remakefile_name = self.remakefile_path.stem
@@ -123,14 +129,13 @@ class SlurmExecutor:
         return True
 
     def enqueue_task(self, task):
-        self.pending_tasks.append(task)
+        raise NotImplementedError('Should not be called for SlurmExecutor')
 
     def get_completed_task(self):
         raise NotImplementedError('Should not be called for SlurmExecutor')
 
-    def finish(self):
-        for task in self.pending_tasks:
-            self._submit_task(task)
+    def has_finished(self):
+        raise NotImplementedError('Should not be called for SlurmExecutor')
 
 
 def run_job(remakefile, remakefile_hash, task_type, task_key):

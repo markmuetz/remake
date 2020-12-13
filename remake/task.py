@@ -122,7 +122,7 @@ class Task(BaseTask):
         inputs = short_paths(self.inputs.values(), input_paths_to_show)
         outputs = short_paths(self.outputs.values(), output_paths_to_show)
         return f'{self.__class__.__name__}' \
-               f'({self.func.__code__.co_name}, {inputs=}, {outputs=})'
+               f'({self.func.__code__.co_name}, {inputs}, {outputs})'
 
     def __str__(self):
         return self.short_str(3, 3)

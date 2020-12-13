@@ -9,9 +9,7 @@ import networkx as nx
 from remake.task import Task, RescanFileTask
 from remake.metadata import MetadataManager
 from remake.flags import RemakeOn
-from remake.executor.singleproc_executor import SingleprocExecutor
-from remake.executor.multiproc_executor import MultiprocExecutor
-from remake.executor.slurm_executor import SlurmExecutor
+from remake.executor import SingleprocExecutor, MultiprocExecutor, SlurmExecutor
 
 logger = getLogger(__name__)
 
@@ -145,11 +143,11 @@ class TaskControl:
 
     def set_executor(self, executor):
         if executor == 'singleproc':
-            self.executor = SingleprocExecutor()
+            self.executor = SingleprocExecutor(self)
         elif executor == 'slurm':
             self.executor = SlurmExecutor(self)
         else:
-            logger.warning('MULTIPROC EXECUTOR DOES NOT WORK AND MAY SLOW YOUR COMPUTER!')
+            logger.warning('multiproc executor is still experimental')
             # r = input('PRESS y to continue: ')
             # if r != 'y':
             #     raise Exception('Fix MultiprocExecutor')
@@ -446,16 +444,20 @@ class TaskControl:
 
     @check_finalized(True)
     def run_requested(self, requested_tasks, force=False):
-        # TODO: Change to with block.
-        try:
-            if hasattr(self.executor, 'init'):
-                self.executor.init()
+        with self.executor:
             if self.executor.handles_dependencies:
                 # Work here is done, just enqueue all pending and remaining tasks:
                 for task in requested_tasks:
                     self.executor.enqueue_task(task)
             else:
-                tasks = sorted(requested_tasks, key=lambda x: self.sorted_tasks.index(x))
+                def sorter(task):
+                    if isinstance(task, RescanFileTask):
+                        # These should come first!
+                        return -1
+                    else:
+                        return self.sorted_tasks.index(task)
+
+                tasks = sorted(requested_tasks, key=sorter)
                 len_tasks = len(requested_tasks)
                 def task_index(t): return tasks.index(t)
 
@@ -464,11 +466,7 @@ class TaskControl:
                     task_to_run = task
                     while task_to_run or not self.executor.can_accept_task():
                         if task_to_run and self.executor.can_accept_task():
-                            if not isinstance(task_to_run, RescanFileTask):
-                                logger.info(f'{task_index(task_to_run) + 1}/{len_tasks}:'
-                                            f' {task_to_run.path_hash_key()} {task_to_run}')
-                            else:
-                                logger.info(f'Rescanning: {task_to_run.inputs["filepath"]}')
+                            self.log_task_info(task_index, len_tasks, task_to_run)
                             task_enqueued = self.enqueue_task(task_to_run, force=force)
                             if not task_enqueued:
                                 self.task_complete(task_to_run)
@@ -480,29 +478,20 @@ class TaskControl:
                     logger.debug('waiting for remaining tasks')
                     task = self.executor.get_completed_task()
                     self.task_complete(task)
-        finally:
-            self.executor.finish()
 
     @check_finalized(True)
     def run_all(self, force=False):
-        # TODO: Change to with block.
         if self.executor.handles_dependencies:
             remaining_tasks = sorted(self.remaining_tasks, key=lambda t: self.sorted_tasks.index(t))
             tasks = self.rescan_tasks + self.statuses.ordered_pending_tasks + remaining_tasks
             self.run_requested(requested_tasks=tasks, force=force)
             return
-        try:
-            if hasattr(self.executor, 'init'):
-                self.executor.init()
+        with self.executor:
             len_tasks = len(self.sorted_tasks)
             def task_index(t): return self.sorted_tasks.index(t)
             for task in self.get_next_pending():
                 if task and self.executor.can_accept_task():
-                    if not isinstance(task, RescanFileTask):
-                        logger.info(f'{task_index(task) + 1}/{len_tasks}:'
-                                    f' {task.path_hash_key()} {task}')
-                    else:
-                        logger.info(f'Rescanning: {task.inputs["filepath"]}')
+                    self.log_task_info(task_index, len_tasks, task)
                     task_enqueued = self.enqueue_task(task, force=force)
                     if not task_enqueued:
                         self.task_complete(task)
@@ -513,13 +502,13 @@ class TaskControl:
                 logger.debug('waiting for remaining tasks')
                 task = self.executor.get_completed_task()
                 self.task_complete(task)
-        finally:
-            self.executor.finish()
 
-    @check_finalized(True)
-    def run_one(self, *, force=False, display_func=None):
-        task = next(self.get_next_pending())
-        self.run(requested_tasks=[task])
+    def log_task_info(self, task_index, len_tasks, task):
+        if not isinstance(task, RescanFileTask):
+            logger.info(f'{task_index(task) + 1}/{len_tasks}:'
+                        f' {task.path_hash_key()} {task}')
+        else:
+            logger.info(f'Rescanning: {task.inputs["filepath"]}')
 
     @check_finalized(True)
     def print_status(self):
