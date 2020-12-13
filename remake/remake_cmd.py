@@ -42,8 +42,7 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest='subcmd_name', required=True)
     # name of subparser ends up in subcmd_name -- use for command dispatch.
 
-    # TODO: API is different for each command!
-    run_parser = subparsers.add_parser('run', help='Run remake')
+    run_parser = subparsers.add_parser('run', help='Run all pending tasks')
     run_parser.add_argument('remakefiles', nargs='*', default=['remakefile.py'])
     run_parser.add_argument('--force', '-f', action='store_true')
     run_parser.add_argument('--one', '-o', action='store_true')
@@ -51,7 +50,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument('--executor', '-E', default='singleproc')
     run_parser.add_argument('--display', '-d', choices=['print_status', 'task_dag'])
 
-    run_tasks_parser = subparsers.add_parser('run-task', help='Run remake')
+    run_tasks_parser = subparsers.add_parser('run-tasks', help='Run specified tasks')
     run_tasks_parser.add_argument('remakefile', default='remakefile.py')
     run_tasks_parser.add_argument('--force', '-f', action='store_true')
     run_tasks_parser.add_argument('--reasons', '-R', action='store_true')
@@ -60,36 +59,55 @@ def _build_parser() -> argparse.ArgumentParser:
     run_tasks_parser.add_argument('--tasks', '-t', nargs='*')
     # TODO: Add e.g. --filter, --rule in a smart way.
 
-    file_info_parser = subparsers.add_parser('file-info', help='Information about file')
-    file_info_parser.add_argument('remakefile')
-    file_info_parser.add_argument('filenames', nargs='*')
-
-    remakefile_info_parser = subparsers.add_parser('remakefile-info',
-                                                   help='Information about remakefile')
-    remakefile_info_parser.add_argument('remakefiles', nargs='*')
-    remakefile_info_parser.add_argument('--format', '-f', default='medium', choices=['short', 'medium', 'long'])
-
-    task_info_parser = subparsers.add_parser('task-info', help='Information about task')
-    task_info_parser.add_argument('--task', nargs=1)
-    task_info_parser.add_argument('remakefile', nargs=1)
-    task_info_parser.add_argument('--format', '-f', default='medium', choices=['short', 'medium', 'long'])
+    ls_rules_parser = subparsers.add_parser('ls-rules', help='List rules')
+    ls_rules_parser.add_argument('remakefile')
+    ls_rules_parser.add_argument('--long', '-l', action='store_true')
+    ls_rules_parser.add_argument('--filter', '-F', default=None)
+    ls_rules_parser.add_argument('--uses-file')
+    ls_rules_parser.add_argument('--produces-file')
 
     ls_tasks_parser = subparsers.add_parser('ls-tasks', help='List tasks')
+    ls_tasks_parser.add_argument('remakefile')
+    ls_tasks_parser.add_argument('--long', '-l', action='store_true')
     ls_tasks_parser.add_argument('--filter', '-F', default=None)
     ls_tasks_parser.add_argument('--rule', '-R', default=None)
-    ls_tasks_parser.add_argument('remakefile')
+    ls_tasks_parser.add_argument('--changed', '-C', action='store_true')
+    ls_tasks_parser.add_argument('--uses-file')
+    ls_tasks_parser.add_argument('--produces-file')
 
     ls_files_parser = subparsers.add_parser('ls-files', help='List files')
+    ls_files_parser.add_argument('remakefile')
+    ls_files_parser.add_argument('--long', '-l', action='store_true')
     group = ls_files_parser.add_mutually_exclusive_group()
     group.add_argument('--input', action='store_true')
     group.add_argument('--output', action='store_true')
     group.add_argument('--input-only', action='store_true')
     group.add_argument('--output-only', action='store_true')
     group.add_argument('--inout', action='store_true')
-    ls_files_parser.add_argument('--produced-by', action='store_true')
-    ls_files_parser.add_argument('--used-by', action='store_true')
+    ls_files_parser.add_argument('--produced-by-rule')
+    ls_files_parser.add_argument('--used-by-rule')
+    ls_files_parser.add_argument('--produced-by-task')
+    ls_files_parser.add_argument('--used-by-task')
     ls_files_parser.add_argument('--exists', action='store_true')
-    ls_files_parser.add_argument('remakefile')
+
+    remakefile_info_parser = subparsers.add_parser('remakefile-info', help='Information about remakefile')
+    remakefile_info_parser.add_argument('remakefiles', nargs='*')
+    remakefile_info_parser.add_argument('--long', '-l', action='store_true')
+
+    rule_info_parser = subparsers.add_parser('rule-info', help='Information about rule')
+    rule_info_parser.add_argument('remakefile')
+    rule_info_parser.add_argument('--long', '-l', action='store_true')
+    rule_info_parser.add_argument('rules', nargs='*')
+
+    task_info_parser = subparsers.add_parser('task-info', help='Information about task')
+    task_info_parser.add_argument('remakefile')
+    task_info_parser.add_argument('--long', '-l', action='store_true')
+    task_info_parser.add_argument('tasks', nargs='*')
+
+    file_info_parser = subparsers.add_parser('file-info', help='Information about file')
+    file_info_parser.add_argument('--long', '-l', action='store_true')
+    file_info_parser.add_argument('remakefile')
+    file_info_parser.add_argument('filenames', nargs='*')
 
     # version
     version_parser = subparsers.add_parser('version', help='Print remake version')
