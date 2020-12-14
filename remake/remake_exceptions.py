@@ -1,0 +1,2 @@
+class RemakeError(Exception):
+    pass

@@ -2,9 +2,8 @@ import os
 import sys
 import argparse
 from logging import getLogger
-from pathlib import Path
 from time import sleep
-from typing import List
+from typing import List, Union, Optional, Sequence, Text
 try:
     # Might not be installed.
     import ipdb as debug
@@ -16,9 +15,17 @@ from tabulate import tabulate
 from remake.setup_logging import setup_stdout_logging
 from remake.version import get_version
 from remake.load_task_ctrls import load_remake
-from remake.task_query_set import TaskQuerySet
+from remake.remake_exceptions import RemakeError
 
 logger = getLogger(__name__)
+
+
+def log_error(ex_type, value, tb):
+    if isinstance(value, RemakeError):
+        logger.error(value)
+    else:
+        import traceback
+        traceback.print_exception(ex_type, value, tb)
 
 
 def exception_info(ex_type, value, tb):
@@ -27,107 +34,241 @@ def exception_info(ex_type, value, tb):
     debug.pm()
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description='remake command line tool')
-    parser._actions[0].help = 'Show this help message and exit'
+class Arg:
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
 
-    # Top-level arguments.
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument('--debug', '-D', help='Enable debug logging', action='store_true')
-    group.add_argument('--info', '-I', help='Enable info logging', action='store_true')
-    group.add_argument('--warning', '-W', help='Warning logging only', action='store_true')
-    parser.add_argument('--debug-exception', '-X', help=f'Launch {debug.__name__} on exception', action='store_true')
-    parser.add_argument('--no-colour', '-B', help='Black and white logging', action='store_true')
+    def __call__(self):
+        return self.args, self.kwargs
 
-    subparsers = parser.add_subparsers(dest='subcmd_name', required=True)
-    # name of subparser ends up in subcmd_name -- use for command dispatch.
+    def __str__(self):
+        return f'Arg({self.args}, {self.kwargs})'
 
-    run_parser = subparsers.add_parser('run', help='Run all pending tasks')
-    run_parser.add_argument('remakefiles', nargs='*', default=['remakefile.py'])
-    run_parser.add_argument('--force', '-f', action='store_true')
-    run_parser.add_argument('--one', '-o', action='store_true')
-    run_parser.add_argument('--reasons', '-R', action='store_true')
-    run_parser.add_argument('--executor', '-E', default='singleproc')
-    run_parser.add_argument('--display', '-d', choices=['print_status', 'task_dag'])
-
-    run_tasks_parser = subparsers.add_parser('run-tasks', help='Run specified tasks')
-    run_tasks_parser.add_argument('remakefile', default='remakefile.py')
-    run_tasks_parser.add_argument('--force', '-f', action='store_true')
-    run_tasks_parser.add_argument('--reasons', '-R', action='store_true')
-    run_tasks_parser.add_argument('--executor', '-E', default='singleproc')
-    run_tasks_parser.add_argument('--display', '-d', choices=['print_status', 'task_dag'])
-    run_tasks_parser.add_argument('--tasks', '-t', nargs='*')
-    # TODO: Add e.g. --filter, --rule in a smart way.
-
-    ls_rules_parser = subparsers.add_parser('ls-rules', help='List rules')
-    ls_rules_parser.add_argument('remakefile')
-    ls_rules_parser.add_argument('--long', '-l', action='store_true')
-    ls_rules_parser.add_argument('--filter', '-F', default=None)
-    ls_rules_parser.add_argument('--uses-file')
-    ls_rules_parser.add_argument('--produces-file')
-
-    ls_tasks_parser = subparsers.add_parser('ls-tasks', help='List tasks')
-    ls_tasks_parser.add_argument('remakefile')
-    ls_tasks_parser.add_argument('--long', '-l', action='store_true')
-    ls_tasks_parser.add_argument('--filter', '-F', default=None)
-    ls_tasks_parser.add_argument('--rule', '-R', default=None)
-    ls_tasks_parser.add_argument('--changed', '-C', action='store_true')
-    ls_tasks_parser.add_argument('--uses-file')
-    ls_tasks_parser.add_argument('--produces-file')
-
-    ls_files_parser = subparsers.add_parser('ls-files', help='List files')
-    ls_files_parser.add_argument('remakefile')
-    ls_files_parser.add_argument('--long', '-l', action='store_true')
-    group = ls_files_parser.add_mutually_exclusive_group()
-    group.add_argument('--input', action='store_true')
-    group.add_argument('--output', action='store_true')
-    group.add_argument('--input-only', action='store_true')
-    group.add_argument('--output-only', action='store_true')
-    group.add_argument('--inout', action='store_true')
-    ls_files_parser.add_argument('--produced-by-rule')
-    ls_files_parser.add_argument('--used-by-rule')
-    ls_files_parser.add_argument('--produced-by-task')
-    ls_files_parser.add_argument('--used-by-task')
-    ls_files_parser.add_argument('--exists', action='store_true')
-
-    remakefile_info_parser = subparsers.add_parser('remakefile-info', help='Information about remakefile')
-    remakefile_info_parser.add_argument('remakefiles', nargs='*')
-    remakefile_info_parser.add_argument('--long', '-l', action='store_true')
-
-    rule_info_parser = subparsers.add_parser('rule-info', help='Information about rule')
-    rule_info_parser.add_argument('remakefile')
-    rule_info_parser.add_argument('--long', '-l', action='store_true')
-    rule_info_parser.add_argument('rules', nargs='*')
-
-    task_info_parser = subparsers.add_parser('task-info', help='Information about task')
-    task_info_parser.add_argument('remakefile')
-    task_info_parser.add_argument('--long', '-l', action='store_true')
-    task_info_parser.add_argument('tasks', nargs='*')
-
-    file_info_parser = subparsers.add_parser('file-info', help='Information about file')
-    file_info_parser.add_argument('--long', '-l', action='store_true')
-    file_info_parser.add_argument('remakefile')
-    file_info_parser.add_argument('filenames', nargs='*')
-
-    # version
-    version_parser = subparsers.add_parser('version', help='Print remake version')
-    version_parser.add_argument('--long', '-l', action='store_true', help='long version')
-
-    return parser
+    def __repr__(self):
+        return str(self)
 
 
-def _parse_args(argv: List[str]) -> argparse.Namespace:
-    parser = _build_parser()
-    args = parser.parse_args(argv[1:])
-    return args
+class MutuallyExclusiveGroup:
+    def __init__(self, *args):
+        self.args = args
+
+    def __str__(self):
+        argstr = '\n  '.join(str(a) for a in self.args)
+        return f'MutuallyExclusiveGroup(\n  {argstr})'
+
+    def __repr__(self):
+        return str(self)
 
 
-def remake_cmd(argv: List[str] = sys.argv) -> None:
-    args = _parse_args(argv)
+def add_argset(parser, argset):
+    if isinstance(argset, MutuallyExclusiveGroup):
+        group = parser.add_mutually_exclusive_group()
+        for arg in argset.args:
+            group.add_argument(*arg.args, **arg.kwargs)
+    elif isinstance(argset, Arg):
+        parser.add_argument(*argset.args, **argset.kwargs)
+    else:
+        raise Exception(f'Unrecognized argset type {argset}')
+
+
+class RemakeParser:
+    args = [
+        MutuallyExclusiveGroup(
+            Arg('--debug', '-D', help='Enable debug logging', action='store_true'),
+            Arg('--info', '-I', help='Enable info logging', action='store_true'),
+            Arg('--warning', '-W', help='Warning logging only', action='store_true'),
+        ),
+        Arg('--debug-exception', '-X', help=f'Launch {debug.__name__} on exception', action='store_true'),
+        Arg('--no-colour', '-B', help='Black and white logging', action='store_true'),
+    ]
+    run_ctrl_group = [
+        Arg('--force', '-f', action='store_true'),
+        Arg('--reasons', '-R', action='store_true'),
+        Arg('--executor', '-E', default='singleproc'),
+        Arg('--display', '-d', choices=['print_status', 'task_dag']),
+    ]
+    task_filter_group = [
+        Arg('--filter'),
+        Arg('--rule'),
+    ]
+    sub_cmds = {
+        'run': {
+            'help': 'Run all pending tasks',
+            'args': [
+                Arg('remakefiles', nargs='*', default=['remakefile']),
+                Arg('--one', '-o', action='store_true'),
+                *run_ctrl_group,
+            ],
+        },
+        'run-tasks': {
+            'help': 'Run specified tasks',
+            'args': [
+                Arg('remakefile', default='remakefile.py'),
+                Arg('--tasks', '-t', nargs='*'),
+                *run_ctrl_group,
+                *task_filter_group,
+            ]
+        },
+        'ls-rules': {
+            'help': 'List rules',
+            'args': [
+                Arg('remakefile'),
+                Arg('--long', '-l', action='store_true'),
+                Arg('--filter', '-F', default=None),
+                Arg('--uses-file'),
+                Arg('--produces-file'),
+            ]
+        },
+        'ls-tasks': {
+            'help': 'List tasks',
+            'args': [
+                Arg('remakefile'),
+                Arg('--long', '-l', action='store_true'),
+                *task_filter_group,
+                Arg('--changed', '-C', action='store_true'),
+                Arg('--uses-file'),
+                Arg('--produces-file'),
+            ]
+        },
+        'ls-files': {
+            'help': 'List files',
+            'args': [
+                Arg('remakefile'),
+                Arg('--long', '-l', action='store_true'),
+                MutuallyExclusiveGroup(
+                    Arg('--input', action='store_true'),
+                    Arg('--output', action='store_true'),
+                    Arg('--input-only', action='store_true'),
+                    Arg('--output-only', action='store_true'),
+                    Arg('--inout', action='store_true'),
+                ),
+                Arg('--produced-by-rule'),
+                Arg('--used-by-rule'),
+                Arg('--produced-by-task'),
+                Arg('--used-by-task'),
+                Arg('--exists', action='store_true'),
+            ]
+        },
+        'remakefile-info': {
+            'help': 'Information about remakefile',
+            'args': [
+                Arg('remakefiles', nargs='*'),
+                Arg('--long', '-l', action='store_true'),
+            ]
+        },
+        'rule-info': {
+            'help': 'Information about rule',
+            'args': [
+                Arg('remakefile'),
+                Arg('--long', '-l', action='store_true'),
+                Arg('rules', nargs='*'),
+            ]
+        },
+        'task-info': {
+            'help': 'Information about task',
+            'args': [
+                Arg('remakefile'),
+                Arg('--long', '-l', action='store_true'),
+                Arg('tasks', nargs='*'),
+            ]
+        },
+        'file-info': {
+            'help': 'Information about file',
+            'args': [
+                Arg('--long', '-l', action='store_true'),
+                Arg('remakefile'),
+                Arg('filenames', nargs='*'),
+            ]
+        },
+        'version': {
+            'help': 'Print remake version',
+            'args': [
+                Arg('--long', '-l', action='store_true', help='long version'),
+            ]
+        },
+
+    }
+
+    def __init__(self):
+        self.args = None
+        self.parser = self._build_parser()
+
+    def _build_parser(self):
+        parser = argparse.ArgumentParser(description='remake command line tool')
+        parser._actions[0].help = 'Show this help message and exit'
+
+        for argset in RemakeParser.args:
+            add_argset(parser, argset)
+
+        subparsers = parser.add_subparsers(dest='subcmd_name', required=True)
+        for cmd_key, cmd_kwargs in RemakeParser.sub_cmds.items():
+            args = cmd_kwargs['args']
+            subparser = subparsers.add_parser(cmd_key, help=cmd_kwargs['help'])
+            for argset in args:
+                add_argset(subparser, argset)
+
+        return parser
+
+    def parse_args(self, argv: Optional[Sequence[Text]] = ...) -> argparse.Namespace:
+        self.args = self.parser.parse_args(argv[1:])
+        return self.args
+
+    def dispatch(self):
+        args = self.args
+        # Dispatch command.
+        # N.B. args should always be dereferenced at this point,
+        # not passed into any subsequent functions.
+        if args.subcmd_name == 'run':
+            remake_run(args.remakefiles, args.force, args.one, args.reasons, args.executor, args.display)
+        elif args.subcmd_name == 'run-tasks':
+            remake_run_tasks(args.remakefile, args.tasks, args.force, args.reasons, args.executor, args.display,
+                             args.filter, args.rule)
+        elif args.subcmd_name == 'ls-rules':
+            # ls_rules(args.remakefile, args.filter, args.rule)
+            pass
+        elif args.subcmd_name == 'ls-tasks':
+            ls_tasks(args.remakefile, args.filter, args.rule)
+        elif args.subcmd_name == 'ls-files':
+            if args.input:
+                filetype = 'input'
+            elif args.output:
+                filetype = 'output'
+            elif args.input_only:
+                filetype = 'input_only'
+            elif args.output_only:
+                filetype = 'output_only'
+            elif args.inout:
+                filetype = 'inout'
+            else:
+                filetype = None
+            ls_files(args.remakefile, filetype, args.exists)
+        elif args.subcmd_name == 'remakefile-info':
+            remakefile_info(args.remakefiles, args.long)
+        elif args.subcmd_name == 'rule-info':
+            # rule_info(args.remakefile, args.long, args.rules)
+            pass
+        elif args.subcmd_name == 'task-info':
+            task_info(args.remakefile, args.long, args.tasks)
+        elif args.subcmd_name == 'file-info':
+            file_info(args.remakefile, args.filenames)
+        elif args.subcmd_name == 'version':
+            print(get_version(form='long' if args.long else 'short'))
+        else:
+            assert False, f'Subcommand {args.subcmd_name} not recognized'
+
+
+def remake_cmd(argv: Union[List[str], None] = None) -> None:
+    if argv is None:
+        argv = sys.argv
+    parser = RemakeParser()
+    args = parser.parse_args(argv)
 
     if args.debug_exception:
         # Handle top level exceptions with a debugger.
         sys.excepthook = exception_info
+    else:
+        sys.excepthook = log_error
 
     loglevel = os.getenv('REMAKE_LOGLEVEL', None)
     if loglevel is None:
@@ -147,52 +288,105 @@ def remake_cmd(argv: List[str] = sys.argv) -> None:
     colour = not args.no_colour
     setup_stdout_logging(loglevel, colour=colour)
 
-    # Dispatch command.
-    # N.B. args should always be dereferenced at this point,
-    # not passed into any subsequent functions.
-    if args.subcmd_name == 'run':
-        remake_run(args.remakefiles, args.force, args.one, args.tasks, args.reasons, args.executor, args.display)
-    elif args.subcmd_name == 'version':
-        print(get_version(form='long' if args.long else 'short'))
-    elif args.subcmd_name == 'file-info':
-        file_info(args.remakefile, args.filenames)
-    elif args.subcmd_name == 'remakefile-info':
-        remakefile_info(args.remakefiles, args.format)
-    elif args.subcmd_name == 'task-info':
-        task_info(args.remakefile[0], args.format, args.task[0])
-    elif args.subcmd_name == 'ls-files':
-        if args.input:
-            filetype = 'input'
-        elif args.output:
-            filetype = 'output'
-        elif args.input_only:
-            filetype = 'input_only'
-        elif args.output_only:
-            filetype = 'output_only'
-        elif args.inout:
-            filetype = 'inout'
-        else:
-            filetype = None
+    parser.dispatch()
 
-        ls_files(args.remakefile, filetype, args.exists)
-    elif args.subcmd_name == 'ls-tasks':
-        ls_tasks(args.remakefile, args.filter, args.rule)
+
+def remake_run(remakefiles, force, one, print_reasons, executor, display):
+    for remakefile in remakefiles:
+        remake = load_remake(remakefile).finalize()
+        remake.configure(print_reasons, executor, display)
+        if not remake.rerun_required() and (not force):
+            logger.info(f'{remake.name}: {len(remake.completed_tasks)} tasks already run')
+        if one:
+            remake.run_one(force=force)
+        else:
+            remake.run_all(force=force)
+        if display == 'task_dag':
+            # Give user time to see final task_dag state.
+            sleep(3)
+
+
+def remake_run_tasks(remakefile, task_path_hash_keys, force, print_reasons, executor, display, tfilter, rule):
+    remake = load_remake(remakefile).finalize()
+    remake.configure(print_reasons, executor, display)
+    if task_path_hash_keys and (tfilter or rule):
+        raise RemakeError('Can only use one of --tasks and (--filter or --rule)')
+    if task_path_hash_keys:
+        tasks = remake.find_tasks(task_path_hash_keys)
     else:
-        assert False, f'Subcommand {args.subcmd_name} not recognized'
+        tasks = remake.list_tasks(tfilter, rule)
+    remake.run_requested(tasks, force=force)
+    if display == 'task_dag':
+        # Give user time to see final task_dag state.
+        sleep(3)
+
+
+def ls_tasks(remakefile, tfilter, rule):
+    remake = load_remake(remakefile)
+    tasks = remake.list_tasks(tfilter, rule)
+    for task in tasks:
+        print(f'{task.path_hash_key()[:6]}: {task}')
+
+
+def ls_files(remakefile, filetype=None, exists=False):
+    remake = load_remake(remakefile)
+    files = remake.list_files(filetype, exists)
+    for file in files:
+        print(file)
+
+
+def remakefile_info(remakefiles, long):
+    if not long:
+        rows = []
+    for remakefile in remakefiles:
+        remake = load_remake(remakefile).finalize()
+        if not long:
+            rows.append([remake.name,
+                         len(remake.completed_tasks),
+                         len(remake.pending_tasks),
+                         len(remake.remaining_tasks),
+                         len(remake.tasks),
+                         ])
+        else:
+            print(f'{remake.name}')
+            for i, task in enumerate(remake.sorted_tasks):
+                task_status = remake.task_status(task)
+                print(f'{i + 1}/{len(remake.tasks)}, {task_status}: {task.path_hash_key()} {task.short_str()}')
+
+    if not long:
+        # totals = list(np.array([r[1:] for r in rows]).sum(axis=0))
+        # Same thing without numpy.
+        totals = [sum(col) for col in list(zip(*rows))[1:]]
+        rows.append(['Total'] + totals)
+        print(tabulate(rows, headers=('Name', 'completed', 'pending', 'remaining', 'total')))
+
+
+def task_info(remakefile, long, task_path_hash_keys):
+    remake = load_remake(remakefile).finalize()
+    info = remake.task_info(task_path_hash_keys)
+    for task_path_hash_key, (task, task_md, status) in info.items():
+        print(str(task))
+        print(status)
+        print(task_md.task_requires_rerun())
+        if long:
+            print('Uses files:')
+            for key, path in task.inputs.items():
+                print(f'  {key}: {path}')
+            print('Produces files:')
+            for key, path in task.outputs.items():
+                print(f'  {key}: {path}')
 
 
 def file_info(remakefile, filenames):
-    remake = load_remake(remakefile)
-    remake.finalize()
-
-    for path in (Path(fn).absolute() for fn in filenames):
+    remake = load_remake(remakefile).finalize()
+    info = remake.file_info(filenames)
+    for path, (path_md, produced_by_task, used_by_tasks) in info.items():
         if path.exists():
             print(f'exists: {path}')
         else:
             print(f'does not exist: {path}')
-        path_md, used_by_tasks, produced_by_task = remake.file_info(path)
         if not path_md:
-            print(f'Path not found in {remake.task_ctrl.name}')
+            print(f'Path not found in {remake.name}')
             print()
             continue
         if produced_by_task:
@@ -208,109 +402,6 @@ def file_info(remakefile, filenames):
                 print('Path metadata has changed since last use')
             else:
                 print('Path metadata unchanged')
-        print()
+            print()
 
 
-def task_info(remakefile, output_format, task_path_hash_key):
-    remake = load_remake(remakefile)
-    remake.finalize()
-    task = remake.task_ctrl.task_from_path_hash_key[task_path_hash_key]
-    print(repr(task))
-    task_md = remake.task_ctrl.metadata_manager.task_metadata_map[task]
-    print(task_md.task_requires_rerun())
-
-
-def ls_files(remakefile, filetype=None, exists=False):
-    remake = load_remake(remakefile)
-    if filetype is None:
-        files = sorted(set(remake.task_ctrl.input_task_map.keys()) | set(remake.task_ctrl.output_task_map.keys()))
-    elif filetype == 'input':
-        files = sorted(remake.task_ctrl.input_task_map.keys())
-    elif filetype == 'output':
-        files = sorted(remake.task_ctrl.output_task_map.keys())
-    elif filetype == 'input_only':
-        files = sorted(set(remake.task_ctrl.input_task_map.keys()) - set(remake.task_ctrl.output_task_map.keys()))
-    elif filetype == 'output_only':
-        files = sorted(set(remake.task_ctrl.output_task_map.keys()) - set(remake.task_ctrl.input_task_map.keys()))
-    elif filetype == 'inout':
-        files = sorted(set(remake.task_ctrl.output_task_map.keys()) & set(remake.task_ctrl.input_task_map.keys()))
-    else:
-        raise Exception(f'Unknown {filetype=}')
-    if exists:
-        files = [f for f in files if f.exists()]
-    for file in files:
-        print(file)
-
-
-def ls_tasks(remakefile, tfilter, rule):
-    remake = load_remake(remakefile)
-    tasks = TaskQuerySet([t for t in remake.tasks], remake.task_ctrl)
-    if tfilter:
-        filter_kwargs = dict([kv.split('=') for kv in tfilter.split(',')])
-        tasks = tasks.filter(cast_to_str=True, **filter_kwargs)
-    if rule:
-        tasks = tasks.in_rule(rule)
-    for task in tasks:
-        print(task)
-
-
-
-def remakefile_info(remakefiles, output_format='medium'):
-    if output_format == 'short':
-        rows = []
-    for remakefile in remakefiles:
-        remake = load_remake(remakefile)
-        remake.finalize()
-        if output_format == 'short':
-            rows.append([remake.task_ctrl.name,
-                         len(remake.task_ctrl.completed_tasks),
-                         len(remake.task_ctrl.pending_tasks),
-                         len(remake.task_ctrl.remaining_tasks),
-                         len(remake.task_ctrl.tasks),
-                         ])
-        elif output_format == 'medium':
-            remake.task_ctrl.print_status()
-        elif output_format == 'long':
-            print(f'{remake.task_ctrl.name}')
-            for i, task in enumerate(remake.task_ctrl.sorted_tasks):
-                task_status = remake.task_ctrl.statuses.task_status(task)
-                print(f'{i + 1}/{len(remake.task_ctrl.tasks)}, {task_status}: {task.path_hash_key()} {task.short_str()}')
-
-    if output_format == 'short':
-        # totals = list(np.array([r[1:] for r in rows]).sum(axis=0))
-        # Same thing without numpy.
-        totals = [sum(col) for col in list(zip(*rows))[1:]]
-        rows.append(['Total'] + totals)
-        print(tabulate(rows, headers=('Name', 'completed', 'pending', 'remaining', 'total')))
-
-
-def remake_run(remakefiles, force, one, task_hash_keys, print_reasons, executor, display):
-    remakes = []
-    for remakefile in remakefiles:
-        remakes.append(load_remake(remakefile))
-
-    for remake in remakes:
-        if not remake.finalized:
-            remake.finalize()
-        remake.task_ctrl.print_reasons = print_reasons
-        remake.task_ctrl.set_executor(executor)
-        if display == 'print_status':
-            remake.task_ctrl.display_func = remake.task_ctrl.__class__.print_status
-        elif display == 'task_dag':
-            from remake.experimental.networkx_displays import display_task_status
-            remake.task_ctrl.display_func = display_task_status
-        elif display:
-            raise Exception(f'display {display} not recognized')
-        if (not remake.task_ctrl.rescan_tasks) and (not remake.task_ctrl.pending_tasks) and (not force):
-            logger.info(f'{remake.task_ctrl.name}: {len(remake.task_ctrl.completed_tasks)} tasks already run')
-        if not task_hash_keys:
-            if one:
-                remake.run_one(force=force)
-            else:
-                remake.run_all(force=force)
-        else:
-            tasks = [remake.task_ctrl.task_from_path_hash_key[t] for t in task_hash_keys]
-            remake.run_requested(requested_tasks=tasks, force=force)
-        if display == 'task_dag':
-            # Give user time to see final task_dag state.
-            sleep(3)

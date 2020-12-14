@@ -2,6 +2,24 @@
 
 all: run_examples
 
+test_cli: run_ex1
+	remake run ex1
+	remake run --one ex1
+	remake run --force ex1
+	remake run --reasons ex1
+	remake run --executor multiproc ex1
+	remake run --display task_dag ex1
+	remake run-tasks ex1 --tasks 516e69
+	remake run-tasks ex1 --rule Basic1
+	# remake ls-rules
+	remake ls-tasks ex1
+	remake ls-files ex1
+	remake remakefile-info ex1
+	# remake rule-info ex1 --rule Basic1
+	remake task-info ex1 516e69
+	remake file-info ex1 data/outputs/ex1/out1.txt
+	remake version
+
 run_ex1:
 	remake run --reasons ex1.py
 
