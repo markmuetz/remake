@@ -225,10 +225,10 @@ class RemakeParser:
             remake_run_tasks(args.remakefile, args.tasks, args.force, args.reasons, args.executor, args.display,
                              args.filter, args.rule)
         elif args.subcmd_name == 'ls-rules':
-            # ls_rules(args.remakefile, args.filter, args.rule)
-            pass
+            ls_rules(args.remakefile, args.long, args.filter, args.uses_file, args.produces_file)
         elif args.subcmd_name == 'ls-tasks':
-            ls_tasks(args.remakefile, args.filter, args.rule)
+            ls_tasks(args.remakefile, args.long, args.filter, args.rule,
+                     args.changed, args.uses_file, args.produces_file)
         elif args.subcmd_name == 'ls-files':
             if args.input:
                 filetype = 'input'
@@ -242,12 +242,11 @@ class RemakeParser:
                 filetype = 'inout'
             else:
                 filetype = None
-            ls_files(args.remakefile, filetype, args.exists)
+            ls_files(args.remakefile, args.long, filetype, args.exists)
         elif args.subcmd_name == 'remakefile-info':
             remakefile_info(args.remakefiles, args.long)
         elif args.subcmd_name == 'rule-info':
-            # rule_info(args.remakefile, args.long, args.rules)
-            pass
+            rule_info(args.remakefile, args.long, args.rules)
         elif args.subcmd_name == 'task-info':
             task_info(args.remakefile, args.long, args.tasks)
         elif args.subcmd_name == 'file-info':
@@ -321,14 +320,21 @@ def remake_run_tasks(remakefile, task_path_hash_keys, force, print_reasons, exec
         sleep(3)
 
 
-def ls_tasks(remakefile, tfilter, rule):
+def ls_rules(remakefile, long, tfilter, uses_file, produces_file):
+    remake = load_remake(remakefile)
+    rules = remake.list_rules()
+    for rule in rules:
+        print(f'{rule.__name__}')
+
+
+def ls_tasks(remakefile, long, tfilter, rule, changed, uses_file, produces_file):
     remake = load_remake(remakefile)
     tasks = remake.list_tasks(tfilter, rule)
     for task in tasks:
         print(f'{task.path_hash_key()[:6]}: {task}')
 
 
-def ls_files(remakefile, filetype=None, exists=False):
+def ls_files(remakefile, long, filetype=None, exists=False):
     remake = load_remake(remakefile)
     files = remake.list_files(filetype, exists)
     for file in files:
@@ -359,6 +365,15 @@ def remakefile_info(remakefiles, long):
         totals = [sum(col) for col in list(zip(*rows))[1:]]
         rows.append(['Total'] + totals)
         print(tabulate(rows, headers=('Name', 'completed', 'pending', 'remaining', 'total')))
+
+
+def rule_info(remakefile, long, rule_names):
+    remake = load_remake(remakefile).finalize()
+    rules = remake.list_rules()
+    for rule_name in rule_names:
+        for rule in rules:
+            if rule.__name__ == rule_name:
+                print(rule)
 
 
 def task_info(remakefile, long, task_path_hash_keys):

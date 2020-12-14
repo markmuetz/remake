@@ -85,24 +85,8 @@ class Remake:
     def run_requested(self, requested, force=False):
         self.task_ctrl.run_requested(requested, force=force)
 
-    def list_files(self, filetype, exists):
-        if filetype is None:
-            files = sorted(set(self.task_ctrl.input_task_map.keys()) | set(self.task_ctrl.output_task_map.keys()))
-        elif filetype == 'input':
-            files = sorted(self.task_ctrl.input_task_map.keys())
-        elif filetype == 'output':
-            files = sorted(self.task_ctrl.output_task_map.keys())
-        elif filetype == 'input_only':
-            files = sorted(set(self.task_ctrl.input_task_map.keys()) - set(self.task_ctrl.output_task_map.keys()))
-        elif filetype == 'output_only':
-            files = sorted(set(self.task_ctrl.output_task_map.keys()) - set(self.task_ctrl.input_task_map.keys()))
-        elif filetype == 'inout':
-            files = sorted(set(self.task_ctrl.output_task_map.keys()) & set(self.task_ctrl.input_task_map.keys()))
-        else:
-            raise Exception(f'Unknown {filetype=}')
-        if exists:
-            files = [f for f in files if f.exists()]
-        return files
+    def list_rules(self):
+        return self.rules
 
     def find_tasks(self, task_path_hash_keys):
         tasks = TaskQuerySet([], self.task_ctrl)
@@ -131,6 +115,25 @@ class Remake:
         if rule:
             tasks = tasks.in_rule(rule)
         return tasks
+
+    def list_files(self, filetype, exists):
+        if filetype is None:
+            files = sorted(set(self.task_ctrl.input_task_map.keys()) | set(self.task_ctrl.output_task_map.keys()))
+        elif filetype == 'input':
+            files = sorted(self.task_ctrl.input_task_map.keys())
+        elif filetype == 'output':
+            files = sorted(self.task_ctrl.output_task_map.keys())
+        elif filetype == 'input_only':
+            files = sorted(set(self.task_ctrl.input_task_map.keys()) - set(self.task_ctrl.output_task_map.keys()))
+        elif filetype == 'output_only':
+            files = sorted(set(self.task_ctrl.output_task_map.keys()) - set(self.task_ctrl.input_task_map.keys()))
+        elif filetype == 'inout':
+            files = sorted(set(self.task_ctrl.output_task_map.keys()) & set(self.task_ctrl.input_task_map.keys()))
+        else:
+            raise Exception(f'Unknown {filetype=}')
+        if exists:
+            files = [f for f in files if f.exists()]
+        return files
 
     def task_info(self, task_path_hash_keys):
         assert self.finalized
