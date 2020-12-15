@@ -122,6 +122,7 @@ class SlurmExecutor(Executor):
     def _submit_task(self, task):
         slurm_script_path = self._write_submit_script(task)
         output = _submit_slurm_script(slurm_script_path)
+        logger.info(f'Submitted: {task}')
         jobid = _parse_jobid(output)
         self.task_jobid_map[task] = jobid
 
@@ -129,7 +130,7 @@ class SlurmExecutor(Executor):
         return True
 
     def enqueue_task(self, task):
-        raise NotImplementedError('Should not be called for SlurmExecutor')
+        self._submit_task(task)
 
     def get_completed_task(self):
         raise NotImplementedError('Should not be called for SlurmExecutor')
@@ -163,7 +164,13 @@ def run_job(remakefile, remakefile_hash, task_type, task_key):
     # Task might not be required anymore -- find out.
     requires_rerun = task_ctrl.task_requires_rerun(task, print_reasons=True)
     if force or task.force or requires_rerun & task_ctrl.remake_on:
-        task_ctrl.run_task(task)
+        logger.info(f'Running task: {task}')
+        # Can't run this; not finalized.
+        # task_ctrl.run_requested([task])
+        task.run(force=True)
+    else:
+        print(f'Run task not required: {task}')
+        logger.info(f'Run task not required: {task}')
 
 
 if __name__ == '__main__':

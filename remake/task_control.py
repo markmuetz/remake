@@ -482,9 +482,13 @@ class TaskControl:
     @check_finalized(True)
     def run_all(self, force=False):
         if self.executor.handles_dependencies or force:
-            completed_tasks = sorted(self.completed_tasks, key=lambda t: self.sorted_tasks.index(t))
             remaining_tasks = sorted(self.remaining_tasks, key=lambda t: self.sorted_tasks.index(t))
-            tasks = self.rescan_tasks + completed_tasks + self.statuses.ordered_pending_tasks + remaining_tasks
+            if force:
+                completed_tasks = sorted(self.completed_tasks, key=lambda t: self.sorted_tasks.index(t))
+                tasks = self.rescan_tasks + completed_tasks + self.statuses.ordered_pending_tasks + remaining_tasks
+            else:
+                tasks = self.rescan_tasks + self.statuses.ordered_pending_tasks + remaining_tasks
+
             self.run_requested(requested_tasks=tasks, force=force)
             return
         with self.executor:
