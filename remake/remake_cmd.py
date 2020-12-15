@@ -242,7 +242,8 @@ class RemakeParser:
                 filetype = 'inout'
             else:
                 filetype = None
-            ls_files(args.remakefile, args.long, filetype, args.exists)
+            ls_files(args.remakefile, args.long, filetype, args.exists,
+                     args.produced_by_rule, args.used_by_rule, args.produced_by_task, args.used_by_task)
         elif args.subcmd_name == 'remakefile-info':
             remakefile_info(args.remakefiles, args.long)
         elif args.subcmd_name == 'rule-info':
@@ -334,9 +335,10 @@ def ls_tasks(remakefile, long, tfilter, rule, changed, uses_file, produces_file)
         print(f'{task.path_hash_key()[:6]}: {task}')
 
 
-def ls_files(remakefile, long, filetype=None, exists=False):
+def ls_files(remakefile, long, filetype, exists,
+             produced_by_rule, used_by_rule, produced_by_task, used_by_task):
     remake = load_remake(remakefile)
-    files = remake.list_files(filetype, exists)
+    files = remake.list_files(filetype, exists, produced_by_rule, used_by_rule, produced_by_task, used_by_task)
     for file in files:
         print(file)
 

@@ -1,3 +1,12 @@
+class TaskQuery:
+    def __init__(self, task, task_ctrl):
+        self.task = task
+        self.task_ctrl = task_ctrl
+
+    def run(self, force=False):
+        self.task_ctrl.run_requested(requested_tasks=[self.task], force=force)
+
+
 class TaskQuerySet(list):
     def __init__(self, iterable=None, task_ctrl=None):
         self.task_ctrl = task_ctrl
@@ -6,13 +15,19 @@ class TaskQuerySet(list):
         super().__init__(iterable)
         
     def __getitem__(self, i):
-        return TaskQuerySet(list.__getitem__(self, i), self.task_ctrl)
+        if isinstance(i, slice):
+            return TaskQuerySet(list.__getitem__(self, i), self.task_ctrl)
+        else:
+            return TaskQuery(list.__getitem__(self, i), self.task_ctrl)
 
     def all(self):
         return self
 
     def in_rule(self, rule):
-        return TaskQuerySet([t for t in self if t.__class__.__name__ == rule], self.task_ctrl)
+        if isinstance(rule, str):
+            return TaskQuerySet([t for t in self if t.__class__.__name__ == rule], self.task_ctrl)
+        else:
+            return TaskQuerySet([t for t in self if t.__class__ is rule], self.task_ctrl)
 
     def filter(self, cast_to_str=False, **kwargs):
         return TaskQuerySet(self._filter(cast_to_str, **kwargs), task_ctrl=self.task_ctrl)

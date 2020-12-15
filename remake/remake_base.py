@@ -116,7 +116,7 @@ class Remake:
             tasks = tasks.in_rule(rule)
         return tasks
 
-    def list_files(self, filetype, exists):
+    def list_files(self, filetype, exists, produced_by_rule, used_by_rule, produced_by_task, used_by_task):
         if filetype is None:
             files = sorted(set(self.task_ctrl.input_task_map.keys()) | set(self.task_ctrl.output_task_map.keys()))
         elif filetype == 'input':
@@ -133,6 +133,45 @@ class Remake:
             raise Exception(f'Unknown {filetype=}')
         if exists:
             files = [f for f in files if f.exists()]
+        if used_by_rule:
+            _files = set()
+            for f in files:
+                if f not in self.task_ctrl.input_task_map:
+                    continue
+                for t in self.task_ctrl.input_task_map[f]:
+                    if t.__class__.__name__ == used_by_rule:
+                        _files.add(f)
+            files = sorted(_files)
+        if produced_by_rule:
+            _files = set()
+            for f in files:
+                if f not in self.task_ctrl.output_task_map:
+                    continue
+                t = self.task_ctrl.output_task_map[f]
+                if t.__class__.__name__ == produced_by_rule:
+                    _files.add(f)
+            files = sorted(_files)
+        if used_by_task:
+            used_by_task = self.find_tasks([used_by_task])[0].task
+            _files = set()
+            for f in files:
+                if f not in self.task_ctrl.input_task_map:
+                    continue
+                for t in self.task_ctrl.input_task_map[f]:
+                    if t is used_by_task:
+                        _files.add(f)
+            files = sorted(_files)
+        if produced_by_task:
+            produced_by_task = self.find_tasks([produced_by_task])[0].task
+            _files = set()
+            for f in files:
+                if f not in self.task_ctrl.output_task_map:
+                    continue
+                t = self.task_ctrl.output_task_map[f]
+                if t is produced_by_task:
+                    _files.add(f)
+            files = sorted(_files)
+
         return files
 
     def task_info(self, task_path_hash_keys):
