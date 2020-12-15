@@ -111,7 +111,7 @@ class RemakeParser:
         'run-tasks': {
             'help': 'Run specified tasks (uses same flags as ls-tasks)',
             'args': [
-                Arg('remakefile', default='remakefile.py'),
+                Arg('remakefile', default='remakefile'),
                 Arg('--tasks', '-t', nargs='*'),
                 *run_ctrl_group,
                 *task_filter_group,
@@ -304,9 +304,10 @@ def remake_run(remakefiles, force, one, random, print_reasons, executor, display
         remake = load_remake(remakefile).finalize()
         remake.configure(print_reasons, executor, display)
         remake.short_status()
-        if not remake.rerun_required() and (not force):
-            logger.info(f'{remake.name}: {len(remake.completed_tasks)} tasks already run')
-            continue
+        # Tasks themselves may have task.force = True:
+        # if not remake.rerun_required() and (not force):
+        #     logger.info(f'{remake.name}: {len(remake.completed_tasks)} tasks already run')
+        #     continue
         if one:
             remake.run_one(force=force)
         elif random:
@@ -401,9 +402,14 @@ def rule_info(remakefile, long, rule_names):
     remake = load_remake(remakefile).finalize()
     rules = remake.list_rules()
     for rule_name in rule_names:
+        found = False
         for rule in rules:
             if rule.__name__ == rule_name:
                 print(rule)
+                found = True
+                break
+        if not found:
+            logger.error(f'No rule {rule_name} in {remake.name} found')
 
 
 def task_info(remakefile, long, task_path_hash_keys):

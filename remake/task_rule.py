@@ -92,5 +92,12 @@ class TaskRule(Task, metaclass=RemakeMetaclass):
     pass
 
 
+# TODO: Ideas for new TaskRules:
+# class CommandTaskRule(TaskRule):
+#    command = ...
+# class ScriptTaskRule(TaskRule):
+#    script = ...
+
+
 class Config(metaclass=RemakeMetaclass):
     pass
