@@ -11,7 +11,7 @@ from remake.util import sha1sum
 
 logger = getLogger(__name__)
 
-METADATA_VERSION = 'metadata_v4'
+METADATA_VERSION = 'metadata_v5'
 JSON_READ_ATTEMPTS = 3
 
 
