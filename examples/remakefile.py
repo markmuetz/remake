@@ -107,6 +107,7 @@ class TestEx1(TaskRule):
             'remake run --reasons ex1.py || true',
             'remake run --reasons ex1.py || true',
             'echo "All tasks SUCCESSFUL"',
+            'make reset',
         ]
         run_commands(commands)
         self.outputs['dummy'].touch()
