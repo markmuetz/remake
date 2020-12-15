@@ -1,8 +1,10 @@
 from logging import getLogger
 import multiprocessing
 from pathlib import Path
+import random
 import traceback
 
+from remake.task import Task
 from remake.task_control import TaskControl
 from remake.task_query_set import TaskQuerySet
 from remake.setup_logging import setup_stdout_logging
@@ -72,6 +74,16 @@ class Remake:
         elif display:
             raise Exception(f'display {display} not recognized')
 
+    def short_status(self):
+        logger.info(f'Status (complete/pending/remaining): '
+                    f'{len(self.completed_tasks)}/{len(self.pending_tasks)}/{len(self.remaining_tasks)}')
+
+    def display_task_dag(self):
+        from remake.experimental.networkx_displays import display_task_status
+        import matplotlib.pyplot as plt
+        display_task_status(self.task_ctrl)
+        plt.show()
+
     def run_all(self, force=False):
         self.task_ctrl.run_all(force=force)
 
@@ -82,11 +94,21 @@ class Remake:
         except StopIteration:
             pass
 
+    def run_random(self, force=False):
+        task = random.choice(list(self.task_ctrl.pending_tasks))
+        self.run_requested([task], force=force)
+
     def run_requested(self, requested, force=False):
         self.task_ctrl.run_requested(requested, force=force)
 
     def list_rules(self):
         return self.rules
+
+    def find_task(self, task_path_hash_key):
+        if isinstance(task_path_hash_key, Task):
+            return task_path_hash_key
+        else:
+            return self.find_tasks([task_path_hash_key])[0].task
 
     def find_tasks(self, task_path_hash_keys):
         tasks = TaskQuerySet([], self.task_ctrl)
@@ -107,13 +129,48 @@ class Remake:
                 tasks.append(_tasks[0])
         return tasks
 
-    def list_tasks(self, tfilter, rule):
+    def list_tasks(self, tfilter, rule, requires_rerun, uses_file, produces_file, ancestor_of, descendant_of):
         tasks = TaskQuerySet([t for t in self.tasks], self.task_ctrl)
         if tfilter:
             filter_kwargs = dict([kv.split('=') for kv in tfilter.split(',')])
             tasks = tasks.filter(cast_to_str=True, **filter_kwargs)
         if rule:
             tasks = tasks.in_rule(rule)
+        if uses_file:
+            uses_file = Path(uses_file).absolute()
+            tasks = [t for t in tasks if uses_file in t.inputs.values()]
+        if produces_file:
+            produces_file = Path(produces_file).absolute()
+            tasks = [t for t in tasks if produces_file in t.outputs.values()]
+        if ancestor_of:
+            ancestor_of = self.find_task(ancestor_of)
+            ancestor_tasks = set(list(self.task_ctrl.task_dag.successors(ancestor_of)))
+            next_tasks = set(ancestor_tasks)
+            ancestor_tasks.add(ancestor_of)
+            while next_tasks:
+                new_next_tasks = set()
+                for next_task in next_tasks:
+                    ancestor_tasks.add(next_task)
+                    new_next_tasks.update(list(self.task_ctrl.task_dag.successors(next_task)))
+                next_tasks = new_next_tasks
+            tasks = sorted(ancestor_tasks & set(tasks), key=self.task_ctrl.sorted_tasks.index)
+        if descendant_of:
+            descendant_of = self.find_task(descendant_of)
+            descendant_tasks = set(list(self.task_ctrl.task_dag.predecessors(descendant_of)))
+            next_tasks = set(descendant_tasks)
+            descendant_tasks.add(descendant_of)
+            while next_tasks:
+                new_next_tasks = set()
+                for next_task in next_tasks:
+                    descendant_tasks.add(next_task)
+                    new_next_tasks.update(list(self.task_ctrl.task_dag.predecessors(next_task)))
+                next_tasks = new_next_tasks
+            tasks = sorted(descendant_tasks & set(tasks), key=self.task_ctrl.sorted_tasks.index)
+        if requires_rerun:
+            tasks = [t for t in tasks
+                     if self.task_ctrl.statuses.task_status(t) in ['pending', 'remaining']]
+                     # if self.task_ctrl.metadata_manager.task_metadata_map[t].task_requires_rerun()]
+
         return tasks
 
     def list_files(self, filetype, exists, produced_by_rule, used_by_rule, produced_by_task, used_by_task):
@@ -152,7 +209,7 @@ class Remake:
                     _files.add(f)
             files = sorted(_files)
         if used_by_task:
-            used_by_task = self.find_tasks([used_by_task])[0].task
+            used_by_task = self.find_task(used_by_task)
             _files = set()
             for f in files:
                 if f not in self.task_ctrl.input_task_map:
@@ -162,7 +219,7 @@ class Remake:
                         _files.add(f)
             files = sorted(_files)
         if produced_by_task:
-            produced_by_task = self.find_tasks([produced_by_task])[0].task
+            produced_by_task = self.find_task(produced_by_task)
             _files = set()
             for f in files:
                 if f not in self.task_ctrl.output_task_map:

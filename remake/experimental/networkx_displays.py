@@ -22,6 +22,7 @@ def display_task_status(task_ctrl):
             pos[task] = np.array([level, i])
 
     plt.clf()
+    plt.title(task_ctrl.name)
     nx.draw_networkx_nodes(task_ctrl.task_dag, pos, task_ctrl.rescan_tasks, node_color='c')
     nx.draw_networkx_nodes(task_ctrl.task_dag, pos, task_ctrl.completed_tasks, node_color='k')
     nx.draw_networkx_nodes(task_ctrl.task_dag, pos, task_ctrl.running_tasks, node_color='g')

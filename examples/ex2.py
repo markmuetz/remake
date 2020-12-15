@@ -12,8 +12,15 @@ VAR_MATRIX = {'i': range(4),
               'j': range(4)}
 
 
+class Init(TaskRule):
+    inputs = {}
+    outputs = {'out': 'data/outputs/ex2/out1.out'}
+
+    def rule_run(self):
+        self.outputs['out'].touch()
+
 class FanOut(TaskRule):
-    rule_inputs = {}
+    rule_inputs = Init.outputs
     rule_outputs = {'a{i},{j}': 'data/outputs/ex2/fan_out.{i}.{j}.out'}
     var_matrix = VAR_MATRIX
 
