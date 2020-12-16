@@ -126,6 +126,7 @@ class TaskControl:
         self.input_tasks = set()
 
         self.task_dag = nx.DiGraph()
+        self.rule_dag = nx.DiGraph()
         self.sorted_tasks = []
         self.rescan_tasks = []
         self.completed_rescan_tasks = set()
@@ -372,9 +373,10 @@ class TaskControl:
                     # Every output is created by only one task.
                     input_task = self.output_task_map[input_path]
                     self.task_dag.add_edge(input_task, task)
-                    if input_task not in self.task_dag.predecessors(task):
-                        task.__class__.prev_rules.add(input_task.__class__)
-                        input_task.__class__.next_rules.add(task.__class__)
+                    self.rule_dag.add_edge(input_task.__class__, task.__class__)
+                    # if input_task not in self.task_dag.predecessors(task):
+                    #    task.__class__.prev_rules.add(input_task.__class__)
+                    #    input_task.__class__.next_rules.add(task.__class__)
                 else:
                     self.input_paths.add(input_path)
             if is_input_task:
