@@ -129,6 +129,7 @@ class TaskControl:
         self.rule_dag = nx.DiGraph()
         self.sorted_tasks = []
         self.rescan_tasks = []
+        self.rescan_paths = {}
         self.completed_rescan_tasks = set()
 
         self.statuses = TaskStatuses()
@@ -266,7 +267,11 @@ class TaskControl:
         return requires_rerun
 
     def gen_rescan_task(self, path):
+        # N.B. this should only happen once per path.
         path = Path(path)
+        if path in self.rescan_paths:
+            return
+        self.rescan_paths.add(path)
         path_md = self.metadata_manager.path_metadata_map[path]
         if path in self.input_task_map and path in self.output_task_map:
             pathtype = 'inout'
