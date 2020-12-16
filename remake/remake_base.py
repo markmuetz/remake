@@ -75,8 +75,9 @@ class Remake:
             raise Exception(f'display {display} not recognized')
 
     def short_status(self):
-        logger.info(f'Status (complete/pending/remaining): '
-                    f'{len(self.completed_tasks)}/{len(self.pending_tasks)}/{len(self.remaining_tasks)}')
+        logger.info(f'Status (complete/rescan/pending/remaining): '
+                    f'{len(self.completed_tasks)}/{len(self.task_ctrl.rescan_tasks)}/'
+                    f'{len(self.pending_tasks)}/{len(self.remaining_tasks)}')
 
     def display_task_dag(self):
         from remake.experimental.networkx_displays import display_task_status
