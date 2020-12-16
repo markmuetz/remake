@@ -462,6 +462,11 @@ class TaskControl:
                 def task_index(t): return tasks.index(t)
 
                 # TODO: Does not work with MultiprocExecutor.
+                # TODO: THIS IS NOT RIGHT.
+                # There is a straight loop over tasks. This will not handle the case where there are no
+                # pending tasks available. Need to use same kind of loop as below, with subset of tasks.
+                if isinstance(self.executor, MultiprocExecutor):
+                    raise Exception('Not safe to run')
                 for task in tasks:
                     task_to_run = task
                     while task_to_run or not self.executor.can_accept_task():
