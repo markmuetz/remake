@@ -4,6 +4,7 @@ import multiprocessing
 from remake.task import Task
 from remake.remake_base import Remake
 from remake.task_query_set import TaskQuerySet
+from remake.util import fmtp
 
 
 class LoopVar:
@@ -62,14 +63,14 @@ class RemakeMetaclass(type):
                         elif callable(attrs['rule_inputs']):
                             inputs = attrs['rule_inputs'](**fmt_dict)
                         else:
-                            inputs = {k.format(**fmt_dict): v.format(**fmt_dict)
+                            inputs = {k.format(**fmt_dict): fmtp(v, **fmt_dict)
                                       for k, v in attrs['rule_inputs'].items()}
                         if hasattr(attrs['rule_outputs'], '__func__'):
                             outputs = attrs['rule_outputs'].__func__(**fmt_dict)
                         elif callable(attrs['rule_outputs']):
                             outputs = attrs['rule_outputs'](**fmt_dict)
                         else:
-                            outputs = {k.format(**fmt_dict): v.format(**fmt_dict)
+                            outputs = {k.format(**fmt_dict): fmtp(v, **fmt_dict)
                                        for k, v in attrs['rule_outputs'].items()}
                         rule_obj = newcls(remake.task_ctrl, attrs['rule_run'], inputs, outputs,
                                           depends_on=depends_on)
