@@ -241,6 +241,7 @@ class TaskControl:
 
         logger.debug('performing task file contents checks')
 
+        # TODO: Possibly switch to one rescan task per task (instead of one per task input).
         for path in task.inputs.values():
             if not path.exists():
                 continue
@@ -443,6 +444,10 @@ class TaskControl:
             self.display_func(self)
 
     @check_finalized(True)
+    def run_rescan_only(self):
+        self.run_requested(self.rescan_tasks)
+
+    @check_finalized(True)
     def run_requested(self, requested_tasks, force=False):
         with self.executor:
             if self.executor.handles_dependencies:
@@ -453,7 +458,7 @@ class TaskControl:
                 def sorter(task):
                     if isinstance(task, RescanFileTask):
                         # These should come first!
-                        return -1
+                        return -1 * (len(self.rescan_tasks) - self.rescan_tasks.index(task))
                     else:
                         return self.sorted_tasks.index(task)
 

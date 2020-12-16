@@ -103,6 +103,7 @@ class RemakeParser:
             'help': 'Run all pending tasks',
             'args': [
                 Arg('remakefiles', nargs='*', default=['remakefile']),
+                Arg('--rescan-only', action='store_true', help='only rescan input files'),
                 Arg('--one', '-o', action='store_true', help='run one pending task'),
                 Arg('--random',  action='store_true', help='run one (lucky dip!)'),
                 *run_ctrl_group,
@@ -225,7 +226,8 @@ class RemakeParser:
         # N.B. args should always be dereferenced at this point,
         # not passed into any subsequent functions.
         if args.subcmd_name == 'run':
-            remake_run(args.remakefiles, args.force, args.one, args.random, args.reasons, args.executor, args.display)
+            remake_run(args.remakefiles, args.rescan_only, args.force, args.one, args.random,
+                       args.reasons, args.executor, args.display)
         elif args.subcmd_name == 'run-tasks':
             remake_run_tasks(args.remakefile, args.tasks, args.force, args.reasons, args.executor, args.display,
                              args.filter, args.rule,
@@ -299,7 +301,7 @@ def remake_cmd(argv: Union[List[str], None] = None) -> None:
     parser.dispatch()
 
 
-def remake_run(remakefiles, force, one, random, print_reasons, executor, display):
+def remake_run(remakefiles, rescan_only, force, one, random, print_reasons, executor, display):
     for remakefile in remakefiles:
         remake = load_remake(remakefile).finalize()
         remake.configure(print_reasons, executor, display)
@@ -308,7 +310,9 @@ def remake_run(remakefiles, force, one, random, print_reasons, executor, display
         # if not remake.rerun_required() and (not force):
         #     logger.info(f'{remake.name}: {len(remake.completed_tasks)} tasks already run')
         #     continue
-        if one:
+        if rescan_only:
+            remake.task_ctrl.run_rescan_only()
+        elif one:
             remake.run_one(force=force)
         elif random:
             remake.run_random(force=force)
