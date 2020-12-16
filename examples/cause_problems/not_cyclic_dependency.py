@@ -1,6 +1,6 @@
 from remake import Remake, TaskRule
 
-cyclic_dependency = Remake()
+not_cyclic_dependency = Remake()
 
 
 class T1(TaskRule):
@@ -12,7 +12,7 @@ class T1(TaskRule):
 
 
 class T2(TaskRule):
-    inputs = {**T1.outputs, **{'in2': 'data/inputs/in2.txt'}}
+    inputs = T1.outputs
     outputs = {'out2': 'out2.txt'}
 
     def rule_run(self):
@@ -20,8 +20,16 @@ class T2(TaskRule):
 
 
 class T3(TaskRule):
-    inputs = T2.inputs
-    outputs = {'out3': 'data/inputs/in2.txt'}
+    inputs = {}
+    outputs = {'out3': 'data/inputs/out3.txt'}
+
+    def rule_run(self):
+        self.outputs['out3'].touch()
+
+
+class T4(TaskRule):
+    inputs = {**T2.outputs, **T3.outputs}
+    outputs = {'out3': 'data/inputs/out4.txt'}
 
     def rule_run(self):
         self.outputs['out3'].touch()

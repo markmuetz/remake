@@ -1,4 +1,4 @@
-from collections import defaultdict
+from collections import defaultdict, Counter
 import functools
 from logging import getLogger
 from pathlib import Path
@@ -195,13 +195,13 @@ class TaskControl:
 
         level = 0
         curr_tasks = set(self.input_tasks)
-        visited = set()
+        visited = Counter()
         all_tasks = set()
         while curr_tasks:
             self.tasks_at_level[level] = sorted(curr_tasks, key=lambda t: list(t.outputs.values())[0])
             next_tasks = set()
             for curr_task in sorted(curr_tasks, key=lambda t: list(t.outputs.values())[0]):
-                if curr_task in visited:
+                if curr_task in visited and visited[curr_task] > len(list(self.task_dag.predecessors(curr_task))):
                     # Why not just check this earlier? nx method just returns True or False, whereas
                     # I can build up a bit more info to supply to user.
                     assert not nx.is_directed_acyclic_graph(self.task_dag), ('networkx and TaskControl disagree on DAG!'
@@ -215,7 +215,7 @@ class TaskControl:
 
                     raise Exception(f'cycle detected in DAG:\n  {curr_task} produces input for\n  >' +
                                     '\n  >'.join([str(t) for t in input_tasks]) + '\n')
-                visited.add(curr_task)
+                visited[curr_task] += 1
                 can_yield = True
                 # for prev_task in self.prev_tasks[curr_task]:
                 for prev_task in self.task_dag.predecessors(curr_task):
