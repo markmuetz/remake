@@ -129,7 +129,7 @@ class TaskControl:
         self.rule_dag = nx.DiGraph()
         self.sorted_tasks = []
         self.rescan_tasks = []
-        self.rescan_paths = {}
+        self.rescan_paths = set()
         self.completed_rescan_tasks = set()
 
         self.statuses = TaskStatuses()

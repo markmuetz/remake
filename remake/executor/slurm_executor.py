@@ -16,8 +16,8 @@ from remake.executor.base_executor import Executor
 SLURM_SCRIPT_TPL = """#!/bin/bash
 #SBATCH --job-name={job_name}
 #SBATCH -p {queue}
-#SBATCH -o slurm_output/{script_name}_{remakefile_name}_{task_type}_%j.out
-#SBATCH -e slurm_output/{script_name}_{remakefile_name}_{task_type}_%j.err
+#SBATCH -o {rule_slurm_output}/{script_name}_{remakefile_name}_{task_type}_%j.out
+#SBATCH -e {rule_slurm_output}/{script_name}_{remakefile_name}_{task_type}_%j.err
 #SBATCH --time={max_runtime}
 #SBATCH --mem={mem}
 {dependencies}
@@ -62,8 +62,8 @@ class SlurmExecutor(Executor):
 
         slurm_dir = Path('slurm_scripts')
         slurm_dir.mkdir(exist_ok=True)
-        slurm_output = Path('slurm_output')
-        slurm_output.mkdir(exist_ok=True)
+        self.slurm_output = Path('slurm_output')
+        self.slurm_output.mkdir(exist_ok=True)
 
         self.slurm_dir = slurm_dir
         self.remakefile_path = Path(task_ctrl.name + '.py').absolute()
@@ -81,6 +81,9 @@ class SlurmExecutor(Executor):
         remakefile_name = self.remakefile_path.stem
         script_path = Path(__file__)
         script_name = script_path.stem
+        rule_name = task.__class__.__name__
+        rule_slurm_output = self.slurm_output / rule_name
+        rule_slurm_output.mkdir(exist_ok=True)
         slurm_script_filepath = self.slurm_dir / f'{script_name}_{remakefile_name}_{task.path_hash_key()}.sbatch'
         logger.debug(f'  writing {slurm_script_filepath}')
 
@@ -106,6 +109,7 @@ class SlurmExecutor(Executor):
 
         slurm_script = SLURM_SCRIPT_TPL.format(script_name=script_name,
                                                script_path=script_path,
+                                               rule_slurm_output=rule_slurm_output,
                                                remakefile_name=remakefile_name,
                                                remakefile_path=self.remakefile_path,
                                                remakefile_path_hash=self.remakefile_path_hash,
