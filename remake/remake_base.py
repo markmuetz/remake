@@ -130,7 +130,9 @@ class Remake:
                 tasks.append(_tasks[0])
         return tasks
 
-    def list_tasks(self, tfilter, rule, requires_rerun, uses_file, produces_file, ancestor_of, descendant_of):
+    def list_tasks(self, tfilter=None, rule=None, requires_rerun=False,
+                   uses_file=None, produces_file=None,
+                   ancestor_of=None, descendant_of=None):
         tasks = TaskQuerySet([t for t in self.tasks], self.task_ctrl)
         if tfilter:
             filter_kwargs = dict([kv.split('=') for kv in tfilter.split(',')])
@@ -174,7 +176,9 @@ class Remake:
 
         return tasks
 
-    def list_files(self, filetype, exists, produced_by_rule, used_by_rule, produced_by_task, used_by_task):
+    def list_files(self, filetype=None, exists=False,
+                   produced_by_rule=None, used_by_rule=None,
+                   produced_by_task=None, used_by_task=None):
         if filetype is None:
             files = sorted(set(self.task_ctrl.input_task_map.keys()) | set(self.task_ctrl.output_task_map.keys()))
         elif filetype == 'input':

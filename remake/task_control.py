@@ -399,6 +399,20 @@ class TaskControl:
             else:
                 yield self.statuses.ordered_pending_tasks[0]
 
+    def get_next_pending_from_subset(self):
+        # TODO: need to be smarter -- self.statuses.ordered_pending_tasks NOT decremented in get_next_pending.
+        # TODO: will end up in tight loop if no pending.
+        while self.subset_tasks:
+            try:
+                next_pending = self.get_next_pending()
+            except StopIteration:
+                break
+            if not next_pending:
+                yield None
+            else:
+                if next_pending in self.subset_tasks:
+                    yield next_pending
+
     def enqueue_task(self, task, force=False):
         if task is None:
             raise Exception('No task to enqueue')
