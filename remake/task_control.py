@@ -95,6 +95,7 @@ class TaskControl:
                  remake_on: RemakeOn = RemakeOn.ANY_STANDARD_CHANGE,
                  dotremake_dir='.remake',
                  print_reasons=False):
+        self.check_path_metadata = True
         self.filename = filename
         self.dependencies = dependencies
         self.path = Path(filename).absolute()
@@ -243,18 +244,21 @@ class TaskControl:
 
         logger.debug('performing task file contents checks')
 
-        # TODO: Possibly switch to one rescan task per task (instead of one per task input).
-        for path in task.inputs.values():
-            if not path.exists():
-                continue
-            path_md = self.metadata_manager.path_metadata_map[path]
-            metadata_has_changed = path_md.compare_path_with_previous()
-            if metadata_has_changed:
-                self.gen_rescan_task(path)
+        if self.check_path_metadata:
+            # TODO: Possibly switch to one rescan task per task (instead of one per task input).
+            for path in task.inputs.values():
+                if not path.exists():
+                    continue
+                path_md = self.metadata_manager.path_metadata_map[path]
+                metadata_has_changed = path_md.compare_path_with_previous()
+                if metadata_has_changed:
+                    self.gen_rescan_task(path)
 
         task_md = self.metadata_manager.task_metadata_map[task]
         task_md.generate_metadata()
         requires_rerun = task_md.task_requires_rerun()
+        if not self.check_path_metadata and requires_rerun & RemakeOn.INPUTS_CHANGED:
+            requires_rerun &= ~RemakeOn.INPUTS_CHANGED
 
         if requires_rerun:
             logger.debug(f'requires rerun: {requires_rerun}')

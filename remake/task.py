@@ -232,7 +232,6 @@ class Task(BaseTask):
         assert not requires_rerun
 
 
-
 class RescanFileTask(BaseTask):
     def __init__(self, task_ctrl, filepath, path_md, pathtype):
         super().__init__(task_ctrl)
