@@ -6,6 +6,7 @@ import traceback
 
 import networkx as nx
 
+from remake.remake_exceptions import RemakeError
 from remake.task import Task
 from remake.task_control import TaskControl
 from remake.task_query_set import TaskQuerySet
@@ -101,7 +102,18 @@ class Remake:
         task = random.choice(list(self.task_ctrl.pending_tasks))
         self.run_requested([task], force=force)
 
-    def run_requested(self, requested, force=False):
+    def run_requested(self, requested, force=False, handle_dependencies=False):
+        # Work out whether it's possible to run requested tasks.
+        ancestors = self.all_ancestors(requested)
+        rerun_required_ancestors = ancestors & (self.pending_tasks | self.remaining_tasks)
+        missing_tasks = rerun_required_ancestors - set(requested)
+        if missing_tasks:
+            logger.debug(f'{len(missing_tasks)} need to be added')
+            if not handle_dependencies:
+                logger.error('Impossible to run requested tasks')
+                raise RemakeError('Cannot run with requested tasks. Use --handle-dependencies to fix.')
+            else:
+                requested = list(rerun_required_ancestors)
         self.task_ctrl.run_requested(requested, force=force)
 
     def list_rules(self):
@@ -160,6 +172,22 @@ class Remake:
                      if self.task_ctrl.statuses.task_status(t) in ['pending', 'remaining']]
 
         return tasks
+
+    def all_descendants(self, tasks):
+        descendants = set()
+        for task in tasks:
+            if task in descendants:
+                continue
+            descendants |= self.descendants(task)
+        return descendants
+
+    def all_ancestors(self, tasks):
+        ancestors = set()
+        for task in tasks:
+            if task in ancestors:
+                continue
+            ancestors |= self.ancestors(task)
+        return ancestors
 
     def descendants(self, task):
         return set(nx.bfs_tree(self.task_ctrl.task_dag, task))

@@ -16,6 +16,8 @@ logger = getLogger(__name__)
 
 class TaskStatuses:
     def __init__(self):
+        # TODO: think rescan tasks need to go in here.
+        self._rescan_tasks = []
         self._completed_tasks = set()
         self._pending_tasks = set()
         self._ordered_pending_tasks = []
@@ -27,26 +29,37 @@ class TaskStatuses:
         self.__init__()
 
     def add_task(self, task, status):
-        getattr(self, f'_{status}_tasks').add(task)
-        if status == 'pending':
-            self._ordered_pending_tasks.append(task)
+        if isinstance(task, RescanFileTask):
+            assert status == 'pending'
+            self._rescan_tasks.append(task)
+        else:
+            getattr(self, f'_{status}_tasks').add(task)
+            if status == 'pending':
+                self._ordered_pending_tasks.append(task)
         self._task_status[task] = status
 
     def update_task(self, task, old_status, new_status):
-        old_tasks = getattr(self, f'_{old_status}_tasks')
-        new_tasks = getattr(self, f'_{new_status}_tasks')
-        assert task in old_tasks
-        assert self._task_status[task] in old_status
-        old_tasks.remove(task)
-        new_tasks.add(task)
-        if old_status == 'pending':
-            self._ordered_pending_tasks.remove(task)
-        if new_status == 'pending':
-            self._ordered_pending_tasks.append(task)
+        if isinstance(task, RescanFileTask):
+            assert self._task_status[task] in old_status
+        else:
+            old_tasks = getattr(self, f'_{old_status}_tasks')
+            new_tasks = getattr(self, f'_{new_status}_tasks')
+            assert task in old_tasks
+            assert self._task_status[task] in old_status
+            old_tasks.remove(task)
+            new_tasks.add(task)
+            if old_status == 'pending':
+                self._ordered_pending_tasks.remove(task)
+            if new_status == 'pending':
+                self._ordered_pending_tasks.append(task)
         self._task_status[task] = new_status
 
     def task_status(self, task):
         return self._task_status[task]
+
+    @property
+    def rescan_tasks(self):
+        return self._rescan_tasks
 
     @property
     def completed_tasks(self):
@@ -129,11 +142,10 @@ class TaskControl:
         self.task_dag = nx.DiGraph()
         self.rule_dag = nx.DiGraph()
         self.sorted_tasks = []
-        self.rescan_tasks = []
         self.rescan_paths = set()
-        self.completed_rescan_tasks = set()
 
         self.statuses = TaskStatuses()
+        self.subset_statuses = None
 
         self.tasks_at_level = {}
 
@@ -155,6 +167,10 @@ class TaskControl:
             # if r != 'y':
             #     raise Exception('Fix MultiprocExecutor')
             self.executor = MultiprocExecutor(self)
+
+    @property
+    def rescan_tasks(self):
+        return self.statuses.rescan_tasks
 
     @property
     def completed_tasks(self):
@@ -287,7 +303,8 @@ class TaskControl:
         rescan_task = RescanFileTask(self, path_md.path, path_md, pathtype)
         task_md = self.metadata_manager.create_task_metadata(rescan_task)
         rescan_task.add_metadata(task_md)
-        self.rescan_tasks.append(rescan_task)
+
+        self.statuses.add_task(rescan_task, 'pending')
         for next_task in self.input_task_map[path]:
             if next_task is not rescan_task:
                 self.task_dag.add_edge(rescan_task, next_task)
@@ -405,25 +422,21 @@ class TaskControl:
                 yield self.statuses.ordered_pending_tasks[0]
 
     def get_next_pending_from_subset(self):
-        # TODO: need to be smarter -- self.statuses.ordered_pending_tasks NOT decremented in get_next_pending.
-        # TODO: will end up in tight loop if no pending.
-        while self.subset_tasks:
-            try:
-                next_pending = self.get_next_pending()
-            except StopIteration:
-                break
-            if not next_pending:
+        # TODO: need to handle rescan tasks.
+        while (self.subset_statuses.rescan_tasks or
+               self.subset_statuses.pending_tasks or
+               self.subset_statuses.remaining_tasks):
+            if not self.subset_statuses.pending_tasks:
                 yield None
             else:
-                if next_pending in self.subset_tasks:
-                    yield next_pending
+                yield self.subset_statuses.ordered_pending_tasks[0]
 
     def enqueue_task(self, task, force=False):
         if task is None:
             raise Exception('No task to enqueue')
-        if not isinstance(task, RescanFileTask):
-            status = self.statuses.task_status(task)
-            self.statuses.update_task(task, status, 'running')
+        status = self.statuses.task_status(task)
+        self.update_task_status(task, status, 'running')
+
         requires_rerun = self.task_requires_rerun(task, print_reasons=self.print_reasons)
         if force or task.force or requires_rerun & self.remake_on:
             logger.debug(f'enqueue task (force={force}, requires_rerun={requires_rerun}): {task}')
@@ -434,8 +447,7 @@ class TaskControl:
                 logger.error(f'TaskControl: {self.name}')
                 logger.error(e)
                 task.task_md.update_status('ERROR')
-                if not isinstance(task, RescanFileTask):
-                    self.statuses.update_task(task, 'running', status)
+                self.update_task_status(task, 'running', status)
                 raise
             logger.debug(f'enqueued task: {task}')
             return True
@@ -448,10 +460,7 @@ class TaskControl:
     def task_complete(self, task):
         assert task.complete(), 'task not complete'
         logger.debug(f'add completed task: {task.path_hash_key()}')
-        if not isinstance(task, RescanFileTask) and task in self.running_tasks:
-            self.statuses.update_task(task, 'running', 'completed')
-        else:
-            self.completed_rescan_tasks.add(task)
+        self.update_task_status(task, 'running', 'completed')
 
         for next_task in self.task_dag.successors(task):
             if next_task in self.completed_tasks:
@@ -459,12 +468,13 @@ class TaskControl:
             add_to_pending = True
             # Make sure all previous tasks have been run.
             for prev_task in self.task_dag.predecessors(next_task):
-                if not (prev_task in self.completed_tasks or prev_task in self.completed_rescan_tasks):
+                if not self.statuses.task_status(prev_task) == 'completed':
                     add_to_pending = False
                     break
             if add_to_pending:
                 logger.debug(f'adding new pending task: {next_task.path_hash_key()}')
-                self.statuses.update_task(next_task, self.statuses.task_status(next_task), 'pending')
+                curr_status = self.statuses.task_status(next_task)
+                self.update_task_status(next_task, curr_status, 'pending')
 
         if self.display_func:
             self.display_func(self)
@@ -475,62 +485,54 @@ class TaskControl:
 
     @check_finalized(True)
     def run_requested(self, requested_tasks, force=False):
-        with self.executor:
-            if self.executor.handles_dependencies:
+        if self.executor.handles_dependencies:
+            with self.executor:
                 # Work here is done, just enqueue all pending and remaining tasks:
                 for task in requested_tasks:
                     self.executor.enqueue_task(task)
+            return
+
+        def sorter(task):
+            if isinstance(task, RescanFileTask):
+                # These should come first!
+                return -1 * (len(self.rescan_tasks) - self.rescan_tasks.index(task))
             else:
-                def sorter(task):
-                    if isinstance(task, RescanFileTask):
-                        # These should come first!
-                        return -1 * (len(self.rescan_tasks) - self.rescan_tasks.index(task))
-                    else:
-                        return self.sorted_tasks.index(task)
+                return self.sorted_tasks.index(task)
 
-                tasks = sorted(requested_tasks, key=sorter)
-                len_tasks = len(requested_tasks)
-                def task_index(t): return tasks.index(t)
-
-                # TODO: Does not work with MultiprocExecutor.
-                # TODO: THIS IS NOT RIGHT.
-                # There is a straight loop over tasks. This will not handle the case where there are no
-                # pending tasks available. Need to use same kind of loop as below, with subset of tasks.
-                if isinstance(self.executor, MultiprocExecutor):
-                    raise Exception('Not safe to run')
-                for task in tasks:
-                    task_to_run = task
-                    while task_to_run or not self.executor.can_accept_task():
-                        if task_to_run and self.executor.can_accept_task():
-                            self.log_task_info(task_index, len_tasks, task_to_run)
-                            task_enqueued = self.enqueue_task(task_to_run, force=force)
-                            if not task_enqueued:
-                                self.task_complete(task_to_run)
-                            task_to_run = None
-                        else:
-                            completed_task = self.executor.get_completed_task()
-                            self.task_complete(completed_task)
-                while not self.executor.has_finished():
-                    logger.debug('waiting for remaining tasks')
-                    task = self.executor.get_completed_task()
-                    self.task_complete(task)
+        sorted_tasks = sorted(requested_tasks, key=sorter)
+        self.subset_statuses = TaskStatuses()
+        for task in sorted_tasks:
+            self.subset_statuses.add_task(task, self.statuses.task_status(task))
+        try:
+            self.run_all(force=force, use_subset=True)
+        finally:
+            self.subset_statuses = None
 
     @check_finalized(True)
-    def run_all(self, force=False):
-        if self.executor.handles_dependencies or force:
+    def run_all(self, force=False, use_subset=False):
+        if self.executor.handles_dependencies:
             remaining_tasks = sorted(self.remaining_tasks, key=lambda t: self.sorted_tasks.index(t))
-            if force:
-                completed_tasks = sorted(self.completed_tasks, key=lambda t: self.sorted_tasks.index(t))
-                tasks = self.rescan_tasks + completed_tasks + self.statuses.ordered_pending_tasks + remaining_tasks
-            else:
-                tasks = self.rescan_tasks + self.statuses.ordered_pending_tasks + remaining_tasks
-
-            self.run_requested(requested_tasks=tasks, force=force)
+            tasks = self.rescan_tasks + self.statuses.ordered_pending_tasks + remaining_tasks
+            with self.executor:
+                # Work here is done, just enqueue all pending and remaining tasks:
+                for task in tasks:
+                    self.executor.enqueue_task(task)
             return
         with self.executor:
-            len_tasks = len(self.sorted_tasks)
-            def task_index(t): return self.sorted_tasks.index(t)
-            for task in self.get_next_pending():
+            if use_subset:
+                get_next_pending = self.get_next_pending_from_subset
+                len_tasks = len(self.sorted_tasks)
+
+                def task_index(t):
+                    return self.sorted_tasks.index(t)
+            else:
+                get_next_pending = self.get_next_pending
+                len_tasks = len(self.sorted_tasks)
+
+                def task_index(t):
+                    return self.sorted_tasks.index(t)
+
+            for task in get_next_pending():
                 if task and self.executor.can_accept_task():
                     self.log_task_info(task_index, len_tasks, task)
                     task_enqueued = self.enqueue_task(task, force=force)
@@ -555,3 +557,8 @@ class TaskControl:
     def print_status(self):
         print(f'{self.name}')
         self.statuses.print_status()
+
+    def update_task_status(self, task, old_status, new_status):
+        self.statuses.update_task(task, old_status, new_status)
+        if self.subset_statuses:
+            self.subset_statuses.update_task(task, old_status, new_status)
