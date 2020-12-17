@@ -25,22 +25,15 @@ class BaseTask:
 
     @property
     def status(self):
-        if self in self.task_ctrl.completed_tasks:
-            return 'completed'
-        elif self in self.task_ctrl.pending_tasks:
-            return 'pending'
-        elif self in self.task_ctrl.running_tasks:
-            return 'running'
-        elif self in self.task_ctrl.remaining_tasks:
-            return 'remaining'
+        return self.task_ctrl.statuses.task_status(self)
 
     @property
     def next_tasks(self):
-        return self.task_ctrl.next_tasks[self]
+        return list(self.task_ctrl.task_dag.successors(self))
 
     @property
     def prev_tasks(self):
-        return self.task_ctrl.prev_tasks[self]
+        return list(self.task_ctrl.task_dag.predecessors(self))
 
 
 class Task(BaseTask):
