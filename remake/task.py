@@ -18,6 +18,7 @@ class BaseTask:
     def __init__(self, task_ctrl):
         self.task_ctrl = task_ctrl
         self.task_md = None
+        self.check_path_metadata = True
 
     def add_metadata(self, task_md):
         self.task_md = task_md
@@ -229,6 +230,9 @@ class Task(BaseTask):
 
         logger.debug('post run content checks extra_checks')
         requires_rerun = self.task_md.task_requires_rerun()
+        if not self.check_path_metadata and requires_rerun & RemakeOn.INPUTS_CHANGED:
+            requires_rerun &= ~RemakeOn.INPUTS_CHANGED
+
         assert not requires_rerun
 
 

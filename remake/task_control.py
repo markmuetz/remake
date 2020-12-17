@@ -190,6 +190,7 @@ class TaskControl:
 
         task_md = self.metadata_manager.create_task_metadata(task)
         task.add_metadata(task_md)
+        task.check_path_metadata = self.check_path_metadata
 
         return task
 
