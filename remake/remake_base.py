@@ -4,6 +4,8 @@ from pathlib import Path
 import random
 import traceback
 
+import networkx as nx
+
 from remake.task import Task
 from remake.task_control import TaskControl
 from remake.task_query_set import TaskQuerySet
@@ -147,34 +149,23 @@ class Remake:
             tasks = [t for t in tasks if produces_file in t.outputs.values()]
         if ancestor_of:
             ancestor_of = self.find_task(ancestor_of)
-            ancestor_tasks = set(list(self.task_ctrl.task_dag.successors(ancestor_of)))
-            next_tasks = set(ancestor_tasks)
-            ancestor_tasks.add(ancestor_of)
-            while next_tasks:
-                new_next_tasks = set()
-                for next_task in next_tasks:
-                    ancestor_tasks.add(next_task)
-                    new_next_tasks.update(list(self.task_ctrl.task_dag.successors(next_task)))
-                next_tasks = new_next_tasks
+            ancestor_tasks = self.ancestors(ancestor_of)
             tasks = sorted(ancestor_tasks & set(tasks), key=self.task_ctrl.sorted_tasks.index)
         if descendant_of:
             descendant_of = self.find_task(descendant_of)
-            descendant_tasks = set(list(self.task_ctrl.task_dag.predecessors(descendant_of)))
-            next_tasks = set(descendant_tasks)
-            descendant_tasks.add(descendant_of)
-            while next_tasks:
-                new_next_tasks = set()
-                for next_task in next_tasks:
-                    descendant_tasks.add(next_task)
-                    new_next_tasks.update(list(self.task_ctrl.task_dag.predecessors(next_task)))
-                next_tasks = new_next_tasks
+            descendant_tasks = self.descendants(descendant_of)
             tasks = sorted(descendant_tasks & set(tasks), key=self.task_ctrl.sorted_tasks.index)
         if requires_rerun:
             tasks = [t for t in tasks
                      if self.task_ctrl.statuses.task_status(t) in ['pending', 'remaining']]
-                     # if self.task_ctrl.metadata_manager.task_metadata_map[t].task_requires_rerun()]
 
         return tasks
+
+    def descendants(self, task):
+        return set(nx.bfs_tree(self.task_ctrl.task_dag, task))
+
+    def ancestors(self, task):
+        return set(nx.bfs_tree(self.task_ctrl.task_dag, task, reverse=True))
 
     def list_files(self, filetype=None, exists=False,
                    produced_by_rule=None, used_by_rule=None,
