@@ -16,7 +16,7 @@ logger = getLogger(__name__)
 
 class TaskStatuses:
     def __init__(self):
-        # TODO: think rescan tasks need to go in here.
+        self._all_tasks = set()
         self._rescan_tasks = []
         self._completed_tasks = set()
         self._pending_tasks = set()
@@ -29,6 +29,7 @@ class TaskStatuses:
         self.__init__()
 
     def add_task(self, task, status):
+        self._all_tasks.add(task)
         if isinstance(task, RescanFileTask):
             assert status == 'pending'
             self._rescan_tasks.append(task)
@@ -56,6 +57,10 @@ class TaskStatuses:
 
     def task_status(self, task):
         return self._task_status[task]
+
+    @property
+    def all_tasks(self):
+        return self._all_tasks
 
     @property
     def rescan_tasks(self):
@@ -141,7 +146,7 @@ class TaskControl:
 
         self.task_dag = nx.DiGraph()
         self.rule_dag = nx.DiGraph()
-        self.sorted_tasks = []
+        self.sorted_tasks = {}
         self.rescan_paths = set()
 
         self.statuses = TaskStatuses()
@@ -213,6 +218,7 @@ class TaskControl:
     def _topogological_tasks(self):
         assert self._dag_built
 
+        count = 0
         level = 0
         curr_tasks = set(self.input_tasks)
         visited = Counter()
@@ -243,7 +249,8 @@ class TaskControl:
                         can_yield = False
                         break
                 if can_yield and curr_task not in all_tasks:
-                    yield curr_task
+                    yield curr_task, count
+                    count += 1
                     all_tasks.add(curr_task)
 
                 for next_task in self.task_dag.successors(curr_task):
@@ -334,7 +341,7 @@ class TaskControl:
 
         logger.info('Perform topological sort')
         # Can now perform a topological sort.
-        self.sorted_tasks = list(self._topogological_tasks())
+        self.sorted_tasks = dict(self._topogological_tasks())
         # N.B. provides nicer ordering of tasks than using self.task_dag.
         # self.sorted_tasks = list(nx.topological_sort(self.task_dag))
         if self.extra_checks:
@@ -364,7 +371,7 @@ class TaskControl:
         # pending: task has been run and needs to be rerun.
         # remaining: task either needs to be rerun, or has previous tasks that need to be rerun.
         # import ipdb; ipdb.set_trace()
-        for task in self.sorted_tasks:
+        for task in self.sorted_tasks.keys():
             status = 'completed'
             requires_rerun = self.task_requires_rerun(task)
 
@@ -422,11 +429,12 @@ class TaskControl:
                 yield self.statuses.ordered_pending_tasks[0]
 
     def get_next_pending_from_subset(self):
-        # TODO: need to handle rescan tasks.
         while (self.subset_statuses.rescan_tasks or
                self.subset_statuses.pending_tasks or
                self.subset_statuses.remaining_tasks):
-            if not self.subset_statuses.pending_tasks:
+            if self.subset_statuses.rescan_tasks:
+                yield self.subset_statuses.rescan_tasks.pop(0)
+            elif not self.subset_statuses.pending_tasks:
                 yield None
             else:
                 yield self.subset_statuses.ordered_pending_tasks[0]
@@ -497,10 +505,29 @@ class TaskControl:
                 # These should come first!
                 return -1 * (len(self.rescan_tasks) - self.rescan_tasks.index(task))
             else:
-                return self.sorted_tasks.index(task)
+                return self.sorted_tasks[task]
 
         sorted_tasks = sorted(requested_tasks, key=sorter)
         self.subset_statuses = TaskStatuses()
+        if force:
+            # Search for all tasks whose inputs are outside of requested tasks. These are the
+            # input_tasks -- they are marked as pending. All others marked as remaining so
+            # when comes to get_next_pending_from_subset they will be doled out correctly.
+            # Essentially find initial tasks *in subset* and mark pending,
+            # Mark all others as remaining.
+            taskset = set(sorted_tasks)
+            for task in sorted_tasks:
+                input_task = True
+                for prev_task in self.task_dag.predecessors(task):
+                    if prev_task in taskset:
+                        input_task = False
+                        break
+
+                if input_task:
+                    self.statuses.update_task(task, task.status, 'pending')
+                else:
+                    self.statuses.update_task(task, task.status, 'remaining')
+
         for task in sorted_tasks:
             self.subset_statuses.add_task(task, self.statuses.task_status(task))
         try:
@@ -511,36 +538,36 @@ class TaskControl:
     @check_finalized(True)
     def run_all(self, force=False, use_subset=False):
         if self.executor.handles_dependencies:
-            remaining_tasks = sorted(self.remaining_tasks, key=lambda t: self.sorted_tasks.index(t))
+            remaining_tasks = sorted(self.remaining_tasks, key=self.sorted_tasks.get)
             tasks = self.rescan_tasks + self.statuses.ordered_pending_tasks + remaining_tasks
             with self.executor:
                 # Work here is done, just enqueue all pending and remaining tasks:
                 for task in tasks:
+                    # TODO: make work for force=True.
                     self.executor.enqueue_task(task)
             return
         with self.executor:
             if use_subset:
                 get_next_pending = self.get_next_pending_from_subset
-                len_tasks = len(self.sorted_tasks)
-
-                def task_index(t):
-                    return self.sorted_tasks.index(t)
             else:
+                if force:
+                    for task in self.sorted_tasks.keys():
+                        if task in self.input_tasks:
+                            self.statuses.update_task(task, task.status, 'pending')
+                        else:
+                            self.statuses.update_task(task, task.status, 'remaining')
                 get_next_pending = self.get_next_pending
-                len_tasks = len(self.sorted_tasks)
-
-                def task_index(t):
-                    return self.sorted_tasks.index(t)
 
             for task in get_next_pending():
                 if task and self.executor.can_accept_task():
-                    self.log_task_info(task_index, len_tasks, task)
+                    self.log_task_info(self.sorted_tasks.get, len(self.sorted_tasks), task)
                     task_enqueued = self.enqueue_task(task, force=force)
                     if not task_enqueued:
                         self.task_complete(task)
                 else:
                     completed_task = self.executor.get_completed_task()
                     self.task_complete(completed_task)
+
             while not self.executor.has_finished():
                 logger.debug('waiting for remaining tasks')
                 task = self.executor.get_completed_task()
@@ -560,5 +587,5 @@ class TaskControl:
 
     def update_task_status(self, task, old_status, new_status):
         self.statuses.update_task(task, old_status, new_status)
-        if self.subset_statuses:
+        if self.subset_statuses and task in self.subset_statuses.all_tasks:
             self.subset_statuses.update_task(task, old_status, new_status)

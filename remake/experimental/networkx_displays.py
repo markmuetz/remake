@@ -2,6 +2,8 @@ import networkx as nx
 import numpy as np
 import matplotlib.pyplot as plt
 
+from remake.task import RescanFileTask
+
 
 def files_as_networkx_graph(task_ctrl):
     assert task_ctrl.finalized
@@ -15,7 +17,7 @@ def files_as_networkx_graph(task_ctrl):
 
 def display_task_status(task_ctrl):
     pos = {}
-    for i, task in enumerate(task_ctrl.rescan_tasks + sorted(task_ctrl.completed_rescan_tasks)):
+    for i, task in enumerate([n for n in task_ctrl.task_dag.nodes if isinstance(n, RescanFileTask)]):
         pos[task] = np.array([-1, i])
     for level, tasks in task_ctrl.tasks_at_level.items():
         for i, task in enumerate(tasks):

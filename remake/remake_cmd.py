@@ -114,6 +114,7 @@ class RemakeParser:
             'args': [
                 Arg('remakefile', default='remakefile'),
                 Arg('--tasks', '-t', nargs='*'),
+                Arg('--handle-dependencies', '-H', action='store_true'),
                 *run_ctrl_group,
                 *task_filter_group,
             ]
@@ -229,7 +230,8 @@ class RemakeParser:
             remake_run(args.remakefiles, args.rescan_only, args.force, args.one, args.random,
                        args.reasons, args.executor, args.display)
         elif args.subcmd_name == 'run-tasks':
-            remake_run_tasks(args.remakefile, args.tasks, args.force, args.reasons, args.executor, args.display,
+            remake_run_tasks(args.remakefile, args.tasks, args.handle_dependencies, args.force,
+                             args.reasons, args.executor, args.display,
                              args.filter, args.rule,
                              args.requires_rerun, args.uses_file, args.produces_file,
                              args.ancestor_of, args.descendant_of)
@@ -306,10 +308,6 @@ def remake_run(remakefiles, rescan_only, force, one, random, print_reasons, exec
         remake = load_remake(remakefile).finalize()
         remake.configure(print_reasons, executor, display)
         remake.short_status()
-        # Tasks themselves may have task.force = True:
-        # if not remake.rerun_required() and (not force):
-        #     logger.info(f'{remake.name}: {len(remake.completed_tasks)} tasks already run')
-        #     continue
         if rescan_only:
             remake.task_ctrl.run_rescan_only()
         elif one:
@@ -317,6 +315,7 @@ def remake_run(remakefiles, rescan_only, force, one, random, print_reasons, exec
         elif random:
             remake.run_random(force=force)
         else:
+            # TODO: not sure this works is force=True.
             remake.run_all(force=force)
         if display == 'task_dag':
             # Give user time to see final task_dag state.
@@ -324,7 +323,7 @@ def remake_run(remakefiles, rescan_only, force, one, random, print_reasons, exec
         remake.short_status()
 
 
-def remake_run_tasks(remakefile, task_path_hash_keys, force, print_reasons, executor, display,
+def remake_run_tasks(remakefile, task_path_hash_keys, handle_dependencies, force, print_reasons, executor, display,
                      tfilter, rule,
                      requires_rerun, uses_file, produces_file,
                      ancestor_of, descendant_of):
@@ -337,7 +336,7 @@ def remake_run_tasks(remakefile, task_path_hash_keys, force, print_reasons, exec
         tasks = remake.find_tasks(task_path_hash_keys)
     else:
         tasks = remake.list_tasks(tfilter, rule, requires_rerun, uses_file, produces_file, ancestor_of, descendant_of)
-    remake.run_requested(tasks, force=force)
+    remake.run_requested(tasks, force=force, handle_dependencies=handle_dependencies)
     if display == 'task_dag':
         # Give user time to see final task_dag state.
         sleep(3)

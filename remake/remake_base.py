@@ -105,7 +105,8 @@ class Remake:
     def run_requested(self, requested, force=False, handle_dependencies=False):
         # Work out whether it's possible to run requested tasks.
         ancestors = self.all_ancestors(requested)
-        rerun_required_ancestors = ancestors & (self.pending_tasks | self.remaining_tasks)
+        rerun_required_ancestors = ancestors & (self.pending_tasks |
+                                                self.remaining_tasks)
         missing_tasks = rerun_required_ancestors - set(requested)
         if missing_tasks:
             logger.debug(f'{len(missing_tasks)} need to be added')
@@ -114,6 +115,7 @@ class Remake:
                 raise RemakeError('Cannot run with requested tasks. Use --handle-dependencies to fix.')
             else:
                 requested = list(rerun_required_ancestors)
+        requested += self.task_ctrl.rescan_tasks
         self.task_ctrl.run_requested(requested, force=force)
 
     def list_rules(self):
@@ -162,11 +164,11 @@ class Remake:
         if ancestor_of:
             ancestor_of = self.find_task(ancestor_of)
             ancestor_tasks = self.ancestors(ancestor_of)
-            tasks = sorted(ancestor_tasks & set(tasks), key=self.task_ctrl.sorted_tasks.index)
+            tasks = sorted(ancestor_tasks & set(tasks), key=self.task_ctrl.sorted_tasks.get)
         if descendant_of:
             descendant_of = self.find_task(descendant_of)
             descendant_tasks = self.descendants(descendant_of)
-            tasks = sorted(descendant_tasks & set(tasks), key=self.task_ctrl.sorted_tasks.index)
+            tasks = sorted(descendant_tasks & set(tasks), key=self.task_ctrl.sorted_tasks.get)
         if requires_rerun:
             tasks = [t for t in tasks
                      if self.task_ctrl.statuses.task_status(t) in ['pending', 'remaining']]
