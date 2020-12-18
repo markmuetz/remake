@@ -112,7 +112,7 @@ class RemakeParser:
         'run-tasks': {
             'help': 'Run specified tasks (uses same flags as ls-tasks)',
             'args': [
-                Arg('remakefile', default='remakefile'),
+                Arg('remakefile', nargs='?', default='remakefile'),
                 Arg('--tasks', '-t', nargs='*'),
                 Arg('--handle-dependencies', '-H', action='store_true'),
                 *run_ctrl_group,
@@ -122,7 +122,7 @@ class RemakeParser:
         'ls-rules': {
             'help': 'List rules',
             'args': [
-                Arg('remakefile'),
+                Arg('remakefile', nargs='?', default='remakefile'),
                 Arg('--long', '-l', action='store_true'),
                 Arg('--filter', '-F', default=None),
                 Arg('--uses-file', '-U'),
@@ -132,7 +132,7 @@ class RemakeParser:
         'ls-tasks': {
             'help': 'List tasks',
             'args': [
-                Arg('remakefile'),
+                Arg('remakefile', nargs='?', default='remakefile'),
                 Arg('--long', '-l', action='store_true'),
                 *task_filter_group,
             ]
@@ -140,7 +140,7 @@ class RemakeParser:
         'ls-files': {
             'help': 'List files',
             'args': [
-                Arg('remakefile'),
+                Arg('remakefile', nargs='?', default='remakefile'),
                 Arg('--long', '-l', action='store_true'),
                 MutuallyExclusiveGroup(
                     Arg('--input', action='store_true'),
@@ -156,8 +156,8 @@ class RemakeParser:
                 Arg('--exists', action='store_true'),
             ]
         },
-        'remakefile-info': {
-            'help': 'Information about remakefile',
+        'info': {
+            'help': 'Information about remakefile status',
             'args': [
                 Arg('remakefiles', nargs='*'),
                 Arg('--long', '-l', action='store_true'),
@@ -167,7 +167,7 @@ class RemakeParser:
         'rule-info': {
             'help': 'Information about rule',
             'args': [
-                Arg('remakefile'),
+                Arg('remakefile', nargs='?', default='remakefile'),
                 Arg('--long', '-l', action='store_true'),
                 Arg('rules', nargs='*'),
             ]
@@ -175,7 +175,7 @@ class RemakeParser:
         'task-info': {
             'help': 'Information about task',
             'args': [
-                Arg('remakefile'),
+                Arg('remakefile', nargs='?', default='remakefile'),
                 Arg('--long', '-l', action='store_true'),
                 Arg('tasks', nargs='*'),
             ]
@@ -184,7 +184,7 @@ class RemakeParser:
             'help': 'Information about file',
             'args': [
                 Arg('--long', '-l', action='store_true'),
-                Arg('remakefile'),
+                Arg('remakefile', nargs='?', default='remakefile'),
                 Arg('filenames', nargs='*'),
             ]
         },
@@ -256,7 +256,7 @@ class RemakeParser:
                 filetype = None
             ls_files(args.remakefile, args.long, filetype, args.exists,
                      args.produced_by_rule, args.used_by_rule, args.produced_by_task, args.used_by_task)
-        elif args.subcmd_name == 'remakefile-info':
+        elif args.subcmd_name == 'info':
             remakefile_info(args.remakefiles, args.long, args.display)
         elif args.subcmd_name == 'rule-info':
             rule_info(args.remakefile, args.long, args.rules)

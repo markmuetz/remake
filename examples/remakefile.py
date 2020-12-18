@@ -23,7 +23,7 @@ def run_commands(commands):
 
 
 VAR_MATRIX = {
-    'name': ['ex1', 'ex2', 'ex3', 'ex4', 'ex5'],
+    'name': ['ex1', 'ex2', 'ex3', 'ex4', 'ex5', 'ex6'],
     'executor': ['singleproc', 'multiproc']
 }
 
@@ -67,7 +67,7 @@ class TestCLI(TaskRule):
             # f'remake run-tasks {self.name} --rule Basic1',
             f'remake ls-tasks {self.name}',
             f'remake ls-files {self.name}',
-            f'remake remakefile-info {self.name}',
+            f'remake info {self.name}',
             # ex1 specific.
             # f'remake rule-info {self.name} Basic1',
             # ex1 specific.
