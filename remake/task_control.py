@@ -145,7 +145,10 @@ class TaskControl:
         self.input_tasks = set()
 
         self.task_dag = nx.DiGraph()
-        self.rule_dag = nx.DiGraph()
+        # Not necessarily a DAG.
+        # Can have one rule that defines tasks that link back and forth to tasks in another rule.
+        # tasks must form DAG; rules don't have to.
+        self.rule_graph = nx.DiGraph()
         self.sorted_tasks = {}
         self.rescan_paths = set()
 
@@ -408,7 +411,7 @@ class TaskControl:
                     # Every output is created by only one task.
                     input_task = self.output_task_map[input_path]
                     self.task_dag.add_edge(input_task, task)
-                    self.rule_dag.add_edge(input_task.__class__, task.__class__)
+                    self.rule_graph.add_edge(input_task.__class__, task.__class__)
                     # if input_task not in self.task_dag.predecessors(task):
                     #    task.__class__.prev_rules.add(input_task.__class__)
                     #    input_task.__class__.next_rules.add(task.__class__)
