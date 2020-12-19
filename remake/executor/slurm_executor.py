@@ -57,7 +57,7 @@ class SlurmExecutor(Executor):
     def __init__(self, task_ctrl):
         super().__init__(task_ctrl)
         slurm_kwargs = {'queue': 'short-serial',
-                        'max_runtime': '04:00:00',
+                        'max_runtime': '10:00:00',
                         'mem': 16000}
 
         slurm_dir = Path('slurm_scripts')

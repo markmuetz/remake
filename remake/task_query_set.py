@@ -13,7 +13,7 @@ class TaskQuerySet(list):
         if not iterable:
             iterable = []
         super().__init__(iterable)
-        
+
     def __getitem__(self, i):
         if isinstance(i, slice):
             return TaskQuerySet(list.__getitem__(self, i), self.task_ctrl)
@@ -34,13 +34,18 @@ class TaskQuerySet(list):
 
     def _filter(self, cast_to_str=False, **kwargs):
         for task in self:
+            has_all_vals = True
             for k, v in kwargs.items():
                 if cast_to_str:
-                    if str(getattr(task, k, None)) == str(v):
-                        yield task
+                    if str(getattr(task, k, None)) != str(v):
+                        has_all_vals = False
+                        break
                 else:
-                    if getattr(task, k, None) == v:
-                        yield task
+                    if getattr(task, k, None) != v:
+                        has_all_vals = False
+                        break
+            if has_all_vals:
+                yield task
 
     def filter_on_inputs(self, inputs):
         return TaskQuerySet(self._filter_on_inputs(inputs), task_ctrl=self.task_ctrl)
