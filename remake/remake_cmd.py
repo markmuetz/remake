@@ -159,7 +159,7 @@ class RemakeParser:
         'info': {
             'help': 'Information about remakefile status',
             'args': [
-                Arg('remakefiles', nargs='*'),
+                Arg('remakefiles', nargs='*', default=['remakefile']),
                 Arg('--long', '-l', action='store_true'),
                 Arg('--display', '-d', choices=['print_status', 'task_dag'], default='print_status'),
             ]
