@@ -42,6 +42,8 @@ class TaskStatuses:
     def update_task(self, task, old_status, new_status):
         if isinstance(task, RescanFileTask):
             assert self._task_status[task] in old_status
+            if task in self._rescan_tasks:
+                self._rescan_tasks.remove(task)
         else:
             old_tasks = getattr(self, f'_{old_status}_tasks')
             new_tasks = getattr(self, f'_{new_status}_tasks')
@@ -88,6 +90,7 @@ class TaskStatuses:
 
     def print_status(self):
         print(f'  completed: {len(self.completed_tasks)}')
+        print(f'  rescan   : {len(self.rescan_tasks)}')
         print(f'  pending  : {len(self.pending_tasks)}')
         print(f'  running  : {len(self.running_tasks)}')
         print(f'  remaining: {len(self.remaining_tasks)}')
@@ -425,7 +428,7 @@ class TaskControl:
     def get_next_pending(self):
         while self.rescan_tasks or self.pending_tasks or self.remaining_tasks:
             if self.rescan_tasks:
-                yield self.rescan_tasks.pop(0)
+                yield self.rescan_tasks[0]
             elif not self.pending_tasks:
                 yield None
             else:
@@ -436,7 +439,7 @@ class TaskControl:
                self.subset_statuses.pending_tasks or
                self.subset_statuses.remaining_tasks):
             if self.subset_statuses.rescan_tasks:
-                yield self.subset_statuses.rescan_tasks.pop(0)
+                yield self.subset_statuses.rescan_tasks[0]
             elif not self.subset_statuses.pending_tasks:
                 yield None
             else:
