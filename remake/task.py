@@ -113,6 +113,7 @@ class Task(BaseTask):
                 return f'{[p.name for p in paths]}'
             else:
                 return f'{len(paths)}'
+
         inputs = short_paths(self.inputs.values(), input_paths_to_show)
         outputs = short_paths(self.outputs.values(), output_paths_to_show)
         return f'{self.__class__.__name__}' \
@@ -175,45 +176,48 @@ class Task(BaseTask):
         # add_file_logging(task_md.log_path)
         self.task_md.update_status('RUNNING')
 
-        if self.requires_rerun() or force or self.force:
-            logger.debug(f'requires_rerun or force')
-            for output_dir in set([o.parent for o in self.outputs.values()]):
-                output_dir.mkdir(parents=True, exist_ok=True)
-            if self.atomic_write:
-                logger.debug(f'atomic_write: make temp paths')
-                self.tmp_outputs = {k: tmp_atomic_path(v) for k, v in self.outputs.items()}
+        try:
+            if self.requires_rerun() or force or self.force:
+                logger.debug(f'requires_rerun or force')
+                for output_dir in set([o.parent for o in self.outputs.values()]):
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                if self.atomic_write:
+                    logger.debug(f'atomic_write: make temp paths')
+                    self.tmp_outputs = {k: tmp_atomic_path(v) for k, v in self.outputs.items()}
+                else:
+                    self.tmp_outputs = self.outputs
+
+                logger.debug(f'run func {self.func}')
+                start = timer()
+
+                orig_outputs = self.outputs
+                self.outputs = self.tmp_outputs
+                self.result = self.func(self)
+                self.outputs = orig_outputs
+
+                logger.debug(f'run func {self.func} completed in {timer() - start:.2f}s:'
+                             f' {[o.name for o in self.outputs.values()]}')
+                if self.atomic_write:
+                    for output in self.tmp_outputs.values():
+                        if not output.exists():
+                            raise Exception(f'func {output} not created')
+                    logger.debug(f'atomic_write: rename temp paths')
+                    tmp_paths = self.tmp_outputs.values()
+                    for tmp_path, path in zip(tmp_paths, self.outputs.values()):
+                        tmp_path.rename(path)
+                else:
+                    for output in self.outputs.values():
+                        if not output.exists():
+                            raise Exception(f'func {output} not created')
+
             else:
-                self.tmp_outputs = self.outputs
-
-            logger.debug(f'run func {self.func}')
-            start = timer()
-
-            orig_outputs = self.outputs
-            self.outputs = self.tmp_outputs
-            self.result = self.func(self)
-            self.outputs = orig_outputs
-
-            logger.debug(f'run func {self.func} completed in {timer() - start:.2f}s:'
-                         f' {[o.name for o in self.outputs.values()]}')
-            if self.atomic_write:
-                for output in self.tmp_outputs.values():
-                    if not output.exists():
-                        raise Exception(f'func {output} not created')
-                logger.debug(f'atomic_write: rename temp paths')
-                tmp_paths = self.tmp_outputs.values()
-                for tmp_path, path in zip(tmp_paths, self.outputs.values()):
-                    tmp_path.rename(path)
-            else:
-                for output in self.outputs.values():
-                    if not output.exists():
-                        raise Exception(f'func {output} not created')
-
-        else:
-            logger.debug(f'already exist: {self.outputs}')
+                logger.debug(f'already exist: {self.outputs}')
+            self._post_run_with_content_check()
+        except:
+            self.task_md.update_status('ERROR')
+            raise
 
         self.task_md.update_status('COMPLETE')
-        self._post_run_with_content_check()
-
         return self
 
     def _post_run_with_content_check(self):
@@ -273,5 +277,3 @@ class RescanFileTask(BaseTask):
                 logger.debug(f'Content changed of in: {self.path_md.path}')
 
         self.path_md.write_new_metadata()
-
-
