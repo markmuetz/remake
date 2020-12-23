@@ -200,20 +200,27 @@ class Remake:
     def list_files(self, filetype=None, exists=False,
                    produced_by_rule=None, used_by_rule=None,
                    produced_by_task=None, used_by_task=None):
+        input_paths = set(self.task_ctrl.input_task_map.keys())
+        output_paths = set(self.task_ctrl.output_task_map.keys())
+        input_only_paths = input_paths - output_paths
+        output_only_paths = output_paths - input_paths
+        inout_paths = input_paths & output_paths
+        files = input_paths | output_only_paths
+
         if filetype is None:
-            files = sorted(set(self.task_ctrl.input_task_map.keys()) | set(self.task_ctrl.output_task_map.keys()))
-        elif filetype == 'input':
-            files = sorted(self.task_ctrl.input_task_map.keys())
-        elif filetype == 'output':
-            files = sorted(self.task_ctrl.output_task_map.keys())
+            files = sorted(files)
         elif filetype == 'input_only':
-            files = sorted(set(self.task_ctrl.input_task_map.keys()) - set(self.task_ctrl.output_task_map.keys()))
+            files = sorted(input_only_paths)
         elif filetype == 'output_only':
-            files = sorted(set(self.task_ctrl.output_task_map.keys()) - set(self.task_ctrl.input_task_map.keys()))
+            files = sorted(output_only_paths)
+        elif filetype == 'input':
+            files = sorted(input_paths)
+        elif filetype == 'output':
+            files = sorted(output_paths)
         elif filetype == 'inout':
-            files = sorted(set(self.task_ctrl.output_task_map.keys()) & set(self.task_ctrl.input_task_map.keys()))
+            files = sorted(inout_paths)
         else:
-            raise Exception(f'Unknown {filetype=}')
+            raise ValueError(f'Unknown {filetype=}')
         if exists:
             files = [f for f in files if f.exists()]
         if used_by_rule:
@@ -255,7 +262,17 @@ class Remake:
                     _files.add(f)
             files = sorted(_files)
 
-        return files
+        filelist = []
+        for file in files:
+            if file in input_only_paths:
+                ftype = 'input-only'
+            elif file in output_only_paths:
+                ftype = 'output-only'
+            elif file in inout_paths:
+                ftype = 'inout'
+            filelist.append((file, ftype, file.exists()))
+
+        return filelist
 
     def task_info(self, task_path_hash_keys):
         assert self.finalized

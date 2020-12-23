@@ -2,7 +2,6 @@ import os
 import sys
 import argparse
 from logging import getLogger
-from pathlib import Path
 from time import sleep
 from typing import List, Union, Optional, Sequence, Text
 try:
@@ -17,6 +16,7 @@ from remake.setup_logging import setup_stdout_logging
 from remake.version import get_version
 from remake.load_task_ctrls import load_remake
 from remake.remake_exceptions import RemakeError
+from remake.bcolors import bcolors
 
 logger = getLogger(__name__)
 
@@ -98,6 +98,19 @@ class RemakeParser:
         Arg('--ancestor-of', '-A', help='includes requested task'),
         Arg('--descendant-of', '-D', help='includes requested task'),
     ]
+    ls_files_group = [
+        MutuallyExclusiveGroup(
+            Arg('--input', action='store_true'),
+            Arg('--output', action='store_true'),
+            Arg('--input-only', action='store_true'),
+            Arg('--output-only', action='store_true'),
+            Arg('--inout', action='store_true'),
+        ),
+        Arg('--produced-by-rule'),
+        Arg('--used-by-rule'),
+        Arg('--produced-by-task'),
+        Arg('--used-by-task'),
+    ]
     sub_cmds = {
         'run': {
             'help': 'Run all pending tasks',
@@ -138,22 +151,19 @@ class RemakeParser:
             ]
         },
         'ls-files': {
-            'help': 'List files',
+            'help': 'Remove files',
             'args': [
                 Arg('remakefile', nargs='?', default='remakefile'),
                 Arg('--long', '-l', action='store_true'),
-                MutuallyExclusiveGroup(
-                    Arg('--input', action='store_true'),
-                    Arg('--output', action='store_true'),
-                    Arg('--input-only', action='store_true'),
-                    Arg('--output-only', action='store_true'),
-                    Arg('--inout', action='store_true'),
-                ),
-                Arg('--produced-by-rule'),
-                Arg('--used-by-rule'),
-                Arg('--produced-by-task'),
-                Arg('--used-by-task'),
+                *ls_files_group,
                 Arg('--exists', action='store_true'),
+            ]
+        },
+        'rm-files': {
+            'help': 'Remove files',
+            'args': [
+                Arg('remakefile', nargs='?', default='remakefile'),
+                *ls_files_group,
             ]
         },
         'info': {
@@ -241,7 +251,7 @@ class RemakeParser:
             ls_tasks(args.remakefile, args.long,
                      args.filter, args.rule,
                      args.requires_rerun, args.uses_file, args.produces_file, args.ancestor_of, args.descendant_of)
-        elif args.subcmd_name == 'ls-files':
+        elif args.subcmd_name in ['ls-files', 'rm-files']:
             if args.input:
                 filetype = 'input'
             elif args.output:
@@ -254,8 +264,12 @@ class RemakeParser:
                 filetype = 'inout'
             else:
                 filetype = None
-            ls_files(args.remakefile, args.long, filetype, args.exists,
-                     args.produced_by_rule, args.used_by_rule, args.produced_by_task, args.used_by_task)
+            if args.subcmd_name == 'ls-files':
+                ls_files(args.remakefile, args.long, filetype, args.exists,
+                         args.produced_by_rule, args.used_by_rule, args.produced_by_task, args.used_by_task)
+            else:
+                rm_files(args.remakefile, filetype,
+                         args.produced_by_rule, args.used_by_rule, args.produced_by_task, args.used_by_task)
         elif args.subcmd_name == 'info':
             remakefile_info(args.remakefiles, args.long, args.display)
         elif args.subcmd_name == 'rule-info':
@@ -363,9 +377,31 @@ def ls_tasks(remakefile, long, tfilter, rule, requires_rerun, uses_file, produce
 def ls_files(remakefile, long, filetype, exists,
              produced_by_rule, used_by_rule, produced_by_task, used_by_task):
     remake = load_remake(remakefile)
-    files = remake.list_files(filetype, exists, produced_by_rule, used_by_rule, produced_by_task, used_by_task)
-    for file in files:
-        print(file)
+    filelist = remake.list_files(filetype, exists, produced_by_rule, used_by_rule, produced_by_task, used_by_task)
+    if long:
+        print(tabulate(filelist, headers=('path', 'filetype', 'exists')))
+    else:
+        for file, ftype, exists in filelist:
+            print(file)
+
+
+def rm_files(remakefile, filetype,
+             produced_by_rule, used_by_rule, produced_by_task, used_by_task):
+    remake = load_remake(remakefile)
+    filelist = remake.list_files(filetype, True, produced_by_rule, used_by_rule, produced_by_task, used_by_task)
+    if not filelist:
+        logger.info('No files to delete')
+        return
+
+    r = input(bcolors.BOLD + bcolors.WARNING +
+              f'This will delete {len(filelist)} files, do you want to proceed? (yes/[no]): ' +
+              bcolors.ENDC)
+    if r != 'yes':
+        print('Not deleting files (yes not entered)')
+        return
+    for file, ftype, exists in filelist:
+        logger.info(f'Deleting file: {file}')
+        file.unlink()
 
 
 def remakefile_info(remakefiles, long, display):
