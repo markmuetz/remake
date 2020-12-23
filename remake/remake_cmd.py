@@ -400,6 +400,13 @@ def rm_files(remakefile, filetype,
         print('Not deleting files (yes not entered)')
         return
     for file, ftype, exists in filelist:
+        if ftype == 'input-only':
+            r = input(bcolors.BOLD + bcolors.FAIL +
+                      f'Are you sure you want to delete input-only file: {file}? (yes/[no]): ' +
+                      bcolors.ENDC)
+            if r != 'yes':
+                print('Not deleting files (yes not entered)')
+                continue
         logger.info(f'Deleting file: {file}')
         file.unlink()
 
