@@ -115,7 +115,7 @@ class Remake:
                 raise RemakeError('Cannot run with requested tasks. Use --handle-dependencies to fix.')
             else:
                 requested = list(rerun_required_ancestors)
-        requested += self.task_ctrl.rescan_tasks
+        requested = self.task_ctrl.rescan_tasks + requested
         self.task_ctrl.run_requested(requested, force=force)
 
     def list_rules(self):

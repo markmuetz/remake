@@ -18,6 +18,7 @@ class TaskStatuses:
     def __init__(self):
         self._all_tasks = set()
         self._rescan_tasks = []
+        self._cannot_run_tasks = set()
         self._completed_tasks = set()
         self._pending_tasks = set()
         self._ordered_pending_tasks = []
@@ -69,6 +70,10 @@ class TaskStatuses:
         return self._rescan_tasks
 
     @property
+    def cannot_run_tasks(self):
+        return self._cannot_run_tasks
+
+    @property
     def completed_tasks(self):
         return self._completed_tasks
 
@@ -89,12 +94,13 @@ class TaskStatuses:
         return self._remaining_tasks
 
     def print_status(self):
-        print(f'  completed: {len(self.completed_tasks)}')
-        print(f'  rescan   : {len(self.rescan_tasks)}')
-        print(f'  pending  : {len(self.pending_tasks)}')
-        print(f'  running  : {len(self.running_tasks)}')
-        print(f'  remaining: {len(self.remaining_tasks)}')
-        print(f'  all      : {len(self._task_status)}')
+        print(f'  cannot run: {len(self.cannot_run_tasks)}')
+        print(f'  completed : {len(self.completed_tasks)}')
+        print(f'  rescan    : {len(self.rescan_tasks)}')
+        print(f'  pending   : {len(self.pending_tasks)}')
+        print(f'  running   : {len(self.running_tasks)}')
+        print(f'  remaining : {len(self.remaining_tasks)}')
+        print(f'  all       : {len(self._task_status)}')
 
 
 def check_finalized(finalized):
@@ -182,6 +188,10 @@ class TaskControl:
     @property
     def rescan_tasks(self):
         return self.statuses.rescan_tasks
+
+    @property
+    def cannot_run_tasks(self):
+        return self.statuses.cannot_run_tasks
 
     @property
     def completed_tasks(self):
@@ -338,13 +348,13 @@ class TaskControl:
         logger.info('Build task DAG')
         self.build_task_DAG()
 
-        missing_paths = [p for p in self.input_only_paths if not p.exists()]
-        if missing_paths:
-            for input_path in missing_paths:
-                tasks = self.input_task_map[input_path]
-                logger.error(f'No input file {input_path} exists or will be created (needed by {len(tasks)} tasks)')
-            raise Exception(f'Not all input paths exist: {len(missing_paths)} missing')
-
+#         missing_paths = [p for p in self.input_only_paths if not p.exists()]
+#         if missing_paths:
+#             for input_path in missing_paths:
+#                 tasks = self.input_task_map[input_path]
+#                 logger.error(f'No input file {input_path} exists or will be created (needed by {len(tasks)} tasks)')
+#             raise Exception(f'Not all input paths exist: {len(missing_paths)} missing')
+#
         logger.info('Perform topological sort')
         # Can now perform a topological sort.
         self.sorted_tasks = dict(self._topogological_tasks())
@@ -360,9 +370,11 @@ class TaskControl:
 
         if self.extra_checks:
             logger.debug('performing extra checks on groups')
-            all_tasks_assigned = (self.completed_tasks | self.pending_tasks | self.remaining_tasks ==
+            all_tasks_assigned = (self.cannot_run_tasks | self.completed_tasks |
+                                  self.pending_tasks | self.remaining_tasks ==
                                   set(self.tasks) and
-                                  len(self.completed_tasks) + len(self.pending_tasks) + len(self.remaining_tasks) ==
+                                  len(self.cannot_run_tasks) + len(self.completed_tasks) +
+                                  len(self.pending_tasks) + len(self.remaining_tasks) ==
                                   len(self.tasks))
             assert all_tasks_assigned, 'All tasks not assigned.'
 
@@ -372,26 +384,36 @@ class TaskControl:
         return self
 
     def _assign_tasks(self):
-        # Assign each task to one of three groups:
+        # Assign each task to one of four groups:
+        # cannot_run: not possible to run task (missing inputs).
         # completed: task has been run and does not need to be rerun.
         # pending: task has been run and needs to be rerun.
         # remaining: task either needs to be rerun, or has previous tasks that need to be rerun.
         # import ipdb; ipdb.set_trace()
         for task in self.sorted_tasks.keys():
-            status = 'completed'
             requires_rerun = self.task_requires_rerun(task)
 
-            if (task.can_run() and requires_rerun & self.remake_on) or task.force:
-                status = 'pending'
-                for prev_task in self.task_dag.predecessors(task):
-                    if prev_task in self.pending_tasks or prev_task in self.remaining_tasks:
-                        status = 'remaining'
-                        break
+            if task.can_run():
+                status = 'completed'
+                if task.force:
+                    status = 'pending'
+                else:
+                    for prev_task in self.task_dag.predecessors(task):
+                        if prev_task in self.pending_tasks or prev_task in self.remaining_tasks:
+                            status = 'remaining'
+                            break
+                    if status != 'remaining' and requires_rerun & self.remake_on:
+                        status = 'pending'
             else:
-                for prev_task in self.task_dag.predecessors(task):
-                    if prev_task in self.pending_tasks or prev_task in self.remaining_tasks:
-                        status = 'remaining'
-                        break
+                status = 'remaining'
+                prev_tasks = list(self.task_dag.predecessors(task))
+                if prev_tasks:
+                    for prev_task in prev_tasks:
+                        if prev_task in self.cannot_run_tasks:
+                            status = 'cannot_run'
+                            break
+                else:
+                    status = 'cannot_run'
 
             logger.debug(f'  task status: {status} - {task.path_hash_key()}')
             self.statuses.add_task(task, status)
