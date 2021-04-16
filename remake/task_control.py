@@ -504,7 +504,9 @@ class TaskControl:
     def task_complete(self, task):
         assert task.complete(), 'task not complete'
         logger.debug(f'add completed task: {task.path_hash_key()}')
-        self.update_task_status(task, 'running', 'completed')
+        # Task is not necessarily running if multiproc running?
+        # TODO: investigate further. Run examples/ex1 with multiproc.
+        self.update_task_status(task, task.status, 'completed')
 
         for next_task in self.task_dag.successors(task):
             if next_task in self.statuses.cannot_run_tasks:
