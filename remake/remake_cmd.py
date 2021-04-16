@@ -423,6 +423,7 @@ def remakefile_info(remakefiles, long, display):
                              len(remake.task_ctrl.rescan_tasks),
                              len(remake.pending_tasks),
                              len(remake.remaining_tasks),
+                             len(remake.task_ctrl.cannot_run_tasks),
                              len(remake.tasks),
                              ])
             else:
@@ -436,7 +437,8 @@ def remakefile_info(remakefiles, long, display):
             # Same thing without numpy.
             totals = [sum(col) for col in list(zip(*rows))[1:]]
             rows.append(['Total'] + totals)
-            print(tabulate(rows, headers=('Name', 'completed', 'rescan', 'pending', 'remaining', 'total')))
+            print(tabulate(rows,
+                           headers=('Name', 'completed', 'rescan', 'pending', 'remaining', 'cannot run', 'total')))
     elif display == 'task_dag':
         for remakefile in remakefiles:
             remake = load_remake(remakefile).finalize()
