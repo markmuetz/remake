@@ -507,6 +507,8 @@ class TaskControl:
         self.update_task_status(task, 'running', 'completed')
 
         for next_task in self.task_dag.successors(task):
+            if next_task in self.statuses.cannot_run_tasks:
+                continue
             if next_task in self.completed_tasks:
                 continue
             add_to_pending = True
