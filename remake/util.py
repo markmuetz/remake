@@ -37,7 +37,7 @@ def load_module(local_filename):
         raise Exception(f'Module file {module_path} does not exist')
 
     # No longer needed due to sys.modules line below.
-    # Make sure any local imports in the config script work.
+    # Make sure any local imports in the module script work.
     sys.path.append(str(module_path.parent))
     module_name = Path(local_filename).stem
 
@@ -47,7 +47,7 @@ def load_module(local_filename):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
     except SyntaxError as se:
-        print(f'Bad syntax in config file {module_path}')
+        print(f'Bad syntax in module file {module_path}')
         raise
 
     return module

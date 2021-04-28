@@ -118,12 +118,13 @@ def check_finalized(finalized):
 
 # noinspection PyAttributeOutsideInit
 class TaskControl:
-    def __init__(self, filename: str, dependencies: List['TaskControl'] = None, *,
+    def __init__(self, filename: str, config: dict, dependencies: List['TaskControl'] = None, *,
                  remake_on: RemakeOn = RemakeOn.ANY_STANDARD_CHANGE,
                  dotremake_dir='.remake',
                  print_reasons=False):
         self.check_path_metadata = True
         self.filename = filename
+        self.config = config
         self.dependencies = dependencies
         self.path = Path(filename).absolute()
         self.name = self.path.stem
@@ -177,7 +178,8 @@ class TaskControl:
         if executor == 'singleproc':
             self.executor = SingleprocExecutor(self)
         elif executor == 'slurm':
-            self.executor = SlurmExecutor(self)
+            slurm_config = self.config.get('slurm', {})
+            self.executor = SlurmExecutor(self, slurm_config)
         else:
             logger.warning('multiproc executor is still experimental')
             # r = input('PRESS y to continue: ')

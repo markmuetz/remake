@@ -19,14 +19,12 @@ class LoopVar:
 
 class RemakeMetaclass(type):
     def __new__(mcs, clsname, bases, attrs):
-        if clsname not in ['TaskRule', 'Config']:
+        if clsname not in ['TaskRule']:
             remake = Remake.current_remake[multiprocessing.current_process().name]
             if 'TaskRule' in [b.__name__ for b in bases]:
                 assert 'rule_inputs' in attrs or 'inputs' in attrs
                 assert 'rule_outputs' in attrs or 'outputs' in attrs
                 attrs['tasks'] = TaskQuerySet(task_ctrl=remake.task_ctrl)
-                if remake.config:
-                    attrs['config'] = remake.config
                 attrs['task_ctrl'] = remake.task_ctrl
                 attrs['next_rules'] = set()
                 attrs['prev_rules'] = set()
@@ -34,18 +32,13 @@ class RemakeMetaclass(type):
                 for attr, v in attrs.items():
                     if isinstance(v, LoopVar):
                         var_matrix[attr] = v.loop
-            elif 'Config' in [b.__name__ for b in bases]:
-                pass
         else:
             pass
 
         newcls = super(RemakeMetaclass, mcs).__new__(
             mcs, clsname, bases, attrs)
 
-        if 'Config' in [b.__name__ for b in bases]:
-            remake.config = newcls
-
-        if clsname not in ['TaskRule', 'Config']:
+        if clsname not in ['TaskRule']:
             if 'TaskRule' in [b.__name__ for b in bases]:
                 remake.rules.append(newcls)
                 if not var_matrix:
@@ -99,6 +92,3 @@ class TaskRule(Task, metaclass=RemakeMetaclass):
 # class ScriptTaskRule(TaskRule):
 #    script = ...
 
-
-class Config(metaclass=RemakeMetaclass):
-    pass

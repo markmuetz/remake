@@ -54,11 +54,13 @@ def _submit_slurm_script(slurm_script_path):
 class SlurmExecutor(Executor):
     handles_dependencies = True
 
-    def __init__(self, task_ctrl):
+    def __init__(self, task_ctrl, slurm_config):
         super().__init__(task_ctrl)
-        slurm_kwargs = {'queue': 'short-serial',
-                        'max_runtime': '10:00:00',
-                        'mem': 16000}
+        default_slurm_kwargs = {'queue': 'short-serial',
+                                'max_runtime': '4:00:00',
+                                'mem': 50000}
+        slurm_kwargs = {**default_slurm_kwargs}
+        slurm_kwargs.update(slurm_config)
 
         slurm_dir = Path('slurm_scripts')
         slurm_dir.mkdir(exist_ok=True)
