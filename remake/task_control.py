@@ -118,12 +118,14 @@ def check_finalized(finalized):
 
 # noinspection PyAttributeOutsideInit
 class TaskControl:
-    def __init__(self, filename: str, config: dict, dependencies: List['TaskControl'] = None, *,
+    def __init__(self, filename: str, config: dict = None, dependencies: List['TaskControl'] = None, *,
                  remake_on: RemakeOn = RemakeOn.ANY_STANDARD_CHANGE,
                  dotremake_dir='.remake',
                  print_reasons=False):
         self.check_path_metadata = True
         self.filename = filename
+        if not config:
+            config = {}
         self.config = config
         self.dependencies = dependencies
         self.path = Path(filename).absolute()
