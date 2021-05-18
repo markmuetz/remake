@@ -105,7 +105,8 @@ class Task(BaseTask):
         self.tmp_outputs = {}
 
     def __repr__(self):
-        return f'{self.__class__}({self.func.__code__.co_name}, {self.inputs}, {self.outputs})'
+        # return f'{self.__class__}({self.func.__code__.co_name}, {self.inputs}, {self.outputs})'
+        return str(self)
 
     def short_str(self, input_paths_to_show=1, output_paths_to_show=2):
         def short_paths(paths, paths_to_show):
@@ -270,10 +271,12 @@ class RescanFileTask(BaseTask):
         assert metadata_has_changed
         self.path_md.gen_sha1hex()
         if self.path_md.metadata and self.path_md.metadata['sha1hex'] != self.path_md.new_metadata['sha1hex']:
-            if self.pathtype == 'inout':
-                # TODO: this needs to be overridable with a config option.
-                raise Exception(f'Content changed of inout: {self.path_md.path}')
-            else:
-                logger.debug(f'Content changed of in: {self.path_md.path}')
+            # I'm not sure this logic still holds when some tasks are marked cannot_run.
+            # if self.pathtype == 'inout':
+            #     # TODO: this needs to be overridable with a config option.
+            #     raise Exception(f'Content changed of inout: {self.path_md.path}')
+            # else:
+            #     logger.debug(f'Content changed of in: {self.path_md.path}')
+            logger.debug(f'Content changed of in: {self.path_md.path}')
 
         self.path_md.write_new_metadata()
