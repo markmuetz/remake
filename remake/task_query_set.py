@@ -1,12 +1,3 @@
-class TaskQuery:
-    def __init__(self, task, task_ctrl):
-        self.task = task
-        self.task_ctrl = task_ctrl
-
-    def run(self, force=False):
-        self.task_ctrl.run_requested(requested_tasks=[self.task], force=force)
-
-
 class TaskQuerySet(list):
     def __init__(self, iterable=None, task_ctrl=None):
         self.task_ctrl = task_ctrl
@@ -15,10 +6,11 @@ class TaskQuerySet(list):
         super().__init__(iterable)
 
     def __getitem__(self, i):
+        # Returns a TaskQuerySet if a slice is used, else an individual task.
         if isinstance(i, slice):
             return TaskQuerySet(list.__getitem__(self, i), self.task_ctrl)
         else:
-            return TaskQuery(list.__getitem__(self, i), self.task_ctrl)
+            return list.__getitem__(self, i)
 
     def all(self):
         return self
@@ -98,3 +90,14 @@ class TaskQuerySet(list):
 
     def run(self, force=False):
         self.task_ctrl.run_requested(requested_tasks=self, force=force)
+
+    def status(self, reasons=False):
+        for task in self:
+            print(f'{task.status:<10}: {task}')
+            if reasons:
+                for reason in task.task_md.rerun_reasons:
+                    if reason[1]:
+                        print(f'  {reason[0]}: {reason[1]}')
+                    else:
+                        print(f'  {reason[0]}')
+
