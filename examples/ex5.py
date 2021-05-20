@@ -16,7 +16,7 @@ class Basic1(TaskRule):
 
 
 class Basic2(TaskRule):
-    rule_inputs = Basic1.outputs
+    rule_inputs = Basic1.rule_outputs
     rule_outputs = {'dummy': 'data/outputs/ex5/dummy.out'}
 
     def rule_run(self):
