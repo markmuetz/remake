@@ -151,8 +151,7 @@ class Remake:
                    ancestor_of=None, descendant_of=None):
         tasks = TaskQuerySet([t for t in self.tasks], self.task_ctrl)
         if tfilter:
-            filter_kwargs = dict([kv.split('=') for kv in tfilter.split(',')])
-            tasks = tasks.filter(cast_to_str=True, **filter_kwargs)
+            tasks = tasks.filter(cast_to_str=True, **tfilter)
         if rule:
             tasks = tasks.in_rule(rule)
         if uses_file:

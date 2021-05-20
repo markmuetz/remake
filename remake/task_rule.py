@@ -7,16 +7,6 @@ from remake.task_query_set import TaskQuerySet
 from remake.util import fmtp
 
 
-class LoopVar:
-    # Not sure if I should use this or original (define a var_matrix)
-    def __init__(self, loop):
-        self.loop = loop
-
-    def __iter__(self):
-        for v in self.loop:
-            yield v
-
-
 class RemakeMetaclass(type):
     def __new__(mcs, clsname, bases, attrs):
         if clsname not in ['TaskRule']:
@@ -29,9 +19,6 @@ class RemakeMetaclass(type):
                 attrs['next_rules'] = set()
                 attrs['prev_rules'] = set()
                 var_matrix = {}
-                for attr, v in attrs.items():
-                    if isinstance(v, LoopVar):
-                        var_matrix[attr] = v.loop
         else:
             pass
 
@@ -65,17 +52,18 @@ class RemakeMetaclass(type):
                         else:
                             outputs = {k.format(**fmt_dict): fmtp(v, **fmt_dict)
                                        for k, v in attrs['rule_outputs'].items()}
-                        rule_obj = newcls(remake.task_ctrl, attrs['rule_run'], inputs, outputs,
-                                          depends_on=depends_on)
-                        newcls.tasks.append(rule_obj)
-                        remake.task_ctrl.add(rule_obj)
-                        for k, v in zip(var_matrix.keys(), loop_vars):
-                            setattr(rule_obj, k, v)
-                else:
-                    rule_obj = newcls(remake.task_ctrl, attrs['rule_run'], attrs['inputs'], attrs['outputs'],
+                        task = newcls(remake.task_ctrl, attrs['rule_run'], inputs, outputs,
                                       depends_on=depends_on)
-                    newcls.tasks.append(rule_obj)
-                    remake.task_ctrl.add(rule_obj)
+                        for k, v in zip(var_matrix.keys(), loop_vars):
+                            setattr(task, k, v)
+                        newcls.tasks.append(task)
+                        remake.task_ctrl.add(task)
+                else:
+                    task = newcls(remake.task_ctrl, attrs['rule_run'],
+                                  attrs['rule_inputs'], attrs['rule_outputs'],
+                                  depends_on=depends_on)
+                    newcls.tasks.append(task)
+                    remake.task_ctrl.add(task)
 
                 remake.tasks.extend(newcls.tasks)
         return newcls
