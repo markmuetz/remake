@@ -13,14 +13,14 @@ VAR_MATRIX = {'i': range(4),
 
 
 class Init(TaskRule):
-    inputs = {}
-    outputs = {'out': 'data/outputs/ex2/out1.out'}
+    rule_inputs = {}
+    rule_outputs = {'out': 'data/outputs/ex2/out1.out'}
 
     def rule_run(self):
         self.outputs['out'].touch()
 
 class FanOut(TaskRule):
-    rule_inputs = Init.outputs
+    rule_inputs = Init.rule_outputs
     rule_outputs = {'a{i},{j}': 'data/outputs/ex2/fan_out.{i}.{j}.out'}
     var_matrix = VAR_MATRIX
 
@@ -58,8 +58,8 @@ class Reduce1(TaskRule):
 
 
 class Reduce2(TaskRule):
-    inputs = dict_exp(Reduce1.rule_outputs, i=VAR_MATRIX['i'])
-    outputs = {'a': 'data/outputs/ex2/reduce2.out'}
+    rule_inputs = dict_exp(Reduce1.rule_outputs, i=VAR_MATRIX['i'])
+    rule_outputs = {'a': 'data/outputs/ex2/reduce2.out'}
 
     def rule_run(self):
         payload = f'{self.__class__.__name__}'

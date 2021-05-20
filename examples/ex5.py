@@ -6,8 +6,8 @@ ex5 = Remake()
 
 
 class Basic1(TaskRule):
-    inputs = {'in': 'data/inputs/in1.txt'}
-    outputs = {'out': 'data/outputs/ex5/out1.txt'}
+    rule_inputs = {'in': 'data/inputs/in1.txt'}
+    rule_outputs = {'out': 'data/outputs/ex5/out1.txt'}
 
     def rule_run(self):
         assert len(self.inputs) == len(self.outputs)
@@ -16,8 +16,8 @@ class Basic1(TaskRule):
 
 
 class Basic2(TaskRule):
-    inputs = Basic1.outputs
-    outputs = {'dummy': 'data/outputs/ex5/dummy.out'}
+    rule_inputs = Basic1.outputs
+    rule_outputs = {'dummy': 'data/outputs/ex5/dummy.out'}
 
     def rule_run(self):
         self.outputs['dummy'].touch()

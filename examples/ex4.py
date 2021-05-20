@@ -10,8 +10,8 @@ def join_lines(path, prepend_text):
 
 
 class DependsOn1(TaskRule):
-    inputs = {'in': 'data/inputs/in1.txt'}
-    outputs = {'out1': 'data/outputs/ex4/out1.txt'}
+    rule_inputs = {'in': 'data/inputs/in1.txt'}
+    rule_outputs = {'out1': 'data/outputs/ex4/out1.txt'}
     depends_on = [join_lines]
 
     def rule_run(self):
@@ -19,8 +19,8 @@ class DependsOn1(TaskRule):
 
 
 class DependsOn2(TaskRule):
-    inputs = DependsOn1.outputs
-    outputs = {'out2': 'data/outputs/ex4/out2.txt'}
+    rule_inputs = DependsOn1.rule_outputs
+    rule_outputs = {'out2': 'data/outputs/ex4/out2.txt'}
     depends_on = [join_lines]
 
     def rule_run(self):

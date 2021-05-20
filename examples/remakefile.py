@@ -80,8 +80,8 @@ class TestCLI(TaskRule):
 
 
 class TestEx1(TaskRule):
-    inputs = {}
-    outputs = {'dummy': 'remakefile/test_ex1.run'}
+    rule_inputs = {}
+    rule_outputs = {'dummy': 'remakefile/test_ex1.run'}
     force = True
 
     def rule_run(self):

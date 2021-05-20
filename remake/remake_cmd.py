@@ -355,7 +355,8 @@ def remake_run_tasks(remakefile, task_path_hash_keys, handle_dependencies,
     if task_path_hash_keys:
         tasks = remake.find_tasks(task_path_hash_keys)
     else:
-        tfilter = dict([kv.split('=') for kv in tfilter.split(',')])
+        if tfilter:
+            tfilter = dict([kv.split('=') for kv in tfilter.split(',')])
         tasks = remake.list_tasks(tfilter, rule, requires_rerun, uses_file,
                                   produces_file, ancestor_of, descendant_of)
     remake.run_requested(tasks, force=force, handle_dependencies=handle_dependencies)
@@ -375,7 +376,8 @@ def ls_rules(remakefile, long, tfilter, uses_file, produces_file):
 def ls_tasks(remakefile, long, tfilter, rule, requires_rerun, uses_file, produces_file,
              ancestor_of, descendant_of):
     remake = load_remake(remakefile).finalize()
-    tfilter = dict([kv.split('=') for kv in tfilter.split(',')])
+    if tfilter:
+        tfilter = dict([kv.split('=') for kv in tfilter.split(',')])
     tasks = remake.list_tasks(tfilter, rule, requires_rerun, uses_file,
                               produces_file, ancestor_of, descendant_of)
     for task in tasks:

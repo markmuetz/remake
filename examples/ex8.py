@@ -6,8 +6,8 @@ ex8 = Remake()
 
 
 class CannotRun(TaskRule):
-    inputs = {'in1': 'data/inputs/input_not_there.txt'}
-    outputs = {'out': 'data/inputs/ex8_in1.txt'}
+    rule_inputs = {'in1': 'data/inputs/input_not_there.txt'}
+    rule_outputs = {'out': 'data/inputs/ex8_in1.txt'}
 
     def rule_run(self):
         input_text = self.inputs['in1'].read_text()
@@ -15,9 +15,9 @@ class CannotRun(TaskRule):
 
 
 class CanRun1(TaskRule):
-    inputs = CannotRun.outputs
-    outputs = {'out1': 'data/outputs/ex8/out1.txt',
-               'out2': 'data/outputs/ex8/out2.txt'}
+    rule_inputs = CannotRun.outputs
+    rule_outputs = {'out1': 'data/outputs/ex8/out1.txt',
+                    'out2': 'data/outputs/ex8/out2.txt'}
 
     def rule_run(self):
         for o in self.outputs.values():

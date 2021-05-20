@@ -6,8 +6,8 @@ ex1 = Remake()
 
 
 class Basic1(TaskRule):
-    inputs = {'in': 'data/inputs/in1.txt'}
-    outputs = {'out': 'data/outputs/ex1/out1.txt'}
+    rule_inputs = {'in': 'data/inputs/in1.txt'}
+    rule_outputs = {'out': 'data/outputs/ex1/out1.txt'}
 
     def rule_run(self):
         # Changed!
@@ -18,8 +18,8 @@ class Basic1(TaskRule):
 
 
 class Basic2(TaskRule):
-    inputs = Basic1.outputs
-    outputs = {'out': 'data/outputs/ex1/out2.txt'}
+    rule_inputs = Basic1.rule_outputs
+    rule_outputs = {'out': 'data/outputs/ex1/out2.txt'}
 
     def rule_run(self):
 

@@ -4,9 +4,9 @@ rmk = Remake()
 
 
 class Init(TaskRule):
-    inputs = {}
-    outputs = {'out0': 'data/outputs/ex6/rule1.0.in',
-               'out1': 'data/outputs/ex6/chain.0.in'}
+    rule_inputs = {}
+    rule_outputs = {'out0': 'data/outputs/ex6/rule1.0.in',
+                    'out1': 'data/outputs/ex6/chain.0.in'}
 
     def rule_run(self):
         self.outputs['out0'].touch()

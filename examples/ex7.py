@@ -6,9 +6,9 @@ ex7 = Remake()
 
 
 class Basic1(TaskRule):
-    inputs = {'in1': 'data/inputs/in1.txt',
-              'in2': 'data/inputs/in2.txt'}
-    outputs = {'out': 'data/outputs/ex7/out1.txt'}
+    rule_inputs = {'in1': 'data/inputs/in1.txt',
+                   'in2': 'data/inputs/in2.txt'}
+    rule_outputs = {'out': 'data/outputs/ex7/out1.txt'}
 
     def rule_run(self):
         input_text = self.inputs['in1'].read_text() + '\n' + self.inputs['in2'].read_text()
@@ -16,8 +16,8 @@ class Basic1(TaskRule):
 
 
 class Basic2(TaskRule):
-    inputs = Basic1.outputs
-    outputs = {'out': 'data/outputs/ex7/out2.txt'}
+    rule_inputs = Basic1.rule_outputs
+    rule_outputs = {'out': 'data/outputs/ex7/out2.txt'}
 
     def rule_run(self):
 
