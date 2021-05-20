@@ -91,7 +91,7 @@ class TaskQuerySet(list):
     def run(self, force=False):
         self.task_ctrl.run_requested(requested_tasks=self, force=force)
 
-    def status(self, reasons=False):
+    def status(self, reasons=False, task_diff=False):
         for task in self:
             print(f'{task.status:<10}: {task}')
             if reasons:
@@ -100,4 +100,6 @@ class TaskQuerySet(list):
                         print(f'  {reason[0]}: {reason[1]}')
                     else:
                         print(f'  {reason[0]}')
+            if task_diff := task.diff():
+                print('\n'.join(task_diff))
 

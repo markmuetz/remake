@@ -1,4 +1,5 @@
 from collections import Counter, Mapping
+import difflib
 import inspect
 from hashlib import sha1
 from logging import getLogger
@@ -149,6 +150,17 @@ class Task(BaseTask):
                 rerun |= RemakeOn.OLDER_OUTPUT
 
         return rerun
+
+    def diff(self):
+        if self.task_md and self.task_md.metadata:
+            func_last = self.task_md.metadata['func_source']
+            func = self.func_source
+            if func_last == func:
+                return None
+            diff = list(difflib.ndiff(func_last.split('\n'),
+                                      func.split('\n')))
+            return diff
+        return None
 
     def complete(self):
         for output in self.outputs.values():
