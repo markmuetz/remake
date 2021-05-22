@@ -36,6 +36,8 @@ setup(
         ],
     extras_require={
         'debug': ['ipdb'],
+        'display': ['matplotlib'],
+        'testing': ['nose', 'coverage'],
     },
     entry_points={
         'console_scripts': [

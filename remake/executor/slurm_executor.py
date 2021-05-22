@@ -8,7 +8,7 @@ from pathlib import Path
 
 from remake.util import sysrun
 from remake.setup_logging import setup_stdout_logging
-from remake.load_task_ctrls import load_task_ctrls
+from remake.load_remake import load_remake
 from remake.task import Task, RescanFileTask
 from remake.executor.base_executor import Executor
 
@@ -153,7 +153,8 @@ def run_job(remakefile, remakefile_hash, task_type, task_key):
     if remakefile_hash != curr_remakefile_hash:
         raise Exception(f'config file {remakefile} has changed -- cannot run task.')
 
-    task_ctrl = load_task_ctrls(remakefile)[0]
+    remake = load_remake(remakefile)
+    task_ctrl = remake.task_ctrl
     assert not task_ctrl.finalized, f'task control {task_ctrl} already finalized'
     # Note, task_ctrl is not finalized.
     # This is because another task could be finishing, and writing its output's metadata

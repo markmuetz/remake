@@ -14,7 +14,7 @@ from tabulate import tabulate
 
 from remake.setup_logging import setup_stdout_logging
 from remake.version import get_version
-from remake.load_task_ctrls import load_remake
+from remake.load_remake import load_remake
 from remake.remake_exceptions import RemakeError
 from remake.bcolors import bcolors
 

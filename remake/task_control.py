@@ -10,6 +10,7 @@ from remake.task import Task, RescanFileTask
 from remake.metadata import MetadataManager
 from remake.flags import RemakeOn
 from remake.executor import SingleprocExecutor, MultiprocExecutor, SlurmExecutor
+from remake.remake_exceptions import CyclicDependency
 
 logger = getLogger(__name__)
 
@@ -259,8 +260,9 @@ class TaskControl:
                             if input_path in curr_task.outputs.values():
                                 input_tasks.append(task)
 
-                    raise Exception(f'cycle detected in DAG:\n  {curr_task} produces input for\n  >' +
-                                    '\n  >'.join([str(t) for t in input_tasks]) + '\n')
+                    raise CyclicDependency(f'cycle detected in DAG:\n  {curr_task} produces input for\n  >' +
+                                           '\n  >'.join([str(t) for t in input_tasks]) + '\n',
+                                           [curr_task] + input_tasks)
                 visited[curr_task] += 1
                 can_yield = True
                 # for prev_task in self.prev_tasks[curr_task]:

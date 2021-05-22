@@ -5,7 +5,7 @@ import logging.handlers
 from logging import getLogger
 
 from remake.setup_logging import setup_stdout_logging
-from remake.load_task_ctrls import load_task_ctrls
+from remake.load_remake import load_remake
 from remake.task import RescanFileTask
 from remake.executor.base_executor import Executor
 
@@ -41,7 +41,8 @@ def sender_log_configurer(log_queue):
 
 def worker(task_ctrl_name, task_queue, task_complete_queue, error_queue, log_queue):
     # sender_log_configurer(log_queue)
-    task_ctrl = load_task_ctrls(task_ctrl_name + '.py')[0]
+    remake = load_remake(task_ctrl_name)
+    task_ctrl = remake.task_ctrl
     logger = getLogger(__name__ + '.worker')
     logger.debug('starting')
     task = None

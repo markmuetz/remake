@@ -4,8 +4,9 @@ Best run with `remake -W run remakefile`, which disables info logging from this.
 Dogfooding by using this instead of Makefile (previous), although it's a bit meta.
 Allows easy broadcast on e.g. all examples remakefiles, and using different executors.
 """
+from pathlib import Path
 import subprocess
-from remake import TaskRule, Remake
+from remake import TaskRule, Remake, remake_cmd
 
 remake_all = Remake()
 
@@ -18,12 +19,16 @@ def sysrun(command):
 def run_commands(commands):
     for command in commands:
         print(command)
-        output = sysrun(command)
-        assert output.returncode == 0
+        system = command.split()[0] != 'remake'
+        if system:
+            output = sysrun(command)
+            assert output.returncode == 0
+        else:
+            remake_cmd.remake_cmd(['examples/remakefile.py'] + command.split()[1:])
 
 
 VAR_MATRIX = {
-    'name': ['ex1', 'ex2', 'ex3', 'ex4', 'ex5', 'ex6'],
+    'name': sorted([p.name for p in Path.cwd().glob('ex?.py')]),
     'executor': ['singleproc', 'multiproc']
 }
 
@@ -32,7 +37,7 @@ VAR_MATRIX = {
 # class RunAllRemakes(CommandTaskRule):
 class RunAllRemakes(TaskRule):
     rule_inputs = {}
-    rule_outputs = {'dummy': 'remakefile/run_all_remakes.{name}.{executor}.run'}
+    rule_outputs = {'dummy': 'remakefile_output/run_all_remakes.{name}.{executor}.run'}
     var_matrix = VAR_MATRIX
     force = True
 
@@ -50,7 +55,7 @@ class RunAllRemakes(TaskRule):
 
 class TestCLI(TaskRule):
     rule_inputs = {}
-    rule_outputs = {'dummy': 'remakefile/test_cli.{name}.run'}
+    rule_outputs = {'dummy': 'remakefile_output/test_cli.{name}.run'}
     var_matrix = {'name': VAR_MATRIX['name']}
     force = True
 
@@ -81,7 +86,7 @@ class TestCLI(TaskRule):
 
 class TestEx1(TaskRule):
     rule_inputs = {}
-    rule_outputs = {'dummy': 'remakefile/test_ex1.run'}
+    rule_outputs = {'dummy': 'remakefile_output/test_ex1.run'}
     force = True
 
     def rule_run(self):
@@ -104,8 +109,8 @@ class TestEx1(TaskRule):
             'remake run --reasons ex1.py',
             'remake run --reasons ex1.py',
             'echo newline >> data/outputs/ex1/out1.txt',
-            'remake run --reasons ex1.py || true',
-            'remake run --reasons ex1.py || true',
+            'remake run --reasons ex1.py',
+            'remake run --reasons ex1.py',
             'echo "All tasks SUCCESSFUL"',
             'make reset',
         ]
