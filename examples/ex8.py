@@ -15,7 +15,7 @@ class CannotRun(TaskRule):
 
 
 class CanRun1(TaskRule):
-    rule_inputs = CannotRun.outputs
+    rule_inputs = CannotRun.rule_outputs
     rule_outputs = {'out1': 'data/outputs/ex8/out1.txt',
                     'out2': 'data/outputs/ex8/out2.txt'}
 
