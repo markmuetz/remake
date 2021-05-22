@@ -6,7 +6,7 @@ from typing import List
 
 import networkx as nx
 
-from remake.task import Task, RescanFileTask
+from remake.task import RescanFileTask
 from remake.metadata import MetadataManager
 from remake.flags import RemakeOn
 from remake.executor import SingleprocExecutor, MultiprocExecutor, SlurmExecutor
@@ -470,11 +470,6 @@ class TaskControl:
             else:
                 yield self.statuses.ordered_pending_tasks[0]
 
-    def get_forced_next_pending(self):
-        forced_tasks = self.rescan_tasks + [t for t in self.sorted_tasks if t.status != 'cannot_run']
-        for forced_task in forced_tasks:
-            yield forced_task
-
     def get_next_pending_from_subset(self):
         while (self.subset_statuses.rescan_tasks or
                self.subset_statuses.pending_tasks or
@@ -493,7 +488,7 @@ class TaskControl:
         self.update_task_status(task, status, 'running')
 
         requires_rerun = self.task_requires_rerun(task, print_reasons=self.print_reasons)
-        if force or task.force or requires_rerun & self.remake_on:
+        if requires_rerun & self.remake_on:
             logger.debug(f'enqueue task (force={force}, requires_rerun={requires_rerun}): {task}')
 
             try:
@@ -588,6 +583,22 @@ class TaskControl:
 
     @check_finalized(True)
     def run_all(self, force=False, use_subset=False):
+        if force:
+            # Change the status of all tasks:
+            # cannot_run: no change.
+            # input_tasks: no change.
+            # completed and after a cannot run: pending.
+            # completed and not after a cannot run: remaining.
+            for task in [t for t in self.input_tasks if not t.status == 'cannot_run']:
+                self.statuses.update_task(task, task.status, 'pending')
+            after_cannot_runs = set()
+            for cannot_run_task in self.cannot_run_tasks:
+                after_cannot_runs.update(cannot_run_task.next_tasks)
+            for after_cannot_run in after_cannot_runs:
+                self.statuses.update_task(after_cannot_run, after_cannot_run.status, 'pending')
+            for completed in list(self.completed_tasks):
+                self.statuses.update_task(completed, completed.status, 'remaining')
+
         if self.executor.handles_dependencies:
             remaining_tasks = sorted(self.remaining_tasks, key=self.sorted_tasks.get)
             tasks = self.rescan_tasks + self.statuses.ordered_pending_tasks + remaining_tasks
@@ -601,10 +612,7 @@ class TaskControl:
             if use_subset:
                 get_next_pending = self.get_next_pending_from_subset
             else:
-                if force:
-                    get_next_pending = self.get_forced_next_pending
-                else:
-                    get_next_pending = self.get_next_pending
+                get_next_pending = self.get_next_pending
 
             for task in get_next_pending():
                 if task and self.executor.can_accept_task():

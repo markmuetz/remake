@@ -16,6 +16,8 @@ def test_all_examples():
         yield run_task, example_runner, task
     for task in example_runner.tasks.in_rule('TestCLI'):
         yield run_task, example_runner, task
+    for task in example_runner.tasks.in_rule('TestCLI2'):
+        yield run_task, example_runner, task
     for task in example_runner.tasks.in_rule('TestEx1'):
         yield run_task, example_runner, task
     os.chdir(orig_cwd)

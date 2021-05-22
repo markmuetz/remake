@@ -164,6 +164,7 @@ class RemakeParser:
             'help': 'Remove files',
             'args': [
                 Arg('remakefile', nargs='?', default='remakefile'),
+                Arg('--force', '-f', action='store_true'),
                 *ls_files_group,
             ]
         },
@@ -272,7 +273,7 @@ class RemakeParser:
                          args.produced_by_rule, args.used_by_rule,
                          args.produced_by_task, args.used_by_task)
             else:
-                rm_files(args.remakefile, filetype,
+                rm_files(args.remakefile, args.force, filetype,
                          args.produced_by_rule, args.used_by_rule,
                          args.produced_by_task, args.used_by_task)
         elif args.subcmd_name == 'info':
@@ -367,6 +368,7 @@ def remake_run_tasks(remakefile, task_path_hash_keys, handle_dependencies,
 
 
 def ls_rules(remakefile, long, tfilter, uses_file, produces_file):
+    # TODO: implement all args.
     remake = load_remake(remakefile)
     rules = remake.list_rules()
     for rule in rules:
@@ -380,11 +382,7 @@ def ls_tasks(remakefile, long, tfilter, rule, requires_rerun, uses_file, produce
         tfilter = dict([kv.split('=') for kv in tfilter.split(',')])
     tasks = remake.list_tasks(tfilter, rule, requires_rerun, uses_file,
                               produces_file, ancestor_of, descendant_of)
-    for task in tasks:
-        if long:
-            print(f'{task.path_hash_key()[:6]}: {task}')
-        else:
-            print(f'{task.path_hash_key()}')
+    tasks.status(long, long)
 
 
 def ls_files(remakefile, long, filetype, exists,
@@ -399,7 +397,7 @@ def ls_files(remakefile, long, filetype, exists,
             print(file)
 
 
-def rm_files(remakefile, filetype,
+def rm_files(remakefile, force, filetype,
              produced_by_rule, used_by_rule, produced_by_task, used_by_task):
     remake = load_remake(remakefile)
     filelist = remake.list_files(filetype, True, produced_by_rule, used_by_rule,
@@ -408,17 +406,23 @@ def rm_files(remakefile, filetype,
         logger.info('No files to delete')
         return
 
-    r = input(bcolors.BOLD + bcolors.WARNING +
-              f'This will delete {len(filelist)} files, do you want to proceed? (yes/[no]): ' +
-              bcolors.ENDC)
+    if force:
+        r = 'yes'
+    else:
+        r = input(bcolors.BOLD + bcolors.WARNING +
+                  f'This will delete {len(filelist)} files, do you want to proceed? (yes/[no]): ' +
+                  bcolors.ENDC)
     if r != 'yes':
         print('Not deleting files (yes not entered)')
         return
     for file, ftype, exists in filelist:
         if ftype == 'input-only':
-            r = input(bcolors.BOLD + bcolors.FAIL +
-                      f'Are you sure you want to delete input-only file: {file}? (yes/[no]): ' +
-                      bcolors.ENDC)
+            if force:
+                r = 'yes'
+            else:
+                r = input(bcolors.BOLD + bcolors.FAIL +
+                          f'Are you sure you want to delete input-only file: {file}? (yes/[no]): ' +
+                          bcolors.ENDC)
             if r != 'yes':
                 print('Not deleting files (yes not entered)')
                 continue

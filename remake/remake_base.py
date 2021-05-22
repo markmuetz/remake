@@ -172,7 +172,7 @@ class Remake:
             tasks = [t for t in tasks
                      if self.task_ctrl.statuses.task_status(t) in ['pending', 'remaining']]
 
-        return tasks
+        return TaskQuerySet(tasks, self.task_ctrl)
 
     def all_descendants(self, tasks):
         descendants = set()

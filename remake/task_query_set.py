@@ -93,13 +93,14 @@ class TaskQuerySet(list):
 
     def status(self, reasons=False, task_diff=False):
         for task in self:
-            print(f'{task.status:<10}: {task}')
+            print(f'{task.path_hash_key()[:6]}: {task.status:<10} - {task}')
             if reasons:
                 for reason in task.task_md.rerun_reasons:
                     if reason[1]:
                         print(f'  {reason[0]}: {reason[1]}')
                     else:
                         print(f'  {reason[0]}')
-            if task_diff := task.diff():
-                print('\n'.join(task_diff))
+            if task_diff:
+                if task_diff := task.diff():
+                    print('\n'.join(task_diff))
 

@@ -12,5 +12,6 @@ def test_bug1():
     os.chdir(examples_dir)
     sysrun('make clean')
     remake_cmd('remake run -E multiproc -f ex1'.split())
+    remake_cmd('remake run -E multiproc -f ex1'.split())
     os.chdir(orig_cwd)
 

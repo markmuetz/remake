@@ -67,18 +67,52 @@ class TestCLI(TaskRule):
             f'remake run --reasons {self.name}',
             f'remake run --executor multiproc {self.name}',
             f'remake run --display task_dag {self.name}',
-            # ex1 specific.
-            # f'remake run-tasks {self.name} --tasks 516e69',
-            # f'remake run-tasks {self.name} --rule Basic1',
             f'remake ls-tasks {self.name}',
+            f'remake ls-tasks --long {self.name}',
             f'remake ls-files {self.name}',
             f'remake info {self.name}',
-            # ex1 specific.
-            # f'remake rule-info {self.name} Basic1',
-            # ex1 specific.
-            # f'remake task-info {self.name} 516e69',
             f'remake file-info {self.name} data/outputs/{self.name}/out1.txt',
             f'remake version',
+        ]
+        run_commands(commands)
+        self.outputs['dummy'].touch()
+
+
+class TestCLI2(TaskRule):
+    rule_inputs = {}
+    rule_outputs = {'dummy': 'remakefile_output/test_cli2.run'}
+    force = True
+
+    def rule_run(self):
+        commands = [
+            f'rm -rf data/outputs/ex2',
+            f'remake info ex2',
+            f'remake ls-tasks ex2',
+            f'remake ls-tasks -l ex2',
+            f'remake ls-tasks --filter=i=2 ex2',
+            f'remake ls-tasks --uses-file=data/outputs/ex2/fan_out.0.3.out ex2',
+            f'remake ls-tasks --produces-file=data/outputs/ex2/fan_out.0.3.out ex2',
+            f'remake ls-files ex2',
+            f'remake ls-files -l --input ex2',
+            f'remake ls-files --output ex2',
+            f'remake ls-files --input-only ex2',
+            f'remake ls-files --output-only ex2',
+            f'remake ls-files --inout ex2',
+            f'remake ls-files --produced-by-rule=Process ex2',
+            f'remake ls-files --used-by-rule=Process ex2',
+            f'remake ls-files --exists ex2',
+            f'remake ls-rules ex2',
+            f'remake run-tasks --handle-dependencies --produces-file=data/outputs/ex2/fan_out.0.3.out ex2',
+            f'remake run-tasks --rule=Init ex2',
+            f'remake run-tasks --rule=FanOut ex2',
+            f'remake run-tasks --rule=Process ex2',
+            f'remake run --random ex2',
+            f'remake run-tasks --rule=Reduce1 ex2',
+            f'remake run-tasks --rule=Reduce2 ex2',
+            f'remake rm-files -f --output-only ex2',
+            f'remake rule-info ex2 Process',
+            f'remake task-info ex2 82b155',
+            f'remake file-info ex2 data/outputs/ex2/fan_out.0.3.out',
         ]
         run_commands(commands)
         self.outputs['dummy'].touch()

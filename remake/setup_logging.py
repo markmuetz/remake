@@ -55,20 +55,20 @@ def setup_stdout_logging(level='INFO', colour=True, detailed=False):
     if colour:
         if level == 'DEBUG':
             formatter = ColourConsoleFormatter(
-                DEBUG='%(name)-30s %(levelname)-8s: %(message)s',
-                INFO='%(name)-30s %(levelname)-8s: %(message)s',
-                WARNING='%(name)-30s %(levelname)-8s: %(message)s',
-                ERROR='%(name)-30s %(levelname)-8s: %(message)s',
+                DEBUG='%(name)-40s %(levelname)-8s: %(message)s',
+                INFO='%(name)-40s %(levelname)-8s: %(message)s',
+                WARNING='%(name)-40s %(levelname)-8s: %(message)s',
+                ERROR='%(name)-40s %(levelname)-8s: %(message)s',
             )
         else:
             formatter = ColourConsoleFormatter(
-                DEBUG='%(asctime)s %(name)-30s %(levelname)-8s: %(message)s',
+                DEBUG='%(asctime)s %(name)-40s %(levelname)-8s: %(message)s',
                 INFO='%(message)s',
                 WARNING='WARNING: %(message)s',
                 ERROR='ERROR: %(message)s',
             )
     elif detailed:
-        formatter = logging.Formatter('%(asctime)s %(name)-30s %(levelname)-8s %(message)s')
+        formatter = logging.Formatter('%(asctime)s %(name)-40s %(levelname)-8s %(message)s')
     else:
         formatter = logging.Formatter('%(levelname)-8s: %(message)s')
     remake_root.setLevel(level)

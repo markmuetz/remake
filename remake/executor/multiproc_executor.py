@@ -44,8 +44,8 @@ def worker(task_ctrl_name, task_queue, task_complete_queue, log_queue):
     # sender_log_configurer(log_queue)
     remake = load_remake(task_ctrl_name)
     task_ctrl = remake.task_ctrl
-    logger = getLogger(__name__ + '.worker')
-    logger.debug('starting')
+    # logger = getLogger(__name__ + '.worker')
+    # logger.debug('starting')
     task = None
     while True:
         try:
@@ -53,14 +53,14 @@ def worker(task_ctrl_name, task_queue, task_complete_queue, log_queue):
             if item is None:
                 break
             task_type, task_key, force = item
-            logger.debug(f'{task_type}: {task_key} ({force=})')
+            # logger.debug(f'{task_type}: {task_key} ({force=})')
             if task_type == 'rescan':
                 task = task_ctrl.gen_rescan_task(task_key)
             else:
                 task = task_ctrl.task_from_path_hash_key[task_key]
-            logger.debug(f'worker {current_process().name} running {task.path_hash_key()}')
+            # logger.debug(f'worker {current_process().name} running {task.path_hash_key()}')
             task.run(force)
-            logger.debug(f'worker {current_process().name} complete {task.path_hash_key()}')
+            # logger.debug(f'worker {current_process().name} complete {task.path_hash_key()}')
             task_complete_queue.put((task_key, True, None))
         except Exception as e:
             logger.error(e)
@@ -72,7 +72,7 @@ def worker(task_ctrl_name, task_queue, task_complete_queue, log_queue):
             if item is None:
                 break
 
-    logger.debug('stopping')
+    # logger.debug('stopping')
 
 
 class MultiprocExecutor(Executor):
@@ -97,8 +97,8 @@ class MultiprocExecutor(Executor):
         self.task_queue = Queue()
         self.task_complete_queue = Queue()
         self.log_queue = Queue()
-        self.listener = Process(target=log_listener, args=(self.log_queue,))
-        self.listener.start()
+        # self.listener = Process(target=log_listener, args=(self.log_queue,))
+        # self.listener.start()
 
         logger.debug(f'creating {self.nproc} workers')
         for i in range(self.nproc):
@@ -106,11 +106,13 @@ class MultiprocExecutor(Executor):
                                                 self.task_queue,
                                                 self.task_complete_queue,
                                                 self.log_queue))
+            proc.daemon = True
             logger.debug(f'created proc {proc}')
             proc.start()
             self.procs.append(proc)
 
-        sender_log_configurer(self.log_queue)
+        # This causes a hang at e.g. the end of nosetests.
+        # sender_log_configurer(self.log_queue)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         super().__exit__(exc_type, exc_val, exc_tb)
@@ -119,12 +121,7 @@ class MultiprocExecutor(Executor):
             self.task_queue.put_nowait(None)
 
         for proc in self.procs:
-            proc.terminate()
-
-        self.log_queue.put_nowait(None)
-        # listener.terminate()
-        # self.listener.join(5)
-        self.listener.terminate()
+            proc.join()
 
     def _run_task(self, task):
         # N.B. Cannot send Tasks that are build from rules as they do not pickle.
@@ -136,6 +133,7 @@ class MultiprocExecutor(Executor):
         else:
             task_type = 'task'
             key = task.path_hash_key()
+        logger.debug(f'adding task {key}: {task}')
         self.running_tasks[key] = (task_type, task, key)
         self.task_queue.put((task_type, key, True))
 
