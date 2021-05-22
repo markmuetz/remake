@@ -470,6 +470,11 @@ class TaskControl:
             else:
                 yield self.statuses.ordered_pending_tasks[0]
 
+    def get_forced_next_pending(self):
+        forced_tasks = self.rescan_tasks + [t for t in self.sorted_tasks if t.status != 'cannot_run']
+        for forced_task in forced_tasks:
+            yield forced_task
+
     def get_next_pending_from_subset(self):
         while (self.subset_statuses.rescan_tasks or
                self.subset_statuses.pending_tasks or
@@ -597,12 +602,9 @@ class TaskControl:
                 get_next_pending = self.get_next_pending_from_subset
             else:
                 if force:
-                    for task in self.sorted_tasks.keys():
-                        if task in self.input_tasks:
-                            self.statuses.update_task(task, task.status, 'pending')
-                        else:
-                            self.statuses.update_task(task, task.status, 'remaining')
-                get_next_pending = self.get_next_pending
+                    get_next_pending = self.get_forced_next_pending
+                else:
+                    get_next_pending = self.get_next_pending
 
             for task in get_next_pending():
                 if task and self.executor.can_accept_task():

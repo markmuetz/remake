@@ -1,6 +1,7 @@
 from multiprocessing import Process, Queue, current_process
 import logging
 import logging.handlers
+from time import sleep
 
 from logging import getLogger
 
@@ -39,7 +40,7 @@ def sender_log_configurer(log_queue):
     # remake_root.setLevel(logging.INFO)
 
 
-def worker(task_ctrl_name, task_queue, task_complete_queue, error_queue, log_queue):
+def worker(task_ctrl_name, task_queue, task_complete_queue, log_queue):
     # sender_log_configurer(log_queue)
     remake = load_remake(task_ctrl_name)
     task_ctrl = remake.task_ctrl
@@ -60,12 +61,12 @@ def worker(task_ctrl_name, task_queue, task_complete_queue, error_queue, log_que
             logger.debug(f'worker {current_process().name} running {task.path_hash_key()}')
             task.run(force)
             logger.debug(f'worker {current_process().name} complete {task.path_hash_key()}')
-            task_complete_queue.put(task_key)
+            task_complete_queue.put((task_key, True, None))
         except Exception as e:
             logger.error(e)
             if task:
                 logger.error(str(task))
-            error_queue.put(e)
+            task_complete_queue.put((task_key, False, e))
 
             item = task_queue.get()
             if item is None:
@@ -86,7 +87,6 @@ class MultiprocExecutor(Executor):
         self.running_tasks = {}
         self.task_queue = None
         self.task_complete_queue = None
-        self.error_queue = None
         self.log_queue = None
         self.listener = None
 
@@ -96,7 +96,6 @@ class MultiprocExecutor(Executor):
         logger.debug('initializing queues')
         self.task_queue = Queue()
         self.task_complete_queue = Queue()
-        self.error_queue = Queue()
         self.log_queue = Queue()
         self.listener = Process(target=log_listener, args=(self.log_queue,))
         self.listener.start()
@@ -106,7 +105,6 @@ class MultiprocExecutor(Executor):
             proc = Process(target=worker, args=(self.task_ctrl.name,
                                                 self.task_queue,
                                                 self.task_complete_queue,
-                                                self.error_queue,
                                                 self.log_queue))
             logger.debug(f'created proc {proc}')
             proc.start()
@@ -152,9 +150,12 @@ class MultiprocExecutor(Executor):
 
     def get_completed_task(self):
         logger.debug('ctrl no tasks available - wait for completed')
-        remaote_task_key = self.task_complete_queue.get()
-        logger.debug(f'ctrl receieved: {remaote_task_key}')
-        task_type, completed_task, key = self.running_tasks.pop(remaote_task_key)
+        remote_task_key, success, error = self.task_complete_queue.get()
+        if not success:
+            logger.error(f'Error running {remote_task_key}')
+            raise Exception(error)
+        logger.debug(f'ctrl receieved: {remote_task_key}')
+        task_type, completed_task, key = self.running_tasks.pop(remote_task_key)
         logger.debug(f'completed: {completed_task}')
         assert self.can_accept_task()
 
