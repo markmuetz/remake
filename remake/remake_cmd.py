@@ -10,6 +10,10 @@ try:
 except ImportError:
     import pdb as debug
 
+try:
+    import argcomplete
+except ImportError:
+    argcomplete = None
 from tabulate import tabulate
 
 from remake.setup_logging import setup_stdout_logging
@@ -207,7 +211,6 @@ class RemakeParser:
                 Arg('--long', '-l', action='store_true', help='long version'),
             ]
         },
-
     }
 
     def __init__(self):
@@ -227,6 +230,8 @@ class RemakeParser:
             subparser = subparsers.add_parser(cmd_key, help=cmd_kwargs['help'])
             for argset in args:
                 add_argset(subparser, argset)
+        if argcomplete:
+            argcomplete.autocomplete(parser)
 
         return parser
 
