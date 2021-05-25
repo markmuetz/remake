@@ -175,6 +175,7 @@ def run_job(remakefile, remakefile_hash, task_type, task_key):
         # Can't run this; not finalized.
         # task_ctrl.run_requested([task])
         task.run(force=True)
+        task.update_status('COMPLETED')
     else:
         print(f'Run task not required: {task}')
         logger.info(f'Run task not required: {task}')
