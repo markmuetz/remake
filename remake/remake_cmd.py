@@ -21,6 +21,7 @@ from remake.version import get_version
 from remake.load_remake import load_remake
 from remake.remake_exceptions import RemakeError
 from remake.bcolors import bcolors
+from remake.monitor import remake_curses_monitor
 
 logger = getLogger(__name__)
 
@@ -205,6 +206,13 @@ class RemakeParser:
                 Arg('filenames', nargs='*'),
             ]
         },
+        'monitor': {
+            'help': 'Monitor remake (polls remake metadata dir)',
+            'args': [
+                Arg('--timeout', '-t', help='timeout (ms) to use for polling', default=1000, type=int),
+                Arg('remakefile', nargs='?', default='remakefile'),
+            ]
+        },
         'version': {
             'help': 'Print remake version',
             'args': [
@@ -289,6 +297,8 @@ class RemakeParser:
             task_info(args.remakefile, args.long, args.tasks)
         elif args.subcmd_name == 'file-info':
             file_info(args.remakefile, args.filenames)
+        elif args.subcmd_name == 'monitor':
+            monitor(args.remakefile, args.timeout)
         elif args.subcmd_name == 'version':
             print(get_version(form='long' if args.long else 'short'))
         else:
@@ -531,3 +541,7 @@ def file_info(remakefile, filenames):
             print()
 
 
+def monitor(remakefile, timeout):
+    from curses import wrapper
+    remake = load_remake(remakefile).finalize()
+    wrapper(remake_curses_monitor, remake, timeout)

@@ -40,6 +40,7 @@ class TaskStatuses:
             if status == 'pending':
                 self._ordered_pending_tasks.append(task)
         self._task_status[task] = status
+        task.update_status(status)
 
     def update_task(self, task, old_status, new_status):
         if isinstance(task, RescanFileTask):
@@ -58,6 +59,7 @@ class TaskStatuses:
             if new_status == 'pending':
                 self._ordered_pending_tasks.append(task)
         self._task_status[task] = new_status
+        task.update_status(new_status)
 
     def task_status(self, task):
         return self._task_status[task]

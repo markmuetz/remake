@@ -61,12 +61,13 @@ class TestCLI(TaskRule):
 
     def rule_run(self):
         commands = [
-            f'remake run {self.name}',
+            f'rm -rf data/outputs/{self.name}',
             f'remake run --one {self.name}',
             f'remake run --force {self.name}',
             f'remake run --reasons {self.name}',
             f'remake run --executor multiproc {self.name}',
             f'remake run --display task_dag {self.name}',
+            f'remake run {self.name}',
             f'remake ls-tasks {self.name}',
             f'remake ls-tasks --long {self.name}',
             f'remake ls-files {self.name}',
@@ -146,7 +147,6 @@ class TestEx1(TaskRule):
             'remake run --reasons ex1.py',
             'remake run --reasons ex1.py',
             'echo "All tasks SUCCESSFUL"',
-            'make reset',
         ]
         run_commands(commands)
         self.outputs['dummy'].touch()

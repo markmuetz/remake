@@ -24,6 +24,9 @@ class BaseTask:
     def add_metadata(self, task_md):
         self.task_md = task_md
 
+    def update_status(self, status):
+        self.task_md.update_status(status.upper())
+
     @property
     def status(self):
         return self.task_ctrl.statuses.task_status(self)
@@ -187,7 +190,7 @@ class Task(BaseTask):
         self.task_md.log_path.parent.mkdir(parents=True, exist_ok=True)
         # TODO: adding file logging is disabling other logging.
         # add_file_logging(task_md.log_path)
-        self.task_md.update_status('RUNNING')
+        self.update_status('RUNNING')
 
         try:
             if self.requires_rerun() or force or self.force:
@@ -227,10 +230,9 @@ class Task(BaseTask):
                 logger.debug(f'already exist: {self.outputs}')
             self._post_run_with_content_check()
         except:
-            self.task_md.update_status('ERROR')
+            self.update_status('ERROR')
             raise
 
-        self.task_md.update_status('COMPLETE')
         return self
 
     def _post_run_with_content_check(self):
