@@ -91,7 +91,7 @@ def remake_curses_monitor(stdscr, remake: Remake, timeout: int):
                 stdscr.addstr(2 + i, 15, f'{str(rule.__name__)[:20]:<20}')
                 rule_status = Counter([monitor.task_key_status_map[t.path_hash_key()]
                                       for t in rule.tasks
-                                      if t in monitor.task_key_status_map])
+                                      if t.path_hash_key() in monitor.task_key_status_map])
                 for j, status in enumerate(['CANNOT_RUN', 'PENDING', 'REMAINING', 'RUNNING', 'COMPLETED', 'ERROR']):
                     if status in rule_status:
                         stdscr.addstr(2 + i, 36 + j * 4, f'{str(rule_status[status]):>3}', curses.color_pair(colour_pairs[status]))
