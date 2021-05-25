@@ -63,7 +63,8 @@ def remake_curses_monitor(stdscr, remake: Remake, timeout: int):
 
 
 if __name__ == '__main__':
-    remake = load_remake(sys.argv[1]).finalize()
+    remake = load_remake(sys.argv[1])
+    remake.build_task_DAG()
 
     if len(sys.argv) == 3:
         wrapper(remake_curses_monitor, remake, int(sys.argv[1]))

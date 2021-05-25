@@ -363,9 +363,6 @@ class TaskControl:
 #                 logger.error(f'No input file {input_path} exists or will be created (needed by {len(tasks)} tasks)')
 #             raise Exception(f'Not all input paths exist: {len(missing_paths)} missing')
 #
-        logger.info('Perform topological sort')
-        # Can now perform a topological sort.
-        self.sorted_tasks = dict(self._topogological_tasks())
         # N.B. provides nicer ordering of tasks than using self.task_dag.
         # self.sorted_tasks = list(nx.topological_sort(self.task_dag))
         if self.extra_checks:
@@ -462,6 +459,9 @@ class TaskControl:
                 self.input_tasks.add(task)
 
         self._dag_built = True
+        logger.info('Perform topological sort')
+        # Can now perform a topological sort.
+        self.sorted_tasks = dict(self._topogological_tasks())
 
     def get_next_pending(self):
         while self.rescan_tasks or self.pending_tasks or self.remaining_tasks:
