@@ -125,6 +125,11 @@ class Task(BaseTask):
                f'({self.func.__code__.co_name}, {inputs}, {outputs})'
 
     def __str__(self):
+        if hasattr(self, 'var_matrix'):
+            args = ', '.join([f'{k}={getattr(self, k)}' for k in self.var_matrix.keys()])
+            return f'{self.__class__.__name__}({args})'
+        else:
+            return f'{self.__class__.__name__}()'
         return self.short_str(3, 3)
 
     def can_run(self):

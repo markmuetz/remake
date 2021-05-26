@@ -543,5 +543,6 @@ def file_info(remakefile, filenames):
 
 def monitor(remakefile, timeout):
     from curses import wrapper
-    remake = load_remake(remakefile).finalize()
+    remake = load_remake(remakefile)
+    remake.task_ctrl.build_task_DAG()
     wrapper(remake_curses_monitor, remake, timeout)
