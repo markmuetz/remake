@@ -11,6 +11,10 @@ from remake.load_remake import load_remake
 from remake.metadata import METADATA_VERSION
 from remake.util import sha1sum
 
+class Quit(Exception):
+    pass
+
+
 class RemakeMonitor:
     def __init__(self, remake):
         self.remake = remake
@@ -35,131 +39,141 @@ class RemakeMonitor:
             self.statuses.append((task, status))
 
 
-def remake_curses_monitor(stdscr, remake: Remake, timeout: int):
-    monitor = RemakeMonitor(remake)
-    remake_sha1sum = sha1sum(Path(remake.name + '.py'))
-    rows, cols = stdscr.getmaxyx()
-    colour_pairs = {
-        "CANNOT_RUN": 1,
-        "PENDING": 2,
-        "REMAINING": 3,
-        "RUNNING": 4,
-        "COMPLETED": 5,
-        "ERROR": 6,
-        "UNKNOWN": 7,
-    }
-    curses.init_pair(colour_pairs['CANNOT_RUN'], curses.COLOR_YELLOW, curses.COLOR_BLACK)
-    curses.init_pair(colour_pairs['PENDING'], curses.COLOR_MAGENTA, curses.COLOR_BLACK)
-    curses.init_pair(colour_pairs['REMAINING'], curses.COLOR_WHITE, curses.COLOR_BLACK)
-    curses.init_pair(colour_pairs['RUNNING'], curses.COLOR_BLUE, curses.COLOR_BLACK)
-    curses.init_pair(colour_pairs['COMPLETED'], curses.COLOR_GREEN, curses.COLOR_BLACK)
-    curses.init_pair(colour_pairs['ERROR'], curses.COLOR_RED, curses.COLOR_BLACK)
-    curses.init_pair(colour_pairs['UNKNOWN'], curses.COLOR_YELLOW, curses.COLOR_BLACK)
+class RemakeMonitorCurses:
+    def __init__(self, stdscr, remake: Remake, timeout: int):
+        self.stdscr = stdscr
+        self.remake = remake
+        self.monitor = RemakeMonitor(remake)
+        self.remake_sha1sum = sha1sum(Path(remake.name + '.py'))
+        self.timeout = timeout
+        self.input_loop_timeout = 10
+        self.num_input_loops = self.timeout // self.input_loop_timeout
 
-    curses.init_pair(8, curses.COLOR_BLACK, curses.COLOR_WHITE)
-    stdscr.nodelay(True)
-    input_loop_timeout = 10
-    num_input_loops = timeout // input_loop_timeout
+        self.rows, self.cols = stdscr.getmaxyx()
+        self.colour_pairs = {
+            "CANNOT_RUN": 1,
+            "PENDING": 2,
+            "REMAINING": 3,
+            "RUNNING": 4,
+            "COMPLETED": 5,
+            "ERROR": 6,
+            "UNKNOWN": 7,
+        }
+        curses.init_pair(self.colour_pairs['CANNOT_RUN'], curses.COLOR_YELLOW, curses.COLOR_BLACK)
+        curses.init_pair(self.colour_pairs['PENDING'], curses.COLOR_MAGENTA, curses.COLOR_BLACK)
+        curses.init_pair(self.colour_pairs['REMAINING'], curses.COLOR_WHITE, curses.COLOR_BLACK)
+        curses.init_pair(self.colour_pairs['RUNNING'], curses.COLOR_BLUE, curses.COLOR_BLACK)
+        curses.init_pair(self.colour_pairs['COMPLETED'], curses.COLOR_GREEN, curses.COLOR_BLACK)
+        curses.init_pair(self.colour_pairs['ERROR'], curses.COLOR_RED, curses.COLOR_BLACK)
+        curses.init_pair(self.colour_pairs['UNKNOWN'], curses.COLOR_YELLOW, curses.COLOR_BLACK)
+        curses.init_pair(8, curses.COLOR_BLACK, curses.COLOR_WHITE)
 
-    curses.curs_set(0)
-    command = None
-    keypresses = []
-    mode = None
-    show = 'tasks'
-    i_offset = 0
-    while True:
-        # Refresh loop.
-        monitor.refresh()
-        if remake_sha1sum != sha1sum(Path(remake.name + '.py')):
-            remake_name = remake.name + '*'
-        else:
-            remake_name = remake.name
+        self.stdscr.nodelay(True)
+        curses.curs_set(0)
 
+    def cp(self, status):
+        return curses.color_pair(self.colour_pairs[status])
+
+    def ui(self, mode, command, keypresses, show, remake_name):
+        stdscr = self.stdscr
         stdscr.clear()
         if mode == 'command':
             if command:
-                stdscr.addstr(rows - 2, 0, ':' + ' '.join(command))
+                stdscr.addstr(self.rows - 1, 0, ':' + ' '.join(command))
                 command = None
                 mode = None
             elif keypresses:
-                stdscr.addstr(rows - 1, 0, ''.join(keypresses))
+                stdscr.addstr(self.rows - 1, 0, ''.join(keypresses))
 
         timestr = f'{dt.datetime.now().replace(microsecond=0)}'
-        stdscr.addstr(0, cols // 2 - len(timestr) // 2, timestr)
+        stdscr.addstr(0, self.cols // 2 - len(timestr) // 2, timestr)
 
-        topline = [' '] * cols
+        topline = [' '] * self.cols
         show_str = f' {show} '
-        topline[cols // 2 - len(show_str): len(show_str)] = list(show_str)
+        topline[self.cols // 2 - len(show_str): len(show_str)] = list(show_str)
         stdscr.addstr(1, 0, ''.join(topline), curses.color_pair(8))
 
-        bottomline = [' '] * cols
+        bottomline = [' '] * self.cols
         bottomline[:len(remake_name)] = list(remake_name)
-        stdscr.addstr(rows - 2, 0, ''.join(bottomline), curses.color_pair(8))
+        stdscr.addstr(self.rows - 2, 0, ''.join(bottomline), curses.color_pair(8)|curses.A_BOLD)
 
-        status_counts = monitor.status_counts
-        stdscr.addstr(2, 0, f'Cant run : {status_counts["CANNOT_RUN"]}', curses.color_pair(colour_pairs['CANNOT_RUN']))
-        stdscr.addstr(3, 0, f'Unknown  : {status_counts["UNKNOWN"]}', curses.color_pair(colour_pairs['UNKNOWN']))
-        stdscr.addstr(4, 0, f'Remaining: {status_counts["REMAINING"]}', curses.color_pair(colour_pairs['REMAINING']))
-        stdscr.addstr(5, 0, f'Pending  : {status_counts["PENDING"]}', curses.color_pair(colour_pairs['PENDING']))
-        stdscr.addstr(6, 0, f'Running  : {status_counts["RUNNING"]}', curses.color_pair(colour_pairs['RUNNING']))
-        stdscr.addstr(7, 0, f'Completed: {status_counts["COMPLETED"]}', curses.color_pair(colour_pairs['COMPLETED']))
-        stdscr.addstr(8, 0, f'Error    : {status_counts["ERROR"]}', curses.color_pair(colour_pairs['ERROR']))
+    def summary(self, status_counts):
+        stdscr = self.stdscr
+        stdscr.addstr(2, 0, f'Cant run : {status_counts["CANNOT_RUN"]}', self.cp('CANNOT_RUN'))
+        stdscr.addstr(3, 0, f'Unknown  : {status_counts["UNKNOWN"]}', self.cp('UNKNOWN'))
+        stdscr.addstr(4, 0, f'Remaining: {status_counts["REMAINING"]}', self.cp('REMAINING'))
+        stdscr.addstr(5, 0, f'Pending  : {status_counts["PENDING"]}', self.cp('PENDING'))
+        stdscr.addstr(6, 0, f'Running  : {status_counts["RUNNING"]}', self.cp('RUNNING'))
+        stdscr.addstr(7, 0, f'Completed: {status_counts["COMPLETED"]}', self.cp('COMPLETED'))
+        stdscr.addstr(8, 0, f'Error    : {status_counts["ERROR"]}', self.cp('ERROR'))
 
-        if show == 'tasks':
-            if i_offset < -len(monitor.statuses) + rows - 4 or i_offset == -10000:
-                i_offset = -len(monitor.statuses) + rows - 4
-            if i_offset > 0:
-                i_offset = 0
-            for i, (task, status) in enumerate(monitor.statuses):
-                if 2 + i + i_offset <= 1:
-                    continue
-                if 2 + i + i_offset >= rows - 2:
-                    break
-                stdscr.addstr(2 + i + i_offset, 15, f'{str(i):>3}')
-                stdscr.addstr(2 + i + i_offset, 19, f'{status:<10}: {task}'[:cols - 19], curses.color_pair(colour_pairs[status]))
-        elif show == 'rules':
-            if i_offset < -len(remake.rules) + 1 + rows - 4 or i_offset == -10000:
-                i_offset = -len(remake.rules) + 1 + rows - 4
-            if i_offset > 0:
-                i_offset = 0
-            stdscr.addstr(2, 36, ' CR,  P, RM,  R,  C,  E')
-            for i, rule in enumerate(remake.rules):
-                if 2 + i + i_offset <= 1:
-                    continue
-                if 2 + i + i_offset >= rows - 2:
-                    break
-                stdscr.addstr(3 + i + i_offset, 15, f'{str(rule.__name__)[:20]:<20}')
-                rule_status = Counter([monitor.task_key_status_map[t.path_hash_key()]
-                                      for t in rule.tasks
-                                      if t.path_hash_key() in monitor.task_key_status_map])
-                for j, status in enumerate(['CANNOT_RUN', 'PENDING', 'REMAINING', 'RUNNING', 'COMPLETED', 'ERROR']):
-                    if status in rule_status:
-                        stdscr.addstr(3 + i + i_offset, 36 + j * 4, f'{str(rule_status[status]):>3}', curses.color_pair(colour_pairs[status]))
-                    else:
-                        stdscr.addstr(3 + i + i_offset, 36 + j * 4, f'  0', curses.color_pair(colour_pairs[status]))
-                    if status != 'ERROR':
-                        stdscr.addstr(3 + i + i_offset, 36 + j * 4 + 3, ',')
-        elif show == 'files':
-            paths = [p
-                     for t in remake.task_ctrl.sorted_tasks
-                     for p in t.outputs.values()]
-            if i_offset < -len(paths) + rows - 4 or i_offset == -10000:
-                i_offset = -len(paths) + rows - 4
-            if i_offset > 0:
-                i_offset = 0
-            for i, path in enumerate(paths):
-                if 2 + i + i_offset <= 1:
-                    continue
-                if 2 + i + i_offset >= rows - 2:
-                    break
-                if path.exists():
-                    stdscr.addstr(2 + i + i_offset, 15, f'{str(path.exists()):>5}: {path}', curses.color_pair(colour_pairs['COMPLETED']))
+    def _check_i_offset(self, i_offset, n):
+        if i_offset < -n + 1 + self.rows - 4 or i_offset == -10000:
+            i_offset = -n + 1 + self.rows - 4
+        if i_offset > 0:
+            i_offset = 0
+        return i_offset
+
+    def show_tasks(self, i_offset):
+        stdscr = self.stdscr
+        monitor = self.monitor
+
+        i_offset = self._check_i_offset(i_offset, len(monitor.statuses))
+        for i, (task, status) in enumerate(monitor.statuses):
+            if 2 + i + i_offset <= 1:
+                continue
+            if 2 + i + i_offset >= self.rows - 2:
+                break
+            stdscr.addstr(2 + i + i_offset, 15, f'{str(i):>3}')
+            stdscr.addstr(2 + i + i_offset, 19, f'{status:<10}: {task}'[:self.cols - 19], self.cp(status))
+
+    def show_rules(self, i_offset):
+        stdscr = self.stdscr
+        remake = self.remake
+        monitor = self.monitor
+        i_offset = self._check_i_offset(i_offset, len(remake.rules))
+        stdscr.addstr(2, 36, ' CR,  U,  P, RM,  R,  C,  E')
+        for i, rule in enumerate(remake.rules):
+            if 2 + i + i_offset <= 1:
+                continue
+            if 2 + i + i_offset >= self.rows - 2:
+                break
+            stdscr.addstr(3 + i + i_offset, 15, f'{str(rule.__name__)[:20]:<20}')
+            rule_status = Counter([monitor.task_key_status_map[t.path_hash_key()]
+                                  for t in rule.tasks
+                                  if t.path_hash_key() in monitor.task_key_status_map])
+            for j, status in enumerate(['CANNOT_RUN', 'UNKNOWN', 'PENDING',
+                                        'REMAINING', 'RUNNING',
+                                        'COMPLETED', 'ERROR']):
+                if status in rule_status:
+                    stdscr.addstr(3 + i + i_offset, 36 + j * 4, f'{str(rule_status[status]):>3}', self.cp(status))
                 else:
-                    stdscr.addstr(2 + i + i_offset, 15, f'{str(path.exists()):>5}: {path}')
+                    stdscr.addstr(3 + i + i_offset, 36 + j * 4, f'  0', self.cp(status))
+                if status != 'ERROR':
+                    stdscr.addstr(3 + i + i_offset, 36 + j * 4 + 3, ',')
 
-        for i in range(num_input_loops):
+    def show_files(self, i_offset):
+        stdscr = self.stdscr
+        remake = self.remake
+        paths = [p
+                 for t in remake.task_ctrl.sorted_tasks
+                 for p in t.outputs.values()]
+        i_offset = self._check_i_offset(i_offset, len(paths))
+        for i, path in enumerate(paths):
+            if 2 + i + i_offset <= 1:
+                continue
+            if 2 + i + i_offset >= self.rows - 2:
+                break
+            if path.exists():
+                stdscr.addstr(2 + i + i_offset, 15, f'{str(path.exists()):>5}: {path}', self.cp('COMPLETED'))
+            else:
+                stdscr.addstr(2 + i + i_offset, 15, f'{str(path.exists()):>5}: {path}')
+
+    def input_loop(self, mode, command, keypresses, show, i_offset):
+        stdscr = self.stdscr
+        for i in range(self.num_input_loops):
             # Input loop.
-            curses.napms(input_loop_timeout)
+            curses.napms(self.input_loop_timeout)
             try:
                 c = stdscr.getch()
                 # stdscr.addstr(rows - 1, cols - 10, str(c))
@@ -209,22 +223,57 @@ def remake_curses_monitor(stdscr, remake: Remake, timeout: int):
                             i_offset = -10000
                             break
                         elif chr(c) == 'R':
-                            remake = load_remake(remake.name)
-                            remake.task_ctrl.build_task_DAG()
-                            monitor = RemakeMonitor(remake)
-                            remake_sha1sum = sha1sum(Path(remake.name + '.py'))
+                            self.remake = load_remake(self.remake.name)
+                            self.remake.task_ctrl.build_task_DAG()
+                            self.monitor = RemakeMonitor(self.remake)
+                            self.remake_sha1sum = sha1sum(Path(self.remake.name + '.py'))
 
-                stdscr.addstr(rows - 1, 0, ''.join(keypresses))
+                stdscr.addstr(self.rows - 1, 0, ''.join(keypresses))
             except curses.error:
                 pass
             stdscr.refresh()
         if command:
             if command[0] == 'q':
-                break
+                raise Quit()
             elif command[0] == 'show':
                 show = command[1]
                 i_offset = 0
+        return mode, command, keypresses, show, i_offset
 
+    def monitor_loop(self):
+        mode = None
+        command = None
+        keypresses = []
+        show = 'tasks'
+        i_offset = 0
+        while True:
+            # Monitor loop.
+            self.monitor.refresh()
+            if self.remake_sha1sum != sha1sum(Path(self.remake.name + '.py')):
+                self.remake_name = self.remake.name + '*'
+            else:
+                self.remake_name = self.remake.name
+
+            self.ui(mode, command, keypresses, show, self.remake_name)
+
+            self.summary(self.monitor.status_counts)
+            if show == 'tasks':
+                self.show_tasks(i_offset)
+            elif show == 'rules':
+                self.show_rules(i_offset)
+            elif show == 'files':
+                self.show_files(i_offset)
+
+            try:
+                (mode, command, keypresses,
+                 show, i_offset) = self.input_loop(mode, command, keypresses, show, i_offset)
+            except Quit:
+                break
+
+
+def remake_curses_monitor(stdscr, remake: Remake, timeout: int):
+    _mon = RemakeMonitorCurses(stdscr, remake, timeout)
+    _mon.monitor_loop()
 
 if __name__ == '__main__':
     remake = load_remake(sys.argv[1])
