@@ -1,10 +1,12 @@
 from collections import defaultdict, Counter
 import functools
 from logging import getLogger
+import math
 from pathlib import Path
 from typing import List
 
 import networkx as nx
+import numpy as np
 
 from remake.task import RescanFileTask
 from remake.metadata import MetadataManager
@@ -633,8 +635,10 @@ class TaskControl:
 
     def log_task_info(self, task_index, len_tasks, task):
         if not isinstance(task, RescanFileTask):
-            logger.info(f'{task_index(task) + 1}/{len_tasks}:'
-                        f' {task.path_hash_key()} {task}')
+            num_digits = math.floor(math.log10(len_tasks)) + 1
+            # N.B. double subs allowed in fstrings!
+            logger.info(f'{task_index(task) + 1:>{num_digits}}/{len_tasks}:'
+                        f' {task.path_hash_key()[:10]} {task}')
         else:
             logger.info(f'Rescanning: {task.inputs["filepath"]}')
 
