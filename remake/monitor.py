@@ -125,7 +125,8 @@ class RemakeMonitorCurses:
             if 2 + i + i_offset >= self.rows - 2:
                 break
             stdscr.addstr(2 + i + i_offset, 15, f'{str(i):>3}')
-            stdscr.addstr(2 + i + i_offset, 19, f'{status:<10}: {task}'[:self.cols - 19], self.cp(status))
+            stdscr.addstr(2 + i + i_offset, 19, f'{status:<10}: {task}'[:self.cols - 19],
+                          self.cp(status))
 
     def show_rules(self, i_offset):
         stdscr = self.stdscr
@@ -146,7 +147,9 @@ class RemakeMonitorCurses:
                                         'REMAINING', 'RUNNING',
                                         'COMPLETED', 'ERROR']):
                 if status in rule_status:
-                    stdscr.addstr(3 + i + i_offset, 36 + j * 4, f'{str(rule_status[status]):>3}', self.cp(status))
+                    stdscr.addstr(3 + i + i_offset, 36 + j * 4,
+                                  f'{str(rule_status[status]):>3}',
+                                  self.cp(status))
                 else:
                     stdscr.addstr(3 + i + i_offset, 36 + j * 4, f'  0', self.cp(status))
                 if status != 'ERROR':
@@ -165,15 +168,24 @@ class RemakeMonitorCurses:
             if 2 + i + i_offset >= self.rows - 2:
                 break
             if path.exists():
-                stdscr.addstr(2 + i + i_offset, 15, f'{str(path.exists()):>5}: {path}', self.cp('COMPLETED'))
+                stdscr.addstr(2 + i + i_offset, 15,
+                              f'{str(path.exists()):>5}: {path}'[:self.cols - 15],
+                              self.cp('COMPLETED'))
             else:
-                stdscr.addstr(2 + i + i_offset, 15, f'{str(path.exists()):>5}: {path}')
+                stdscr.addstr(2 + i + i_offset, 15,
+                              f'{str(path.exists()):>5}: {path}'[:self.cols - 15])
 
     def input_loop(self, mode, command, keypresses, show, i_offset):
         stdscr = self.stdscr
         for i in range(self.num_input_loops):
             # Input loop.
             curses.napms(self.input_loop_timeout)
+            # Action in loop if resize is True:
+            # Not working!
+            if curses.is_term_resized(self.rows, self.cols):
+                self.rows, self.cols = self.stdscr.getmaxyx()
+                curses.resizeterm(self.rows, self.cols)
+                break
             try:
                 c = stdscr.getch()
                 # stdscr.addstr(rows - 1, cols - 10, str(c))
