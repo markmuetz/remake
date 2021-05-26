@@ -16,6 +16,7 @@ JSON_READ_ATTEMPTS = 3
 
 
 def flush_json_write(obj, path):
+    logger.debug(f'write json to: {path}')
     with path.open('w') as fp:
         json.dump(obj, fp, indent=2)
         fp.write('\n')
@@ -32,8 +33,8 @@ def try_json_read(path):
         except json.JSONDecodeError as jde:
             attempts += 1
             logger.error(jde)
-            logger.debug(path)
-            logger.debug(f'attempts: {attempts}')
+            logger.error(path)
+            logger.error(f'attempts: {attempts}')
             if attempts == JSON_READ_ATTEMPTS:
                 raise
         sleep(attempts * 5)

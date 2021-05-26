@@ -2,6 +2,7 @@ import sys
 from collections import Counter
 import datetime as dt
 from pathlib import Path
+import logging
 
 import curses
 from curses import wrapper
@@ -10,6 +11,9 @@ from remake import Remake
 from remake.load_remake import load_remake
 from remake.metadata import METADATA_VERSION
 from remake.util import sha1sum
+
+logger = logging.getLogger(__name__)
+
 
 class Quit(Exception):
     pass
@@ -45,7 +49,7 @@ class RemakeMonitorCurses:
         self.remake = remake
         self.monitor = RemakeMonitor(remake)
         self.remake_sha1sum = sha1sum(Path(remake.name + '.py'))
-        self.timeout = timeout
+        self.timeout = timeout * 1000
         self.input_loop_timeout = 10
         self.num_input_loops = self.timeout // self.input_loop_timeout
 
@@ -77,14 +81,6 @@ class RemakeMonitorCurses:
     def ui(self, mode, command, keypresses, show, remake_name):
         stdscr = self.stdscr
         stdscr.clear()
-        if mode == 'command':
-            if command:
-                stdscr.addstr(self.rows - 1, 0, ':' + ' '.join(command))
-                command = None
-                mode = None
-            elif keypresses:
-                stdscr.addstr(self.rows - 1, 0, ''.join(keypresses))
-
         timestr = f'{dt.datetime.now().replace(microsecond=0)}'
         stdscr.addstr(0, self.cols // 2 - len(timestr) // 2, timestr)
 
@@ -175,6 +171,27 @@ class RemakeMonitorCurses:
                 stdscr.addstr(2 + i + i_offset, 15,
                               f'{str(path.exists()):>5}: {path}'[:self.cols - 15])
 
+    def show_task(self, task_i):
+        stdscr = self.stdscr
+        monitor = self.monitor
+        task = list(self.remake.task_ctrl.sorted_tasks.keys())[task_i]
+
+        stdscr.addstr(2, 15, (f'{task.path_hash_key()[:6]}: {task}'))
+        row = 3
+        task.task_md.generate_metadata()
+        task.task_md.task_requires_rerun()
+
+        for reason in task.task_md.rerun_reasons:
+            if reason[1]:
+                stdscr.addstr(row, 15, f'  {reason[0]}: {reason[1]}')
+            else:
+                stdscr.addstr(row, 15, f'  {reason[0]}')
+            row += 1
+        if task_diff := task.diff():
+            for line in task_diff:
+                stdscr.addstr(row, 15, line)
+                row += 1
+
     def input_loop(self, mode, command, keypresses, show, i_offset):
         stdscr = self.stdscr
         for i in range(self.num_input_loops):
@@ -239,6 +256,11 @@ class RemakeMonitorCurses:
                             self.remake.task_ctrl.build_task_DAG()
                             self.monitor = RemakeMonitor(self.remake)
                             self.remake_sha1sum = sha1sum(Path(self.remake.name + '.py'))
+                        elif chr(c) == 'F':
+                            self.remake = load_remake(self.remake.name)
+                            self.remake.finalize()
+                            self.monitor = RemakeMonitor(self.remake)
+                            self.remake_sha1sum = sha1sum(Path(self.remake.name + '.py'))
 
                 stdscr.addstr(self.rows - 1, 0, ''.join(keypresses))
             except curses.error:
@@ -249,6 +271,10 @@ class RemakeMonitorCurses:
                 raise Quit()
             elif command[0] == 'show':
                 show = command[1]
+                i_offset = 0
+            elif command[0] == 'task':
+                show = 'task'
+                self.task_i = int(command[1])
                 i_offset = 0
         return mode, command, keypresses, show, i_offset
 
@@ -267,6 +293,13 @@ class RemakeMonitorCurses:
                 self.remake_name = self.remake.name
 
             self.ui(mode, command, keypresses, show, self.remake_name)
+            if mode == 'command':
+                if command:
+                    self.stdscr.addstr(self.rows - 1, 0, ':' + ' '.join(command))
+                    command = None
+                    mode = None
+                elif keypresses:
+                    self.stdscr.addstr(self.rows - 1, 0, ''.join(keypresses))
 
             self.summary(self.monitor.status_counts)
             if show == 'tasks':
@@ -275,6 +308,8 @@ class RemakeMonitorCurses:
                 self.show_rules(i_offset)
             elif show == 'files':
                 self.show_files(i_offset)
+            elif show == 'task':
+                self.show_task(self.task_i)
 
             try:
                 (mode, command, keypresses,

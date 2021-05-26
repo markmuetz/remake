@@ -209,7 +209,8 @@ class RemakeParser:
         'monitor': {
             'help': 'Monitor remake (polls remake metadata dir)',
             'args': [
-                Arg('--timeout', '-t', help='timeout (ms) to use for polling', default=1000, type=int),
+                Arg('--timeout', '-t', help='timeout (s) to use for polling', default=10,
+                    type=int),
                 Arg('remakefile', nargs='?', default='remakefile'),
             ]
         },
@@ -333,7 +334,9 @@ def remake_cmd(argv: Union[List[str], None] = None) -> None:
             else:
                 loglevel = 'INFO'
     colour = not args.no_colour
-    setup_stdout_logging(loglevel, colour=colour)
+
+    if args.subcmd_name != 'monitor':
+        setup_stdout_logging(loglevel, colour=colour)
 
     parser.dispatch()
 
@@ -542,7 +545,14 @@ def file_info(remakefile, filenames):
 
 
 def monitor(remakefile, timeout):
+    import logging
     from curses import wrapper
+
+    remake_root = logging.getLogger('remake')
+    handlers = [h for h in remake_root.handlers
+                if isinstance(h, logging.StreamHandler)]
+    for handler in handlers:
+        remake_root.handlers.remove(handler)
     remake = load_remake(remakefile)
     remake.task_ctrl.build_task_DAG()
     wrapper(remake_curses_monitor, remake, timeout)
