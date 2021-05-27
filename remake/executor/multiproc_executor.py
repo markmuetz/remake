@@ -5,7 +5,7 @@ from time import sleep
 
 from logging import getLogger
 
-from remake.setup_logging import setup_stdout_logging
+from remake.setup_logging import setup_stdout_logging, add_file_logging, remove_file_logging
 from remake.load_remake import load_remake
 from remake.task import RescanFileTask
 from remake.executor.base_executor import Executor
@@ -40,11 +40,12 @@ def sender_log_configurer(log_queue):
     # remake_root.setLevel(logging.INFO)
 
 
-def worker(task_ctrl_name, task_queue, task_complete_queue, log_queue):
+def worker(proc_id, task_ctrl_name, task_queue, task_complete_queue, log_queue):
     # sender_log_configurer(log_queue)
     remake = load_remake(task_ctrl_name)
     task_ctrl = remake.task_ctrl
-    # logger = getLogger(__name__ + '.worker')
+    logger = getLogger(__name__ + '.worker')
+    add_file_logging(f'.remake/worker.{proc_id}.log', 'DEBUG')
     # logger.debug('starting')
     task = None
     while True:
@@ -71,6 +72,7 @@ def worker(task_ctrl_name, task_queue, task_complete_queue, log_queue):
             item = task_queue.get()
             if item is None:
                 break
+    remove_file_logging(f'.remake/worker.{proc_id}.log')
 
     # logger.debug('stopping')
 
@@ -102,7 +104,8 @@ class MultiprocExecutor(Executor):
 
         logger.debug(f'creating {self.nproc} workers')
         for i in range(self.nproc):
-            proc = Process(target=worker, args=(self.task_ctrl.name,
+            proc = Process(target=worker, args=(i,
+                                                self.task_ctrl.name,
                                                 self.task_queue,
                                                 self.task_complete_queue,
                                                 self.log_queue))

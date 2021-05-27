@@ -44,11 +44,14 @@ class TaskStatuses:
         self._task_status[task] = status
         task.update_status(status)
 
+    def get_next_pending(self):
+        task = self._ordered_pending_tasks[0]
+        self.update_task(task, 'pending', 'running')
+        return task
+
     def update_task(self, task, old_status, new_status):
         if isinstance(task, RescanFileTask):
             assert self._task_status[task] in old_status
-            if task in self._rescan_tasks:
-                self._rescan_tasks.remove(task)
         else:
             old_tasks = getattr(self, f'_{old_status}_tasks')
             new_tasks = getattr(self, f'_{new_status}_tasks')
@@ -468,28 +471,28 @@ class TaskControl:
     def get_next_pending(self):
         while self.rescan_tasks or self.pending_tasks or self.remaining_tasks:
             if self.rescan_tasks:
-                yield self.rescan_tasks[0]
+                yield self.rescan_tasks.pop(0)
             elif not self.pending_tasks:
                 yield None
             else:
-                yield self.statuses.ordered_pending_tasks[0]
+                yield self.statuses.get_next_pending()
 
     def get_next_pending_from_subset(self):
         while (self.subset_statuses.rescan_tasks or
                self.subset_statuses.pending_tasks or
                self.subset_statuses.remaining_tasks):
             if self.subset_statuses.rescan_tasks:
-                yield self.subset_statuses.rescan_tasks[0]
+                yield self.subset_statuses.rescan_tasks.pop(0)
             elif not self.subset_statuses.pending_tasks:
                 yield None
             else:
-                yield self.subset_statuses.ordered_pending_tasks[0]
+                yield self.subset_statuses.get_next_pending()
 
     def enqueue_task(self, task, force=False):
         if task is None:
             raise Exception('No task to enqueue')
         status = self.statuses.task_status(task)
-        self.update_task_status(task, status, 'running')
+        # self.update_task_status(task, status, 'running')
 
         requires_rerun = self.task_requires_rerun(task, print_reasons=self.print_reasons)
         if requires_rerun & self.remake_on:
@@ -618,15 +621,31 @@ class TaskControl:
             else:
                 get_next_pending = self.get_next_pending
 
-            for task in get_next_pending():
-                if task and self.executor.can_accept_task():
-                    self.log_task_info(self.sorted_tasks.get, len(self.sorted_tasks), task)
-                    task_enqueued = self.enqueue_task(task, force=force)
-                    if not task_enqueued:
-                        self.task_complete(task)
-                else:
-                    completed_task = self.executor.get_completed_task()
-                    self.task_complete(completed_task)
+            for pending_task in get_next_pending():
+                print(pending_task)
+
+                while True:
+                    if pending_task:
+                        # Got a pending task.
+                        if self.executor.can_accept_task():
+                            # Executor can accept tasks -- enqueue it.
+                            self.log_task_info(self.sorted_tasks.get,
+                                               len(self.sorted_tasks),
+                                               pending_task)
+                            task_enqueued = self.enqueue_task(pending_task, force=force)
+                            if not task_enqueued:
+                                self.task_complete(pending_task)
+                            # Go get a new pending task.
+                            break
+                        else:
+                            # Executor cant accept tasks - wait for slot and rerun with pending_task
+                            completed_task = self.executor.get_completed_task()
+                            self.task_complete(completed_task)
+                    else:
+                        # No pending tasks because they are all enqueued.
+                        completed_task = self.executor.get_completed_task()
+                        self.task_complete(completed_task)
+                        break
 
             while not self.executor.has_finished():
                 logger.debug('waiting for remaining tasks')
