@@ -112,7 +112,9 @@ class TestCLI2(TaskRule):
             f'remake run-tasks --rule=Reduce2 ex2',
             f'remake rm-files -f --output-only ex2',
             f'remake rule-info ex2 Process',
-            f'remake task-info ex2 82b155',
+            # Computer dependent hash.
+            # TODO: Re-instate at some point.
+            # f'remake task-info ex2 82b155',
             f'remake file-info ex2 data/outputs/ex2/fan_out.0.3.out',
         ]
         run_commands(commands)
