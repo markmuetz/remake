@@ -127,9 +127,9 @@ class Task(BaseTask):
     def __str__(self):
         if hasattr(self, 'var_matrix'):
             args = ', '.join([f'{k}={getattr(self, k)}' for k in self.var_matrix.keys()])
-            return f'{self.__class__.__name__}({args})'
+            return f'{self.path_hash_key()[:10]} {self.__class__.__name__}({args})'
         else:
-            return f'{self.__class__.__name__}()'
+            return f'{self.path_hash_key()[:10]} {self.__class__.__name__}()'
         return self.short_str(3, 3)
 
     def can_run(self):
@@ -262,6 +262,9 @@ class RescanFileTask(BaseTask):
         self.inputs = {'filepath': Path(filepath).absolute()}
         self.outputs = {}
         self.force = False
+
+    def __str__(self):
+        return f'{self.path_hash_key()[:10]} {self.__class__.__name__}({self.filepath})'
 
     def can_run(self):
         can_run = True

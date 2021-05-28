@@ -338,9 +338,14 @@ class TaskControl:
             raise Exception('gen_rescan_task should never be called on output only path')
         rescan_task = RescanFileTask(self, path_md.path, path_md, pathtype)
         task_md = self.metadata_manager.create_task_metadata(rescan_task)
-        rescan_task.add_metadata(task_md)
+        if path.exists():
+            rescan_task.add_metadata(task_md)
 
-        self.statuses.add_task(rescan_task, 'pending')
+        # self.statuses.add_task(rescan_task, 'pending')
+        if path.exists():
+            self.statuses.add_task(rescan_task, 'pending')
+        else:
+            self.statuses.add_task(rescan_task, 'cannot_run')
         for next_task in self.input_task_map[path]:
             if next_task is not rescan_task:
                 self.task_dag.add_edge(rescan_task, next_task)
@@ -409,7 +414,7 @@ class TaskControl:
                     status = 'pending'
                 else:
                     for prev_task in self.task_dag.predecessors(task):
-                        if prev_task in self.pending_tasks or prev_task in self.remaining_tasks:
+                        if prev_task in self.pending_tasks or prev_task in self.remaining_tasks or isinstance(prev_task, RescanFileTask):
                             status = 'remaining'
                             break
                     if status != 'remaining' and requires_rerun & self.remake_on:
@@ -433,7 +438,7 @@ class TaskControl:
                         status = 'cannot_run'
                         break
 
-            logger.debug(f'  task status: {status} - {task.path_hash_key()}')
+            logger.debug(f'  task status: {status} - {task}')
             self.statuses.add_task(task, status)
 
     def build_task_DAG(self):
@@ -482,11 +487,14 @@ class TaskControl:
                self.subset_statuses.pending_tasks or
                self.subset_statuses.remaining_tasks):
             if self.subset_statuses.rescan_tasks:
-                yield self.subset_statuses.rescan_tasks.pop(0)
+                task = self.subset_statuses.rescan_tasks.pop(0)
+                yield task
             elif not self.subset_statuses.pending_tasks:
                 yield None
             else:
-                yield self.subset_statuses.get_next_pending()
+                task = self.subset_statuses.get_next_pending()
+                self.statuses.update_task(task, 'pending', 'running')
+                yield task
 
     def enqueue_task(self, task, force=False):
         if task is None:
@@ -516,7 +524,7 @@ class TaskControl:
 
     def task_complete(self, task):
         assert task.complete(), 'task not complete'
-        logger.debug(f'add completed task: {task.path_hash_key()}')
+        logger.debug(f'add completed task: {task}')
         # Task is not necessarily running if multiproc running?
         # TODO: investigate further. Run examples/ex1 with multiproc.
         self.update_task_status(task, task.status, 'completed')
@@ -529,11 +537,11 @@ class TaskControl:
             add_to_pending = True
             # Make sure all previous tasks have been run.
             for prev_task in self.task_dag.predecessors(next_task):
-                if not self.statuses.task_status(prev_task) == 'completed':
+                if not prev_task.status == 'completed' and not prev_task.status == 'cannot_run':
                     add_to_pending = False
                     break
             if add_to_pending:
-                logger.debug(f'adding new pending task: {next_task.path_hash_key()}')
+                logger.debug(f'adding new pending task: {next_task}')
                 curr_status = self.statuses.task_status(next_task)
                 self.update_task_status(next_task, curr_status, 'pending')
 
@@ -588,23 +596,32 @@ class TaskControl:
         finally:
             self.subset_statuses = None
 
+    def _forced_assign_tasks(self):
+        # Change the status of all tasks:
+        # cannot_run: no change.
+        # input_tasks: no change.
+        # completed and after a cannot run: pending.
+        # completed and not after a cannot run: remaining.
+        for task in [t for t in self.input_tasks if not t.status == 'cannot_run']:
+            self.update_task_status(task, task.status, 'pending')
+        after_cannot_runs = set()
+        after_rescan_tasks = set()
+
+        for cannot_run_task in self.cannot_run_tasks:
+            after_cannot_runs.update(cannot_run_task.next_tasks)
+        for after_cannot_run in after_cannot_runs:
+            self.update_task_status(after_cannot_run, after_cannot_run.status, 'pending')
+        for rescan_task in self.rescan_tasks:
+            after_rescan_tasks.update(rescan_task.next_tasks)
+        for after_rescan_task in after_rescan_tasks:
+            self.update_task_status(after_rescan_task, after_rescan_task.status, 'remaining')
+        for completed in list(self.completed_tasks):
+            self.update_task_status(completed, completed.status, 'remaining')
+
     @check_finalized(True)
     def run_all(self, force=False, use_subset=False):
         if force:
-            # Change the status of all tasks:
-            # cannot_run: no change.
-            # input_tasks: no change.
-            # completed and after a cannot run: pending.
-            # completed and not after a cannot run: remaining.
-            for task in [t for t in self.input_tasks if not t.status == 'cannot_run']:
-                self.statuses.update_task(task, task.status, 'pending')
-            after_cannot_runs = set()
-            for cannot_run_task in self.cannot_run_tasks:
-                after_cannot_runs.update(cannot_run_task.next_tasks)
-            for after_cannot_run in after_cannot_runs:
-                self.statuses.update_task(after_cannot_run, after_cannot_run.status, 'pending')
-            for completed in list(self.completed_tasks):
-                self.statuses.update_task(completed, completed.status, 'remaining')
+            self._forced_assign_tasks()
 
         if self.executor.handles_dependencies:
             remaining_tasks = sorted(self.remaining_tasks, key=self.sorted_tasks.get)
@@ -620,14 +637,18 @@ class TaskControl:
                 get_next_pending = self.get_next_pending_from_subset
             else:
                 get_next_pending = self.get_next_pending
+            run_tasks = set()
 
             for pending_task in get_next_pending():
-                print(pending_task)
+                if pending_task:
+                    assert pending_task not in run_tasks, f'Cannot run task twice!: {pending_task}'
+                run_tasks.add(pending_task)
 
                 while True:
                     if pending_task:
                         # Got a pending task.
                         if self.executor.can_accept_task():
+                            logger.debug(f'Executor can accept {pending_task}')
                             # Executor can accept tasks -- enqueue it.
                             self.log_task_info(self.sorted_tasks.get,
                                                len(self.sorted_tasks),
@@ -638,10 +659,12 @@ class TaskControl:
                             # Go get a new pending task.
                             break
                         else:
+                            logger.debug('Executor cannot accept')
                             # Executor cant accept tasks - wait for slot and rerun with pending_task
                             completed_task = self.executor.get_completed_task()
                             self.task_complete(completed_task)
                     else:
+                        logger.debug('No pending tasks')
                         # No pending tasks because they are all enqueued.
                         completed_task = self.executor.get_completed_task()
                         self.task_complete(completed_task)
@@ -656,8 +679,7 @@ class TaskControl:
         if not isinstance(task, RescanFileTask):
             num_digits = math.floor(math.log10(len_tasks)) + 1
             # N.B. double subs allowed in fstrings!
-            logger.info(f'{task_index(task) + 1:>{num_digits}}/{len_tasks}:'
-                        f' {task.path_hash_key()[:10]} {task}')
+            logger.info(f'{task_index(task) + 1:>{num_digits}}/{len_tasks}: {task}')
         else:
             logger.info(f'Rescanning: {task.inputs["filepath"]}')
 
