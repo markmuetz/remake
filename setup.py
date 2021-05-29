@@ -11,15 +11,15 @@ from remake.version import get_version
 
 def read(fname):
     try:
-        return (Path(__file__) / fname).read_text()
+        return (Path(__file__).parent / fname).read_text()
     except (IOError, OSError, FileNotFoundError):
         return ''
-
 
 setup(
     name='remake',
     version=get_version(),
     description='Smart remake tool',
+    license = 'LICENSE',
     long_description=read('README.md'),
     long_description_content_type='text/markdown',
     author='Mark Muetzelfeldt',
@@ -43,6 +43,7 @@ setup(
     extras_require={
         'debug': ['ipdb'],
         'display': ['matplotlib'],
+        'experimental': ['numpy'],
         'testing': ['nose', 'coverage'],
     },
     entry_points={
