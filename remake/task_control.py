@@ -192,10 +192,6 @@ class TaskControl:
             slurm_config = self.config.get('slurm', {})
             self.executor = SlurmExecutor(self, slurm_config)
         else:
-            logger.warning('multiproc executor is still experimental')
-            # r = input('PRESS y to continue: ')
-            # if r != 'y':
-            #     raise Exception('Fix MultiprocExecutor')
             self.executor = MultiprocExecutor(self)
 
     @property

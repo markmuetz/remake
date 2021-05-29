@@ -210,7 +210,7 @@ class RemakeParser:
             'help': 'Monitor remake (polls remake metadata dir)',
             'args': [
                 Arg('--timeout', '-t', help='timeout (s) to use for polling', default=10,
-                    type=int),
+                    type=float),
                 Arg('remakefile', nargs='?', default='remakefile'),
             ]
         },

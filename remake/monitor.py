@@ -44,12 +44,12 @@ class RemakeMonitor:
 
 
 class RemakeMonitorCurses:
-    def __init__(self, stdscr, remake: Remake, timeout: int):
+    def __init__(self, stdscr, remake: Remake, timeout: float):
         self.stdscr = stdscr
         self.remake = remake
         self.monitor = RemakeMonitor(remake)
         self.remake_sha1sum = sha1sum(Path(remake.name + '.py'))
-        self.timeout = timeout * 1000
+        self.timeout = int(timeout * 1000)
         self.input_loop_timeout = 10
         self.num_input_loops = self.timeout // self.input_loop_timeout
 

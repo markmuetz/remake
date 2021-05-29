@@ -4,7 +4,7 @@ import remake
 from remake.remake_cmd import remake_cmd
 from remake.util import sysrun
 
-examples_dir = Path(remake.__file__).parent.parent / 'examples'
+examples_dir = Path.cwd().parent / 'examples'
 
 
 def test_bug1():
