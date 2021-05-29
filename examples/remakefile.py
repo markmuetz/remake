@@ -148,7 +148,6 @@ class TestEx1(TaskRule):
             'echo newline >> data/outputs/ex1/out1.txt',
             'remake run --reasons ex1.py',
             'remake run --reasons ex1.py',
-            'echo "All tasks SUCCESSFUL"',
         ]
         run_commands(commands)
         self.outputs['dummy'].touch()

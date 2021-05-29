@@ -174,6 +174,8 @@ class TaskControl:
 
         self.statuses = TaskStatuses()
         self.subset_statuses = None
+        self.forced_next_pending_tasks = []
+        self.forced_run_tasks = set()
 
         self.tasks_at_level = {}
 
@@ -482,6 +484,26 @@ class TaskControl:
             else:
                 yield self.statuses.get_next_pending()
 
+    def get_forced_next_pending(self):
+        run_tasks = set()
+        while self.forced_next_pending_tasks:
+            task = self.forced_next_pending_tasks[0]
+            pending = True
+            for prev_task in self.task_dag.predecessors(task):
+                if prev_task not in self.forced_run_tasks:
+                    if prev_task in run_tasks:
+                        pending = False
+                        break
+                    if prev_task.status != 'completed':
+                        pending = False
+                        break
+            if pending:
+                task = self.forced_next_pending_tasks.pop(0)
+                run_tasks.add(task)
+                yield task
+            else:
+                yield None
+
     def get_next_pending_from_subset(self):
         while (self.subset_statuses.rescan_tasks or
                self.subset_statuses.pending_tasks or
@@ -503,7 +525,7 @@ class TaskControl:
         # self.update_task_status(task, status, 'running')
 
         requires_rerun = self.task_requires_rerun(task, print_reasons=self.print_reasons)
-        if requires_rerun & self.remake_on:
+        if requires_rerun & self.remake_on or force:
             logger.debug(f'enqueue task (force={force}, requires_rerun={requires_rerun}): {task}')
 
             try:
@@ -522,12 +544,14 @@ class TaskControl:
             # TODO: at this point the DAG could be rescanned, and any downstream tasks could be marked as completed.
             return False
 
-    def task_complete(self, task):
-        assert task.complete(), 'task not complete'
+    def task_complete(self, task, force=False):
+        assert task.complete(), f'{task} not complete'
         logger.debug(f'add completed task: {task}')
         # Task is not necessarily running if multiproc running?
         # TODO: investigate further. Run examples/ex1 with multiproc.
         self.update_task_status(task, task.status, 'completed')
+        if force:
+            self.forced_run_tasks.add(task)
 
         for next_task in self.task_dag.successors(task):
             if next_task in self.statuses.cannot_run_tasks:
@@ -568,60 +592,34 @@ class TaskControl:
             else:
                 return self.sorted_tasks[task]
 
-        sorted_tasks = sorted(requested_tasks, key=sorter)
-        self.subset_statuses = TaskStatuses()
-        if force:
-            # Search for all tasks whose inputs are outside of requested tasks. These are the
-            # input_tasks -- they are marked as pending. All others marked as remaining so
-            # when comes to get_next_pending_from_subset they will be doled out correctly.
-            # Essentially find initial tasks *in subset* and mark pending,
-            # Mark all others as remaining.
-            taskset = set(sorted_tasks)
-            for task in sorted_tasks:
-                input_task = True
-                for prev_task in self.task_dag.predecessors(task):
-                    if prev_task in taskset:
-                        input_task = False
-                        break
+        self.subset_sorted_tasks = sorted(requested_tasks, key=sorter)
 
-                if input_task:
-                    self.statuses.update_task(task, task.status, 'pending')
-                else:
-                    self.statuses.update_task(task, task.status, 'remaining')
-
-        for task in sorted_tasks:
-            self.subset_statuses.add_task(task, self.statuses.task_status(task))
+        if not force:
+            self.subset_statuses = TaskStatuses()
+            for task in self.subset_sorted_tasks:
+                self.subset_statuses.add_task(task, self.statuses.task_status(task))
         try:
             self.run_all(force=force, use_subset=True)
         finally:
             self.subset_statuses = None
+            self.subset_sorted_tasks = None
 
-    def _forced_assign_tasks(self):
-        # Change the status of all tasks:
-        # cannot_run: no change.
-        # input_tasks: no change.
-        # completed and after a cannot run: pending.
-        # completed and not after a cannot run: remaining.
-        for task in [t for t in self.input_tasks if not t.status == 'cannot_run']:
-            self.update_task_status(task, task.status, 'pending')
-        after_cannot_runs = set()
-        after_rescan_tasks = set()
-
-        for cannot_run_task in self.cannot_run_tasks:
-            after_cannot_runs.update(cannot_run_task.next_tasks)
-        for after_cannot_run in after_cannot_runs:
-            self.update_task_status(after_cannot_run, after_cannot_run.status, 'pending')
-        for rescan_task in self.rescan_tasks:
-            after_rescan_tasks.update(rescan_task.next_tasks)
-        for after_rescan_task in after_rescan_tasks:
-            self.update_task_status(after_rescan_task, after_rescan_task.status, 'remaining')
-        for completed in list(self.completed_tasks):
-            self.update_task_status(completed, completed.status, 'remaining')
+    def _forced_assign_tasks(self, use_subset=False):
+        if use_subset:
+            sorted_tasks = self.subset_sorted_tasks
+        else:
+            sorted_tasks = self.rescan_tasks + list(self.sorted_tasks.keys())
+        for task in sorted_tasks:
+            if task.status == 'cannot_run':
+                break
+            self.forced_next_pending_tasks.append(task)
 
     @check_finalized(True)
     def run_all(self, force=False, use_subset=False):
         if force:
-            self._forced_assign_tasks()
+            self.forced_next_pending_tasks = []
+            self.forced_run_tasks = set()
+            self._forced_assign_tasks(use_subset=use_subset)
 
         if self.executor.handles_dependencies:
             remaining_tasks = sorted(self.remaining_tasks, key=self.sorted_tasks.get)
@@ -633,47 +631,53 @@ class TaskControl:
                     self.executor.enqueue_task(task)
             return
         with self.executor:
-            if use_subset:
-                get_next_pending = self.get_next_pending_from_subset
+            if force:
+                get_next_pending = self.get_forced_next_pending
             else:
-                get_next_pending = self.get_next_pending
+                if use_subset:
+                    get_next_pending = self.get_next_pending_from_subset
+                else:
+                    get_next_pending = self.get_next_pending
             run_tasks = set()
 
-            for pending_task in get_next_pending():
-                if pending_task:
-                    assert pending_task not in run_tasks, f'Cannot run task twice!: {pending_task}'
-                run_tasks.add(pending_task)
-
-                while True:
+            try:
+                for pending_task in get_next_pending():
                     if pending_task:
-                        # Got a pending task.
-                        if self.executor.can_accept_task():
-                            logger.debug(f'Executor can accept {pending_task}')
-                            # Executor can accept tasks -- enqueue it.
-                            self.log_task_info(self.sorted_tasks.get,
-                                               len(self.sorted_tasks),
-                                               pending_task)
-                            task_enqueued = self.enqueue_task(pending_task, force=force)
-                            if not task_enqueued:
-                                self.task_complete(pending_task)
-                            # Go get a new pending task.
-                            break
-                        else:
-                            logger.debug('Executor cannot accept')
-                            # Executor cant accept tasks - wait for slot and rerun with pending_task
-                            completed_task = self.executor.get_completed_task()
-                            self.task_complete(completed_task)
-                    else:
-                        logger.debug('No pending tasks')
-                        # No pending tasks because they are all enqueued.
-                        completed_task = self.executor.get_completed_task()
-                        self.task_complete(completed_task)
-                        break
+                        assert pending_task not in run_tasks, f'Cannot run task twice!: {pending_task}'
+                    run_tasks.add(pending_task)
 
-            while not self.executor.has_finished():
-                logger.debug('waiting for remaining tasks')
-                task = self.executor.get_completed_task()
-                self.task_complete(task)
+                    while True:
+                        if pending_task:
+                            # Got a pending task.
+                            if self.executor.can_accept_task():
+                                logger.debug(f'Executor can accept {pending_task}')
+                                # Executor can accept tasks -- enqueue it.
+                                self.log_task_info(self.sorted_tasks.get,
+                                                   len(self.sorted_tasks),
+                                                   pending_task)
+                                task_enqueued = self.enqueue_task(pending_task, force=force)
+                                if not task_enqueued:
+                                    self.task_complete(pending_task, force=force)
+                                # Go get a new pending task.
+                                break
+                            else:
+                                logger.debug('Executor cannot accept')
+                                # Executor cant accept tasks - wait for slot and rerun with pending_task
+                                completed_task = self.executor.get_completed_task()
+                                self.task_complete(completed_task, force=force)
+                        else:
+                            logger.debug('No pending tasks')
+                            # No pending tasks because they are all enqueued.
+                            completed_task = self.executor.get_completed_task()
+                            self.task_complete(completed_task, force=force)
+                            break
+
+                while not self.executor.has_finished():
+                    logger.debug('waiting for remaining tasks')
+                    task = self.executor.get_completed_task()
+                    self.task_complete(task, force=force)
+            finally:
+                self.forced_run_tasks = None
 
     def log_task_info(self, task_index, len_tasks, task):
         if not isinstance(task, RescanFileTask):
