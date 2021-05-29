@@ -33,6 +33,7 @@ setup(
     packages=[
         'remake',
         'remake.executor',
+        'remake.experimental',
         ],
     python_requires='>=3.6',
     install_requires=[
