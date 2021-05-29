@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import List
 
 import networkx as nx
-import numpy as np
 
 from remake.task import RescanFileTask
 from remake.metadata import MetadataManager
