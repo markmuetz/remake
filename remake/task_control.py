@@ -193,8 +193,10 @@ class TaskControl:
         elif executor == 'slurm':
             slurm_config = self.config.get('slurm', {})
             self.executor = SlurmExecutor(self, slurm_config)
-        else:
+        elif executor == 'multiproc':
             self.executor = MultiprocExecutor(self)
+        else:
+            raise ValueError(f'executor must be one of singleproc, multiproc, or slurm')
 
     @property
     def rescan_tasks(self):
