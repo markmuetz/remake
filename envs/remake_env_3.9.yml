@@ -1,0 +1,12 @@
+name: remake_env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - coverage 
+  - ipdb 
+  - ipython
+  - matplotlib 
+  - networkx 
+  - nose 
+  - tabulate 
