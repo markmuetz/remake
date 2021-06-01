@@ -7,7 +7,7 @@ from pathlib import Path
 from timeit import default_timer as timer
 
 from remake.flags import RemakeOn
-from remake.util import map_special_paths
+from remake.special_paths import map_special_paths
 
 logger = getLogger(__name__)
 
