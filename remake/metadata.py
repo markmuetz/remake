@@ -48,10 +48,9 @@ class NoMetadata(Exception):
 class MetadataManager:
     """Creates and stores maps of PathMetadata and TaskMetadata"""
     # Needed because it keeps track of all PathMetadata objs, and stops there being duplicate ones for inputs.
-    def __init__(self, task_control_name, dotremake_dir, paths, *, full_tracking=False):
+    def __init__(self, task_control_name, dotremake_dir, *, full_tracking=False):
         self.task_control_name = task_control_name
         self.dotremake_dir = dotremake_dir
-        self.paths = paths
         self.full_tracking = full_tracking
         self.path_metadata_map = {}
         self.task_metadata_map = {}
@@ -59,16 +58,16 @@ class MetadataManager:
     def create_task_metadata(self, task):
         task_inputs_metadata_map = {}
         task_outputs_metadata_map = {}
-        for input_path in task.inputs.values():
+        for input_path, special_input_path in zip(task.inputs.values(), task.special_inputs.values()):
             if input_path not in self.path_metadata_map:
-                input_md = self._create_path_metadata(input_path)
+                input_md = self._create_path_metadata(input_path, special_input_path)
             else:
                 input_md = self.path_metadata_map[input_path]
             task_inputs_metadata_map[input_path] = input_md
 
-        for output_path in task.outputs.values():
+        for output_path, special_output_path in zip(task.outputs.values(), task.special_outputs.values()):
             if output_path not in self.path_metadata_map:
-                output_md = self._create_path_metadata(output_path)
+                output_md = self._create_path_metadata(output_path, special_output_path)
             else:
                 output_md = self.path_metadata_map[output_path]
             task_outputs_metadata_map[output_path] = output_md
@@ -78,14 +77,9 @@ class MetadataManager:
         self.task_metadata_map[task] = task_md
         return task_md
 
-    def _create_path_metadata(self, path):
+    def _create_path_metadata(self, path, special_input_path):
         assert path not in self.path_metadata_map, f'path already tracked: {path}'
-        metadata_path = None
-        for path_name, special_path in self.paths.paths.items():
-            if path.is_relative_to(special_path.absolute()):
-                metadata_path = Path(path_name) / path.relative_to(special_path)
-                break
-        path_md = PathMetadata(self.task_control_name, self.dotremake_dir, path, metadata_path)
+        path_md = PathMetadata(self.task_control_name, self.dotremake_dir, path, special_input_path)
         self.path_metadata_map[path] = path_md
         return path_md
 
@@ -267,18 +261,18 @@ class TaskMetadata:
 
 
 class PathMetadata:
-    def __init__(self, task_control_name, dotremake_dir, path, metadata_base_path=None):
+    def __init__(self, task_control_name, dotremake_dir, path, special_input_path):
         self.task_control_name = task_control_name
         self.dotremake_dir = dotremake_dir
         self.path = path
-        if metadata_base_path:
-            self.metadata_base_path = metadata_base_path
+        if special_input_path:
+            self.special_input_path = special_input_path
         else:
-            self.metadata_base_path = Path(*path.parts[1:])
+            self.special_input_path = Path(*path.parts[1:])
         self.metadata_dir = dotremake_dir / METADATA_VERSION
         self.file_metadata_dir = self.metadata_dir / 'file_metadata'
 
-        self.metadata_path = self.file_metadata_dir.joinpath(*(metadata_base_path.parent.parts +
+        self.metadata_path = self.file_metadata_dir.joinpath(*(special_input_path.parent.parts +
                                                                (f'{path.name}.metadata',)))
         self.task_metadata_path = self.file_metadata_dir.joinpath(*(path.parent.parts[1:] +
                                                                     (f'{path.name}.created_by.task',)))

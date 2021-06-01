@@ -7,6 +7,7 @@ from pathlib import Path
 from timeit import default_timer as timer
 
 from remake.flags import RemakeOn
+from remake.util import map_special_paths
 
 logger = getLogger(__name__)
 
@@ -104,6 +105,8 @@ class Task(BaseTask):
 
         self.inputs = {k: Path(v).absolute() for k, v in inputs.items()}
         self.outputs = {k: Path(v).absolute() for k, v in outputs.items()}
+        self.special_inputs = map_special_paths(self.task_ctrl.special_paths, self.inputs)
+        self.special_outputs = map_special_paths(self.task_ctrl.special_paths, self.outputs)
         self.result = None
         self.rerun_on_mtime = True
         self.tmp_outputs = {}
@@ -178,12 +181,17 @@ class Task(BaseTask):
 
     def path_hash_key(self):
         h = sha1(self.func.__code__.co_name.encode())
-        for input_path in self.inputs.values():
-            path_md = self.task_md.inputs_metadata_map[input_path]
-            h.update(str(path_md.metadata_base_path).encode())
-        for output_path in self.outputs.values():
-            path_md = self.task_md.inputs_metadata_map[output_path]
-            h.update(str(path_md.metadata_base_path).encode())
+        # Does not work! Can only do this when task_ctrl has been finalized.
+        # for input_path in self.inputs.values():
+        #     path_md = self.task_md.inputs_metadata_map[input_path]
+        #     h.update(str(path_md.metadata_base_path).encode())
+        # for output_path in self.outputs.values():
+        #     path_md = self.task_md.inputs_metadata_map[output_path]
+        #     h.update(str(path_md.metadata_base_path).encode())
+        for input_path in self.special_inputs.values():
+            h.update(str(input_path).encode())
+        for output_path in self.special_outputs.values():
+            h.update(str(output_path).encode())
         return h.hexdigest()
 
     def run_task_rule(self, force=False):
@@ -262,7 +270,9 @@ class RescanFileTask(BaseTask):
         self.path_md = path_md
         self.pathtype = pathtype
         self.inputs = {'filepath': Path(filepath).absolute()}
+        self.special_inputs = map_special_paths(task_ctrl.special_paths, self.inputs)
         self.outputs = {}
+        self.special_outputs = {}
         self.force = False
 
     def __str__(self):

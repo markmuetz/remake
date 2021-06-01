@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-class Paths:
+class SpecialPaths:
     def __init__(self, **paths):
         if 'CWD' not in paths:
             paths['CWD'] = Path.cwd()

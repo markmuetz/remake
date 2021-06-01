@@ -7,6 +7,7 @@ import traceback
 import networkx as nx
 
 from remake.remake_exceptions import RemakeError
+from remake.special_paths import SpecialPaths
 from remake.task import Task
 from remake.task_control import TaskControl
 from remake.task_query_set import TaskQuerySet
@@ -19,7 +20,7 @@ class Remake:
     remakes = {}
     current_remake = {}
 
-    def __init__(self, name=None, config=None, paths=None):
+    def __init__(self, name=None, config=None, special_paths=None):
         if not name:
             stack = next(traceback.walk_stack(None))
             frame = stack[0]
@@ -38,8 +39,10 @@ class Remake:
         Remake.current_remake[multiprocessing.current_process().name] = self
 
         self.config = config
-        self.paths = paths
-        self.task_ctrl = TaskControl(name, config, paths)
+        if not special_paths:
+            special_paths = SpecialPaths()
+        self.special_paths = special_paths
+        self.task_ctrl = TaskControl(name, config, special_paths)
         self.rules = []
         self.tasks = TaskQuerySet(task_ctrl=self.task_ctrl)
 

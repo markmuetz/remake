@@ -64,3 +64,19 @@ def sysrun(cmd):
     raises CalledProcessError if cmd is bad.
     to access output: sysrun(cmd).stdout"""
     return sp.run(cmd, check=True, shell=True, stdout=sp.PIPE, stderr=sp.PIPE, encoding='utf8')
+
+
+def map_special_paths(special_paths, paths):
+    mapped_paths = {}
+    for path_name, path in paths.items():
+        mapped_path = None
+        for special_path_name, special_path in special_paths.paths.items():
+            if path.is_relative_to(special_path.absolute()):
+                mapped_path = Path(special_path_name) / path.relative_to(special_path)
+                break
+        if mapped_path:
+            mapped_paths[path_name] = mapped_path
+        else:
+            mapped_paths[path_name] = path
+
+    return mapped_paths

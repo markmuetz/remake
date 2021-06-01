@@ -125,7 +125,8 @@ def check_finalized(finalized):
 
 # noinspection PyAttributeOutsideInit
 class TaskControl:
-    def __init__(self, filename: str, config: dict = None, paths = None, dependencies: List['TaskControl'] = None, *,
+    def __init__(self, filename: str, config: dict = None, special_paths=None,
+                 dependencies: List['TaskControl'] = None, *,
                  remake_on: RemakeOn = RemakeOn.ANY_STANDARD_CHANGE,
                  dotremake_dir='.remake',
                  print_reasons=False):
@@ -134,7 +135,7 @@ class TaskControl:
         if not config:
             config = {}
         self.config = config
-        self.paths = paths
+        self.special_paths = special_paths
         self.dependencies = dependencies
         self.path = Path(filename).absolute()
         self.name = self.path.stem
@@ -152,7 +153,7 @@ class TaskControl:
         self.reset()
 
     def reset(self):
-        self.metadata_manager = MetadataManager(self.name, self.dotremake_dir, self.paths)
+        self.metadata_manager = MetadataManager(self.name, self.dotremake_dir)
         self.finalized = False
 
         self.output_task_map = {}
@@ -224,6 +225,7 @@ class TaskControl:
         for output in task.outputs.values():
             if output in self.output_task_map:
                 raise Exception(f'Trying to add {output} twice')
+
         task_path_hash_key = task.path_hash_key()
         if task_path_hash_key in self.task_from_path_hash_key:
             raise Exception(f'Trying to add {task} twice')
