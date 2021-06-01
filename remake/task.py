@@ -179,9 +179,11 @@ class Task(BaseTask):
     def path_hash_key(self):
         h = sha1(self.func.__code__.co_name.encode())
         for input_path in self.inputs.values():
-            h.update(str(input_path).encode())
+            path_md = self.task_md.inputs_metadata_map[input_path]
+            h.update(str(path_md.metadata_base_path).encode())
         for output_path in self.outputs.values():
-            h.update(str(output_path).encode())
+            path_md = self.task_md.inputs_metadata_map[output_path]
+            h.update(str(path_md.metadata_base_path).encode())
         return h.hexdigest()
 
     def run_task_rule(self, force=False):

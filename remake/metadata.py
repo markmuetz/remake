@@ -3,6 +3,7 @@ import datetime as dt
 import json
 from hashlib import sha1
 from logging import getLogger
+from pathlib import Path
 from time import sleep
 
 from remake.flags import RemakeOn
@@ -47,9 +48,10 @@ class NoMetadata(Exception):
 class MetadataManager:
     """Creates and stores maps of PathMetadata and TaskMetadata"""
     # Needed because it keeps track of all PathMetadata objs, and stops there being duplicate ones for inputs.
-    def __init__(self, task_control_name, dotremake_dir, *, full_tracking=False):
+    def __init__(self, task_control_name, dotremake_dir, paths, *, full_tracking=False):
         self.task_control_name = task_control_name
         self.dotremake_dir = dotremake_dir
+        self.paths = paths
         self.full_tracking = full_tracking
         self.path_metadata_map = {}
         self.task_metadata_map = {}
@@ -78,7 +80,12 @@ class MetadataManager:
 
     def _create_path_metadata(self, path):
         assert path not in self.path_metadata_map, f'path already tracked: {path}'
-        path_md = PathMetadata(self.task_control_name, self.dotremake_dir, path)
+        metadata_path = None
+        for path_name, special_path in self.paths.paths.items():
+            if path.is_relative_to(special_path.absolute()):
+                metadata_path = Path(path_name) / path.relative_to(special_path)
+                break
+        path_md = PathMetadata(self.task_control_name, self.dotremake_dir, path, metadata_path)
         self.path_metadata_map[path] = path_md
         return path_md
 
@@ -260,14 +267,18 @@ class TaskMetadata:
 
 
 class PathMetadata:
-    def __init__(self, task_control_name, dotremake_dir, path):
+    def __init__(self, task_control_name, dotremake_dir, path, metadata_base_path=None):
         self.task_control_name = task_control_name
         self.dotremake_dir = dotremake_dir
         self.path = path
+        if metadata_base_path:
+            self.metadata_base_path = metadata_base_path
+        else:
+            self.metadata_base_path = Path(*path.parts[1:])
         self.metadata_dir = dotremake_dir / METADATA_VERSION
         self.file_metadata_dir = self.metadata_dir / 'file_metadata'
 
-        self.metadata_path = self.file_metadata_dir.joinpath(*(path.parent.parts[1:] +
+        self.metadata_path = self.file_metadata_dir.joinpath(*(metadata_base_path.parent.parts +
                                                                (f'{path.name}.metadata',)))
         self.task_metadata_path = self.file_metadata_dir.joinpath(*(path.parent.parts[1:] +
                                                                     (f'{path.name}.created_by.task',)))

@@ -19,7 +19,7 @@ class Remake:
     remakes = {}
     current_remake = {}
 
-    def __init__(self, name=None, config=None):
+    def __init__(self, name=None, config=None, paths=None):
         if not name:
             stack = next(traceback.walk_stack(None))
             frame = stack[0]
@@ -38,7 +38,8 @@ class Remake:
         Remake.current_remake[multiprocessing.current_process().name] = self
 
         self.config = config
-        self.task_ctrl = TaskControl(name, config)
+        self.paths = paths
+        self.task_ctrl = TaskControl(name, config, paths)
         self.rules = []
         self.tasks = TaskQuerySet(task_ctrl=self.task_ctrl)
 

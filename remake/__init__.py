@@ -5,3 +5,4 @@ from remake.util import fmtp
 from remake.task_rule import TaskRule
 from remake.task_query_set import TaskQuerySet
 from remake.remake_base import Remake
+from remake.paths import Paths
