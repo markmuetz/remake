@@ -3,7 +3,7 @@ from pathlib import Path
 from remake.load_remake import load_remake
 import remake
 
-examples_dir = Path(__file__).parent.parent.parent / 'examples'
+examples_dir = Path(__file__).parent.parent.parent / 'remake' / 'examples'
 
 
 def test_all_examples():

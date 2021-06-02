@@ -22,5 +22,5 @@ docs/_build/
 .idea
 
 # Examples dirs.
-examples/.remake
-examples/data/outputs/
+remake/examples/.remake
+remake/examples/data/outputs/

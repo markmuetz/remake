@@ -1,0 +1,3 @@
+include remake/examples/README.md
+include remake/examples/Makefile
+include remake/examples/data/inputs/*

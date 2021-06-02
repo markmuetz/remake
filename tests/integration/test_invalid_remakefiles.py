@@ -4,7 +4,7 @@ from remake.remake_cmd import remake_cmd
 from remake.remake_exceptions import CyclicDependency
 import remake
 
-examples_dir = Path(remake.__file__).parent.parent / 'examples'
+examples_dir = Path(__file__).parent.parent.parent / 'remake' / 'examples'
 
 
 def run_task_expect_exception(cmd, expected_exception):

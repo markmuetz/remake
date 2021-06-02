@@ -1,7 +1,9 @@
 import os
 import sys
 import argparse
+import shutil
 from logging import getLogger
+from pathlib import Path
 from time import sleep
 from typing import List, Union, Optional, Sequence, Text
 try:
@@ -214,6 +216,10 @@ class RemakeParser:
                 Arg('remakefile', nargs='?', default='remakefile'),
             ]
         },
+        'setup-examples': {
+            'help': 'Setup examples directory',
+            'args': []
+        },
         'version': {
             'help': 'Print remake version',
             'args': [
@@ -300,6 +306,8 @@ class RemakeParser:
             file_info(args.remakefile, args.filenames)
         elif args.subcmd_name == 'monitor':
             monitor(args.remakefile, args.timeout)
+        elif args.subcmd_name == 'setup-examples':
+            setup_examples()
         elif args.subcmd_name == 'version':
             print(get_version(form='long' if args.long else 'short'))
         else:
@@ -556,3 +564,37 @@ def monitor(remakefile, timeout):
     remake = load_remake(remakefile)
     remake.task_ctrl.build_task_DAG()
     wrapper(remake_curses_monitor, remake, timeout)
+
+
+def setup_examples():
+    import remake
+    logger.debug('Setting up examples')
+
+    new_examples_dir = 'remake-examples'
+    r = input(f'Directory name [{new_examples_dir}]: ')
+    if r:
+        new_examples_dir = r
+    new_examples_dir = Path(new_examples_dir)
+    if new_examples_dir.exists():
+        r = input(f'Overwrite examples in {new_examples_dir} y/[n]: ')
+        if r != 'y':
+            print('Exiting')
+            return
+        logger.debug(f'rm {new_examples_dir}')
+        shutil.rmtree(new_examples_dir)
+
+    new_examples_dir.mkdir(parents=True, exist_ok=True)
+    remake_dir = Path(remake.__file__).parent
+    examples_dir = remake_dir / 'examples'
+    cp_paths = sorted(examples_dir.glob('ex?.py'))
+    cp_paths.append(examples_dir / 'ex_slurm.py')
+    cp_paths.append(examples_dir / 'README.md')
+    cp_paths.append(examples_dir / 'Makefile')
+    for path in cp_paths:
+        new_path = new_examples_dir / path.name
+        logger.info(f'Copy {path} -> {new_path}')
+        shutil.copy(path, new_path)
+    data_dir = examples_dir / 'data'
+    new_data_dir = new_examples_dir / 'data'
+    logger.info(f'Copy {data_dir} -> {new_data_dir}')
+    shutil.copytree(data_dir, new_data_dir)

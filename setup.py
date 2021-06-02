@@ -19,6 +19,7 @@ setup(
     name='remake',
     version=get_version(),
     description='Smart remake tool',
+    include_package_data=True,
     license = 'LICENSE',
     long_description=read('README.md'),
     long_description_content_type='text/markdown',
@@ -28,10 +29,12 @@ setup(
     maintainer_email='mark.muetzelfeldt@reading.ac.uk',
     url='https://github.com/markmuetz/remake',
     project_urls={
+        'Documentation': 'https://markmuetz.github.io/remake',
         'Bug Tracker': 'https://github.com/markmuetz/remake/issues',
     },
     packages=[
         'remake',
+        'remake.examples',
         'remake.executor',
         'remake.experimental',
         ],

@@ -8,11 +8,11 @@ Quickstart
 .. code-block:: bash
 
     remake setup-examples
-    cd remake_examples
+    cd remake-examples
     remake run ex1
+    cat README.md
 
 Alternatively, any ``remake`` file can be run using Python (e.g. using IPython):
-
 
 ::
 
