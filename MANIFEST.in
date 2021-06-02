@@ -1,3 +1,4 @@
 include remake/examples/README.md
 include remake/examples/Makefile
 include remake/examples/data/inputs/*
+include remake/examples/data/in.txt
