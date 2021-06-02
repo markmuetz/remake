@@ -21,6 +21,9 @@ project = 'remake'
 copyright = '2021, Mark Muetzelfeldt'
 author = 'Mark Muetzelfeldt'
 
+from remake import version
+version = version.get_version('short')
+
 
 # -- General configuration ---------------------------------------------------
 
@@ -28,6 +31,8 @@ author = 'Mark Muetzelfeldt'
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
 extensions = [
+    'sphinx.ext.autodoc',
+    'sphinxarg.ext',
 ]
 
 # Add any paths that contain templates here, relative to this directory.

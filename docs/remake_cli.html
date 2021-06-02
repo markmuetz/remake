@@ -1,0 +1,591 @@
+
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.17.1: http://docutils.sourceforge.net/" />
+
+    <title>remake CLI &#8212; remake  documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="_static/alabaster.css" />
+    <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js"></script>
+    <script src="_static/jquery.js"></script>
+    <script src="_static/underscore.js"></script>
+    <script src="_static/doctools.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="API" href="remake_package.html" />
+    <link rel="prev" title="Quickstart" href="quickstart.html" />
+   
+  <link rel="stylesheet" href="_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="remake-cli">
+<h1>remake CLI<a class="headerlink" href="#remake-cli" title="Permalink to this headline">¶</a></h1>
+<p><p>remake command line tool</p>
+</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">usage</span><span class="p">:</span> <span class="n">remake</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">debug</span> <span class="o">|</span> <span class="o">--</span><span class="n">info</span> <span class="o">|</span> <span class="o">--</span><span class="n">warning</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">debug</span><span class="o">-</span><span class="n">exception</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">no</span><span class="o">-</span><span class="n">colour</span><span class="p">]</span>
+              <span class="p">{</span><span class="n">run</span><span class="p">,</span><span class="n">run</span><span class="o">-</span><span class="n">tasks</span><span class="p">,</span><span class="n">ls</span><span class="o">-</span><span class="n">rules</span><span class="p">,</span><span class="n">ls</span><span class="o">-</span><span class="n">tasks</span><span class="p">,</span><span class="n">ls</span><span class="o">-</span><span class="n">files</span><span class="p">,</span><span class="n">rm</span><span class="o">-</span><span class="n">files</span><span class="p">,</span><span class="n">info</span><span class="p">,</span><span class="n">rule</span><span class="o">-</span><span class="n">info</span><span class="p">,</span><span class="n">task</span><span class="o">-</span><span class="n">info</span><span class="p">,</span><span class="n">file</span><span class="o">-</span><span class="n">info</span><span class="p">,</span><span class="n">monitor</span><span class="p">,</span><span class="n">setup</span><span class="o">-</span><span class="n">examples</span><span class="p">,</span><span class="n">version</span><span class="p">}</span>
+              <span class="o">...</span>
+</pre></div>
+</div>
+<section id="Positional Arguments">
+<h2>Positional Arguments<a class="headerlink" href="#Positional Arguments" title="Permalink to this headline">¶</a></h2>
+<dl class="option-list">
+<dt><kbd>subcmd_name</kbd></dt>
+<dd><p>Possible choices: run, run-tasks, ls-rules, ls-tasks, ls-files, rm-files, info, rule-info, task-info, file-info, monitor, setup-examples, version</p>
+</dd>
+</dl>
+</section>
+<section id="Named Arguments">
+<h2>Named Arguments<a class="headerlink" href="#Named Arguments" title="Permalink to this headline">¶</a></h2>
+<dl class="option-list">
+<dt><kbd>--debug, -D</kbd></dt>
+<dd><p>Enable debug logging</p>
+<p>Default: False</p>
+</dd>
+<dt><kbd>--info, -I</kbd></dt>
+<dd><p>Enable info logging</p>
+<p>Default: False</p>
+</dd>
+<dt><kbd>--warning, -W</kbd></dt>
+<dd><p>Warning logging only</p>
+<p>Default: False</p>
+</dd>
+<dt><kbd>--debug-exception, -X</kbd></dt>
+<dd><p>Launch ipdb on exception</p>
+<p>Default: False</p>
+</dd>
+<dt><kbd>--no-colour, -B</kbd></dt>
+<dd><p>Black and white logging</p>
+<p>Default: False</p>
+</dd>
+</dl>
+</section>
+<section id="Sub-commands:">
+<h2>Sub-commands:<a class="headerlink" href="#Sub-commands:" title="Permalink to this headline">¶</a></h2>
+<section id="run">
+<h3>run<a class="headerlink" href="#run" title="Permalink to this headline">¶</a></h3>
+<p>Run all pending tasks</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">run</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">rescan</span><span class="o">-</span><span class="n">only</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">one</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">random</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">force</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">reasons</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">executor</span> <span class="n">EXECUTOR</span><span class="p">]</span>
+           <span class="p">[</span><span class="o">--</span><span class="n">display</span> <span class="p">{</span><span class="n">print_status</span><span class="p">,</span><span class="n">task_dag</span><span class="p">}]</span>
+           <span class="p">[</span><span class="n">remakefiles</span> <span class="o">...</span><span class="p">]</span>
+</pre></div>
+</div>
+<section id="Positional Arguments_repeat1">
+<h4>Positional Arguments<a class="headerlink" href="#Positional Arguments_repeat1" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>remakefiles</kbd></dt>
+<dd><p>Default: [‘remakefile’]</p>
+</dd>
+</dl>
+</section>
+<section id="Named Arguments_repeat1">
+<h4>Named Arguments<a class="headerlink" href="#Named Arguments_repeat1" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>--rescan-only</kbd></dt>
+<dd><p>only rescan input files</p>
+<p>Default: False</p>
+</dd>
+<dt><kbd>--one, -o</kbd></dt>
+<dd><p>run one pending task</p>
+<p>Default: False</p>
+</dd>
+<dt><kbd>--random</kbd></dt>
+<dd><p>run one (lucky dip!)</p>
+<p>Default: False</p>
+</dd>
+<dt><kbd>--force, -f</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+<dt><kbd>--reasons, -r</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+<dt><kbd>--executor, -E</kbd></dt>
+<dd><p>Default: “singleproc”</p>
+</dd>
+<dt><kbd>--display, -d</kbd></dt>
+<dd><p>Possible choices: print_status, task_dag</p>
+</dd>
+</dl>
+</section>
+</section>
+<section id="run-tasks">
+<h3>run-tasks<a class="headerlink" href="#run-tasks" title="Permalink to this headline">¶</a></h3>
+<p>Run specified tasks (uses same flags as ls-tasks)</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">run</span><span class="o">-</span><span class="n">tasks</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">tasks</span> <span class="p">[</span><span class="n">TASKS</span> <span class="o">...</span><span class="p">]]</span> <span class="p">[</span><span class="o">--</span><span class="n">handle</span><span class="o">-</span><span class="n">dependencies</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">force</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">reasons</span><span class="p">]</span>
+                 <span class="p">[</span><span class="o">--</span><span class="n">executor</span> <span class="n">EXECUTOR</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">display</span> <span class="p">{</span><span class="n">print_status</span><span class="p">,</span><span class="n">task_dag</span><span class="p">}]</span> <span class="p">[</span><span class="o">--</span><span class="nb">filter</span> <span class="n">FILTER</span><span class="p">]</span>
+                 <span class="p">[</span><span class="o">--</span><span class="n">rule</span> <span class="n">RULE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">requires</span><span class="o">-</span><span class="n">rerun</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">uses</span><span class="o">-</span><span class="n">file</span> <span class="n">USES_FILE</span><span class="p">]</span>
+                 <span class="p">[</span><span class="o">--</span><span class="n">produces</span><span class="o">-</span><span class="n">file</span> <span class="n">PRODUCES_FILE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">ancestor</span><span class="o">-</span><span class="n">of</span> <span class="n">ANCESTOR_OF</span><span class="p">]</span>
+                 <span class="p">[</span><span class="o">--</span><span class="n">descendant</span><span class="o">-</span><span class="n">of</span> <span class="n">DESCENDANT_OF</span><span class="p">]</span>
+                 <span class="p">[</span><span class="n">remakefile</span><span class="p">]</span>
+</pre></div>
+</div>
+<section id="Positional Arguments_repeat2">
+<h4>Positional Arguments<a class="headerlink" href="#Positional Arguments_repeat2" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>remakefile</kbd></dt>
+<dd><p>Default: “remakefile”</p>
+</dd>
+</dl>
+</section>
+<section id="Named Arguments_repeat2">
+<h4>Named Arguments<a class="headerlink" href="#Named Arguments_repeat2" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>--tasks, -t</kbd></dt>
+<dd></dd>
+<dt><kbd>--handle-dependencies, -H</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+<dt><kbd>--force, -f</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+<dt><kbd>--reasons, -r</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+<dt><kbd>--executor, -E</kbd></dt>
+<dd><p>Default: “singleproc”</p>
+</dd>
+<dt><kbd>--display, -d</kbd></dt>
+<dd><p>Possible choices: print_status, task_dag</p>
+</dd>
+<dt><kbd>--filter</kbd></dt>
+<dd></dd>
+<dt><kbd>--rule</kbd></dt>
+<dd></dd>
+<dt><kbd>--requires-rerun, -R</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+<dt><kbd>--uses-file, -U</kbd></dt>
+<dd></dd>
+<dt><kbd>--produces-file, -P</kbd></dt>
+<dd></dd>
+<dt><kbd>--ancestor-of, -A</kbd></dt>
+<dd><p>includes requested task</p>
+</dd>
+<dt><kbd>--descendant-of, -D</kbd></dt>
+<dd><p>includes requested task</p>
+</dd>
+</dl>
+</section>
+</section>
+<section id="ls-rules">
+<h3>ls-rules<a class="headerlink" href="#ls-rules" title="Permalink to this headline">¶</a></h3>
+<p>List rules</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">ls</span><span class="o">-</span><span class="n">rules</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">long</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="nb">filter</span> <span class="n">FILTER</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">uses</span><span class="o">-</span><span class="n">file</span> <span class="n">USES_FILE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">produces</span><span class="o">-</span><span class="n">file</span> <span class="n">PRODUCES_FILE</span><span class="p">]</span>
+                <span class="p">[</span><span class="n">remakefile</span><span class="p">]</span>
+</pre></div>
+</div>
+<section id="Positional Arguments_repeat3">
+<h4>Positional Arguments<a class="headerlink" href="#Positional Arguments_repeat3" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>remakefile</kbd></dt>
+<dd><p>Default: “remakefile”</p>
+</dd>
+</dl>
+</section>
+<section id="Named Arguments_repeat3">
+<h4>Named Arguments<a class="headerlink" href="#Named Arguments_repeat3" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>--long, -l</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+<dt><kbd>--filter, -F</kbd></dt>
+<dd></dd>
+<dt><kbd>--uses-file, -U</kbd></dt>
+<dd></dd>
+<dt><kbd>--produces-file, -P</kbd></dt>
+<dd></dd>
+</dl>
+</section>
+</section>
+<section id="ls-tasks">
+<h3>ls-tasks<a class="headerlink" href="#ls-tasks" title="Permalink to this headline">¶</a></h3>
+<p>List tasks</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">ls</span><span class="o">-</span><span class="n">tasks</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">long</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="nb">filter</span> <span class="n">FILTER</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">rule</span> <span class="n">RULE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">requires</span><span class="o">-</span><span class="n">rerun</span><span class="p">]</span>
+                <span class="p">[</span><span class="o">--</span><span class="n">uses</span><span class="o">-</span><span class="n">file</span> <span class="n">USES_FILE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">produces</span><span class="o">-</span><span class="n">file</span> <span class="n">PRODUCES_FILE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">ancestor</span><span class="o">-</span><span class="n">of</span> <span class="n">ANCESTOR_OF</span><span class="p">]</span>
+                <span class="p">[</span><span class="o">--</span><span class="n">descendant</span><span class="o">-</span><span class="n">of</span> <span class="n">DESCENDANT_OF</span><span class="p">]</span>
+                <span class="p">[</span><span class="n">remakefile</span><span class="p">]</span>
+</pre></div>
+</div>
+<section id="Positional Arguments_repeat4">
+<h4>Positional Arguments<a class="headerlink" href="#Positional Arguments_repeat4" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>remakefile</kbd></dt>
+<dd><p>Default: “remakefile”</p>
+</dd>
+</dl>
+</section>
+<section id="Named Arguments_repeat4">
+<h4>Named Arguments<a class="headerlink" href="#Named Arguments_repeat4" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>--long, -l</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+<dt><kbd>--filter</kbd></dt>
+<dd></dd>
+<dt><kbd>--rule</kbd></dt>
+<dd></dd>
+<dt><kbd>--requires-rerun, -R</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+<dt><kbd>--uses-file, -U</kbd></dt>
+<dd></dd>
+<dt><kbd>--produces-file, -P</kbd></dt>
+<dd></dd>
+<dt><kbd>--ancestor-of, -A</kbd></dt>
+<dd><p>includes requested task</p>
+</dd>
+<dt><kbd>--descendant-of, -D</kbd></dt>
+<dd><p>includes requested task</p>
+</dd>
+</dl>
+</section>
+</section>
+<section id="ls-files">
+<h3>ls-files<a class="headerlink" href="#ls-files" title="Permalink to this headline">¶</a></h3>
+<p>Remove files</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">ls</span><span class="o">-</span><span class="n">files</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">long</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="nb">input</span> <span class="o">|</span> <span class="o">--</span><span class="n">output</span> <span class="o">|</span> <span class="o">--</span><span class="nb">input</span><span class="o">-</span><span class="n">only</span> <span class="o">|</span> <span class="o">--</span><span class="n">output</span><span class="o">-</span><span class="n">only</span> <span class="o">|</span> <span class="o">--</span><span class="n">inout</span><span class="p">]</span>
+                <span class="p">[</span><span class="o">--</span><span class="n">produced</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">rule</span> <span class="n">PRODUCED_BY_RULE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">used</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">rule</span> <span class="n">USED_BY_RULE</span><span class="p">]</span>
+                <span class="p">[</span><span class="o">--</span><span class="n">produced</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">task</span> <span class="n">PRODUCED_BY_TASK</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">used</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">task</span> <span class="n">USED_BY_TASK</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">exists</span><span class="p">]</span>
+                <span class="p">[</span><span class="n">remakefile</span><span class="p">]</span>
+</pre></div>
+</div>
+<section id="Positional Arguments_repeat5">
+<h4>Positional Arguments<a class="headerlink" href="#Positional Arguments_repeat5" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>remakefile</kbd></dt>
+<dd><p>Default: “remakefile”</p>
+</dd>
+</dl>
+</section>
+<section id="Named Arguments_repeat5">
+<h4>Named Arguments<a class="headerlink" href="#Named Arguments_repeat5" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>--long, -l</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+<dt><kbd>--input</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+<dt><kbd>--output</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+<dt><kbd>--input-only</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+<dt><kbd>--output-only</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+<dt><kbd>--inout</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+<dt><kbd>--produced-by-rule</kbd></dt>
+<dd></dd>
+<dt><kbd>--used-by-rule</kbd></dt>
+<dd></dd>
+<dt><kbd>--produced-by-task</kbd></dt>
+<dd></dd>
+<dt><kbd>--used-by-task</kbd></dt>
+<dd></dd>
+<dt><kbd>--exists</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+</dl>
+</section>
+</section>
+<section id="rm-files">
+<h3>rm-files<a class="headerlink" href="#rm-files" title="Permalink to this headline">¶</a></h3>
+<p>Remove files</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">rm</span><span class="o">-</span><span class="n">files</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">force</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="nb">input</span> <span class="o">|</span> <span class="o">--</span><span class="n">output</span> <span class="o">|</span> <span class="o">--</span><span class="nb">input</span><span class="o">-</span><span class="n">only</span> <span class="o">|</span> <span class="o">--</span><span class="n">output</span><span class="o">-</span><span class="n">only</span> <span class="o">|</span> <span class="o">--</span><span class="n">inout</span><span class="p">]</span>
+                <span class="p">[</span><span class="o">--</span><span class="n">produced</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">rule</span> <span class="n">PRODUCED_BY_RULE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">used</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">rule</span> <span class="n">USED_BY_RULE</span><span class="p">]</span>
+                <span class="p">[</span><span class="o">--</span><span class="n">produced</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">task</span> <span class="n">PRODUCED_BY_TASK</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">used</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">task</span> <span class="n">USED_BY_TASK</span><span class="p">]</span>
+                <span class="p">[</span><span class="n">remakefile</span><span class="p">]</span>
+</pre></div>
+</div>
+<section id="Positional Arguments_repeat6">
+<h4>Positional Arguments<a class="headerlink" href="#Positional Arguments_repeat6" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>remakefile</kbd></dt>
+<dd><p>Default: “remakefile”</p>
+</dd>
+</dl>
+</section>
+<section id="Named Arguments_repeat6">
+<h4>Named Arguments<a class="headerlink" href="#Named Arguments_repeat6" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>--force, -f</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+<dt><kbd>--input</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+<dt><kbd>--output</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+<dt><kbd>--input-only</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+<dt><kbd>--output-only</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+<dt><kbd>--inout</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+<dt><kbd>--produced-by-rule</kbd></dt>
+<dd></dd>
+<dt><kbd>--used-by-rule</kbd></dt>
+<dd></dd>
+<dt><kbd>--produced-by-task</kbd></dt>
+<dd></dd>
+<dt><kbd>--used-by-task</kbd></dt>
+<dd></dd>
+</dl>
+</section>
+</section>
+<section id="info">
+<h3>info<a class="headerlink" href="#info" title="Permalink to this headline">¶</a></h3>
+<p>Information about remakefile status</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">info</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">long</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">display</span> <span class="p">{</span><span class="n">print_status</span><span class="p">,</span><span class="n">task_dag</span><span class="p">}]</span> <span class="p">[</span><span class="n">remakefiles</span> <span class="o">...</span><span class="p">]</span>
+</pre></div>
+</div>
+<section id="Positional Arguments_repeat7">
+<h4>Positional Arguments<a class="headerlink" href="#Positional Arguments_repeat7" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>remakefiles</kbd></dt>
+<dd><p>Default: [‘remakefile’]</p>
+</dd>
+</dl>
+</section>
+<section id="Named Arguments_repeat7">
+<h4>Named Arguments<a class="headerlink" href="#Named Arguments_repeat7" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>--long, -l</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+<dt><kbd>--display, -d</kbd></dt>
+<dd><p>Possible choices: print_status, task_dag</p>
+<p>Default: “print_status”</p>
+</dd>
+</dl>
+</section>
+</section>
+<section id="rule-info">
+<h3>rule-info<a class="headerlink" href="#rule-info" title="Permalink to this headline">¶</a></h3>
+<p>Information about rule</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">rule</span><span class="o">-</span><span class="n">info</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">long</span><span class="p">]</span> <span class="p">[</span><span class="n">remakefile</span><span class="p">]</span> <span class="p">[</span><span class="n">rules</span> <span class="o">...</span><span class="p">]</span>
+</pre></div>
+</div>
+<section id="Positional Arguments_repeat8">
+<h4>Positional Arguments<a class="headerlink" href="#Positional Arguments_repeat8" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>remakefile</kbd></dt>
+<dd><p>Default: “remakefile”</p>
+</dd>
+<dt><kbd>rules</kbd></dt>
+<dd></dd>
+</dl>
+</section>
+<section id="Named Arguments_repeat8">
+<h4>Named Arguments<a class="headerlink" href="#Named Arguments_repeat8" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>--long, -l</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+</dl>
+</section>
+</section>
+<section id="task-info">
+<h3>task-info<a class="headerlink" href="#task-info" title="Permalink to this headline">¶</a></h3>
+<p>Information about task</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">task</span><span class="o">-</span><span class="n">info</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">long</span><span class="p">]</span> <span class="p">[</span><span class="n">remakefile</span><span class="p">]</span> <span class="p">[</span><span class="n">tasks</span> <span class="o">...</span><span class="p">]</span>
+</pre></div>
+</div>
+<section id="Positional Arguments_repeat9">
+<h4>Positional Arguments<a class="headerlink" href="#Positional Arguments_repeat9" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>remakefile</kbd></dt>
+<dd><p>Default: “remakefile”</p>
+</dd>
+<dt><kbd>tasks</kbd></dt>
+<dd></dd>
+</dl>
+</section>
+<section id="Named Arguments_repeat9">
+<h4>Named Arguments<a class="headerlink" href="#Named Arguments_repeat9" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>--long, -l</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+</dl>
+</section>
+</section>
+<section id="file-info">
+<h3>file-info<a class="headerlink" href="#file-info" title="Permalink to this headline">¶</a></h3>
+<p>Information about file</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">file</span><span class="o">-</span><span class="n">info</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">long</span><span class="p">]</span> <span class="p">[</span><span class="n">remakefile</span><span class="p">]</span> <span class="p">[</span><span class="n">filenames</span> <span class="o">...</span><span class="p">]</span>
+</pre></div>
+</div>
+<section id="Positional Arguments_repeat10">
+<h4>Positional Arguments<a class="headerlink" href="#Positional Arguments_repeat10" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>remakefile</kbd></dt>
+<dd><p>Default: “remakefile”</p>
+</dd>
+<dt><kbd>filenames</kbd></dt>
+<dd></dd>
+</dl>
+</section>
+<section id="Named Arguments_repeat10">
+<h4>Named Arguments<a class="headerlink" href="#Named Arguments_repeat10" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>--long, -l</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+</dl>
+</section>
+</section>
+<section id="monitor">
+<h3>monitor<a class="headerlink" href="#monitor" title="Permalink to this headline">¶</a></h3>
+<p>Monitor remake (polls remake metadata dir)</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">monitor</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">timeout</span> <span class="n">TIMEOUT</span><span class="p">]</span> <span class="p">[</span><span class="n">remakefile</span><span class="p">]</span>
+</pre></div>
+</div>
+<section id="Positional Arguments_repeat11">
+<h4>Positional Arguments<a class="headerlink" href="#Positional Arguments_repeat11" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>remakefile</kbd></dt>
+<dd><p>Default: “remakefile”</p>
+</dd>
+</dl>
+</section>
+<section id="Named Arguments_repeat11">
+<h4>Named Arguments<a class="headerlink" href="#Named Arguments_repeat11" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>--timeout, -t</kbd></dt>
+<dd><p>timeout (s) to use for polling</p>
+<p>Default: 10</p>
+</dd>
+</dl>
+</section>
+</section>
+<section id="setup-examples">
+<h3>setup-examples<a class="headerlink" href="#setup-examples" title="Permalink to this headline">¶</a></h3>
+<p>Setup examples directory</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">setup</span><span class="o">-</span><span class="n">examples</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span>
+</pre></div>
+</div>
+</section>
+<section id="version">
+<h3>version<a class="headerlink" href="#version" title="Permalink to this headline">¶</a></h3>
+<p>Print remake version</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">version</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">long</span><span class="p">]</span>
+</pre></div>
+</div>
+<section id="Named Arguments_repeat12">
+<h4>Named Arguments<a class="headerlink" href="#Named Arguments_repeat12" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>--long, -l</kbd></dt>
+<dd><p>long version</p>
+<p>Default: False</p>
+</dd>
+</dl>
+</section>
+</section>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="index.html">remake</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+<p class="caption"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quickstart.html">Quickstart</a></li>
+</ul>
+<p class="caption"><span class="caption-text">Reference:</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">remake CLI</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#Positional Arguments">Positional Arguments</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#Named Arguments">Named Arguments</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#Sub-commands:">Sub-commands:</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="remake_package.html">API</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="index.html">Documentation overview</a><ul>
+      <li>Previous: <a href="quickstart.html" title="previous chapter">Quickstart</a></li>
+      <li>Next: <a href="remake_package.html" title="next chapter">API</a></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" />
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>$('#searchbox').show(0);</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2021, Mark Muetzelfeldt.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 4.0.2</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.12</a>
+      
+      |
+      <a href="_sources/remake_cli.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

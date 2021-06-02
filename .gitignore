@@ -8,7 +8,7 @@ remake.egg-info
 # C extensions
 *.so
 
-./build/
+build/
 dist/
 MANIFEST
 
