@@ -592,6 +592,7 @@ def setup_examples():
     remake_dir = Path(remake.__file__).parent
     examples_dir = remake_dir / 'examples'
     cp_paths = sorted(examples_dir.glob('ex?.py'))
+    cp_paths.append(examples_dir / 'demo.py')
     cp_paths.append(examples_dir / 'ex_slurm.py')
     cp_paths.append(examples_dir / 'README.md')
     cp_paths.append(examples_dir / 'Makefile')

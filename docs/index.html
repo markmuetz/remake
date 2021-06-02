@@ -38,6 +38,76 @@
 <h2>Introduction<a class="headerlink" href="#introduction" title="Permalink to this headline">¶</a></h2>
 <p>Remake is a smart Python build tool, similar to <code class="docutils literal notranslate"><span class="pre">make</span></code>. It is file based – all inputs and outputs of each task are files. It uses a pure-Python implementation to define a set of tasks, where any tasks can depend on the output from previous tasks. It makes it easy to define complex task graphs, using a filename formatter for each task to define its inputs and outputs. It is smart, in that if any of the tasks or any of the input files to a task’s content changes, those tasks will be rerun. Subsequent tasks will only be rerun if their input has changed.</p>
 <p>Remake tracks the contents of each file and task, and can be used to generate a report of how any particular file was made. It is particularly suited to use in scientific settings, due to its ability to reliably recreate any set of output files, based on running only those tasks that are necessary.</p>
+</section>
+<section id="simple-demonstration">
+<h2>Simple demonstration<a class="headerlink" href="#simple-demonstration" title="Permalink to this headline">¶</a></h2>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="sd">&quot;&quot;&quot;Simple remake file: in1.txt -&gt; fan_out1.txt -&gt; out.txt</span>
+<span class="sd">                               `&gt; fan_out2.txt /</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="kn">from</span> <span class="nn">remake</span> <span class="kn">import</span> <span class="n">Remake</span><span class="p">,</span> <span class="n">TaskRule</span>
+
+<span class="n">demo</span> <span class="o">=</span> <span class="n">Remake</span><span class="p">()</span>
+
+
+<span class="k">class</span> <span class="nc">FanOut</span><span class="p">(</span><span class="n">TaskRule</span><span class="p">):</span>
+    <span class="n">rule_inputs</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;in&#39;</span><span class="p">:</span> <span class="s1">&#39;data/in.txt&#39;</span><span class="p">}</span>
+    <span class="n">rule_outputs</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;fan_out_</span><span class="si">{i}</span><span class="s1">&#39;</span><span class="p">:</span> <span class="s1">&#39;data/fan_out_</span><span class="si">{i}</span><span class="s1">.txt&#39;</span><span class="p">}</span>
+    <span class="n">var_matrix</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;i&#39;</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]}</span>
+
+    <span class="k">def</span> <span class="nf">rule_run</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="c1"># self.inputs and self.outputs are dictionaries created from rule_inputs</span>
+        <span class="c1"># Each value is a pathlib.Path.</span>
+        <span class="n">input_value</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">inputs</span><span class="p">[</span><span class="s1">&#39;in&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">read_text</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">outputs</span><span class="p">[</span><span class="sa">f</span><span class="s1">&#39;fan_out_</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">i</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;FanOut </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">i</span><span class="si">}</span><span class="s1">: </span><span class="si">{</span><span class="n">input_value</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">Out</span><span class="p">(</span><span class="n">TaskRule</span><span class="p">):</span>
+    <span class="n">rule_inputs</span> <span class="o">=</span> <span class="p">{</span><span class="sa">f</span><span class="s1">&#39;fan_out_</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">:</span> <span class="sa">f</span><span class="s1">&#39;data/fan_out_</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s1">.txt&#39;</span>
+                   <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]}</span>
+    <span class="n">rule_outputs</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;out&#39;</span><span class="p">:</span> <span class="s1">&#39;data/out.txt&#39;</span><span class="p">}</span>
+
+    <span class="k">def</span> <span class="nf">rule_run</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">input_values</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]:</span>
+            <span class="n">input_values</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">inputs</span><span class="p">[</span><span class="sa">f</span><span class="s1">&#39;fan_out_</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">read_text</span><span class="p">())</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">outputs</span><span class="p">[</span><span class="s1">&#39;out&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="s1">&#39;, &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">input_values</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ remake run <span class="nv">demo</span>
+<span class="o">=</span>&gt; demo &lt;<span class="o">=</span>
+Build task DAG
+Perform topological sort
+Assign status to tasks
+Status <span class="o">(</span>complete/rescan/pending/remaining/cannot run<span class="o">)</span>: <span class="m">0</span>/1/0/3/0
+Rescanning: /home/markmuetz/projects/remake/remake/examples/data/in.txt
+<span class="m">1</span>/3: 3491ba8fdd FanOut<span class="o">(</span><span class="nv">i</span><span class="o">=</span><span class="m">1</span><span class="o">)</span>
+<span class="m">2</span>/3: df3b4d6329 FanOut<span class="o">(</span><span class="nv">i</span><span class="o">=</span><span class="m">2</span><span class="o">)</span>
+<span class="m">3</span>/3: a20a6e7a29 Out<span class="o">()</span>
+Status <span class="o">(</span>complete/rescan/pending/remaining/cannot run<span class="o">)</span>: <span class="m">3</span>/0/0/0/0
+
+<span class="c1"># edit FanOut.rule_run so that its output is different</span>
+$ remake run <span class="nv">demo</span>
+<span class="o">=</span>&gt; demo &lt;<span class="o">=</span>
+Build task DAG
+Perform topological sort
+Assign status to tasks
+Status <span class="o">(</span>complete/rescan/pending/remaining/cannot run<span class="o">)</span>: <span class="m">0</span>/0/2/1/0
+<span class="m">1</span>/3: 3491ba8fdd FanOut<span class="o">(</span><span class="nv">i</span><span class="o">=</span><span class="m">1</span><span class="o">)</span>
+<span class="m">2</span>/3: df3b4d6329 FanOut<span class="o">(</span><span class="nv">i</span><span class="o">=</span><span class="m">2</span><span class="o">)</span>
+<span class="m">3</span>/3: a20a6e7a29 Out<span class="o">()</span>
+Status <span class="o">(</span>complete/rescan/pending/remaining/cannot run<span class="o">)</span>: <span class="m">3</span>/0/0/0/0
+
+<span class="c1"># edit Out.rule_run</span>
+$ remake run <span class="nv">demo</span>
+<span class="o">=</span>&gt; demo &lt;<span class="o">=</span>
+Build task DAG
+Perform topological sort
+Assign status to tasks
+Status <span class="o">(</span>complete/rescan/pending/remaining/cannot run<span class="o">)</span>: <span class="m">2</span>/0/1/0/0
+<span class="m">3</span>/3: a20a6e7a29 Out<span class="o">()</span>
+Status <span class="o">(</span>complete/rescan/pending/remaining/cannot run<span class="o">)</span>: <span class="m">3</span>/0/0/0/0
+</pre></div>
+</div>
 <div class="toctree-wrapper compound">
 <p class="caption"><span class="caption-text">Contents:</span></p>
 <ul>

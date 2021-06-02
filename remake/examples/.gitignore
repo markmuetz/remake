@@ -1,2 +1,4 @@
 slurm_*
 remakefile_output/*
+data/fan_out*
+data/out*
