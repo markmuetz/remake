@@ -11,4 +11,4 @@ reset: clean
 clean: 
 	rm -rf data/outputs
 	rm -rf .remake
-	rm data/fan_out* data/out.txt
+	rm -f data/fan_out* data/out.txt
