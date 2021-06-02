@@ -55,3 +55,7 @@ html_theme = 'alabaster'
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
+
+# Remove page source links because these don't work for on github.io.
+# https://stackoverflow.com/questions/48296169/removing-the-view-source-link-when-using-read-the-docs-sphinx-with-readthedocs
+html_show_sourcelink = False
