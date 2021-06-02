@@ -1,5 +1,5 @@
-"""Simple remake file: in1.txt -> fan_out1.txt -> out.txt
-                               `> fan_out2.txt /
+"""Simple remake file: in.txt -> fan_out1.txt -> out.txt
+                              `> fan_out2.txt /
 """
 from remake import Remake, TaskRule
 
@@ -27,5 +27,5 @@ class Out(TaskRule):
         input_values = []
         for i in [1, 2]:
             input_values.append(self.inputs[f'fan_out_{i}'].read_text())
-        self.outputs['out'].write_text(', '.join(input_values))
+        self.outputs['out'].write_text(''.join(input_values))
 

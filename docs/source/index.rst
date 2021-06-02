@@ -18,8 +18,8 @@ Simple demonstration
 
 ::
 
-    """Simple remake file: in1.txt -> fan_out1.txt -> out.txt
-                                   `> fan_out2.txt /
+    """Simple remake file: in.txt -> fan_out1.txt -> out.txt
+                                  `> fan_out2.txt /
     """
     from remake import Remake, TaskRule
 
@@ -47,10 +47,13 @@ Simple demonstration
             input_values = []
             for i in [1, 2]:
                 input_values.append(self.inputs[f'fan_out_{i}'].read_text())
-            self.outputs['out'].write_text(', '.join(input_values))
+            self.outputs['out'].write_text(''.join(input_values))
 
 
 .. code-block:: bash
+
+    $ cat data/in.txt
+    input
 
     $ remake run demo
     => demo <=
@@ -85,6 +88,10 @@ Simple demonstration
     Status (complete/rescan/pending/remaining/cannot run): 2/0/1/0/0
     3/3: a20a6e7a29 Out()
     Status (complete/rescan/pending/remaining/cannot run): 3/0/0/0/0
+
+    $ cat data/out.txt 
+    FanOut 1: input
+    FanOut 2: input
 
 
 .. toctree::
