@@ -318,9 +318,10 @@ class RemakeMonitorCurses:
                 break
 
 
-def remake_curses_monitor(stdscr, remake: Remake, timeout: int):
+def remake_curses_monitor(stdscr, remake: Remake, timeout: float):
     _mon = RemakeMonitorCurses(stdscr, remake, timeout)
     _mon.monitor_loop()
+
 
 if __name__ == '__main__':
     remake = load_remake(sys.argv[1])
