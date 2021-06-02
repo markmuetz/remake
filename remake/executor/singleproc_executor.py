@@ -10,7 +10,7 @@ class SingleprocExecutor(Executor):
         return self.completed_task is None
 
     def enqueue_task(self, task):
-        task.run(force=True)
+        task.run(force=True, use_task_control=False)
         self.completed_task = task
 
     def get_completed_task(self):

@@ -60,7 +60,7 @@ def worker(proc_id, task_ctrl_name, task_queue, task_complete_queue, log_queue):
             else:
                 task = task_ctrl.task_from_path_hash_key[task_key]
             # logger.debug(f'worker {current_process().name} running {task.path_hash_key()}')
-            task.run(force)
+            task.run(force, use_task_control=False)
             # logger.debug(f'worker {current_process().name} complete {task.path_hash_key()}')
             task_complete_queue.put((task_key, True, None))
         except Exception as e:

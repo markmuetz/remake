@@ -197,7 +197,11 @@ class Task(BaseTask):
     def run_task_rule(self, force=False):
         self.task_ctrl.run_task(self, force=force)
 
-    def run(self, force=False):
+    def run(self, force=False, use_task_control=True):
+        if use_task_control:
+            self.task_ctrl.run_requested([self])
+            return
+
         logger.debug(f'running {repr(self)}')
         if not self.can_run():
             raise Exception('Not all files required for task exist')
@@ -300,7 +304,10 @@ class RescanFileTask(BaseTask):
             h.update(str(input_path).encode())
         return h.hexdigest()
 
-    def run(self, force=False):
+    def run(self, force=False, use_task_control=True):
+        if use_task_control:
+            self.task_ctrl.run_requested([self])
+            return
         metadata_has_changed = self.path_md.compare_path_with_previous()
         assert metadata_has_changed
         self.path_md.gen_sha1hex()

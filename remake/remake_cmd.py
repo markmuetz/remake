@@ -314,6 +314,11 @@ class RemakeParser:
             assert False, f'Subcommand {args.subcmd_name} not recognized'
 
 
+def _get_argparse_parser():
+    parser = RemakeParser()
+    return parser.parser
+
+
 def remake_cmd(argv: Union[List[str], None] = None) -> None:
     if argv is None:
         argv = sys.argv
