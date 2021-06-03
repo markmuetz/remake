@@ -10,7 +10,7 @@ on:
     branches: [ master ]
 
 jobs:
-  build:
+  default_python_build:
 
     runs-on: ubuntu-latest
     strategy:
