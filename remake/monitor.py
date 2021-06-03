@@ -201,6 +201,9 @@ class RemakeMonitorCurses:
                 stdscr.addstr(row, 15, line)
                 row += 1
 
+    def getch(self):
+        return self.stdscr.getch()
+
     def input_loop(self, mode, command, keypresses, show, i_offset):
         stdscr = self.stdscr
         for i in range(self.num_input_loops):
@@ -213,7 +216,7 @@ class RemakeMonitorCurses:
                 curses.resizeterm(self.rows, self.cols)
                 break
             try:
-                c = stdscr.getch()
+                c = self.getch()
                 # stdscr.addstr(rows - 1, cols - 10, str(c))
 
                 if c == -1:
@@ -265,11 +268,13 @@ class RemakeMonitorCurses:
                             self.remake.task_ctrl.build_task_DAG()
                             self.monitor = RemakeMonitor(self.remake)
                             self.remake_sha1sum = sha1sum(Path(self.remake.name + '.py'))
+                            break
                         elif chr(c) == 'F':
                             self.remake = load_remake(self.remake.name)
                             self.remake.finalize()
                             self.monitor = RemakeMonitor(self.remake)
                             self.remake_sha1sum = sha1sum(Path(self.remake.name + '.py'))
+                            break
 
                 stdscr.addstr(self.rows - 1, 0, ''.join(keypresses))
             except curses.error:

@@ -561,14 +561,8 @@ def file_info(remakefile, filenames):
 
 
 def monitor(remakefile, timeout):
-    import logging
     from curses import wrapper
 
-    remake_root = logging.getLogger('remake')
-    handlers = [h for h in remake_root.handlers
-                if isinstance(h, logging.StreamHandler)]
-    for handler in handlers:
-        remake_root.handlers.remove(handler)
     remake = load_remake(remakefile)
     remake.task_ctrl.build_task_DAG()
     wrapper(remake_curses_monitor, remake, timeout)
