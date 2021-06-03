@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import unittest
+from unittest import mock
 from curses import wrapper
 
 from remake.load_remake import load_remake
@@ -41,53 +42,54 @@ class TestRemakeMonitorCurses(unittest.TestCase):
         self.remake.finalize()
         self.monitor = RemakeMonitor(self.remake)
 
-    def _test_monitor1(self):
-        """Not working on PyCharm or github testing."""
-        class StatefulCaller:
-            def __init__(self):
-                commands = [
-                    'r',
-                    'f',
-                    't',
-                    ':task 0',
-                    ':task 1',
-                    ':task 2',
-                    'j',
-                    'k',
-                    'g',
-                    'G',
-                    'F',
-                    ':q'
-                ]
+        # Using the real curses package causes problems for PyCharm and github CI.
+        # Mock out all the important parts.
+        self.stdscr = mock.MagicMock()
+        self.stdscr.getmaxyx.return_value = (100, 50)
+        # Generate dummy keypresses to feed into RemakeMonitorCurses.
+        commands = [
+            'r',
+            'f',
+            't',
+            ':task 0',
+            ':task 1',
+            ':task 2',
+            'j',
+            'k',
+            'g',
+            'G',
+            'F',
+            ':q'  # Note, end by quiting application.
+        ]
 
-                clist = []
-                for command in commands:
-                    clist_command = [-1] * 100 + list(command)
-                    if len(command) > 1:
-                        clist_command += [13]
-                    clist.extend(clist_command)
-                self.ch_iter = iter(clist)
+        clist = []
+        for command in commands:
+            clist_command = [-1] * 100 + [ord(c) for c in command]
+            if len(command) > 1:
+                clist_command += [13]
+            clist.extend(clist_command)
+        self.stdscr.getch.side_effect = clist
 
-            def __call__(self):
-                try:
-                    c = next(self.ch_iter)
-                except StopIteration:
-                    return -1
-                if isinstance(c, int):
-                    return c
-                else:
-                    return ord(c)
-
-        c = StatefulCaller()
-        def getch(_mon):
-            return c()
-
-        RemakeMonitorCurses.getch = getch
-        wrapper(remake_curses_monitor, self.remake, 1)
+        # Create patches for all curses functions called.
+        curses_patch_fns = [
+            'init_pair',
+            'curs_set',
+            'color_pair',
+            'napms',
+            'is_term_resized',
+            'resizeterm',
+        ]
+        self.patchers = []
+        for fn in curses_patch_fns:
+            patcher = mock.patch(f'curses.{fn}')
+            setattr(self, fn, patcher.start())
+            self.patchers.append(patcher)
+        self.is_term_resized.return_value = False
 
     def tearDown(self) -> None:
+        for patcher in self.patchers:
+            patcher.stop()
         os.chdir(self.orig_cwd)
 
-
-if __name__ == '__main__':
-    unittest.main()
+    def test_monitor(self):
+        remake_curses_monitor(self.stdscr, self.remake, 1)
