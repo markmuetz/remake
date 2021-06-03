@@ -4,7 +4,7 @@ from string import Formatter
 
 class RemakeFormatter(Formatter):
     """No automatic/integer numbering allowed, missing values allowed"""
-    def format(self, format_string, /, **kwargs):
+    def format(self, format_string, **kwargs):
         # no *args
         parsed_list = self.parse(format_string)
         for literal_text, field_name, format_spec, conversion in \

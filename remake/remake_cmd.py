@@ -239,7 +239,7 @@ class RemakeParser:
         for argset in RemakeParser.args:
             add_argset(parser, argset)
 
-        subparsers = parser.add_subparsers(dest='subcmd_name', required=True)
+        subparsers = parser.add_subparsers(dest='subcmd_name')
         for cmd_key, cmd_kwargs in RemakeParser.sub_cmds.items():
             args = cmd_kwargs['args']
             subparser = subparsers.add_parser(cmd_key, help=cmd_kwargs['help'])
@@ -324,6 +324,9 @@ def remake_cmd(argv: Union[List[str], None] = None) -> None:
         argv = sys.argv
     parser = RemakeParser()
     args = parser.parse_args(argv)
+    if not args.subcmd_name:
+        parser.parser.print_help()
+        return 1
 
     if args.debug_exception:
         # Handle top level exceptions with a debugger.
@@ -496,7 +499,7 @@ def remakefile_info(remakefiles, long, display):
             remake = load_remake(remakefile).finalize()
             remake.display_task_dag()
     else:
-        raise Exception(f'Unrecognized {display=}')
+        raise Exception(f'Unrecognized display: {display}')
 
 
 def rule_info(remakefile, long, rule_names):

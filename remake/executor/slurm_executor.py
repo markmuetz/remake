@@ -29,7 +29,8 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_jobid(output):
-    if match := re.match('Submitted batch job (?P<jobid>\d+)', output):
+    match = re.match('Submitted batch job (?P<jobid>\d+)', output)
+    if match:
         jobid = match['jobid']
         return jobid
     else:

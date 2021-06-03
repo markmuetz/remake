@@ -101,6 +101,7 @@ class TaskQuerySet(list):
                     else:
                         print(f'  {reason[0]}')
             if task_diff:
-                if task_diff := task.diff():
+                task_diff = task.diff()
+                if task_diff:
                     print('\n'.join(task_diff))
 

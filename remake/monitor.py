@@ -187,7 +187,8 @@ class RemakeMonitorCurses:
             else:
                 stdscr.addstr(row, 15, f'  {reason[0]}')
             row += 1
-        if task_diff := task.diff():
+        task_diff = task.diff()
+        if task_diff:
             for line in task_diff:
                 stdscr.addstr(row, 15, line)
                 row += 1

@@ -1,13 +1,14 @@
 #!/usr/bin/env python
 from pathlib import Path
+import subprocess as sp
 
 try:
     from setuptools import setup
 except ImportError:
     from distutils.core import setup
 
-from remake.version import get_version
-
+version = sp.run('python remake/version.py',
+                 check=True, shell=True, stdout=sp.PIPE, stderr=sp.PIPE, encoding='utf8').stdout
 
 def read(fname):
     try:
@@ -17,7 +18,7 @@ def read(fname):
 
 setup(
     name='remake',
-    version=get_version(),
+    version=version,
     description='Smart remake tool',
     include_package_data=True,
     license = 'LICENSE',
@@ -47,7 +48,7 @@ setup(
         'debug': ['ipdb'],
         'display': ['matplotlib'],
         'experimental': ['numpy'],
-        'testing': ['nose', 'coverage'],
+        'testing': ['nose', 'coverage', 'numpy', 'matplotlib'],
     },
     entry_points={
         'console_scripts': [

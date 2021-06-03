@@ -222,7 +222,7 @@ class Remake:
         elif filetype == 'inout':
             files = sorted(inout_paths)
         else:
-            raise ValueError(f'Unknown {filetype=}')
+            raise ValueError(f'Unknown filetype: {filetype}')
         if exists:
             files = [f for f in files if f.exists()]
         if used_by_rule:
