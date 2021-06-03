@@ -48,10 +48,9 @@ class NoMetadata(Exception):
 class MetadataManager:
     """Creates and stores maps of PathMetadata and TaskMetadata"""
     # Needed because it keeps track of all PathMetadata objs, and stops there being duplicate ones for inputs.
-    def __init__(self, task_control_name, dotremake_dir, *, full_tracking=False):
+    def __init__(self, task_control_name, dotremake_dir):
         self.task_control_name = task_control_name
         self.dotremake_dir = dotremake_dir
-        self.full_tracking = full_tracking
         self.path_metadata_map = {}
         self.task_metadata_map = {}
 
@@ -72,8 +71,7 @@ class MetadataManager:
                 output_md = self.path_metadata_map[output_path]
             task_outputs_metadata_map[output_path] = output_md
         task_md = TaskMetadata(self.task_control_name, self.dotremake_dir,
-                               task, task_inputs_metadata_map, task_outputs_metadata_map,
-                               full_tracking=self.full_tracking)
+                               task, task_inputs_metadata_map, task_outputs_metadata_map)
         self.task_metadata_map[task] = task_md
         return task_md
 
@@ -85,8 +83,7 @@ class MetadataManager:
 
 
 class TaskMetadata:
-    def __init__(self, task_control_name, dotremake_dir, task, inputs_metadata_map, outputs_metadata_map,
-                 *, full_tracking=False):
+    def __init__(self, task_control_name, dotremake_dir, task, inputs_metadata_map, outputs_metadata_map):
         self.task_control_name = task_control_name
         self.dotremake_dir = dotremake_dir
         self.metadata_dir = dotremake_dir / METADATA_VERSION
@@ -94,7 +91,6 @@ class TaskMetadata:
         self.inputs_metadata_map = inputs_metadata_map
         self.outputs_metadata_map = outputs_metadata_map
 
-        self.full_tracking = full_tracking
         self.task_path_hash_key = self.task.path_hash_key()
 
         self.metadata = {}
@@ -238,26 +234,12 @@ class TaskMetadata:
 
         flush_json_write(self.new_metadata, self.task_metadata_path)
 
-        if self.full_tracking:
-            # Not absolutely needed.
-            inputs_outputs_path = self.task_metadata_dir_path / 'inputs_outputs'
-            task_inputs = [str(p) for p in self.task.inputs.values()]
-            task_outputs = [str(p) for p in self.task.outputs.values()]
-            logger.debug(f'write inputs/outputs to {inputs_outputs_path}')
-            flush_json_write({'inputs': task_inputs, 'outputs': task_outputs}, inputs_outputs_path)
-
-            for input_path_md in self.inputs_metadata_map.values():
-                input_path_md.write_new_used_by_task_metadata(self.task_path_hash_key)
-
         for output_path_md in self.outputs_metadata_map.values():
             if not output_path_md.path.exists():
                 continue
             metadata_has_changed = output_path_md.compare_path_with_previous()
             if metadata_has_changed:
                 output_path_md.write_new_metadata()
-            if self.full_tracking:
-                # Not absolutely needed.
-                output_path_md.compare_task_with_previous(self.task_path_hash_key)
 
 
 class PathMetadata:
