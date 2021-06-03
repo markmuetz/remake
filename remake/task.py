@@ -305,6 +305,7 @@ class RescanFileTask(BaseTask):
         return h.hexdigest()
 
     def run(self, force=False, use_task_control=True):
+        self.update_status('RUNNING')
         if use_task_control:
             self.task_ctrl.run_requested([self])
             return

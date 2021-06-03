@@ -53,6 +53,14 @@ class RemakeMonitorCurses:
         self.input_loop_timeout = 10
         self.num_input_loops = self.timeout // self.input_loop_timeout
 
+        # Remove stream logging.
+        remake_root = logging.getLogger('remake')
+        handlers = [h for h in remake_root.handlers
+                    if isinstance(h, logging.StreamHandler)]
+        for handler in handlers:
+            remake_root.debug(f'Removing stream handler {handler}')
+            remake_root.handlers.remove(handler)
+
         self.rows, self.cols = stdscr.getmaxyx()
         self.colour_pairs = {
             "CANNOT_RUN": 1,

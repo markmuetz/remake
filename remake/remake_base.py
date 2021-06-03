@@ -21,6 +21,7 @@ class Remake:
     current_remake = {}
 
     def __init__(self, name=None, config=None, special_paths=None):
+        setup_stdout_logging('INFO', colour=True)
         if not name:
             stack = next(traceback.walk_stack(None))
             frame = stack[0]
