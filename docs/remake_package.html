@@ -200,11 +200,6 @@
 <dt class="sig sig-object py" id="remake.TaskQuerySet">
 <em class="property"><span class="pre">class</span> </em><span class="sig-prename descclassname"><span class="pre">remake.</span></span><span class="sig-name descname"><span class="pre">TaskQuerySet</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">iterable</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">task_ctrl</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.TaskQuerySet" title="Permalink to this definition">¶</a></dt>
 <dd><dl class="py method">
-<dt class="sig sig-object py" id="remake.TaskQuerySet.all">
-<span class="sig-name descname"><span class="pre">all</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#remake.TaskQuerySet.all" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
-
-<dl class="py method">
 <dt class="sig sig-object py" id="remake.TaskQuerySet.exclude">
 <span class="sig-name descname"><span class="pre">exclude</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.TaskQuerySet.exclude" title="Permalink to this definition">¶</a></dt>
 <dd></dd></dl>
@@ -310,17 +305,95 @@
 <section id="module-remake.util">
 <span id="remake-util"></span><h2>remake.util<a class="headerlink" href="#module-remake.util" title="Permalink to this headline">¶</a></h2>
 <dl class="py function">
-<dt class="sig sig-object py" id="remake.util.fmtp">
-<span class="sig-prename descclassname"><span class="pre">remake.util.</span></span><span class="sig-name descname"><span class="pre">fmtp</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">path</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><span class="pre">Union</span><span class="p"><span class="pre">[</span></span><span class="pre">pathlib.Path</span><span class="p"><span class="pre">,</span> </span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span> &#x2192; <span class="pre">pathlib.Path</span><a class="headerlink" href="#remake.util.fmtp" title="Permalink to this definition">¶</a></dt>
-<dd><p>Format a Path</p>
+<dt class="sig sig-object py" id="remake.util.format_path">
+<span class="sig-prename descclassname"><span class="pre">remake.util.</span></span><span class="sig-name descname"><span class="pre">format_path</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">path</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><span class="pre">Union</span><span class="p"><span class="pre">[</span></span><span class="pre">pathlib.Path</span><span class="p"><span class="pre">,</span> </span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span> &#x2192; <span class="pre">pathlib.Path</span><a class="headerlink" href="#remake.util.format_path" title="Permalink to this definition">¶</a></dt>
+<dd><p>Format a path based on <cite>**kwargs</cite>.</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">format_path</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="s1">&#39;some/path/</span><span class="si">{dirname}</span><span class="s1">/</span><span class="si">{filename}</span><span class="s1">&#39;</span><span class="p">),</span> <span class="n">dirname</span><span class="o">=</span><span class="s1">&#39;output&#39;</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="s1">&#39;out.txt&#39;</span><span class="p">)</span>
+<span class="go">PosixPath(&#39;some/path/output/out.txt&#39;)</span>
+</pre></div>
+</div>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>path</strong> – path with python format-style braces</p></li>
+<li><p><strong>kwargs</strong> – keyword args to substitute</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p>formatted path</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="remake.util.load_module">
+<span class="sig-prename descclassname"><span class="pre">remake.util.</span></span><span class="sig-name descname"><span class="pre">load_module</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">local_filename</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><span class="pre">Union</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span> </span><span class="pre">pathlib.Path</span><span class="p"><span class="pre">]</span></span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.util.load_module" title="Permalink to this definition">¶</a></dt>
+<dd><p>Use Python internals to load a Python module from a filename.</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">load_module</span><span class="p">(</span><span class="s1">&#39;examples/ex1.py&#39;</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span>
+<span class="go">&#39;ex1&#39;</span>
+</pre></div>
+</div>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>local_filename</strong> – name of module to load</p>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p>module</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="remake.util.sha1sum">
+<span class="sig-prename descclassname"><span class="pre">remake.util.</span></span><span class="sig-name descname"><span class="pre">sha1sum</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">path</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><span class="pre">pathlib.Path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">buf_size</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><span class="pre">int</span></span> <span class="o"><span class="pre">=</span></span> <span class="default_value"><span class="pre">65536</span></span></em><span class="sig-paren">)</span> &#x2192; <span class="pre">str</span><a class="headerlink" href="#remake.util.sha1sum" title="Permalink to this definition">¶</a></dt>
+<dd><p>Calculate sha1 sum for a path.</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">sha1sum</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="s1">&#39;examples/data/in.txt&#39;</span><span class="p">))</span>
+<span class="go">&#39;3620f0704e803d65098e5f2b836633b166e25474&#39;</span>
+</pre></div>
+</div>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>path</strong> – file path to calculate sha1 sum for</p></li>
+<li><p><strong>buf_size</strong> – buffer size for reading file</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p>sha1 sum of input path</p>
+</dd>
+</dl>
 </dd></dl>
 
 <dl class="py function">
 <dt class="sig sig-object py" id="remake.util.sysrun">
 <span class="sig-prename descclassname"><span class="pre">remake.util.</span></span><span class="sig-name descname"><span class="pre">sysrun</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">cmd</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.util.sysrun" title="Permalink to this definition">¶</a></dt>
 <dd><p>Run a system command, returns a CompletedProcess</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="nb">print</span><span class="p">(</span><span class="n">sysrun</span><span class="p">(</span><span class="s1">&#39;echo &quot;hello&quot;&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">stdout</span><span class="p">)</span>
+<span class="go">hello</span>
+</pre></div>
+</div>
 <p>raises CalledProcessError if cmd is bad.
 to access output: sysrun(cmd).stdout</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="remake.util.tmp_to_actual_path">
+<span class="sig-prename descclassname"><span class="pre">remake.util.</span></span><span class="sig-name descname"><span class="pre">tmp_to_actual_path</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">path</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><span class="pre">pathlib.Path</span></span></em><span class="sig-paren">)</span> &#x2192; <span class="pre">pathlib.Path</span><a class="headerlink" href="#remake.util.tmp_to_actual_path" title="Permalink to this definition">¶</a></dt>
+<dd><p>Convert a temporary remake path to an actual path.</p>
+<p>When writing to an output path, remake uses a temporary path then copies to the actual path on completion.
+This function can be used to see the actual path from the temporary path.</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">tmp_to_actual_path</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="s1">&#39;.remake.tmp.output.txt&#39;</span><span class="p">))</span>
+<span class="go">PosixPath(&#39;output.txt&#39;)</span>
+</pre></div>
+</div>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>path</strong> – temporary remake path</p>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p>actual path</p>
+</dd>
+</dl>
 </dd></dl>
 
 </section>
