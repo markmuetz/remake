@@ -3,12 +3,13 @@
 Installation
 ============
 
-The recommended way to install ``remake`` is using `pip <https://pypi.org/project/pip/>`_. 
+Python >= 3.6 is required, and the recommended way of installing is either using a ``virtualenv`` or ``conda`` virtual environment. ``remake`` can be installed using ``pip``.
 
 .. code-block:: bash
 
-    pip install remake
-    remake version
+    $ pip install remake
+    $ remake version
+    $ remake -h
 
 ::
 
