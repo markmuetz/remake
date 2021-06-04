@@ -30,7 +30,7 @@ jobs:
         python -m pip install --upgrade pip
         python -m pip install .[testing]
         remake version
-    - name: Test with nose
+    - name: Test with nose and doctest
       run: |
         nosetests tests
 
@@ -53,34 +53,13 @@ jobs:
         python -m pip install --upgrade pip
         python -m pip install .[testing]
         remake version
-    - name: Test with nose and coverage
+    - name: Test with nose/coverage/doctest
       run: |
         nosetests --with-coverage tests
+        cd ./remake
+        nosetests --with-doctest *.py
+        cd ..
     - name: Upload Coverage to Codecov
       uses: codecov/codecov-action@v1
       with:
           token: ${{ secrets.CODECOV_TOKEN }}
-
-  doctest:
-
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: [3.9]
-
-    steps:
-    - uses: actions/checkout@v2
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v2
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        python -m pip install .[testing]
-        remake version
-    - name: Test with nose and doctest
-      run: |
-        cd ./remake
-        nosetests --with-doctest *.py
