@@ -7,9 +7,9 @@ Python >= 3.6 is required, and the recommended way of installing is either using
 
 .. code-block:: bash
 
-    $ pip install remake
-    $ remake version
-    $ remake -h
+    pip install remake
+    remake version
+    remake -h
 
 ::
 
