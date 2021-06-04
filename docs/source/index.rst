@@ -116,7 +116,8 @@ Simple demonstration
 
     installation
     quickstart
-    tutorial
+.. tutorial
+   disable for now.
 
 .. toctree::   
     :maxdepth: 2

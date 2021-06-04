@@ -20,10 +20,6 @@ Remake classes
     :members:
     :undoc-members:
 
-.. autoclass:: remake.Task
-    :members:
-    :undoc-members:
-
 remake.util
 -----------
 

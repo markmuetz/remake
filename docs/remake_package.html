@@ -78,12 +78,6 @@
 </li>
 
 <li class="toctree-l1 nav-item">
- <a class="reference internal nav-link" href="tutorial.html">
-  Tutorial
- </a>
-</li>
-
-<li class="toctree-l1 nav-item">
  <a class="reference internal nav-link" href="remake_cli.html">
   remake CLI
  </a>
@@ -180,21 +174,56 @@
 <h2>Remake classes<a class="headerlink" href="#remake-classes" title="Permalink to this headline">¶</a></h2>
 <dl class="py class">
 <dt class="sig sig-object py" id="remake.Remake">
-<em class="property"><span class="pre">class</span> </em><span class="sig-prename descclassname"><span class="pre">remake.</span></span><span class="sig-name descname"><span class="pre">Remake</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">config</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">special_paths</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake" title="Permalink to this definition">¶</a></dt>
-<dd><dl class="py method">
+<em class="property"><span class="pre">class</span> </em><span class="sig-prename descclassname"><span class="pre">remake.</span></span><span class="sig-name descname"><span class="pre">Remake</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><span class="pre">Optional</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span> <span class="o"><span class="pre">=</span></span> <span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">config</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><span class="pre">Optional</span><span class="p"><span class="pre">[</span></span><span class="pre">dict</span><span class="p"><span class="pre">]</span></span></span> <span class="o"><span class="pre">=</span></span> <span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">special_paths</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><span class="pre">Optional</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="#remake.SpecialPaths" title="remake.special_paths.SpecialPaths"><span class="pre">remake.special_paths.SpecialPaths</span></a><span class="p"><span class="pre">]</span></span></span> <span class="o"><span class="pre">=</span></span> <span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake" title="Permalink to this definition">¶</a></dt>
+<dd><p>Core class. A remakefile is defined by creating an instance of Remake.</p>
+<p>Acts as an entry point to running all tasks via python, and retrieving information about the state of any task.
+Contains a list of all tasks added by any <cite>TaskRule</cite>.</p>
+<p>A remakefile must contain:</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">demo</span> <span class="o">=</span> <span class="n">Remake</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>This must be near the top of the file - after the imports but before any <cite>TaskRule</cite> is defined.</p>
+<dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.all_ancestors">
 <span class="sig-name descname"><span class="pre">all_ancestors</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tasks</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.all_ancestors" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Find all ancestors of tasks</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>tasks</strong> – tasks to start from</p>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p>all ancestors</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.all_descendants">
 <span class="sig-name descname"><span class="pre">all_descendants</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tasks</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.all_descendants" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Find all descendants of tasks</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>tasks</strong> – tasks to start from</p>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p>all descendants</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.ancestors">
 <span class="sig-name descname"><span class="pre">ancestors</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">task</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.ancestors" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>All ancestors of a given task.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>task</strong> – task to start from</p>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p>all ancestors</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py property">
 <dt class="sig sig-object py" id="remake.Remake.completed_tasks">
@@ -203,8 +232,18 @@
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.configure">
-<span class="sig-name descname"><span class="pre">configure</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">print_reasons</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">executor</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">display</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.configure" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<span class="sig-name descname"><span class="pre">configure</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">print_reasons</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><span class="pre">bool</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">executor</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">display</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.configure" title="Permalink to this definition">¶</a></dt>
+<dd><p>Allow Remake object to be configured after creation.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>print_reasons</strong> – print reason for running individual task</p></li>
+<li><p><strong>executor</strong> – name of which <cite>remake.executor</cite> to use</p></li>
+<li><p><strong>display</strong> – how to display task status after each task is run</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py attribute">
 <dt class="sig sig-object py" id="remake.Remake.current_remake">
@@ -214,52 +253,125 @@
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.descendants">
 <span class="sig-name descname"><span class="pre">descendants</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">task</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.descendants" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>All descendants of a given task.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>task</strong> – task to start from</p>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p>all descendants</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.display_task_dag">
 <span class="sig-name descname"><span class="pre">display_task_dag</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.display_task_dag" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Display all tasks as a Directed Acyclic Graph (DAG)</p>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.file_info">
 <span class="sig-name descname"><span class="pre">file_info</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filenames</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.file_info" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>File info for all given files.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>filenames</strong> – filenames to get info for</p>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p>dict containing all info</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.finalize">
 <span class="sig-name descname"><span class="pre">finalize</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.finalize" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Finalize this Remake object</p>
+</dd></dl>
 
 <dl class="py property">
 <dt class="sig sig-object py" id="remake.Remake.finalized">
 <em class="property"><span class="pre">property</span> </em><span class="sig-name descname"><span class="pre">finalized</span></span><a class="headerlink" href="#remake.Remake.finalized" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Is this finalized (i.e. ready to be run)?</p>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.find_task">
-<span class="sig-name descname"><span class="pre">find_task</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">task_path_hash_key</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.find_task" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<span class="sig-name descname"><span class="pre">find_task</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">task_path_hash_key</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><span class="pre">Union</span><span class="p"><span class="pre">[</span></span><span class="pre">remake.task.Task</span><span class="p"><span class="pre">,</span> </span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.find_task" title="Permalink to this definition">¶</a></dt>
+<dd><p>Find a task from its path_hash_key.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>task_path_hash_key</strong> – key of task</p>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p>found task</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.find_tasks">
 <span class="sig-name descname"><span class="pre">find_tasks</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">task_path_hash_keys</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.find_tasks" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Find all tasks given by their path hash keys</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>task_path_hash_keys</strong> – list of path hash keys</p>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p>all found tasks</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.list_files">
 <span class="sig-name descname"><span class="pre">list_files</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filetype</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">exists</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">produced_by_rule</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">used_by_rule</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">produced_by_task</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">used_by_task</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.list_files" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>List all files subject to criteria.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>filetype</strong> – one of input_only, output_only, input, output, inout</p></li>
+<li><p><strong>exists</strong> – whether file exists</p></li>
+<li><p><strong>produced_by_rule</strong> – whether file is produced by rule</p></li>
+<li><p><strong>used_by_rule</strong> – whether file is used by rule</p></li>
+<li><p><strong>produced_by_task</strong> – whether file is produced by task (path hash key)</p></li>
+<li><p><strong>used_by_task</strong> – whether file is used by task (path hash key)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p>all matching files</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.list_rules">
 <span class="sig-name descname"><span class="pre">list_rules</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.list_rules" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>List all rules</p>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.list_tasks">
 <span class="sig-name descname"><span class="pre">list_tasks</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tfilter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rule</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">requires_rerun</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">uses_file</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">produces_file</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ancestor_of</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">descendant_of</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.list_tasks" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>List all tasks subject to requirements.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>tfilter</strong> – dict of key/value pairs to filter tasks on</p></li>
+<li><p><strong>rule</strong> – rule that tasks belongs to</p></li>
+<li><p><strong>requires_rerun</strong> – whether tasks require rerun</p></li>
+<li><p><strong>uses_file</strong> – whether tasks use a given file</p></li>
+<li><p><strong>produces_file</strong> – whether tasks produce a given file</p></li>
+<li><p><strong>ancestor_of</strong> – whether tasks are an ancestor of this task (path hash key)</p></li>
+<li><p><strong>descendant_of</strong> – whether tasks are a descendant of this task (path hash key)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p>all matching tasks</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py property">
 <dt class="sig sig-object py" id="remake.Remake.name">
@@ -284,162 +396,285 @@
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.rerun_required">
 <span class="sig-name descname"><span class="pre">rerun_required</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.rerun_required" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Rerun status of this Remake object.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns</dt>
+<dd class="field-odd"><p>True if any tasks remain to be run</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.reset">
 <span class="sig-name descname"><span class="pre">reset</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.reset" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Reset the internal state</p>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.run_all">
 <span class="sig-name descname"><span class="pre">run_all</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">force</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.run_all" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Run all tasks.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>force</strong> – force rerun of each task</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.run_one">
-<span class="sig-name descname"><span class="pre">run_one</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">force</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.run_one" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<span class="sig-name descname"><span class="pre">run_one</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.run_one" title="Permalink to this definition">¶</a></dt>
+<dd><p>Run the next pending task</p>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.run_random">
-<span class="sig-name descname"><span class="pre">run_random</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">force</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.run_random" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<span class="sig-name descname"><span class="pre">run_random</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.run_random" title="Permalink to this definition">¶</a></dt>
+<dd><p>Run a random task (pot luck out of pending)</p>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.run_requested">
 <span class="sig-name descname"><span class="pre">run_requested</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">requested</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">force</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">handle_dependencies</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.run_requested" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Run requested tasks.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>requested</strong> – </p></li>
+<li><p><strong>force</strong> – force rerun of each task</p></li>
+<li><p><strong>handle_dependencies</strong> – add all ancestor tasks to ensure given tasks can be run</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.short_status">
 <span class="sig-name descname"><span class="pre">short_status</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.short_status" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Log a short status line</p>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.task_info">
 <span class="sig-name descname"><span class="pre">task_info</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">task_path_hash_keys</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.task_info" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Task info for all given tasks.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>task_path_hash_keys</strong> – task hash keys for tasks</p>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p>dict containing all info</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.task_status">
-<span class="sig-name descname"><span class="pre">task_status</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">task</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.task_status" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<span class="sig-name descname"><span class="pre">task_status</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">task</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><span class="pre">remake.task.Task</span></span></em><span class="sig-paren">)</span> &#x2192; <span class="pre">str</span><a class="headerlink" href="#remake.Remake.task_status" title="Permalink to this definition">¶</a></dt>
+<dd><p>Get the status of a task.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>task</strong> – task to get status for</p>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p>status</p>
+</dd>
+</dl>
+</dd></dl>
 
 </dd></dl>
 
 <dl class="py class">
 <dt class="sig sig-object py" id="remake.SpecialPaths">
 <em class="property"><span class="pre">class</span> </em><span class="sig-prename descclassname"><span class="pre">remake.</span></span><span class="sig-name descname"><span class="pre">SpecialPaths</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">paths</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.SpecialPaths" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Special paths to use for all input/output filenames.</p>
+<p>When tasks use inputs or create outputs, they are referenced by their filesystem path.
+This class makes it easy to define special paths that are used internally to locate the actual file.
+For example, <cite>CWD</cite> is a special path for the current working directory.
+This can be used to make paths consistent across different machine. If machine A has a file at path /A/data/path,
+and machine B has a file at path /B/data/path, a special path called <cite>DATA</cite> could be set up, pointing to the right
+path on each machine. E.g. on machine A:</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">special_paths</span> <span class="o">=</span> <span class="n">SpecialPaths</span><span class="p">(</span><span class="n">DATA</span><span class="o">=</span><span class="s1">&#39;/A/data&#39;</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">special_paths</span><span class="o">.</span><span class="n">DATA</span>
+<span class="go">PosixPath(&#39;/A/data&#39;)</span>
+</pre></div>
+</div>
+<p>This must be passed into <cite>Remake</cite> to take effect:</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="kn">from</span> <span class="nn">remake</span> <span class="kn">import</span> <span class="n">Remake</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">demo</span> <span class="o">=</span> <span class="n">Remake</span><span class="p">(</span><span class="n">special_paths</span><span class="o">=</span><span class="n">special_paths</span><span class="p">)</span>
+</pre></div>
+</div>
+</dd></dl>
 
 <dl class="py class">
 <dt class="sig sig-object py" id="remake.TaskRule">
 <em class="property"><span class="pre">class</span> </em><span class="sig-prename descclassname"><span class="pre">remake.</span></span><span class="sig-name descname"><span class="pre">TaskRule</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">task_ctrl</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">func</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inputs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">outputs</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atomic_write</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">force</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">depends_on</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">()</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.TaskRule" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Core class. Defines a set of tasks in a remakefile.</p>
+<p>Each class must have class-level properties: rule_inputs, rule_outputs, and each must have a method: rule_run.
+Each output file must be unique within a remakefile.
+In the rule_run method, the inputs and outputs are available through e.g. the self.inputs property.</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">demo</span> <span class="o">=</span> <span class="n">Remake</span><span class="p">()</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="k">class</span> <span class="nc">TaskSet</span><span class="p">(</span><span class="n">TaskRule</span><span class="p">):</span>
+<span class="gp">... </span>    <span class="n">rule_inputs</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;in&#39;</span><span class="p">:</span> <span class="s1">&#39;infile&#39;</span><span class="p">}</span>
+<span class="gp">... </span>    <span class="n">rule_outputs</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;out&#39;</span><span class="p">:</span> <span class="s1">&#39;outfile&#39;</span><span class="p">}</span>
+<span class="gp">... </span>    <span class="k">def</span> <span class="nf">rule_run</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="gp">... </span>        <span class="bp">self</span><span class="o">.</span><span class="n">outputs</span><span class="p">[</span><span class="s1">&#39;out&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">inputs</span><span class="p">[</span><span class="s1">&#39;in&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">read_text</span><span class="p">())</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="nb">len</span><span class="p">(</span><span class="n">TaskSet</span><span class="o">.</span><span class="n">tasks</span><span class="p">)</span>
+<span class="go">1</span>
+</pre></div>
+</div>
+<p>Each class can also optionally define a var_matrix, and dependency functions/classes. <cite>var_matrix</cite> should be
+a dict with string keys, and a list of items for each key. There will be as many tasks created as the
+<cite>itertools.product</cite> between the lists for each key. The values will be substituted in to the inputs/outputs.</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="k">def</span> <span class="nf">fn</span><span class="p">():</span>
+<span class="gp">... </span>    <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;in fn&#39;</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="k">class</span> <span class="nc">TaskSet2</span><span class="p">(</span><span class="n">TaskRule</span><span class="p">):</span>
+<span class="gp">... </span>    <span class="n">rule_inputs</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;in&#39;</span><span class="p">:</span> <span class="s1">&#39;infile&#39;</span><span class="p">}</span>
+<span class="gp">... </span>    <span class="n">rule_outputs</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;out_</span><span class="si">{i}{j}</span><span class="s1">&#39;</span><span class="p">:</span> <span class="s1">&#39;outfile_</span><span class="si">{i}{j}</span><span class="s1">&#39;</span><span class="p">}</span>
+<span class="gp">... </span>    <span class="n">var_matrix</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;i&#39;</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">],</span> <span class="s1">&#39;j&#39;</span><span class="p">:</span> <span class="p">[</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">]}</span>
+<span class="gp">... </span>    <span class="n">dependencies</span> <span class="o">=</span> <span class="p">[</span><span class="n">fn</span><span class="p">]</span>
+<span class="gp">... </span>    <span class="k">def</span> <span class="nf">rule_run</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="gp">... </span>        <span class="n">fn</span><span class="p">()</span>
+<span class="gp">... </span>        <span class="bp">self</span><span class="o">.</span><span class="n">outputs</span><span class="p">[</span><span class="sa">f</span><span class="s1">&#39;out_</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">i</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">i</span><span class="p">)</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">inputs</span><span class="p">[</span><span class="s1">&#39;in&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">read_text</span><span class="p">())</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="nb">len</span><span class="p">(</span><span class="n">TaskSet2</span><span class="o">.</span><span class="n">tasks</span><span class="p">)</span>
+<span class="go">4</span>
+</pre></div>
+</div>
+<p>Note, all tasks created by these <cite>TaskRule</cite> are added to the <cite>Remake</cite> object:</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="nb">len</span><span class="p">(</span><span class="n">demo</span><span class="o">.</span><span class="n">tasks</span><span class="p">)</span>
+<span class="go">5</span>
+</pre></div>
+</div>
+<p>When the remakefile is run (<cite>$ remake run</cite> on the command line), all the tasks will be triggered according to their
+ordering. If any of the rule_run methods is changed, then those tasks will be rerun, and if their output is
+is different subsequent tasks will be rerun.</p>
+</dd></dl>
 
 <dl class="py class">
 <dt class="sig sig-object py" id="remake.TaskQuerySet">
 <em class="property"><span class="pre">class</span> </em><span class="sig-prename descclassname"><span class="pre">remake.</span></span><span class="sig-name descname"><span class="pre">TaskQuerySet</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">iterable</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">task_ctrl</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.TaskQuerySet" title="Permalink to this definition">¶</a></dt>
-<dd><dl class="py method">
+<dd><p>List of classes with some extra capabilities.</p>
+<p>Provides some simple methods for filtering, running and displaying the status of all its tasks.</p>
+<dl class="py method">
 <dt class="sig sig-object py" id="remake.TaskQuerySet.exclude">
 <span class="sig-name descname"><span class="pre">exclude</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.TaskQuerySet.exclude" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>As <cite>filter</cite>, but exclude instead of include tasks.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>kwargs</strong> – key-value pairs to exclude</p>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p>filtered tasks</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.TaskQuerySet.filter">
 <span class="sig-name descname"><span class="pre">filter</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">cast_to_str</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.TaskQuerySet.filter" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Filter tasks based on kwargs.</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="k">class</span> <span class="nc">DummyTask</span><span class="p">:</span>
+<span class="gp">... </span>    <span class="k">pass</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">tasks</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
+<span class="gp">... </span>    <span class="n">task</span> <span class="o">=</span> <span class="n">DummyTask</span><span class="p">()</span>
+<span class="gp">... </span>    <span class="nb">setattr</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="s1">&#39;i&#39;</span><span class="p">,</span> <span class="n">i</span><span class="p">)</span>
+<span class="gp">... </span>    <span class="nb">setattr</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="s1">&#39;j&#39;</span><span class="p">,</span> <span class="n">i</span> <span class="o">%</span> <span class="mi">3</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span>
+<span class="gp">... </span>    <span class="n">tasks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">task</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">task_query_set</span> <span class="o">=</span> <span class="n">TaskQuerySet</span><span class="p">(</span><span class="n">tasks</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="nb">len</span><span class="p">(</span><span class="n">task_query_set</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">j</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>
+<span class="go">4</span>
+</pre></div>
+</div>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>cast_to_str</strong> – Cast values to string first</p></li>
+<li><p><strong>kwargs</strong> – key-value pairs of task properties</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p>filtered TaskQuerySet</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.TaskQuerySet.filter_on_inputs">
 <span class="sig-name descname"><span class="pre">filter_on_inputs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">inputs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.TaskQuerySet.filter_on_inputs" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Filter tasks based on whether any of inputs is in their task.inputs dict</p>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.TaskQuerySet.filter_on_outputs">
 <span class="sig-name descname"><span class="pre">filter_on_outputs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">outputs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.TaskQuerySet.filter_on_outputs" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Filter tasks based on whether any of outputs is in their task.outputs dict</p>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.TaskQuerySet.first">
 <span class="sig-name descname"><span class="pre">first</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#remake.TaskQuerySet.first" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Get first task.</p>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.TaskQuerySet.get">
 <span class="sig-name descname"><span class="pre">get</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.TaskQuerySet.get" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Get one and only one task.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>kwargs</strong> – key-value pairs to get</p>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p>task meeting criteria</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.TaskQuerySet.in_rule">
 <span class="sig-name descname"><span class="pre">in_rule</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rule</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.TaskQuerySet.in_rule" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Filter all tasks to those in provided rule.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>rule</strong> – rule to filter on</p>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p>filtered TaskQuerySet</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.TaskQuerySet.last">
 <span class="sig-name descname"><span class="pre">last</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#remake.TaskQuerySet.last" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Get last task.</p>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.TaskQuerySet.run">
 <span class="sig-name descname"><span class="pre">run</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">force</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.TaskQuerySet.run" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
+<dd><p>Run all tasks.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>force</strong> – force run</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.TaskQuerySet.status">
 <span class="sig-name descname"><span class="pre">status</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">reasons</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">task_diff</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.TaskQuerySet.status" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
-
+<dd><p>Print status for all tasks.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>reasons</strong> – show reasons for why tasks have their statuses</p></li>
+<li><p><strong>task_diff</strong> – show a diff of the tasks’ rule_run methods</p></li>
+</ul>
+</dd>
+</dl>
 </dd></dl>
-
-<dl class="py class">
-<dt class="sig sig-object py" id="remake.Task">
-<em class="property"><span class="pre">class</span> </em><span class="sig-prename descclassname"><span class="pre">remake.</span></span><span class="sig-name descname"><span class="pre">Task</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">task_ctrl</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">func</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inputs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">outputs</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atomic_write</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">force</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">depends_on</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">()</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Task" title="Permalink to this definition">¶</a></dt>
-<dd><dl class="py method">
-<dt class="sig sig-object py" id="remake.Task.can_run">
-<span class="sig-name descname"><span class="pre">can_run</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#remake.Task.can_run" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
-
-<dl class="py method">
-<dt class="sig sig-object py" id="remake.Task.complete">
-<span class="sig-name descname"><span class="pre">complete</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#remake.Task.complete" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
-
-<dl class="py method">
-<dt class="sig sig-object py" id="remake.Task.diff">
-<span class="sig-name descname"><span class="pre">diff</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#remake.Task.diff" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
-
-<dl class="py method">
-<dt class="sig sig-object py" id="remake.Task.path_hash_key">
-<span class="sig-name descname"><span class="pre">path_hash_key</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#remake.Task.path_hash_key" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
-
-<dl class="py method">
-<dt class="sig sig-object py" id="remake.Task.requires_rerun">
-<span class="sig-name descname"><span class="pre">requires_rerun</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#remake.Task.requires_rerun" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
-
-<dl class="py method">
-<dt class="sig sig-object py" id="remake.Task.run">
-<span class="sig-name descname"><span class="pre">run</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">force</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">use_task_control</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Task.run" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
-
-<dl class="py method">
-<dt class="sig sig-object py" id="remake.Task.run_task_rule">
-<span class="sig-name descname"><span class="pre">run_task_rule</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">force</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Task.run_task_rule" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
-
-<dl class="py method">
-<dt class="sig sig-object py" id="remake.Task.short_str">
-<span class="sig-name descname"><span class="pre">short_str</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">input_paths_to_show</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">output_paths_to_show</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">2</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Task.short_str" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
-
-<dl class="py attribute">
-<dt class="sig sig-object py" id="remake.Task.task_func_cache">
-<span class="sig-name descname"><span class="pre">task_func_cache</span></span><em class="property"> <span class="pre">=</span> <span class="pre">{}</span></em><a class="headerlink" href="#remake.Task.task_func_cache" title="Permalink to this definition">¶</a></dt>
-<dd></dd></dl>
 
 </dd></dl>
 
