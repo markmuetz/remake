@@ -1,4 +1,4 @@
-remake CLI
+Remake CLI
 ==========
 
 .. argparse::

@@ -1,5 +1,5 @@
-API
-===
+Python API
+==========
 
 Remake classes
 --------------
