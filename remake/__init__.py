@@ -1,7 +1,7 @@
 from remake.task import Task
 from remake.task_control import TaskControl
 from remake.flags import RemakeOn
-from remake.util import fmtp
+from remake.util import format_path
 from remake.task_rule import TaskRule
 from remake.task_query_set import TaskQuerySet
 from remake.remake_base import Remake
@@ -13,7 +13,7 @@ __all__ = [
     'Task',
     'TaskControl',
     'RemakeOn',
-    'fmtp',
+    'format_path',
     'TaskRule',
     'TaskQuerySet',
     'Remake',

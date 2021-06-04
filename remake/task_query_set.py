@@ -12,9 +12,6 @@ class TaskQuerySet(list):
         else:
             return list.__getitem__(self, i)
 
-    def all(self):
-        return self
-
     def in_rule(self, rule):
         if isinstance(rule, str):
             return TaskQuerySet([t for t in self if t.__class__.__name__ == rule], self.task_ctrl)
