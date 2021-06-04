@@ -82,6 +82,5 @@ jobs:
         remake version
     - name: Test with nose and doctest
       run: |
+        cd ./remake
         nosetests --with-doctest *.py
-      with:
-        working-directory: ./remake
