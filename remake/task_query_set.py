@@ -63,26 +63,6 @@ class TaskQuerySet(list):
             if has_all_vals:
                 yield task
 
-    def filter_on_inputs(self, inputs):
-        """Filter tasks based on whether any of inputs is in their task.inputs dict"""
-        return TaskQuerySet(self._filter_on_inputs(inputs), task_ctrl=self.task_ctrl)
-
-    def _filter_on_inputs(self, inputs):
-        for task in self:
-            for i in inputs:
-                if i in task.inputs.values():
-                    yield task
-
-    def filter_on_outputs(self, outputs):
-        """Filter tasks based on whether any of outputs is in their task.outputs dict"""
-        return TaskQuerySet(self._filter_on_outputs(outputs), task_ctrl=self.task_ctrl)
-
-    def _filter_on_outputs(self, outputs):
-        for task in self:
-            for i in outputs:
-                if i in task.outputs.values():
-                    yield task
-
     def exclude(self, **kwargs):
         """As `filter`, but exclude instead of include tasks.
 
