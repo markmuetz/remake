@@ -359,17 +359,18 @@ def remake_cmd(argv: Union[List[str], None] = None) -> None:
 
 def remake_run(remakefiles, rescan_only, force, one, random, print_reasons, executor, display):
     for remakefile in remakefiles:
+        if force and (one or random):
+            raise ValueError('--force cannot be used with --one or --random')
         remake = load_remake(remakefile).finalize()
         remake.configure(print_reasons, executor, display)
         remake.short_status()
         if rescan_only:
             remake.task_ctrl.run_rescan_only()
         elif one:
-            remake.run_one(force=force)
+            remake.run_one()
         elif random:
-            remake.run_random(force=force)
+            remake.run_random()
         else:
-            # TODO: not sure this works is force=True.
             remake.run_all(force=force)
         if display == 'task_dag':
             # Give user time to see final task_dag state.

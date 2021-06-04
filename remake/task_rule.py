@@ -8,6 +8,10 @@ from remake.util import format_path
 
 
 class RemakeMetaclass(type):
+    """Provides the machinery for actually creating `TaskRule` classes.
+
+    Uses the information provided by a `TaskRule` to create instances of the task rule, and add them the
+    `TaskRule` .tasks list."""
     def __new__(mcs, clsname, bases, attrs):
         if clsname not in ['TaskRule']:
             remake = Remake.current_remake[multiprocessing.current_process().name]
@@ -70,6 +74,47 @@ class RemakeMetaclass(type):
 
 
 class TaskRule(Task, metaclass=RemakeMetaclass):
+    """Core class. Defines a set of tasks in a remakefile.
+
+    Each class must have class-level properties: rule_inputs, rule_outputs, and each must have a method: rule_run.
+    Each output file must be unique within a remakefile.
+    In the rule_run method, the inputs and outputs are available through e.g. the self.inputs property.
+
+    >>> demo = Remake()
+    >>> class TaskSet(TaskRule):
+    ...     rule_inputs = {'in': 'infile'}
+    ...     rule_outputs = {'out': 'outfile'}
+    ...     def rule_run(self):
+    ...         self.outputs['out'].write_text(self.inputs['in'].read_text())
+    >>> len(TaskSet.tasks)
+    1
+
+    Each class can also optionally define a var_matrix, and dependency functions/classes. `var_matrix` should be
+    a dict with string keys, and a list of items for each key. There will be as many tasks created as the
+    `itertools.product` between the lists for each key. The values will be substituted in to the inputs/outputs.
+
+    >>> def fn():
+    ...     print('in fn')
+    >>> class TaskSet2(TaskRule):
+    ...     rule_inputs = {'in': 'infile'}
+    ...     rule_outputs = {'out_{i}{j}': 'outfile_{i}{j}'}
+    ...     var_matrix = {'i': [1, 2], 'j': [3, 4]}
+    ...     dependencies = [fn]
+    ...     def rule_run(self):
+    ...         fn()
+    ...         self.outputs[f'out_{self.i}'].write_text(str(self.i) + self.inputs['in'].read_text())
+    >>> len(TaskSet2.tasks)
+    4
+
+    Note, all tasks created by these `TaskRule` are added to the `Remake` object:
+
+    >>> len(demo.tasks)
+    5
+
+    When the remakefile is run (`$ remake run` on the command line), all the tasks will be triggered according to their
+    ordering. If any of the rule_run methods is changed, then those tasks will be rerun, and if their output is
+    is different subsequent tasks will be rerun.
+    """
     pass
 
 

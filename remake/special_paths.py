@@ -1,4 +1,4 @@
-from pathlib import Path
+from pathlib import Path, PosixPath
 
 
 def is_relative_to(p1, p2):
@@ -11,6 +11,24 @@ def is_relative_to(p1, p2):
 
 
 class SpecialPaths:
+    """Special paths to use for all input/output filenames.
+
+    When tasks use inputs or create outputs, they are referenced by their filesystem path.
+    This class makes it easy to define special paths that are used internally to locate the actual file.
+    For example, `CWD` is a special path for the current working directory.
+    This can be used to make paths consistent across different machine. If machine A has a file at path /A/data/path,
+    and machine B has a file at path /B/data/path, a special path called `DATA` could be set up, pointing to the right
+    path on each machine. E.g. on machine A:
+
+    >>> special_paths = SpecialPaths(DATA='/A/data')
+    >>> special_paths.DATA
+    PosixPath('/A/data')
+
+    This must be passed into `Remake` to take effect:
+
+    >>> from remake import Remake
+    >>> demo = Remake(special_paths=special_paths)
+    """
     def __init__(self, **paths):
         if 'CWD' not in paths:
             paths['CWD'] = Path.cwd()
@@ -28,6 +46,13 @@ class SpecialPaths:
 
 
 def map_special_paths(special_paths, paths):
+    """Utility function to map all paths using special paths.
+
+    i.e. if a path is /A/data/path, it would be mapped to DATA/path:
+    >>> special_paths = SpecialPaths(DATA='/A/data')
+    >>> map_special_paths(special_paths, {'path1': Path('/A/data/path')})
+    {'path1': PosixPath('DATA/path')}
+    """
     mapped_paths = {}
     for path_name, path in paths.items():
         mapped_path = None
