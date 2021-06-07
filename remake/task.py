@@ -16,6 +16,10 @@ def tmp_atomic_path(p):
     return p.parent / ('.remake.tmp.' + p.name)
 
 
+def map_val(v):
+    return f"'{v}'" if isinstance(v, str) else v
+
+
 class BaseTask:
     def __init__(self, task_ctrl):
         self.task_ctrl = task_ctrl
@@ -129,7 +133,7 @@ class Task(BaseTask):
 
     def __str__(self):
         if hasattr(self, 'var_matrix'):
-            args = ', '.join([f'{k}={getattr(self, k)}' for k in self.var_matrix.keys()])
+            args = ', '.join([f'{k}={map_val(getattr(self, k))}' for k in self.var_matrix.keys()])
             return f'{self.path_hash_key()[:10]} {self.__class__.__name__}({args})'
         else:
             return f'{self.path_hash_key()[:10]} {self.__class__.__name__}()'
