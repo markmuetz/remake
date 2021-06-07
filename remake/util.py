@@ -2,7 +2,7 @@ import sys
 import importlib.util
 import hashlib
 from logging import getLogger
-from pathlib import Path, PosixPath
+from pathlib import Path, PosixPath  # noqa: F401
 from typing import Union
 import subprocess as sp
 
@@ -74,7 +74,7 @@ def load_module(local_filename: Union[str, Path]):
         spec = importlib.util.spec_from_file_location(module_name, module_path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-    except SyntaxError as se:
+    except SyntaxError:
         print(f'Bad syntax in module file {module_path}')
         raise
 

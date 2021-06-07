@@ -1,4 +1,3 @@
-import os
 import re
 import sys
 from hashlib import sha1
@@ -29,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_jobid(output):
-    match = re.match('Submitted batch job (?P<jobid>\d+)', output)
+    match = re.match('Submitted batch job (?P<jobid>\d+)', output)  # noqa: W605
     if match:
         jobid = match['jobid']
         return jobid
@@ -191,4 +190,3 @@ def run_job(remakefile, remakefile_hash, task_type, task_key):
 if __name__ == '__main__':
     print(sys.argv)
     run_job(*sys.argv[1:])
-

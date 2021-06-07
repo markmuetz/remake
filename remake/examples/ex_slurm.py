@@ -20,6 +20,7 @@ class Init(TaskRule):
     def rule_run(self):
         self.outputs['out'].touch()
 
+
 class FanOut(TaskRule):
     rule_inputs = Init.rule_outputs
     rule_outputs = {'a{i},{j}': 'data/outputs/ex2/fan_out.{i}.{j}.out'}

@@ -21,4 +21,3 @@ class SingleprocExecutor(Executor):
 
     def has_finished(self):
         return not self.completed_task
-

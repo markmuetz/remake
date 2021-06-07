@@ -1,4 +1,3 @@
-from collections import Counter, Mapping
 import difflib
 import inspect
 from hashlib import sha1
@@ -218,11 +217,11 @@ class Task(BaseTask):
         logger_name = f'remake.task.{self.__class__.__name__}'
         try:
             if self.requires_rerun() or force or self.force:
-                logger.debug(f'requires_rerun or force')
+                logger.debug('requires_rerun or force')
                 for output_dir in set([o.parent for o in self.outputs.values()]):
                     output_dir.mkdir(parents=True, exist_ok=True)
                 if self.atomic_write:
-                    logger.debug(f'atomic_write: make temp paths')
+                    logger.debug('atomic_write: make temp paths')
                     self.tmp_outputs = {k: tmp_atomic_path(v) for k, v in self.outputs.items()}
                 else:
                     self.tmp_outputs = self.outputs
@@ -250,7 +249,7 @@ class Task(BaseTask):
                     for output in self.tmp_outputs.values():
                         if not output.exists():
                             raise Exception(f'func {output} not created')
-                    logger.debug(f'atomic_write: rename temp paths')
+                    logger.debug('atomic_write: rename temp paths')
                     tmp_paths = self.tmp_outputs.values()
                     for tmp_path, path in zip(tmp_paths, self.outputs.values()):
                         tmp_path.rename(path)
@@ -262,7 +261,7 @@ class Task(BaseTask):
             else:
                 logger.debug(f'already exist: {self.outputs}')
             self._post_run_with_content_check()
-        except:
+        except Exception:
             self.update_status('ERROR')
             self.logger.exception('')
             raise

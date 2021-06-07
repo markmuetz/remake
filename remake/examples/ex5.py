@@ -12,7 +12,7 @@ class Basic1(TaskRule):
     def rule_run(self):
         assert len(self.inputs) == len(self.outputs)
         for i, o in zip(self.inputs.values(), self.outputs.values()):
-            o.write_text('\n'.join([f'changed output {l}' for l in i.read_text().split('\n')[:-1]]) + '\n')
+            o.write_text('\n'.join([f'changed output {line}' for line in i.read_text().split('\n')[:-1]]) + '\n')
 
 
 class Basic2(TaskRule):

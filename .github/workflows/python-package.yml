@@ -53,12 +53,15 @@ jobs:
         python -m pip install --upgrade pip
         python -m pip install .[testing]
         remake version
+    - name: Flake8
+      run: |
+        flake8 --max-line-length 120 remake
     - name: Test with nose/coverage/doctest
       run: |
-        nosetests --with-coverage tests
         cd ./remake
         nosetests --with-doctest *.py
         cd ..
+        nosetests --with-coverage tests
     - name: Upload Coverage to Codecov
       uses: codecov/codecov-action@v1
       with:

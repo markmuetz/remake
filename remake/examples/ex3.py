@@ -37,5 +37,3 @@ class VariableNumberOutput2(TaskRule):
         payload = f'{self.__class__.__name__} ({self.year}, {self.month})'
         for o in self.outputs.values():
             o.write_text(payload)
-
-

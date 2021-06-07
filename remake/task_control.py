@@ -196,7 +196,7 @@ class TaskControl:
         elif executor == 'multiproc':
             self.executor = MultiprocExecutor(self)
         else:
-            raise ValueError(f'executor must be one of singleproc, multiproc, or slurm')
+            raise ValueError('executor must be one of singleproc, multiproc, or slurm')
 
     @property
     def rescan_tasks(self):
@@ -322,7 +322,7 @@ class TaskControl:
                 if print_reasons:
                     logger.info(f'  --reason: {reason}')
         if print_reasons and not requires_rerun:
-            logger.info(f'  --reason: not needed')
+            logger.info('  --reason: not needed')
         return requires_rerun
 
     def gen_rescan_task(self, path):
@@ -416,7 +416,9 @@ class TaskControl:
                     status = 'pending'
                 else:
                     for prev_task in self.task_dag.predecessors(task):
-                        if prev_task in self.pending_tasks or prev_task in self.remaining_tasks or isinstance(prev_task, RescanFileTask):
+                        if (prev_task in self.pending_tasks or
+                                prev_task in self.remaining_tasks or
+                                isinstance(prev_task, RescanFileTask)):
                             status = 'remaining'
                             break
                     if status != 'remaining' and requires_rerun & self.remake_on:
@@ -426,7 +428,8 @@ class TaskControl:
                 # Reasons task can be cannot run:
                 # 1: one of its prev tasks cannot be run.
                 # 2: it has no previous tasks and thinks it cannot be run (task.can_run() == False).
-                # 3: it has a file that does not exists as an input and that file is not an output of any other task.
+                # 3: it has a file that does not exists as an input and that file is not an output
+                #    of any other task.
                 prev_tasks = list(self.task_dag.predecessors(task))
                 if prev_tasks:
                     for prev_task in prev_tasks:
@@ -521,8 +524,6 @@ class TaskControl:
     def enqueue_task(self, task, force=False):
         if task is None:
             raise Exception('No task to enqueue')
-        status = self.statuses.task_status(task)
-        # self.update_task_status(task, status, 'running')
 
         requires_rerun = self.task_requires_rerun(task, print_reasons=self.print_reasons)
         if requires_rerun & self.remake_on or force:
@@ -533,14 +534,12 @@ class TaskControl:
             except Exception as e:
                 logger.error(f'TaskControl: {self.name}')
                 logger.error(e)
-                # task.task_md.update_status('ERROR')
-                # self.update_task_status(task, 'running', status)
                 raise
             logger.debug(f'enqueued task: {task}')
             return True
         else:
             logger.debug(f'no longer requires enqueued: {task}')
-            logger.info(f'  -> task run not needed')
+            logger.info('  -> task run not needed')
             # TODO: at this point the DAG could be rescanned, and any downstream tasks could be marked as completed.
             return False
 

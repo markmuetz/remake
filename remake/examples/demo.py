@@ -44,4 +44,3 @@ if __name__ == '__main__':
     demo.tasks.status()
     # All (remaining) tasks can be run:
     demo.run_all()
-

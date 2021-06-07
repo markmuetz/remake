@@ -1,11 +1,10 @@
-from multiprocessing import Process, Queue, current_process
+from multiprocessing import Process, Queue
 import logging
 import logging.handlers
-from time import sleep
 
 from logging import getLogger
 
-from remake.setup_logging import setup_stdout_logging, add_file_logging, remove_file_logging
+from remake.setup_logging import add_file_logging, remove_file_logging
 from remake.load_remake import load_remake
 from remake.task import RescanFileTask
 from remake.executor.base_executor import Executor
@@ -167,4 +166,3 @@ class MultiprocExecutor(Executor):
 
     def has_finished(self):
         return (not self.pending_tasks) and (not self.running_tasks)
-

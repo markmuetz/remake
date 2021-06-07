@@ -100,7 +100,7 @@ class RemakeMonitorCurses:
 
         bottomline = [' '] * self.cols
         bottomline[:len(remake_name)] = list(remake_name)
-        stdscr.addstr(self.rows - 2, 0, ''.join(bottomline), curses.color_pair(8)|curses.A_BOLD)
+        stdscr.addstr(self.rows - 2, 0, ''.join(bottomline), curses.color_pair(8) | curses.A_BOLD)
 
     def summary(self, status_counts):
         stdscr = self.stdscr
@@ -252,10 +252,7 @@ class RemakeMonitorCurses:
                     if chr(c) == ':':
                         mode = 'command'
                     if mode == 'command':
-                        try:
-                            keypresses.append(chr(c))
-                        except:
-                            pass
+                        keypresses.append(chr(c))
                     else:
                         if chr(c) == 't':
                             show = 'tasks'
@@ -371,4 +368,3 @@ if __name__ == '__main__':
         wrapper(remake_curses_monitor, remake, int(sys.argv[1]))
     else:
         wrapper(remake_curses_monitor, remake)
-

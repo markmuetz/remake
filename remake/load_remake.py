@@ -20,4 +20,3 @@ def load_remake(filename):
     elif not remakes:
         raise Exception(f'No remake defined in {filename}')
     return remakes[0]
-

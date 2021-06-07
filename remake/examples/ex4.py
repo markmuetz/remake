@@ -6,7 +6,7 @@ ex4 = Remake()
 
 
 def join_lines(path, prepend_text):
-    return '\n'.join([f'{prepend_text} {l}' for l in path.read_text().split('\n')[:-1]]) + '\n'
+    return '\n'.join([f'{prepend_text} {line}' for line in path.read_text().split('\n')[:-1]]) + '\n'
 
 
 class DependsOn1(TaskRule):

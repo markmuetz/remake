@@ -26,6 +26,7 @@ class Rule1(TaskRule):
 class Rule2(TaskRule):
     """Links to Rule1 and back"""
     rule_inputs = {'in': 'data/outputs/ex6/rule1.{i}.out'}
+
     @staticmethod
     def rule_outputs(i):
         return {'out': f'data/outputs/ex6/rule1.{i + 1}.in'}
@@ -38,6 +39,7 @@ class Rule2(TaskRule):
 class Chain(TaskRule):
     """Links to itself"""
     rule_inputs = {'in': 'data/outputs/ex6/chain.{i}.in'}
+
     @staticmethod
     def rule_outputs(i):
         return {'out': f'data/outputs/ex6/chain.{i + 1}.in'}

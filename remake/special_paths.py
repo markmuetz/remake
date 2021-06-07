@@ -1,4 +1,4 @@
-from pathlib import Path, PosixPath
+from pathlib import Path, PosixPath  # noqa: F401
 
 
 def is_relative_to(p1, p2):
