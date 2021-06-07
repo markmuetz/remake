@@ -33,7 +33,7 @@ class RemakeMonitor:
         self.statuses = []
         for task in self.remake.task_ctrl.sorted_tasks:
             key = task.path_hash_key()
-            task_status_path = self.status_dir / key[:2] / (key[2:] + '.status')
+            task_status_path = task.task_md.task_status_path
             if not task_status_path.exists():
                 status = 'UNKNOWN'
             else:
@@ -44,7 +44,7 @@ class RemakeMonitor:
 
 
 class RemakeMonitorCurses:
-    def __init__(self, stdscr, remake: Remake, timeout: float):
+    def __init__(self, stdscr, remake: Remake, timeout: float, wrap=False):
         self.stdscr = stdscr
         self.remake = remake
         self.monitor = RemakeMonitor(remake)
@@ -52,6 +52,7 @@ class RemakeMonitorCurses:
         self.timeout = int(timeout * 1000)
         self.input_loop_timeout = 10
         self.num_input_loops = self.timeout // self.input_loop_timeout
+        self.wrap = wrap
 
         # Remove stream logging.
         remake_root = logging.getLogger('remake')
@@ -118,88 +119,105 @@ class RemakeMonitorCurses:
             i_offset = 0
         return i_offset
 
-    def show_tasks(self, i_offset):
-        stdscr = self.stdscr
+    def show_tasks(self):
         monitor = self.monitor
 
-        i_offset = self._check_i_offset(i_offset, len(monitor.statuses))
+        output = []
         for i, (task, status) in enumerate(monitor.statuses):
-            if 2 + i + i_offset <= 1:
-                continue
-            if 2 + i + i_offset >= self.rows - 2:
-                break
-            stdscr.addstr(2 + i + i_offset, 15, f'{str(i):>3}')
-            stdscr.addstr(2 + i + i_offset, 19, f'{status:<10}: {task}'[:self.cols - 19],
-                          self.cp(status))
+            output.append((f'{str(i):>3} {status:<10}: {task}', self.cp(status)))
+        return output
 
-    def show_rules(self, i_offset):
-        stdscr = self.stdscr
+    def show_rules(self):
         remake = self.remake
         monitor = self.monitor
-        i_offset = self._check_i_offset(i_offset, len(remake.rules))
-        stdscr.addstr(2, 36, ' CR,  U,  P, RM,  R,  C,  E')
+        output = []
+        output.append(' ' * 20 + '  CR,  U,  P, RM,  R,  C,  E')
         for i, rule in enumerate(remake.rules):
-            if 2 + i + i_offset <= 1:
-                continue
-            if 2 + i + i_offset >= self.rows - 2:
-                break
-            stdscr.addstr(3 + i + i_offset, 15, f'{str(rule.__name__)[:20]:<20}')
+            line = []
+            line.append(f'{str(rule.__name__)[:20]:<20} ')
             rule_status = Counter([monitor.task_key_status_map[t.path_hash_key()]
                                   for t in rule.tasks
                                   if t.path_hash_key() in monitor.task_key_status_map])
             for j, status in enumerate(['CANNOT_RUN', 'UNKNOWN', 'PENDING',
                                         'REMAINING', 'RUNNING',
                                         'COMPLETED', 'ERROR']):
-                if status in rule_status:
-                    stdscr.addstr(3 + i + i_offset, 36 + j * 4,
-                                  f'{str(rule_status[status]):>3}',
-                                  self.cp(status))
-                else:
-                    stdscr.addstr(3 + i + i_offset, 36 + j * 4, f'  0', self.cp(status))
-                if status != 'ERROR':
-                    stdscr.addstr(3 + i + i_offset, 36 + j * 4 + 3, ',')
 
-    def show_files(self, i_offset):
-        stdscr = self.stdscr
+                line.append(f'{str(rule_status[status]):>3}')
+
+            output.append(line[0] + ','.join(line[1:]))
+        return output
+
+    def show_files(self):
         remake = self.remake
         paths = [p
                  for t in remake.task_ctrl.sorted_tasks
                  for p in t.outputs.values()]
-        i_offset = self._check_i_offset(i_offset, len(paths))
+        output = []
         for i, path in enumerate(paths):
-            if 2 + i + i_offset <= 1:
-                continue
-            if 2 + i + i_offset >= self.rows - 2:
-                break
             if path.exists():
-                stdscr.addstr(2 + i + i_offset, 15,
-                              f'{str(path.exists()):>5}: {path}'[:self.cols - 15],
-                              self.cp('COMPLETED'))
+                output.append((f'{str(path.exists()):>5}: {path}',
+                               self.cp('COMPLETED')))
             else:
-                stdscr.addstr(2 + i + i_offset, 15,
-                              f'{str(path.exists()):>5}: {path}'[:self.cols - 15])
+                output.append(f'{str(path.exists()):>5}: {path}')
+        return output
 
     def show_task(self, task_i):
-        stdscr = self.stdscr
-        monitor = self.monitor
         task = list(self.remake.task_ctrl.sorted_tasks.keys())[task_i]
 
-        stdscr.addstr(2, 15, (f'{task.path_hash_key()[:6]}: {task}'))
-        row = 3
+        output = [f'{task.path_hash_key()[:6]}: {task}']
+
         task.task_md.generate_metadata()
         task.task_md.task_requires_rerun()
 
         for reason in task.task_md.rerun_reasons:
             if reason[1]:
-                stdscr.addstr(row, 15, f'  {reason[0]}: {reason[1]}')
+                output.append(f'  {reason[0]}: {reason[1]}')
             else:
-                stdscr.addstr(row, 15, f'  {reason[0]}')
-            row += 1
+                output.append(f'  {reason[0]}')
         task_diff = task.diff()
         if task_diff:
-            for line in task_diff:
-                stdscr.addstr(row, 15, line)
-                row += 1
+            output.extend(task_diff)
+        output.append('===LOG===')
+        for line in task.task_md.log_path.read_text().split('\n'):
+            if not line:
+                continue
+            split_line = line.split()
+            time = ' '.join(split_line[:2])
+            level = split_line[4]
+            msg = ' '.join(split_line[5:])
+
+            output.append(f'{time} {level:>6} {msg}')
+        return output
+
+    def display_output(self, output, i_offset):
+        wrapped_output = []
+        if self.wrap:
+            for line in output:
+                if isinstance(line, tuple) and len(line) == 2:
+                    line, colour = line
+                else:
+                    colour = None
+                while 15 + len(line) > self.cols:
+                    wrapped_output.append((line[:self.cols - 15], colour))
+                    line = line[self.cols - 15:]
+                wrapped_output.append((line, colour))
+        else:
+            for line in output:
+                if isinstance(line, tuple) and len(line) == 2:
+                    line, colour = line
+                else:
+                    colour = None
+                wrapped_output.append((line[:self.cols - 15], colour))
+
+        for i, (line, colour) in enumerate(wrapped_output):
+            if 2 + i + i_offset <= 1:
+                continue
+            if 2 + i + i_offset >= self.rows - 2:
+                break
+            if colour:
+                self.stdscr.addstr(i + 2 + i_offset, 15, line, colour)
+            else:
+                self.stdscr.addstr(i + 2 + i_offset, 15, line)
 
     def getch(self):
         return self.stdscr.getch()
@@ -263,6 +281,9 @@ class RemakeMonitorCurses:
                         elif chr(c) == 'G':
                             i_offset = -10000
                             break
+                        elif chr(c) == 'w':
+                            self.wrap = not self.wrap
+                            break
                         elif chr(c) == 'R':
                             self.remake = load_remake(self.remake.name)
                             self.remake.task_ctrl.build_task_DAG()
@@ -317,13 +338,17 @@ class RemakeMonitorCurses:
 
             self.summary(self.monitor.status_counts)
             if show == 'tasks':
-                self.show_tasks(i_offset)
+                output = self.show_tasks()
             elif show == 'rules':
-                self.show_rules(i_offset)
+                output = self.show_rules()
             elif show == 'files':
-                self.show_files(i_offset)
+                output = self.show_files()
             elif show == 'task':
-                self.show_task(self.task_i)
+                output = self.show_task(self.task_i)
+            else:
+                raise Exception(f'Unknown show: {show}')
+
+            self.display_output(output, i_offset)
 
             try:
                 (mode, command, keypresses,
