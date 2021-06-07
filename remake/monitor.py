@@ -177,6 +177,9 @@ class RemakeMonitorCurses:
         task_diff = task.diff()
         if task_diff:
             output.extend(task_diff)
+        if not task.task_md.log_path.exists():
+            return output
+
         output.append('===LOG===')
         for line in task.task_md.log_path.read_text().split('\n'):
             if not line:
