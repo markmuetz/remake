@@ -2,10 +2,9 @@ import os
 from pathlib import Path
 import unittest
 from unittest import mock
-from curses import wrapper
 
 from remake.load_remake import load_remake
-from remake.monitor import RemakeMonitor, RemakeMonitorCurses, remake_curses_monitor
+from remake.monitor import RemakeMonitor, remake_curses_monitor
 from remake.util import sysrun
 
 examples_dir = Path(__file__).parent.parent.parent / 'remake' / 'examples'

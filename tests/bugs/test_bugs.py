@@ -28,4 +28,3 @@ def test_bug2():
     path_md = list(task_md.inputs_metadata_map.values())[0]
     assert is_relative_to(path_md.metadata_path, Path('.remake'))
     os.chdir(orig_cwd)
-

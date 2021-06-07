@@ -48,7 +48,7 @@ setup(
         'debug': ['ipdb'],
         'display': ['matplotlib'],
         'experimental': ['numpy'],
-        'testing': ['nose', 'coverage', 'numpy', 'matplotlib'],
+        'testing': ['coverage', 'flake8', 'matplotlib', 'nose', 'numpy'],
     },
     entry_points={
         'console_scripts': [

@@ -2,7 +2,6 @@ import os
 from pathlib import Path
 from remake.remake_cmd import remake_cmd
 from remake.remake_exceptions import CyclicDependency
-import remake
 
 examples_dir = Path(__file__).parent.parent.parent / 'remake' / 'examples'
 
