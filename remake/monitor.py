@@ -169,27 +169,25 @@ class RemakeMonitorCurses:
         task.task_md.generate_metadata()
         task.task_md.task_requires_rerun()
 
-        for reason in task.task_md.rerun_reasons:
-            if reason[1]:
-                output.append(f'  {reason[0]}: {reason[1]}')
-            else:
-                output.append(f'  {reason[0]}')
+        if task.task_md.rerun_reasons:
+            output.append('===RERUN REASONS===')
+            for reason in task.task_md.rerun_reasons:
+                if reason[1]:
+                    output.append(f'  {reason[0]}: {reason[1]}')
+                else:
+                    output.append(f'  {reason[0]}')
+
         task_diff = task.diff()
         if task_diff:
+            output.append('===DIFF===')
             output.extend(task_diff)
-        if not task.task_md.log_path.exists():
-            return output
 
-        output.append('===LOG===')
-        for line in task.task_md.log_path.read_text().split('\n'):
-            if not line:
-                continue
-            split_line = line.split()
-            time = ' '.join(split_line[:2])
-            level = split_line[4]
-            msg = ' '.join(split_line[5:])
-
-            output.append(f'{time} {level:>6} {msg}')
+        if task.task_md.log_path.exists():
+            output.append('===LOG===')
+            for line in task.task_md.log_path.read_text().split('\n'):
+                if not line:
+                    continue
+                output.append(f'{line}')
         return output
 
     def display_output(self, output, i_offset):

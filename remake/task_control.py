@@ -533,8 +533,8 @@ class TaskControl:
             except Exception as e:
                 logger.error(f'TaskControl: {self.name}')
                 logger.error(e)
-                task.task_md.update_status('ERROR')
-                self.update_task_status(task, 'running', status)
+                # task.task_md.update_status('ERROR')
+                # self.update_task_status(task, 'running', status)
                 raise
             logger.debug(f'enqueued task: {task}')
             return True

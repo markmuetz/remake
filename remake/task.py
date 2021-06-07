@@ -213,9 +213,9 @@ class Task(BaseTask):
             raise Exception('Not all files required for task exist')
 
         self.task_md.log_path.parent.mkdir(parents=True, exist_ok=True)
-        # TODO: adding file logging is disabling other logging.
         self.update_status('RUNNING')
 
+        logger_name = f'remake.task.{self.__class__.__name__}'
         try:
             if self.requires_rerun() or force or self.force:
                 logger.debug(f'requires_rerun or force')
@@ -233,7 +233,6 @@ class Task(BaseTask):
                 orig_outputs = self.outputs
                 self.outputs = self.tmp_outputs
 
-                logger_name = f'remake.task.{self.__class__.__name__}'
                 self.logger = getLogger(logger_name)
                 add_file_logging(self.task_md.log_path, 'DEBUG', logger_name)
 
@@ -265,10 +264,11 @@ class Task(BaseTask):
             self._post_run_with_content_check()
         except:
             self.update_status('ERROR')
+            self.logger.exception('')
             raise
         finally:
             if self.logger:
-                remove_file_logging(self.task_md.log_path)
+                remove_file_logging(self.task_md.log_path, logger_name)
 
         return self
 
