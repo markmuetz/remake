@@ -21,9 +21,9 @@ class Basic2(TaskRule):
     rule_inputs = Basic1.rule_outputs
     rule_outputs = {'out': 'data/outputs/ex1/out2.txt'}
 
-    # def rule_run(self):
+    def rule_run(self):
 
-    #     assert len(self.inputs) == len(self.outputs)
-    #     for i, o in zip(self.inputs.values(), self.outputs.values()):
-    #         o.write_text('\n'.join([f'f1 {l}' for l in i.read_text().split('\n')[:-1]]) + '\n')
+        assert len(self.inputs) == len(self.outputs)
+        for i, o in zip(self.inputs.values(), self.outputs.values()):
+            o.write_text('\n'.join([f'f1 {l}' for l in i.read_text().split('\n')[:-1]]) + '\n')
 
