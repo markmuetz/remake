@@ -16,8 +16,8 @@ from remake.executor.base_executor import Executor
 SLURM_SCRIPT_TPL = """#!/bin/bash
 #SBATCH --job-name={job_name}
 #SBATCH -p {queue}
-#SBATCH -o {rule_slurm_output}/{script_name}_{remakefile_name}_{task_type}_%j.out
-#SBATCH -e {rule_slurm_output}/{script_name}_{remakefile_name}_{task_type}_%j.err
+#SBATCH -o {task_slurm_output}/{task_type}_%j.out
+#SBATCH -e {task_slurm_output}/{task_type}_%j.err
 #SBATCH --time={max_runtime}
 #SBATCH --mem={mem}
 {dependencies}
@@ -63,12 +63,11 @@ class SlurmExecutor(Executor):
         slurm_kwargs = {**default_slurm_kwargs}
         slurm_kwargs.update(slurm_config)
 
-        slurm_dir = Path('slurm_scripts')
-        slurm_dir.mkdir(exist_ok=True)
-        self.slurm_output = Path('slurm_output')
-        self.slurm_output.mkdir(exist_ok=True)
+        self.slurm_dir = Path('.remake/slurm/scripts')
+        self.slurm_dir.mkdir(exist_ok=True, parents=True)
+        self.slurm_output = Path('.remake/slurm/output')
+        self.slurm_output.mkdir(exist_ok=True, parents=True)
 
-        self.slurm_dir = slurm_dir
         self.remakefile_path = Path(task_ctrl.name + '.py').absolute()
         self.slurm_kwargs = slurm_kwargs
         self.task_jobid_map = {}
@@ -86,9 +85,15 @@ class SlurmExecutor(Executor):
         script_name = script_path.stem
         rule_name = task.__class__.__name__
         rule_slurm_output = self.slurm_output / rule_name
-        rule_slurm_output.mkdir(exist_ok=True)
+        if hasattr(task, 'var_matrix'):
+            task_dir = [f'{k}-{getattr(task, k)}' for k in task.var_matrix.keys()]
+            task_slurm_output = rule_slurm_output.joinpath(*task_dir)
+        else:
+            task_slurm_output = rule_slurm_output
+        logger.info(Path.cwd())
+        logger.info(f'  creating {task_slurm_output}')
+        task_slurm_output.mkdir(exist_ok=True, parents=True)
         slurm_script_filepath = self.slurm_dir / f'{script_name}_{remakefile_name}_{task.path_hash_key()}.sbatch'
-        logger.debug(f'  writing {slurm_script_filepath}')
 
         prev_jobids = []
         prev_tasks = self.task_ctrl.task_dag.predecessors(task)
@@ -112,7 +117,7 @@ class SlurmExecutor(Executor):
 
         slurm_script = SLURM_SCRIPT_TPL.format(script_name=script_name,
                                                script_path=script_path,
-                                               rule_slurm_output=rule_slurm_output,
+                                               task_slurm_output=task_slurm_output,
                                                remakefile_name=remakefile_name,
                                                remakefile_path=self.remakefile_path,
                                                remakefile_path_hash=self.remakefile_path_hash,
@@ -122,6 +127,7 @@ class SlurmExecutor(Executor):
                                                job_name=task_key[:10],  # Longer and a leading * is added.
                                                **self.slurm_kwargs)
 
+        logger.info(f'  writing {slurm_script_filepath}')
         with open(slurm_script_filepath, 'w') as fp:
             fp.write(slurm_script)
         return slurm_script_filepath
