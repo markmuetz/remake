@@ -20,8 +20,10 @@ class RemakeMetaclass(type):
     `TaskRule` .tasks list."""
     def __new__(mcs, clsname, bases, attrs):
         if clsname not in ['TaskRule']:
+            # Do not do anything for TaskRule class creation below.
             remake = Remake.current_remake[multiprocessing.current_process().name]
             if 'TaskRule' in [b.__name__ for b in bases]:
+                # Only apply to subclasses of TaskRule.
                 for prop in RemakeMetaclass.required_properties:
                     if prop not in attrs:
                         raise MissingTaskRuleProperty(f'TaskRule requires property `{prop}` to be set')
@@ -30,9 +32,6 @@ class RemakeMetaclass(type):
                 attrs['task_ctrl'] = remake.task_ctrl
                 attrs['next_rules'] = set()
                 attrs['prev_rules'] = set()
-                var_matrix = {}
-        else:
-            pass
 
         newcls = super(RemakeMetaclass, mcs).__new__(
             mcs, clsname, bases, attrs)
@@ -43,32 +42,21 @@ class RemakeMetaclass(type):
         if clsname not in ['TaskRule']:
             if 'TaskRule' in [b.__name__ for b in bases]:
                 remake.rules.append(newcls)
-                if not var_matrix:
-                    var_matrix = attrs.get('var_matrix', None)
+                var_matrix = attrs.get('var_matrix', None)
                 depends_on = attrs.get('depends_on', tuple())
                 if var_matrix:
                     for loop_vars in itertools.product(*var_matrix.values()):
+                        # e.g. var_matrix = {'a': [1, 2], 'b': [3, 4]}
+                        # run for [(1, 3), (1, 4), (2, 3), (2, 4)].
                         fmt_dict = {k: v for k, v in zip(var_matrix.keys(), loop_vars)}
-                        # This is a little gnarly.
-                        # See: https://stackoverflow.com/questions/41921255/staticmethod-object-is-not-callable
-                        # Method has not been bound yet, but you can call it using its __func__ attr.
-                        # N.B. both are possible, if e.g. a second rule uses a first rule's method.
-                        if hasattr(attrs['rule_inputs'], '__func__'):
-                            inputs = attrs['rule_inputs'].__func__(**fmt_dict)
-                        elif callable(attrs['rule_inputs']):
-                            inputs = attrs['rule_inputs'](**fmt_dict)
-                        else:
-                            inputs = {k.format(**fmt_dict): format_path(v, **fmt_dict)
-                                      for k, v in attrs['rule_inputs'].items()}
-                        if hasattr(attrs['rule_outputs'], '__func__'):
-                            outputs = attrs['rule_outputs'].__func__(**fmt_dict)
-                        elif callable(attrs['rule_outputs']):
-                            outputs = attrs['rule_outputs'](**fmt_dict)
-                        else:
-                            outputs = {k.format(**fmt_dict): format_path(v, **fmt_dict)
-                                       for k, v in attrs['rule_outputs'].items()}
+                        # e.g. for (1, 3): fmt_dict = {'a': 1, 'b': 3}
+                        inputs = RemakeMetaclass._create_inputs_ouputs(attrs['rule_inputs'], fmt_dict)
+                        outputs = RemakeMetaclass._create_inputs_ouputs(attrs['rule_outputs'], fmt_dict)
+                        # Creates an instance of the class. N.B. TaskRule inherits from Task, so Task.__init__ is
+                        # called here.
                         task = newcls(remake.task_ctrl, attrs['rule_run'], inputs, outputs,
                                       depends_on=depends_on)
+                        # Set up the instance variables so that e.g. within TaskRule.rule_run, self.a == 1.
                         for k, v in zip(var_matrix.keys(), loop_vars):
                             setattr(task, k, v)
                         newcls.tasks.append(task)
@@ -82,6 +70,20 @@ class RemakeMetaclass(type):
 
                 remake.tasks.extend(newcls.tasks)
         return newcls
+
+    @staticmethod
+    def _create_inputs_ouputs(rule_inputs_outputs, fmt_dict):
+        # This is a little gnarly.
+        # See: https://stackoverflow.com/questions/41921255/staticmethod-object-is-not-callable
+        # Method has not been bound yet, but you can call it using its __func__ attr.
+        # N.B. both are possible, if e.g. a second rule uses a first rule's method.
+        if hasattr(rule_inputs_outputs, '__func__'):
+            return rule_inputs_outputs.__func__(**fmt_dict)
+        elif callable(rule_inputs_outputs):
+            return rule_inputs_outputs(**fmt_dict)
+        else:
+            return {k.format(**fmt_dict): format_path(v, **fmt_dict)
+                    for k, v in rule_inputs_outputs.items()}
 
 
 class TaskRule(Task, metaclass=RemakeMetaclass):
