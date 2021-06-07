@@ -254,8 +254,13 @@ class PathMetadata:
         self.metadata_dir = dotremake_dir / METADATA_VERSION
         self.file_metadata_dir = self.metadata_dir / 'file_metadata'
 
-        self.metadata_path = self.file_metadata_dir.joinpath(*(special_input_path.parent.parts +
-                                                               (f'{path.name}.metadata',)))
+        if special_input_path.is_absolute():
+            self.metadata_path = self.file_metadata_dir.joinpath(*(special_input_path.parent.parts[1:] +
+                                                                   (f'{path.name}.metadata',)))
+        else:
+            self.metadata_path = self.file_metadata_dir.joinpath(*(special_input_path.parent.parts +
+                                                                   (f'{path.name}.metadata',)))
+
         self.task_metadata_path = self.file_metadata_dir.joinpath(*(path.parent.parts[1:] +
                                                                     (f'{path.name}.created_by.task',)))
 
