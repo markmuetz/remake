@@ -104,10 +104,12 @@ class TaskMetadata:
         self.task_metadata_dir_path = self.task_metadata_dir / self.task_path_hash_key[:2] / self.task_path_hash_key[2:]
 
         self.task_metadata_path = self.task_metadata_dir_path / 'task.metadata'
-        self.log_path = self.task_metadata_dir_path / 'task.log'
 
-        self.task_status_path = (self.metadata_dir / self.task_control_name / 'task_status' /
-                                 self.task_path_hash_key[:2] / (self.task_path_hash_key[2:] + '.status'))
+        self.task_status_dir = (self.metadata_dir / self.task_control_name / 'task_status' /
+                                self.task_path_hash_key[:2] / self.task_path_hash_key[2:])
+
+        self.task_status_path = self.task_status_dir / 'task.status'
+        self.log_path = self.task_status_dir / 'task.log'
 
     def update_status(self, status):
         self.task_status_path.parent.mkdir(parents=True, exist_ok=True)

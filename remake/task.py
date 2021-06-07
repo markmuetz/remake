@@ -7,6 +7,7 @@ from pathlib import Path
 from timeit import default_timer as timer
 
 from remake.flags import RemakeOn
+from remake.setup_logging import add_file_logging, remove_file_logging
 from remake.special_paths import map_special_paths
 
 logger = getLogger(__name__)
@@ -114,6 +115,7 @@ class Task(BaseTask):
         self.result = None
         self.rerun_on_mtime = True
         self.tmp_outputs = {}
+        self.logger = None
 
     def __repr__(self):
         # return f'{self.__class__}({self.func.__code__.co_name}, {self.inputs}, {self.outputs})'
@@ -212,7 +214,6 @@ class Task(BaseTask):
 
         self.task_md.log_path.parent.mkdir(parents=True, exist_ok=True)
         # TODO: adding file logging is disabling other logging.
-        # add_file_logging(task_md.log_path)
         self.update_status('RUNNING')
 
         try:
@@ -231,7 +232,17 @@ class Task(BaseTask):
 
                 orig_outputs = self.outputs
                 self.outputs = self.tmp_outputs
+
+                logger_name = f'remake.task.{self.__class__.__name__}'
+                self.logger = getLogger(logger_name)
+                add_file_logging(self.task_md.log_path, 'DEBUG', logger_name)
+
+                self.logger.debug(f'Running: {self}')
                 self.result = self.func(self)
+                self.logger.debug(f'Completed: {self}')
+                remove_file_logging(self.task_md.log_path, logger_name)
+                self.logger = None
+
                 self.outputs = orig_outputs
 
                 logger.debug(f'run func {self.func} completed in {timer() - start:.2f}s:'
@@ -255,6 +266,9 @@ class Task(BaseTask):
         except:
             self.update_status('ERROR')
             raise
+        finally:
+            if self.logger:
+                remove_file_logging(self.task_md.log_path)
 
         return self
 

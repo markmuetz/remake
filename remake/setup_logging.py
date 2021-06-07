@@ -78,27 +78,26 @@ def setup_stdout_logging(level='INFO', colour=True, detailed=False):
     setattr(remake_root, 'is_setup_stream_logging', True)
 
 
-def add_file_logging(log_path, level='INFO'):
+def add_file_logging(log_path, level='INFO', logger_name='remake'):
     log_path = Path(log_path)
-    remake_root = logging.getLogger('remake')
-    remake_root.setLevel(level)
+    logger = logging.getLogger(logger_name)
+    logger.setLevel(level)
 
-    remake_root.debug(f'Adding file handler {log_path}')
+    logger.debug(f'Adding file handler {log_path}')
     formatter = logging.Formatter('%(asctime)s %(processName)-15s %(name)-40s %(levelname)-8s %(message)s')
     handler = logging.FileHandler(str(log_path.absolute()), mode='a')
     handler.setFormatter(formatter)
     handler.setLevel(level)
 
-    remake_root.addHandler(handler)
+    logger.addHandler(handler)
 
 
-def remove_file_logging(log_path):
+def remove_file_logging(log_path, logger_name='remake'):
     log_path = Path(log_path)
-    remake_root = logging.getLogger('remake')
-    handlers = [h for h in remake_root.handlers
+    logger = logging.getLogger(logger_name)
+    handlers = [h for h in logger.handlers
                 if isinstance(h, logging.FileHandler) and h.baseFilename == str(log_path.absolute())]
     assert len(handlers) == 1
     handler = handlers[0]
-    remake_root.handlers.remove(handler)
-    remake_root.debug(f'Removed file handler {log_path}')
-
+    logger.handlers.remove(handler)
+    logger.debug(f'Removed file handler {log_path}')
