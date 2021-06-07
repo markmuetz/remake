@@ -1,6 +1,7 @@
 import itertools
 import multiprocessing
 
+from remake.remake_exceptions import MissingTaskRuleProperty
 from remake.task import Task
 from remake.remake_base import Remake
 from remake.task_query_set import TaskQuerySet
@@ -8,6 +9,11 @@ from remake.util import format_path
 
 
 class RemakeMetaclass(type):
+    required_properties = [
+        'rule_inputs',
+        'rule_outputs',
+        'rule_run',
+    ]
     """Provides the machinery for actually creating `TaskRule` classes.
 
     Uses the information provided by a `TaskRule` to create instances of the task rule, and add them the
@@ -16,8 +22,10 @@ class RemakeMetaclass(type):
         if clsname not in ['TaskRule']:
             remake = Remake.current_remake[multiprocessing.current_process().name]
             if 'TaskRule' in [b.__name__ for b in bases]:
-                assert 'rule_inputs' in attrs or 'inputs' in attrs
-                assert 'rule_outputs' in attrs or 'outputs' in attrs
+                for prop in RemakeMetaclass.required_properties:
+                    if prop not in attrs:
+                        raise MissingTaskRuleProperty(f'TaskRule requires property `{prop}` to be set')
+
                 attrs['tasks'] = TaskQuerySet(task_ctrl=remake.task_ctrl)
                 attrs['task_ctrl'] = remake.task_ctrl
                 attrs['next_rules'] = set()
@@ -28,6 +36,9 @@ class RemakeMetaclass(type):
 
         newcls = super(RemakeMetaclass, mcs).__new__(
             mcs, clsname, bases, attrs)
+
+        if not attrs.get('enabled', True):
+            return newcls
 
         if clsname not in ['TaskRule']:
             if 'TaskRule' in [b.__name__ for b in bases]:

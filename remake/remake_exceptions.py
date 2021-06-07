@@ -2,6 +2,10 @@ class RemakeError(Exception):
     pass
 
 
+class MissingTaskRuleProperty(RemakeError):
+    pass
+
+
 class CyclicDependency(RemakeError):
     def __init__(self, msg, dependent_tasks):
         super().__init__(msg)
