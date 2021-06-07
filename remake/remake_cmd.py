@@ -218,7 +218,9 @@ class RemakeParser:
         },
         'setup-examples': {
             'help': 'Setup examples directory',
-            'args': []
+            'args': [
+                Arg('--force', '-f', action='store_true'),
+            ]
         },
         'version': {
             'help': 'Print remake version',
@@ -307,7 +309,7 @@ class RemakeParser:
         elif args.subcmd_name == 'monitor':
             monitor(args.remakefile, args.timeout)
         elif args.subcmd_name == 'setup-examples':
-            setup_examples()
+            setup_examples(args.force)
         elif args.subcmd_name == 'version':
             print(get_version(form='long' if args.long else 'short'))
         else:
@@ -482,9 +484,8 @@ def remakefile_info(remakefiles, long, display):
                              ])
             else:
                 print(f'{remake.name}')
-                for i, task in enumerate(remake.sorted_tasks):
-                    task_status = remake.task_status(task)
-                    print(f'{i + 1}/{len(remake.tasks)}, {task_status}: {task.path_hash_key()}'
+                for i, task in enumerate(remake.task_ctrl.sorted_tasks):
+                    print(f'{i + 1}/{len(remake.tasks)}, {task.status:<10}: {task.path_hash_key()}'
                           f' {task.short_str()}')
 
         if not long:
@@ -569,20 +570,22 @@ def monitor(remakefile, timeout):
     wrapper(remake_curses_monitor, remake, timeout)
 
 
-def setup_examples():
+def setup_examples(force):
     import remake
     logger.debug('Setting up examples')
 
     new_examples_dir = 'remake-examples'
-    r = input(f'Directory name [{new_examples_dir}]: ')
-    if r:
-        new_examples_dir = r
+    if not force:
+        r = input(f'Directory name [{new_examples_dir}]: ')
+        if r:
+            new_examples_dir = r
     new_examples_dir = Path(new_examples_dir)
     if new_examples_dir.exists():
-        r = input(f'Overwrite examples in {new_examples_dir} y/[n]: ')
-        if r != 'y':
-            print('Exiting')
-            return
+        if not force:
+            r = input(f'Overwrite examples in {new_examples_dir} y/[n]: ')
+            if r != 'y':
+                print('Exiting')
+                return
         logger.debug(f'rm {new_examples_dir}')
         shutil.rmtree(new_examples_dir)
 

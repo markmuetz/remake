@@ -88,6 +88,7 @@ class TestCLI2(TaskRule):
         commands = [
             'rm -rf data/outputs/ex2',
             'remake info ex2',
+            'remake info -l ex2',
             'remake ls-tasks ex2',
             'remake ls-tasks -l ex2',
             'remake ls-tasks --filter=i=2 ex2',
@@ -112,9 +113,8 @@ class TestCLI2(TaskRule):
             'remake run-tasks --rule=Reduce2 ex2',
             'remake rm-files -f --output-only ex2',
             'remake rule-info ex2 Process',
-            # Computer dependent hash.
-            # TODO: Re-instate at some point.
-            # f'remake task-info ex2 82b155',
+            # Note computer independent as output is rel to CWD.
+            'remake task-info ex2 861024da5c',
             'remake file-info ex2 data/outputs/ex2/fan_out.0.3.out',
         ]
         run_commands(commands)
