@@ -225,6 +225,13 @@ class RemakeParser:
                 Arg('--force', '-f', action='store_true'),
             ]
         },
+        'archive': {
+            'help': 'Setup examples directory',
+            'args': [
+                Arg('--files', default='output_only'),
+                Arg('remakefile', nargs='?', default='remakefile'),
+            ]
+        },
         'version': {
             'help': 'Print remake version',
             'args': [
@@ -313,6 +320,8 @@ class RemakeParser:
             monitor(args.remakefile, args.timeout)
         elif args.subcmd_name == 'setup-examples':
             setup_examples(args.force)
+        elif args.subcmd_name == 'archive':
+            archive(args.remakefile, args.files)
         elif args.subcmd_name == 'version':
             print(get_version(form='long' if args.long else 'short'))
         else:
@@ -547,6 +556,18 @@ def monitor(remakefile, timeout):
     remake = load_remake(remakefile)
     remake.task_ctrl.build_task_DAG()
     wrapper(remake_curses_monitor, remake, timeout)
+
+
+def archive(remakefile, files):
+    remake = load_remake(remakefile).finalize()
+    print(remake)
+    filelist = remake.list_files(files, True)
+    import tarfile
+    with tarfile.open(".remake/archive.tgz", "w:gz") as tar:
+        for path, output_type, exists in filelist:
+            print(str(path))
+            tar.add(str(path))
+    tar.close()
 
 
 def setup_examples(force):
