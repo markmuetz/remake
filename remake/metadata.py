@@ -304,22 +304,6 @@ class PathMetadata:
 
         return metadata_has_changed
 
-    def compare_task_with_previous(self, task_path_hash_key):
-        logger.debug(f'comparing task with previous: {self.path}')
-
-        created_by_name_glob = f'{self.path.name}.created_by.*.task'
-        created_by_name_paths = list(self.metadata_path.parent.glob(created_by_name_glob))
-
-        if created_by_name_paths:
-            assert len(created_by_name_paths), 'more than one created_by_task found.'
-            created_by_name_path = created_by_name_paths[0]
-            created_by_task_path_hash_key = created_by_name_path.name.split('.')[-2]
-            if created_by_task_path_hash_key != task_path_hash_key:
-                created_by_name_path.unlink()
-                self.write_new_task_metadata(task_path_hash_key)
-        else:
-            self.write_new_task_metadata(task_path_hash_key)
-
     def gen_sha1hex(self):
         self.new_metadata['sha1hex'] = sha1sum(self.path)
 
@@ -336,17 +320,3 @@ class PathMetadata:
         logger.debug(f'write new path metadata to {self.metadata_path}')
         self.metadata_path.parent.mkdir(parents=True, exist_ok=True)
         flush_json_write(self.new_metadata, self.metadata_path)
-
-    def write_new_used_by_task_metadata(self, task_path_hash_key):
-        used_by_name = f'{self.path.name}.used_by.{task_path_hash_key}.task'
-        used_by_task_metadata_path = self.metadata_path.parent / used_by_name
-        logger.debug(f'write input task metadata to {used_by_task_metadata_path}')
-        used_by_task_metadata_path.parent.mkdir(parents=True, exist_ok=True)
-        used_by_task_metadata_path.touch()
-
-    def write_new_task_metadata(self, task_path_hash_key):
-        logger.debug(f'write output task metadata to {self.task_metadata_path}')
-        created_by_name = f'{self.path.name}.created_by.{task_path_hash_key}.task'
-        created_by_task_metadata_path = self.metadata_path.parent / created_by_name
-        created_by_task_metadata_path.parent.mkdir(parents=True, exist_ok=True)
-        created_by_task_metadata_path.touch()

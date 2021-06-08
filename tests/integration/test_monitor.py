@@ -57,11 +57,14 @@ class TestRemakeMonitorCurses(unittest.TestCase):
             ':task 0',
             ':task 1',
             ':task 2',
+            ':show tasks',
+            'w'
             'j',
             'k',
             'g',
             'G',
             'F',
+            'R',
             ':q'  # Note, end by quiting application.
         ]
 

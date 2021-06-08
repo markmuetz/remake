@@ -1,11 +1,9 @@
-import sys
 from collections import Counter
 import datetime as dt
 from pathlib import Path
 import logging
 
 import curses
-from curses import wrapper
 
 from remake import Remake
 from remake.load_remake import load_remake
@@ -210,6 +208,7 @@ class RemakeMonitorCurses:
                     colour = None
                 wrapped_output.append((line[:self.cols - 15], colour))
 
+        i_offset = self._check_i_offset(i_offset, len(wrapped_output))
         for i, (line, colour) in enumerate(wrapped_output):
             if 2 + i + i_offset <= 1:
                 continue
@@ -358,13 +357,3 @@ class RemakeMonitorCurses:
 def remake_curses_monitor(stdscr, remake: Remake, timeout: float):
     _mon = RemakeMonitorCurses(stdscr, remake, timeout)
     _mon.monitor_loop()
-
-
-if __name__ == '__main__':
-    remake = load_remake(sys.argv[1])
-    remake.build_task_DAG()
-
-    if len(sys.argv) == 3:
-        wrapper(remake_curses_monitor, remake, int(sys.argv[1]))
-    else:
-        wrapper(remake_curses_monitor, remake)
