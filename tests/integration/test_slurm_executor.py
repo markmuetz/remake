@@ -22,6 +22,7 @@ class TestSlurmExecutor(unittest.TestCase):
         self.remake.finalize()
 
     def tearDown(self) -> None:
+        sysrun('make reset')
         os.chdir(self.orig_cwd)
 
     @mock.patch('remake.executor.slurm_executor.sysrun')
@@ -58,6 +59,7 @@ class TestSlurmExecutorRunJob(unittest.TestCase):
         sysrun('make clean')
 
     def tearDown(self) -> None:
+        sysrun('make reset')
         os.chdir(self.orig_cwd)
 
     def test_slurm_executor_run_job_rescan(self):

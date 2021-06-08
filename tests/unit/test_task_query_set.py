@@ -6,7 +6,8 @@ from remake.task_query_set import TaskQuerySet
 
 
 class TestTaskQuerySet(unittest.TestCase):
-    def setUp(self) -> None:
+    @classmethod
+    def setUpClass(cls) -> None:
         tasks = []
         statuses = {'a': 'completed', 'b': 'pending', 'c': 'remaining'}
         for val1, val2 in product(['a', 'b', 'c'], [1, 2, 3]):
@@ -24,13 +25,13 @@ class TestTaskQuerySet(unittest.TestCase):
             tasks.append(task)
 
         task_ctrl = mock.MagicMock()
-        self.tasks = TaskQuerySet(tasks, task_ctrl)
-        assert len(self.tasks) == 9
+        cls.tasks = TaskQuerySet(tasks, task_ctrl)
+        assert len(cls.tasks) == 9
 
     def test_index_slice(self):
-        self.tasks[0]
-        self.tasks[:3]
-        self.tasks[:-1]
+        assert self.tasks[0]
+        self.assertEqual(len(self.tasks[:3]), 3)
+        self.assertEqual(len(self.tasks[:-1]), 8)
 
     def test_filter(self):
         self.assertEqual(len(self.tasks.filter(val1='a')), 3)
