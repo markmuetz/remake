@@ -23,12 +23,15 @@ class TestLoadRemake(unittest.TestCase):
     @mock.patch('remake.load_remake.load_module')
     def test_no_remakes(self, mock_load_module):
         mock_load_module.return_value = []
-        self.assertRaises(RemakeLoadError, load_remake, 'remake')
+        self.assertRaisesRegex(RemakeLoadError, 'No remake defined in remake.py', load_remake, 'remake.py')
 
     @mock.patch('remake.load_remake.load_module')
     def test_too_many_remakes(self, mock_load_module):
-        mock_load_module.return_value = [Remake('a'), Remake('b')]
-        self.assertRaises(RemakeLoadError, load_remake, 'remake.py')
+        mock_module = mock.MagicMock()
+        mock_module.remake_a = Remake('a')
+        mock_module.remake_b = Remake('b')
+        mock_load_module.return_value = mock_module
+        self.assertRaisesRegex(RemakeLoadError, 'More than one remake defined in remake.py', load_remake, 'remake.py')
 
 
 class TestSetupLogging(unittest.TestCase):
