@@ -135,7 +135,6 @@ class TaskRule(Task, metaclass=RemakeMetaclass):
         return self.__dict__[item]
 
 
-
 # TODO: Ideas for new TaskRules:
 # class CommandTaskRule(TaskRule):
 #    command = ...
