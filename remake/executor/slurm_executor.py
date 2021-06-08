@@ -133,7 +133,7 @@ class SlurmExecutor(Executor):
     def _submit_task(self, task):
         slurm_script_path = self._write_submit_script(task)
         output = _submit_slurm_script(slurm_script_path)
-        logger.debug(f'Submitted: {task}')
+        logger.info(f'Submitted: {task}')
         jobid = _parse_jobid(output)
         self.task_jobid_map[task] = jobid
 
