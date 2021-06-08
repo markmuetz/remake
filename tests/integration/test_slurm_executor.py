@@ -51,6 +51,20 @@ class TestSlurmExecutor(unittest.TestCase):
         self.remake.task_ctrl.set_executor('slurm')
         self.assertRaises(sp.CalledProcessError, self.remake.run_all)
 
+    @mock.patch('remake.executor.slurm_executor.sysrun')
+    def test_slurm_remake_run_requested(self, mock_sysrun):
+        sysrun_ret = []
+        for i in range(len(self.remake.task_ctrl.rescan_tasks),
+                       len(self.remake.tasks)):
+            mock_ret = mock.MagicMock()
+            mock_ret.stdout = f'Submitted batch job {i + 100000}'
+            sysrun_ret.append(mock_ret)
+        sysrun_ret[len(sysrun_ret) // 2] = sp.CalledProcessError(100, 'cmd')
+        mock_sysrun.side_effect = sysrun_ret
+
+        self.remake.task_ctrl.set_executor('slurm')
+        self.remake.run_requested(self.remake.tasks[:3], handle_dependencies=True)
+
 
 class TestSlurmExecutorRunJob(unittest.TestCase):
     def setUp(self) -> None:

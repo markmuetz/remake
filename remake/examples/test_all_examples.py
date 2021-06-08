@@ -116,6 +116,7 @@ class TestCLI2(TaskRule):
             'remake rule-info ex2 Process',
             # Note computer independent as output is rel to CWD.
             'remake task-info ex2 861024da5c',
+            'remake task-info -l ex2 861024da5c',
             'remake file-info ex2 data/outputs/ex2/fan_out.0.3.out',
         ]
         run_commands(commands)
@@ -129,7 +130,7 @@ class TestEx1(TaskRule):
 
     def rule_run(self):
         commands = [
-            'remake run --reasons ex1.py',
+            'remake run --reasons --display print_status ex1',
             'remake run --reasons ex1.py',
             'touch data/inputs/in1.txt',
             'remake run --reasons ex1.py',
@@ -141,6 +142,7 @@ class TestEx1(TaskRule):
             'remake run --reasons ex1.py',
             'remake run --reasons ex1.py',
             'cp ex1.1.py ex1.py',
+            'remake task-info -l ex1.py c0cc251cf7',
             'remake run --reasons ex1.py',
             'remake run --reasons ex1.py',
             'cp ex1.2.py ex1.py',

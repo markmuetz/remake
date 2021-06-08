@@ -3,7 +3,6 @@ import functools
 from logging import getLogger
 import math
 from pathlib import Path
-from typing import List
 
 import networkx as nx
 
@@ -126,7 +125,7 @@ def check_finalized(finalized):
 # noinspection PyAttributeOutsideInit
 class TaskControl:
     def __init__(self, filename: str, config: dict = None, special_paths=None,
-                 dependencies: List['TaskControl'] = None, *,
+                 *,
                  remake_on: RemakeOn = RemakeOn.ANY_STANDARD_CHANGE,
                  dotremake_dir='.remake',
                  print_reasons=False):
@@ -136,7 +135,6 @@ class TaskControl:
             config = {}
         self.config = config
         self.special_paths = special_paths
-        self.dependencies = dependencies
         self.path = Path(filename).absolute()
         self.name = self.path.stem
         self.remake_on = remake_on
@@ -358,12 +356,6 @@ class TaskControl:
         logger.info(f'=> {self.name} <=')
         if not self.tasks:
             raise Exception('No tasks have been added')
-
-        if self.dependencies:
-            for dep in self.dependencies:
-                dep.finalize()
-                if not dep.tasks == dep.completed_tasks:
-                    raise Exception(f'Dependency task control {dep.name} is not complete')
 
         logger.info('Build task DAG')
         self.build_task_DAG()

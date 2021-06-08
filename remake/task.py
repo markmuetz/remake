@@ -49,7 +49,7 @@ class Task(BaseTask):
     task_func_cache = {}
 
     def __init__(self, task_ctrl, func, inputs, outputs,
-                 *, atomic_write=True, force=False, depends_on=tuple()):
+                 *, force=False, depends_on=tuple()):
         super().__init__(task_ctrl)
         # self.remake_on = True
         self.depends_on_sources = []
@@ -101,7 +101,6 @@ class Task(BaseTask):
             self.func_bytecode = self.func.__call__.__func__.__code__.co_code
         else:
             raise Exception(f'func is not a function, method or class: {self.func} -- type: {type(self.func)}')
-        self.atomic_write = atomic_write
         self.force = force
 
         if not outputs:
@@ -117,20 +116,7 @@ class Task(BaseTask):
         self.logger = None
 
     def __repr__(self):
-        # return f'{self.__class__}({self.func.__code__.co_name}, {self.inputs}, {self.outputs})'
         return str(self)
-
-    def short_str(self, input_paths_to_show=1, output_paths_to_show=2):
-        def short_paths(paths, paths_to_show):
-            if len(paths) <= paths_to_show:
-                return f'{[p.name for p in paths]}'
-            else:
-                return f'{len(paths)}'
-
-        inputs = short_paths(self.inputs.values(), input_paths_to_show)
-        outputs = short_paths(self.outputs.values(), output_paths_to_show)
-        return f'{self.__class__.__name__}' \
-               f'({self.func.__code__.co_name}, {inputs}, {outputs})'
 
     def __str__(self):
         if hasattr(self, 'var_matrix'):
@@ -138,7 +124,6 @@ class Task(BaseTask):
             return f'{self.path_hash_key()[:10]} {self.__class__.__name__}({args})'
         else:
             return f'{self.path_hash_key()[:10]} {self.__class__.__name__}()'
-        return self.short_str(3, 3)
 
     def can_run(self):
         can_run = True
@@ -220,11 +205,8 @@ class Task(BaseTask):
                 logger.debug('requires_rerun or force')
                 for output_dir in set([o.parent for o in self.outputs.values()]):
                     output_dir.mkdir(parents=True, exist_ok=True)
-                if self.atomic_write:
-                    logger.debug('atomic_write: make temp paths')
-                    self.tmp_outputs = {k: tmp_atomic_path(v) for k, v in self.outputs.items()}
-                else:
-                    self.tmp_outputs = self.outputs
+                logger.debug('atomic_write: make temp paths')
+                self.tmp_outputs = {k: tmp_atomic_path(v) for k, v in self.outputs.items()}
 
                 logger.debug(f'run func {self.func}')
                 start = timer()
@@ -245,18 +227,13 @@ class Task(BaseTask):
 
                 logger.debug(f'run func {self.func} completed in {timer() - start:.2f}s:'
                              f' {[o.name for o in self.outputs.values()]}')
-                if self.atomic_write:
-                    for output in self.tmp_outputs.values():
-                        if not output.exists():
-                            raise Exception(f'func {output} not created')
-                    logger.debug('atomic_write: rename temp paths')
-                    tmp_paths = self.tmp_outputs.values()
-                    for tmp_path, path in zip(tmp_paths, self.outputs.values()):
-                        tmp_path.rename(path)
-                else:
-                    for output in self.outputs.values():
-                        if not output.exists():
-                            raise Exception(f'func {output} not created')
+                for output in self.tmp_outputs.values():
+                    if not output.exists():
+                        raise Exception(f'func {output} not created')
+                logger.debug('atomic_write: rename temp paths')
+                tmp_paths = self.tmp_outputs.values()
+                for tmp_path, path in zip(tmp_paths, self.outputs.values()):
+                    tmp_path.rename(path)
 
             else:
                 logger.debug(f'already exist: {self.outputs}')
