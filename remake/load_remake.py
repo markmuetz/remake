@@ -1,7 +1,7 @@
 from pathlib import Path
 
-# from remake import Remake
 from remake.util import load_module
+from remake.remake_exceptions import RemakeLoadError
 
 
 def load_remake(filename):
@@ -16,7 +16,7 @@ def load_remake(filename):
     remakes = [o for o in [getattr(remake_module, m) for m in dir(remake_module)]
                if isinstance(o, Remake)]
     if len(remakes) > 1:
-        raise Exception(f'More than one remake defined in {filename}')
+        raise RemakeLoadError(f'More than one remake defined in {filename}')
     elif not remakes:
-        raise Exception(f'No remake defined in {filename}')
+        raise RemakeLoadError(f'No remake defined in {filename}')
     return remakes[0]
