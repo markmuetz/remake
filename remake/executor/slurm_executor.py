@@ -40,7 +40,7 @@ def _submit_slurm_script(slurm_script_path):
     try:
         comp_proc = sysrun(f'sbatch {slurm_script_path}')
         output = comp_proc.stdout
-        logger.info(output.strip())
+        logger.debug(output.strip())
     except sp.CalledProcessError as cpe:
         logger.error(f'Error submitting {slurm_script_path}')
         logger.error(cpe)
@@ -89,8 +89,7 @@ class SlurmExecutor(Executor):
             task_slurm_output = rule_slurm_output.joinpath(*task_dir)
         else:
             task_slurm_output = rule_slurm_output
-        logger.info(Path.cwd())
-        logger.info(f'  creating {task_slurm_output}')
+        logger.debug(f'  creating {task_slurm_output}')
         task_slurm_output.mkdir(exist_ok=True, parents=True)
         slurm_script_filepath = self.slurm_dir / f'{script_name}_{remakefile_name}_{task.path_hash_key()}.sbatch'
 
@@ -126,7 +125,7 @@ class SlurmExecutor(Executor):
                                                job_name=task_key[:10],  # Longer and a leading * is added.
                                                **self.slurm_kwargs)
 
-        logger.info(f'  writing {slurm_script_filepath}')
+        logger.debug(f'  writing {slurm_script_filepath}')
         with open(slurm_script_filepath, 'w') as fp:
             fp.write(slurm_script)
         return slurm_script_filepath
@@ -134,7 +133,7 @@ class SlurmExecutor(Executor):
     def _submit_task(self, task):
         slurm_script_path = self._write_submit_script(task)
         output = _submit_slurm_script(slurm_script_path)
-        logger.info(f'Submitted: {task}')
+        logger.debug(f'Submitted: {task}')
         jobid = _parse_jobid(output)
         self.task_jobid_map[task] = jobid
 
