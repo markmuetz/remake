@@ -123,7 +123,7 @@ class RemakeParser:
         'run': {
             'help': 'Run all pending tasks',
             'args': [
-                Arg('remakefiles', nargs='*', default=['remakefile']),
+                Arg('remakefile', nargs='?', default='remakefile'),
                 Arg('--rescan-only', action='store_true', help='only rescan input files'),
                 Arg('--one', '-o', action='store_true', help='run one pending task'),
                 Arg('--random',  action='store_true', help='run one (lucky dip!)'),
@@ -178,7 +178,7 @@ class RemakeParser:
         'info': {
             'help': 'Information about remakefile status',
             'args': [
-                Arg('remakefiles', nargs='*', default=['remakefile']),
+                Arg('remakefile', nargs='?', default='remakefile'),
                 Arg('--long', '-l', action='store_true'),
                 Arg('--display', '-d', choices=['print_status', 'task_dag'],
                     default='print_status'),
@@ -262,7 +262,7 @@ class RemakeParser:
         # N.B. args should always be dereferenced at this point,
         # not passed into any subsequent functions.
         if args.subcmd_name == 'run':
-            remake_run(args.remakefiles, args.rescan_only, args.force, args.one, args.random,
+            remake_run(args.remakefile, args.rescan_only, args.force, args.one, args.random,
                        args.reasons, args.executor, args.display)
         elif args.subcmd_name == 'run-tasks':
             remake_run_tasks(args.remakefile, args.tasks, args.handle_dependencies, args.force,
@@ -299,7 +299,7 @@ class RemakeParser:
                          args.produced_by_rule, args.used_by_rule,
                          args.produced_by_task, args.used_by_task)
         elif args.subcmd_name == 'info':
-            remakefile_info(args.remakefiles, args.long, args.display)
+            remakefile_info(args.remakefile, args.long, args.display)
         elif args.subcmd_name == 'rule-info':
             rule_info(args.remakefile, args.long, args.rules)
         elif args.subcmd_name == 'task-info':
@@ -359,25 +359,24 @@ def remake_cmd(argv: Union[List[str], None] = None) -> None:
     parser.dispatch()
 
 
-def remake_run(remakefiles, rescan_only, force, one, random, print_reasons, executor, display):
-    for remakefile in remakefiles:
-        if force and (one or random):
-            raise ValueError('--force cannot be used with --one or --random')
-        remake = load_remake(remakefile).finalize()
-        remake.configure(print_reasons, executor, display)
-        remake.short_status()
-        if rescan_only:
-            remake.task_ctrl.run_rescan_only()
-        elif one:
-            remake.run_one()
-        elif random:
-            remake.run_random()
-        else:
-            remake.run_all(force=force)
-        if display == 'task_dag':
-            # Give user time to see final task_dag state.
-            sleep(3)
-        remake.short_status()
+def remake_run(remakefile, rescan_only, force, one, random, print_reasons, executor, display):
+    if force and (one or random):
+        raise ValueError('--force cannot be used with --one or --random')
+    remake = load_remake(remakefile).finalize()
+    remake.configure(print_reasons, executor, display)
+    remake.short_status()
+    if rescan_only:
+        remake.task_ctrl.run_rescan_only()
+    elif one:
+        remake.run_one()
+    elif random:
+        remake.run_random()
+    else:
+        remake.run_all(force=force)
+    if display == 'task_dag':
+        # Give user time to see final task_dag state.
+        sleep(3)
+    remake.short_status()
 
 
 def remake_run_tasks(remakefile, task_path_hash_keys, handle_dependencies,
@@ -467,39 +466,28 @@ def rm_files(remakefile, force, filetype,
         file.unlink()
 
 
-def remakefile_info(remakefiles, long, display):
+def remakefile_info(remakefile, long, display):
     if display == 'print_status':
         if not long:
             rows = []
-        for remakefile in remakefiles:
-            remake = load_remake(remakefile).finalize()
-            if not long:
-                rows.append([remake.name,
-                             len(remake.completed_tasks),
-                             len(remake.task_ctrl.rescan_tasks),
-                             len(remake.pending_tasks),
-                             len(remake.remaining_tasks),
-                             len(remake.task_ctrl.cannot_run_tasks),
-                             len(remake.tasks),
-                             ])
-            else:
-                print(f'{remake.name}')
-                for i, task in enumerate(remake.task_ctrl.sorted_tasks):
-                    print(f'{i + 1}/{len(remake.tasks)}, {task.status:<10}: {task.path_hash_key()}'
-                          f' {task.short_str()}')
-
+        remake = load_remake(remakefile).finalize()
         if not long:
-            # totals = list(np.array([r[1:] for r in rows]).sum(axis=0))
-            # Same thing without numpy.
-            totals = [sum(col) for col in list(zip(*rows))[1:]]
-            rows.append(['Total'] + totals)
-            print(tabulate(rows,
-                           headers=('Name', 'completed', 'rescan', 'pending',
-                                    'remaining', 'cannot run', 'total')))
+            rows.append([remake.name,
+                         len(remake.completed_tasks),
+                         len(remake.task_ctrl.rescan_tasks),
+                         len(remake.pending_tasks),
+                         len(remake.remaining_tasks),
+                         len(remake.task_ctrl.cannot_run_tasks),
+                         len(remake.tasks),
+                         ])
+        else:
+            print(f'{remake.name}')
+            for i, task in enumerate(remake.task_ctrl.sorted_tasks):
+                print(f'{i + 1}/{len(remake.tasks)}, {task.status:<10}: {task.path_hash_key()}'
+                      f' {task.short_str()}')
     elif display == 'task_dag':
-        for remakefile in remakefiles:
-            remake = load_remake(remakefile).finalize()
-            remake.display_task_dag()
+        remake = load_remake(remakefile).finalize()
+        remake.display_task_dag()
     else:
         raise Exception(f'Unrecognized display: {display}')
 

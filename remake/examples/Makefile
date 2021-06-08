@@ -12,3 +12,4 @@ clean:
 	rm -rf data/outputs
 	rm -rf .remake
 	rm -f data/fan_out* data/out.txt
+	rm -rf test_all_examples_output

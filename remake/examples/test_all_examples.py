@@ -1,6 +1,6 @@
 """Put remake through its paces by calling remake on all examples.
 
-Best run with `remake -W run remakefile`, which disables info logging from this.
+Best run with `remake -W run test_all_examples`, which disables info logging from this.
 Dogfooding by using this instead of Makefile (previous), although it's a bit meta.
 Allows easy broadcast on e.g. all examples remakefiles, and using different executors.
 """
@@ -24,7 +24,7 @@ def run_commands(commands):
             output = sysrun(command)
             assert output.returncode == 0
         else:
-            remake_cmd.remake_cmd(['examples/remakefile.py'] + command.split()[1:])
+            remake_cmd.remake_cmd(['examples/test_all_examples.py'] + command.split()[1:])
 
 
 VAR_MATRIX = {
@@ -37,7 +37,7 @@ VAR_MATRIX = {
 # class RunAllRemakes(CommandTaskRule):
 class RunAllRemakes(TaskRule):
     rule_inputs = {}
-    rule_outputs = {'dummy': 'remakefile_output/run_all_remakes.{name}.{executor}.run'}
+    rule_outputs = {'dummy': 'test_all_examples_output/run_all_remakes.{name}.{executor}.run'}
     var_matrix = VAR_MATRIX
     force = True
 
@@ -55,7 +55,7 @@ class RunAllRemakes(TaskRule):
 
 class TestCLI(TaskRule):
     rule_inputs = {}
-    rule_outputs = {'dummy': 'remakefile_output/test_cli.{name}.run'}
+    rule_outputs = {'dummy': 'test_all_examples_output/test_cli.{name}.run'}
     var_matrix = {'name': VAR_MATRIX['name']}
     force = True
 
@@ -81,7 +81,7 @@ class TestCLI(TaskRule):
 
 class TestCLI2(TaskRule):
     rule_inputs = {}
-    rule_outputs = {'dummy': 'remakefile_output/test_cli2.run'}
+    rule_outputs = {'dummy': 'test_all_examples_output/test_cli2.run'}
     force = True
 
     def rule_run(self):
@@ -123,7 +123,7 @@ class TestCLI2(TaskRule):
 
 class TestEx1(TaskRule):
     rule_inputs = {}
-    rule_outputs = {'dummy': 'remakefile_output/test_ex1.run'}
+    rule_outputs = {'dummy': 'test_all_examples_output/test_ex1.run'}
     force = True
 
     def rule_run(self):
