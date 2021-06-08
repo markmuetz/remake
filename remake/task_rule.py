@@ -128,7 +128,12 @@ class TaskRule(Task, metaclass=RemakeMetaclass):
     ordering. If any of the rule_run methods is changed, then those tasks will be rerun, and if their output is
     is different subsequent tasks will be rerun.
     """
-    pass
+    def __getattr__(self, item):
+        """By implementing this, IDEs like PyCharm will not complain when `self.i` used in `rule_run`"""
+        if item not in self.__dict__:
+            raise AttributeError(f"'{self.__class__.__name__}' has no attribute '{item}'")
+        return self.__dict__[item]
+
 
 
 # TODO: Ideas for new TaskRules:
