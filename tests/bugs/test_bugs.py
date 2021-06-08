@@ -29,3 +29,13 @@ def test_bug2():
     path_md = list(task_md.inputs_metadata_map.values())[0]
     assert is_relative_to(path_md.metadata_path, Path('.remake'))
     os.chdir(orig_cwd)
+
+
+def test_bug3():
+    """remake run --one not working #29"""
+    orig_cwd = os.getcwd()
+    os.chdir(examples_dir)
+    sysrun('make clean')
+    remake_cmd('remake run --one ex1'.split())
+    sysrun('make reset')
+    os.chdir(orig_cwd)

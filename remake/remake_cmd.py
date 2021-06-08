@@ -179,7 +179,10 @@ class RemakeParser:
             'help': 'Information about remakefile status',
             'args': [
                 Arg('remakefile', nargs='?', default='remakefile'),
-                Arg('--long', '-l', action='store_true'),
+                MutuallyExclusiveGroup(
+                    Arg('--short', '-s',  action='store_true'),
+                    Arg('--long', '-l', action='store_true'),
+                ),
                 Arg('--display', '-d', choices=['print_status', 'task_dag'],
                     default='print_status'),
             ]
@@ -299,7 +302,7 @@ class RemakeParser:
                          args.produced_by_rule, args.used_by_rule,
                          args.produced_by_task, args.used_by_task)
         elif args.subcmd_name == 'info':
-            remakefile_info(args.remakefile, args.long, args.display)
+            remakefile_info(args.remakefile, args.short, args.long, args.display)
         elif args.subcmd_name == 'rule-info':
             rule_info(args.remakefile, args.long, args.rules)
         elif args.subcmd_name == 'task-info':
@@ -466,25 +469,13 @@ def rm_files(remakefile, force, filetype,
         file.unlink()
 
 
-def remakefile_info(remakefile, long, display):
+def remakefile_info(remakefile, short, long, display):
     if display == 'print_status':
-        if not long:
-            rows = []
         remake = load_remake(remakefile).finalize()
-        if not long:
-            rows.append([remake.name,
-                         len(remake.completed_tasks),
-                         len(remake.task_ctrl.rescan_tasks),
-                         len(remake.pending_tasks),
-                         len(remake.remaining_tasks),
-                         len(remake.task_ctrl.cannot_run_tasks),
-                         len(remake.tasks),
-                         ])
+        if short:
+            remake.short_status(mode='print')
         else:
-            print(f'{remake.name}')
-            for i, task in enumerate(remake.task_ctrl.sorted_tasks):
-                print(f'{i + 1}/{len(remake.tasks)}, {task.status:<10}: {task.path_hash_key()}'
-                      f' {task.short_str()}')
+            remake.tasks.status(long, long)
     elif display == 'task_dag':
         remake = load_remake(remakefile).finalize()
         remake.display_task_dag()

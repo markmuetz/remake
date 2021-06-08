@@ -114,11 +114,20 @@ class Remake:
         elif display:
             raise Exception(f'display {display} not recognized')
 
-    def short_status(self):
-        """Log a short status line"""
-        logger.info(f'Status (complete/rescan/pending/remaining/cannot run): '
-                    f'{len(self.completed_tasks)}/{len(self.task_ctrl.rescan_tasks)}/'
-                    f'{len(self.pending_tasks)}/{len(self.remaining_tasks)}/{len(self.task_ctrl.cannot_run_tasks)}')
+    def short_status(self, mode='logger.info'):
+        """Log/print a short status line.
+
+        :param mode: 'logger.info' or 'print'
+        """
+        if mode == 'logger.info':
+            displayer = logger.info
+        elif mode == 'print':
+            displayer = print
+        else:
+            raise ValueError(f'Unrecognized mode: {mode}')
+        displayer(f'Status (complete/rescan/pending/remaining/cannot run): '
+                  f'{len(self.completed_tasks)}/{len(self.task_ctrl.rescan_tasks)}/'
+                  f'{len(self.pending_tasks)}/{len(self.remaining_tasks)}/{len(self.task_ctrl.cannot_run_tasks)}')
 
     def display_task_dag(self):
         """Display all tasks as a Directed Acyclic Graph (DAG)"""

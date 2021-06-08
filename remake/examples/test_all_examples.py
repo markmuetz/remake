@@ -88,6 +88,7 @@ class TestCLI2(TaskRule):
         commands = [
             'rm -rf data/outputs/ex2',
             'remake info ex2',
+            'remake info -s ex2',
             'remake info -l ex2',
             'remake ls-tasks ex2',
             'remake ls-tasks -l ex2',
