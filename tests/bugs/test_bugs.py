@@ -39,3 +39,15 @@ def test_bug3():
     remake_cmd('remake run --one ex1'.split())
     sysrun('make reset')
     os.chdir(orig_cwd)
+
+
+def test_bug4():
+    """remake run --one not working #29"""
+    orig_cwd = os.getcwd()
+    os.chdir(examples_dir)
+    sysrun('make clean')
+    ex1 = load_remake('ex1.py')
+    ex1.finalize()
+    ex1.run_one()
+    sysrun('make reset')
+    os.chdir(orig_cwd)

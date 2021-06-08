@@ -145,11 +145,10 @@ class Remake:
 
     def run_one(self):
         """Run the next pending task"""
-        try:
-            task = next(self.task_ctrl.get_next_pending())
-            self.run_requested([task], force=False)
-        except StopIteration:
-            pass
+        all_pending = list(self.task_ctrl.rescan_tasks + self.task_ctrl.statuses.ordered_pending_tasks)
+        if all_pending:
+            task = all_pending[0]
+            self.task_ctrl.run_requested([task], force=False)
 
     def run_random(self):
         """Run a random task (pot luck out of pending)"""
