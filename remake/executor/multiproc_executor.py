@@ -117,4 +117,4 @@ class MultiprocExecutor(Executor):
         return completed_task
 
     def has_finished(self):
-        return (not self.pending_tasks) and (not self.running_tasks)
+        return not self.running_tasks
