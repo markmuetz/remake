@@ -85,7 +85,10 @@ class SlurmExecutor(Executor):
         rule_name = task.__class__.__name__
         rule_slurm_output = self.slurm_output / rule_name
         if hasattr(task, 'var_matrix'):
-            task_dir = [f'{k}-{getattr(task, k)}' for k in task.var_matrix.keys()]
+            task_path_hash_key = task.path_hash_key()
+            task_dir = [task_path_hash_key[:2], task_path_hash_key[2:]]
+            # Doesn't work if val is e.g. a datetime.
+            # task_dir = [f'{k}-{getattr(task, k)}' for k in task.var_matrix.keys()]
             task_slurm_output = rule_slurm_output.joinpath(*task_dir)
         else:
             task_slurm_output = rule_slurm_output
