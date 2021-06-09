@@ -1,11 +1,15 @@
+import inspect
 import itertools
 import multiprocessing
+from logging import getLogger
 
 from remake.remake_exceptions import MissingTaskRuleProperty
 from remake.task import Task
 from remake.remake_base import Remake
 from remake.task_query_set import TaskQuerySet
 from remake.util import format_path
+
+logger = getLogger(__name__)
 
 
 class RemakeMetaclass(type):
@@ -19,15 +23,24 @@ class RemakeMetaclass(type):
     Uses the information provided by a `TaskRule` to create instances of the task rule, and add them the
     `TaskRule` .tasks list."""
     def __new__(mcs, clsname, bases, attrs):
+        depends_on = []
         if clsname not in ['TaskRule']:
             # Do not do anything for TaskRule class creation below.
             remake = Remake.current_remake[multiprocessing.current_process().name]
             if 'TaskRule' in [b.__name__ for b in bases]:
+                logger.debug(f'creating TaskRule-derived class {clsname}')
                 # Only apply to subclasses of TaskRule.
                 for prop in RemakeMetaclass.required_properties:
                     if prop not in attrs:
                         raise MissingTaskRuleProperty(f'TaskRule requires property `{prop}` to be set')
 
+                # All public methods are treated as being depends_on functions.
+                for key, attr in attrs.items():
+                    if key[0] == '_' or key == 'rule_run':
+                        continue
+                    # N.B. method has not been bound, so it appears like a function.
+                    if inspect.isfunction(attr):
+                        depends_on.append(attr)
                 attrs['tasks'] = TaskQuerySet(task_ctrl=remake.task_ctrl)
                 attrs['task_ctrl'] = remake.task_ctrl
                 attrs['next_rules'] = set()
@@ -37,15 +50,20 @@ class RemakeMetaclass(type):
             mcs, clsname, bases, attrs)
 
         if not attrs.get('enabled', True):
+            logger.debug(f'  {clsname} is disabled')
             return newcls
 
         if clsname not in ['TaskRule']:
             if 'TaskRule' in [b.__name__ for b in bases]:
                 remake.rules.append(newcls)
                 var_matrix = attrs.get('var_matrix', None)
-                depends_on = attrs.get('depends_on', tuple())
+                depends_on.extend(attrs.get('depends_on', []))
+                logger.debug(f'  depends on: {depends_on}')
                 if var_matrix:
-                    for loop_vars in itertools.product(*var_matrix.values()):
+                    all_loop_vars = list(itertools.product(*var_matrix.values()))
+                    logger.debug(f'  creating {len(all_loop_vars)} instances of {clsname}')
+
+                    for loop_vars in all_loop_vars:
                         # e.g. var_matrix = {'a': [1, 2], 'b': [3, 4]}
                         # run for [(1, 3), (1, 4), (2, 3), (2, 4)].
                         fmt_dict = {k: v for k, v in zip(var_matrix.keys(), loop_vars)}
@@ -62,6 +80,7 @@ class RemakeMetaclass(type):
                         newcls.tasks.append(task)
                         remake.task_ctrl.add(task)
                 else:
+                    logger.debug(f'  creating instance of {clsname}')
                     task = newcls(remake.task_ctrl, attrs['rule_run'],
                                   attrs['rule_inputs'], attrs['rule_outputs'],
                                   depends_on=depends_on)

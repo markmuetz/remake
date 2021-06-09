@@ -1,4 +1,4 @@
-"""Basic definition which takes in1.txt -> out1.txt -> out2.txt
+"""Basic definition which takes in1.txt -> out1.txt -> out2.txt -> out3.txt
 """
 from remake import Remake, TaskRule
 
@@ -25,3 +25,16 @@ class DependsOn2(TaskRule):
 
     def rule_run(self):
         self.outputs['out2'].write_text(join_lines(self.inputs['out1'], 'DependsOn2'))
+
+
+class DependsOn3(TaskRule):
+    rule_inputs = DependsOn1.rule_outputs
+    rule_outputs = {'out3': 'data/outputs/ex4/out3.txt'}
+    depends_on = [join_lines]
+
+    def load_data(self):
+        return join_lines(self.inputs['out1'], 'DependsOn3')
+
+    def rule_run(self):
+        data = self.load_data()
+        self.outputs['out3'].write_text(data)
