@@ -40,7 +40,6 @@ class TaskStatuses:
             if status == 'pending':
                 self._ordered_pending_tasks.append(task)
         self._task_status[task] = status
-        task.update_status(status)
 
     def get_next_pending(self):
         task = self._ordered_pending_tasks[0]
@@ -62,7 +61,6 @@ class TaskStatuses:
             if new_status == 'pending':
                 self._ordered_pending_tasks.append(task)
         self._task_status[task] = new_status
-        task.update_status(new_status)
 
     def task_status(self, task):
         return self._task_status[task]
@@ -346,6 +344,7 @@ class TaskControl:
             self.statuses.add_task(rescan_task, 'pending')
         else:
             self.statuses.add_task(rescan_task, 'cannot_run')
+        rescan_task.update_status(rescan_task.status)
         for next_task in self.input_task_map[path]:
             if next_task is not rescan_task:
                 self.task_dag.add_edge(rescan_task, next_task)
@@ -360,13 +359,14 @@ class TaskControl:
         logger.info('Build task DAG')
         self.build_task_DAG()
 
-#         missing_paths = [p for p in self.input_only_paths if not p.exists()]
-#         if missing_paths:
-#             for input_path in missing_paths:
-#                 tasks = self.input_task_map[input_path]
-#                 logger.error(f'No input file {input_path} exists or will be created (needed by {len(tasks)} tasks)')
-#             raise Exception(f'Not all input paths exist: {len(missing_paths)} missing')
-#
+        # missing paths are allowed now. I might want to re-instate this though with a --allow-missing = False
+        # missing_paths = [p for p in self.input_only_paths if not p.exists()]
+        # if missing_paths:
+        #     for input_path in missing_paths:
+        #         tasks = self.input_task_map[input_path]
+        #         logger.error(f'No input file {input_path} exists or will be created (needed by {len(tasks)} tasks)')
+        #     raise Exception(f'Not all input paths exist: {len(missing_paths)} missing')
+
         # N.B. provides nicer ordering of tasks than using self.task_dag.
         # self.sorted_tasks = list(nx.topological_sort(self.task_dag))
         if self.extra_checks:
@@ -522,6 +522,7 @@ class TaskControl:
             logger.debug(f'enqueue task (force={force}, requires_rerun={requires_rerun}): {task}')
 
             try:
+                task.update_status(task.status)
                 self.executor.enqueue_task(task)
             except Exception as e:
                 logger.error(f'TaskControl: {self.name}')
@@ -541,6 +542,7 @@ class TaskControl:
         # Task is not necessarily running if multiproc running?
         # TODO: investigate further. Run examples/ex1 with multiproc.
         self.update_task_status(task, task.status, 'completed')
+        task.update_status(task.status)
         if force:
             self.forced_run_tasks.add(task)
 
@@ -559,6 +561,7 @@ class TaskControl:
                 logger.debug(f'adding new pending task: {next_task}')
                 curr_status = self.statuses.task_status(next_task)
                 self.update_task_status(next_task, curr_status, 'pending')
+                task.update_status(task.status)
 
         if self.display_func:
             self.display_func(self)
@@ -606,11 +609,20 @@ class TaskControl:
             self.forced_next_pending_tasks.append(task)
 
     @check_finalized(True)
+    def save_task_statuses(self, use_subset=False):
+        statuses = self.subset_statuses if use_subset else self.statuses
+        for task in statuses.all_tasks:
+            task.update_status(task.status)
+
+    @check_finalized(True)
     def run_all(self, force=False, use_subset=False):
         if force:
             self.forced_next_pending_tasks = []
             self.forced_run_tasks = set()
             self._forced_assign_tasks(use_subset=use_subset)
+            self.save_task_statuses(use_subset=False)
+        else:
+            self.save_task_statuses(use_subset=use_subset)
 
         if self.executor.handles_dependencies:
             remaining_tasks = sorted(self.remaining_tasks, key=self.sorted_tasks.get)
