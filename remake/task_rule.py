@@ -84,7 +84,7 @@ class RemakeMetaclass(type):
                     inputs = RemakeMetaclass._create_inputs_ouputs(attrs['rule_inputs'], {})
                     outputs = RemakeMetaclass._create_inputs_ouputs(attrs['rule_outputs'], {})
                     task = newcls(remake.task_ctrl, attrs['rule_run'],
-                                  attrs['rule_inputs'], attrs['rule_outputs'],
+                                  inputs, outputs,
                                   depends_on=depends_on)
                     newcls.tasks.append(task)
                     remake.task_ctrl.add(task)
