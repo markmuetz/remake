@@ -81,6 +81,8 @@ class RemakeMetaclass(type):
                         remake.task_ctrl.add(task)
                 else:
                     logger.debug(f'  creating instance of {clsname}')
+                    inputs = RemakeMetaclass._create_inputs_ouputs(attrs['rule_inputs'], {})
+                    outputs = RemakeMetaclass._create_inputs_ouputs(attrs['rule_outputs'], {})
                     task = newcls(remake.task_ctrl, attrs['rule_run'],
                                   attrs['rule_inputs'], attrs['rule_outputs'],
                                   depends_on=depends_on)
