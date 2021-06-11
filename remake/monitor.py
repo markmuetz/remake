@@ -111,8 +111,8 @@ class RemakeMonitorCurses:
         stdscr.addstr(8, 0, f'Error    : {status_counts["ERROR"]}', self.cp('ERROR'))
 
     def _check_i_offset(self, i_offset, n):
-        if i_offset < -n + 1 + self.rows - 4 or i_offset == -10000:
-            i_offset = -n + 1 + self.rows - 4
+        if i_offset < -n + self.rows - 4 or i_offset == -10000:
+            i_offset = -n + self.rows - 4
         if i_offset > 0:
             i_offset = 0
         return i_offset
