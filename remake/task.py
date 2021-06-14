@@ -221,7 +221,6 @@ class Task(BaseTask):
                 self.logger.debug(f'Running: {self}')
                 self.result = self.func(self)
                 self.logger.debug(f'Completed: {self}')
-                remove_file_logging(self.task_md.log_path, logger_name)
 
                 self.outputs = orig_outputs
 
@@ -230,7 +229,6 @@ class Task(BaseTask):
                 for output in self.tmp_outputs.values():
                     if not output.exists():
                         raise FileNotCreated(f'func {output} not created')
-                logger.debug('atomic_write: rename temp paths')
                 tmp_paths = self.tmp_outputs.values()
                 for tmp_path, path in zip(tmp_paths, self.outputs.values()):
                     tmp_path.rename(path)
