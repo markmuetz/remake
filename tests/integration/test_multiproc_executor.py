@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest import mock
 
 from remake.util import sysrun
-from remake.load_remake import load_remake
+from remake.loader import load_remake
 from remake.executor.multiproc_executor import worker
 
 

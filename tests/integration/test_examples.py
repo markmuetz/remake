@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from remake.load_remake import load_remake
+from remake.loader import load_remake
 from remake.util import sysrun
 
 examples_dir = Path(__file__).parent.parent.parent / 'remake' / 'examples'

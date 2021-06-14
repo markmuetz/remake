@@ -6,7 +6,7 @@ from unittest import mock
 import subprocess as sp
 
 from remake.util import sysrun
-from remake.load_remake import load_remake
+from remake.loader import load_remake
 from remake.executor.slurm_executor import run_job
 
 

@@ -6,7 +6,7 @@ import logging
 import curses
 
 from remake import Remake
-from remake.load_remake import load_remake
+from remake.loader import load_remake
 from remake.metadata import METADATA_VERSION
 from remake.util import sha1sum
 

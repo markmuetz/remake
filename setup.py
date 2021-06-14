@@ -10,18 +10,20 @@ except ImportError:
 version = sp.run('python remake/version.py',
                  check=True, shell=True, stdout=sp.PIPE, stderr=sp.PIPE, encoding='utf8').stdout
 
+
 def read(fname):
     try:
         return (Path(__file__).parent / fname).read_text()
     except (IOError, OSError, FileNotFoundError):
         return ''
 
+
 setup(
     name='remake',
     version=version,
     description='Smart remake tool',
     include_package_data=True,
-    license = 'LICENSE',
+    license='LICENSE',
     long_description=read('README.md'),
     long_description_content_type='text/markdown',
     author='Mark Muetzelfeldt',

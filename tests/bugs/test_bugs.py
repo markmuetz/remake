@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from remake.load_remake import load_remake
+from remake.loader import load_remake
 from remake.remake_cmd import remake_cmd
 from remake.util import sysrun
 from remake.special_paths import is_relative_to

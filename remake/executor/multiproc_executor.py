@@ -3,7 +3,7 @@ from multiprocessing import Process, Queue, current_process
 from logging import getLogger
 
 from remake.setup_logging import add_file_logging, remove_file_logging
-from remake.load_remake import load_remake
+from remake.loader import load_remake
 from remake.task import RescanFileTask
 from remake.executor.base_executor import Executor
 

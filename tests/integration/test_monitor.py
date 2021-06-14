@@ -3,7 +3,7 @@ from pathlib import Path
 import unittest
 from unittest import mock
 
-from remake.load_remake import load_remake
+from remake.loader import load_remake
 from remake.monitor import RemakeMonitor, remake_curses_monitor
 from remake.util import sysrun
 

@@ -1,5 +1,5 @@
 from remake.flags import RemakeOn
-from remake.load_remake import load_remake
+from remake.loader import load_remake
 from remake.remake_base import Remake
 from remake.special_paths import SpecialPaths
 from remake.task import Task
@@ -11,12 +11,13 @@ from remake.version import VERSION
 
 __version__ = VERSION
 __all__ = [
+    'format_path',
+    'load_remake',
+    'Remake',
+    'RemakeOn',
+    'SpecialPaths',
     'Task',
     'TaskControl',
-    'RemakeOn',
-    'format_path',
     'TaskRule',
     'TaskQuerySet',
-    'Remake',
-    'SpecialPaths'
 ]

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from remake.util import sysrun
 from remake.setup_logging import setup_stdout_logging
-from remake.load_remake import load_remake
+from remake.loader import load_remake
 from remake.task import Task, RescanFileTask
 from remake.executor.base_executor import Executor
 

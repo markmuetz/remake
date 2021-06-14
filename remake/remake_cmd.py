@@ -20,7 +20,7 @@ from tabulate import tabulate
 
 from remake.setup_logging import setup_stdout_logging
 from remake.version import get_version
-from remake.load_remake import load_remake
+from remake.loader import load_remake
 from remake.remake_exceptions import RemakeError
 from remake.bcolors import bcolors
 from remake.monitor import remake_curses_monitor

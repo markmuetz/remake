@@ -6,7 +6,7 @@ from pathlib import Path
 
 from remake.bcolors import bcolors
 from remake.remake_exceptions import RemakeLoadError
-from remake.load_remake import load_remake
+from remake.loader import load_remake
 from remake.remake_base import Remake
 from remake.setup_logging import setup_stdout_logging
 from remake.special_paths import SpecialPaths, map_special_paths
@@ -20,12 +20,12 @@ class TestBcolors(unittest.TestCase):
 
 
 class TestLoadRemake(unittest.TestCase):
-    @mock.patch('remake.load_remake.load_module')
+    @mock.patch('remake.loader.load_module')
     def test_no_remakes(self, mock_load_module):
         mock_load_module.return_value = []
         self.assertRaisesRegex(RemakeLoadError, 'No remake defined in remake.py', load_remake, 'remake.py')
 
-    @mock.patch('remake.load_remake.load_module')
+    @mock.patch('remake.loader.load_module')
     def test_too_many_remakes(self, mock_load_module):
         mock_module = mock.MagicMock()
         mock_module.remake_a = Remake('a')
