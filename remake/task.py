@@ -8,6 +8,7 @@ from timeit import default_timer as timer
 from remake.flags import RemakeOn
 from remake.setup_logging import add_file_logging, remove_file_logging
 from remake.special_paths import map_special_paths
+from remake.remake_exceptions import FileNotCreated
 
 logger = getLogger(__name__)
 
@@ -221,30 +222,31 @@ class Task(BaseTask):
                 self.result = self.func(self)
                 self.logger.debug(f'Completed: {self}')
                 remove_file_logging(self.task_md.log_path, logger_name)
-                self.logger = None
 
                 self.outputs = orig_outputs
 
-                logger.debug(f'run func {self.func} completed in {timer() - start:.2f}s:'
+                logger.debug(f'{self} completed in {timer() - start:.2f}s:'
                              f' {[o.name for o in self.outputs.values()]}')
                 for output in self.tmp_outputs.values():
                     if not output.exists():
-                        raise Exception(f'func {output} not created')
+                        raise FileNotCreated(f'func {output} not created')
                 logger.debug('atomic_write: rename temp paths')
                 tmp_paths = self.tmp_outputs.values()
                 for tmp_path, path in zip(tmp_paths, self.outputs.values()):
                     tmp_path.rename(path)
-
             else:
                 logger.debug(f'already exist: {self.outputs}')
             self._post_run_with_content_check()
-        except Exception:
+        except (Exception, FileNotCreated):
             self.update_status('ERROR')
-            self.logger.exception('')
+            if self.logger:
+                self.logger.exception('')
+            logger.exception('')
             raise
         finally:
             if self.logger:
                 remove_file_logging(self.task_md.log_path, logger_name)
+                self.logger = None
 
         return self
 

@@ -10,6 +10,10 @@ class RemakeLoadError(RemakeError):
     pass
 
 
+class FileNotCreated(RemakeError):
+    pass
+
+
 class CyclicDependency(RemakeError):
     def __init__(self, msg, dependent_tasks):
         super().__init__(msg)
