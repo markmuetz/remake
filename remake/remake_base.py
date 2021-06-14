@@ -48,6 +48,10 @@ class Remake:
         if multiprocessing.current_process().name == 'MainProcess':
             if name in Remake.remakes:
                 # Can happen on ipython run remakefile.
+                # Can also happen on tab completion of Remake obj.
+                # e.g. in remake/examples/ex1.py:
+                # ex1.Bas<tab>
+                # traceback.print_stack()
                 logger.info(f'Remake {name} added twice')
             Remake.remakes[name] = self
         else:

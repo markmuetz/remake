@@ -3,7 +3,7 @@ import itertools
 import multiprocessing
 from logging import getLogger
 
-from remake.remake_exceptions import MissingTaskRuleProperty
+from remake.remake_exceptions import MissingTaskRuleProperty, TaskRuleNameError
 from remake.task import Task
 from remake.remake_base import Remake
 from remake.task_query_set import TaskQuerySet
@@ -55,6 +55,10 @@ class RemakeMetaclass(type):
 
         if clsname not in ['TaskRule']:
             if 'TaskRule' in [b.__name__ for b in bases]:
+                if hasattr(remake, newcls.__name__):
+                    raise TaskRuleNameError(f'Task rule name clashes with existing method/property:'
+                                            f' {newcls.__name__}')
+                setattr(remake, newcls.__name__, newcls)
                 remake.rules.append(newcls)
                 var_matrix = attrs.get('var_matrix', None)
                 depends_on.extend(attrs.get('depends_on', []))

@@ -6,6 +6,10 @@ class MissingTaskRuleProperty(RemakeError):
     pass
 
 
+class TaskRuleNameError(RemakeError):
+    pass
+
+
 class RemakeLoadError(RemakeError):
     pass
 
