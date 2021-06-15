@@ -81,6 +81,30 @@ class MetadataManager:
         self.path_metadata_map[path] = path_md
         return path_md
 
+    def check_task_status(self, task):
+        changed_paths = []
+        requires_rerun = RemakeOn.NOT_NEEDED
+        task_md = self.task_metadata_map[task]
+        logger.info('1')
+        for path in task.inputs.values():
+            if not path.exists():
+                task_md.rerun_reasons.append(('input_path_does_not_exist', path))
+                requires_rerun |= RemakeOn.MISSING_INPUT
+                continue
+            path_md = self.path_metadata_map[path]
+            if path_md.compare_path_with_previous():
+                task_md.rerun_reasons.append(('input_path_metadata_has_changed', path))
+                requires_rerun |= RemakeOn.INPUTS_CHANGED
+                changed_paths.append(path)
+
+        logger.info('2')
+        # Hits PathMetadata._load_metadata.
+        task_md.generate_metadata()
+        logger.info('3')
+        # Hits PathMetadata._load_metadata.
+        requires_rerun = task_md.task_requires_rerun()
+        return changed_paths, requires_rerun
+
 
 class TaskMetadata:
     def __init__(self, task_control_name, dotremake_dir, task, inputs_metadata_map, outputs_metadata_map):
@@ -166,11 +190,12 @@ class TaskMetadata:
                 logger.debug(f'no path exists: {path}')
                 return ''
             input_path_md = self.inputs_metadata_map[path]
+            # TODO: Not needed??
             # Ensures metadata is loaded.
-            try:
-                input_path_md._load_metadata()
-            except NoMetadata:
-                pass
+            # try:
+            #     input_path_md._load_metadata()
+            # except NoMetadata:
+            #     pass
             # input_path_md.compare_path_with_previous()
             if 'sha1hex' not in input_path_md.metadata:
                 return None
@@ -193,15 +218,16 @@ class TaskMetadata:
             self.rerun_reasons.append(('task_has_not_been_run', None))
             self.requires_rerun |= RemakeOn.NO_TASK_METADATA
 
-        for path in self.task.inputs.values():
-            if not path.exists():
-                self.rerun_reasons.append(('input_path_does_not_exist', path))
-                self.requires_rerun |= RemakeOn.MISSING_INPUT
-                break
-            path_md = self.inputs_metadata_map[path]
-            if path_md.compare_path_with_previous():
-                self.rerun_reasons.append(('input_path_metadata_has_changed', path))
-                self.requires_rerun |= RemakeOn.INPUTS_CHANGED
+        # Handles by check_task_status() above now.
+        # for path in self.task.inputs.values():
+        #     if not path.exists():
+        #         self.rerun_reasons.append(('input_path_does_not_exist', path))
+        #         self.requires_rerun |= RemakeOn.MISSING_INPUT
+        #         break
+        #     path_md = self.inputs_metadata_map[path]
+        #     if path_md.compare_path_with_previous():
+        #         self.rerun_reasons.append(('input_path_metadata_has_changed', path))
+        #         self.requires_rerun |= RemakeOn.INPUTS_CHANGED
 
         for path in self.task.outputs.values():
             if not path.exists():
@@ -290,6 +316,7 @@ class PathMetadata:
             self._load_metadata()
 
         # N.B. lstat dereferences symlinks.
+        logger.info(f'Stat path: {path}')
         stat = path.lstat()
         self.new_metadata.update({'st_size': stat.st_size, 'st_mtime': stat.st_mtime})
 
