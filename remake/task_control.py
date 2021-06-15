@@ -293,7 +293,8 @@ class TaskControl:
         if isinstance(task, RescanFileTask):
             return task.requires_rerun()
 
-        logger.debug('performing task file contents checks')
+        logger.info('performing task file contents checks')
+        logger.info('1')
 
         if self.check_path_metadata:
             # TODO: Possibly switch to one rescan task per task (instead of one per task input).
@@ -305,8 +306,10 @@ class TaskControl:
                 if metadata_has_changed:
                     self.gen_rescan_task(path)
 
+        logger.info('2')
         task_md = self.metadata_manager.task_metadata_map[task]
         task_md.generate_metadata()
+        logger.info('3')
         requires_rerun = task_md.task_requires_rerun()
         if not self.check_path_metadata and requires_rerun & RemakeOn.INPUTS_CHANGED:
             requires_rerun &= ~RemakeOn.INPUTS_CHANGED

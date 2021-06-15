@@ -118,6 +118,7 @@ class TaskMetadata:
 
     def _load_metadata(self):
         if self.task_metadata_path.exists():
+            logger.info(f'Reading task metadata: {self.task}')
             self.metadata = try_json_read(self.task_metadata_path)
         else:
             raise NoMetadata(f'No metadata for task: {self.task}')
@@ -276,6 +277,7 @@ class PathMetadata:
 
     def _load_metadata(self):
         if self.metadata_path.exists():
+            logger.info(f'Reading path metadata: {self.path}')
             self.metadata = try_json_read(self.metadata_path)
         else:
             raise NoMetadata(f'No metadata for {self.path}')
