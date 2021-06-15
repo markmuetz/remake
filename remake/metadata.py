@@ -75,12 +75,6 @@ class MetadataManager:
         self.task_metadata_map[task] = task_md
         return task_md
 
-    def _create_path_metadata(self, path, special_input_path):
-        assert path not in self.path_metadata_map, f'path already tracked: {path}'
-        path_md = PathMetadata(self.task_control_name, self.dotremake_dir, path, special_input_path)
-        self.path_metadata_map[path] = path_md
-        return path_md
-
     def check_task_status(self, task):
         changed_paths = []
         # Issue #34: only hits PathMetadata._load_metadata once now per path.
@@ -100,6 +94,12 @@ class MetadataManager:
         task_md.generate_metadata()
         requires_rerun = task_md.task_requires_rerun()
         return changed_paths, requires_rerun
+
+    def _create_path_metadata(self, path, special_input_path):
+        assert path not in self.path_metadata_map, f'path already tracked: {path}'
+        path_md = PathMetadata(self.task_control_name, self.dotremake_dir, path, special_input_path)
+        self.path_metadata_map[path] = path_md
+        return path_md
 
 
 class TaskMetadata:
@@ -186,13 +186,6 @@ class TaskMetadata:
                 logger.debug(f'no path exists: {path}')
                 return ''
             input_path_md = self.inputs_metadata_map[path]
-            # TODO: Not needed??
-            # Ensures metadata is loaded.
-            # try:
-            #     input_path_md._load_metadata()
-            # except NoMetadata:
-            #     pass
-            # input_path_md.compare_path_with_previous()
             if 'sha1hex' not in input_path_md.metadata:
                 return None
             content_hash_data.append(input_path_md.metadata['sha1hex'])
@@ -213,17 +206,6 @@ class TaskMetadata:
         except NoMetadata:
             self.rerun_reasons.append(('task_has_not_been_run', None))
             self.requires_rerun |= RemakeOn.NO_TASK_METADATA
-
-        # Handles by check_task_status() above now.
-        # for path in self.task.inputs.values():
-        #     if not path.exists():
-        #         self.rerun_reasons.append(('input_path_does_not_exist', path))
-        #         self.requires_rerun |= RemakeOn.MISSING_INPUT
-        #         break
-        #     path_md = self.inputs_metadata_map[path]
-        #     if path_md.compare_path_with_previous():
-        #         self.rerun_reasons.append(('input_path_metadata_has_changed', path))
-        #         self.requires_rerun |= RemakeOn.INPUTS_CHANGED
 
         for path in self.task.outputs.values():
             if not path.exists():

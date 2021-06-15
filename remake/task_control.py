@@ -292,28 +292,9 @@ class TaskControl:
             return task.requires_rerun()
 
         changed_paths, requires_rerun = self.metadata_manager.check_task_status(task)
+        # TODO: Possibly switch to one rescan task per task (instead of one per task input).
         for path in changed_paths:
             self.gen_rescan_task(path)
-        # logger.info('performing task file contents checks')
-        # logger.info('1')
-
-        # # TODO: Possibly switch to one rescan task per task (instead of one per task input).
-        # for path in task.inputs.values():
-        #     if not path.exists():
-        #         continue
-        #     path_md = self.metadata_manager.path_metadata_map[path]
-        #     # Hits PathMetadata._load_metadata.
-        #     metadata_has_changed = path_md.compare_path_with_previous()
-        #     if metadata_has_changed:
-        #         self.gen_rescan_task(path)
-
-        # logger.info('2')
-        # task_md = self.metadata_manager.task_metadata_map[task]
-        # # Hits PathMetadata._load_metadata.
-        # task_md.generate_metadata()
-        # logger.info('3')
-        # # Hits PathMetadata._load_metadata.
-        # requires_rerun = task_md.task_requires_rerun()
 
         if requires_rerun:
             logger.debug(f'requires rerun: {requires_rerun}')
