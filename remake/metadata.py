@@ -83,9 +83,9 @@ class MetadataManager:
 
     def check_task_status(self, task):
         changed_paths = []
+        # Issue #34: only hits PathMetadata._load_metadata once now per path.
         requires_rerun = RemakeOn.NOT_NEEDED
         task_md = self.task_metadata_map[task]
-        logger.info('1')
         for path in task.inputs.values():
             if not path.exists():
                 task_md.rerun_reasons.append(('input_path_does_not_exist', path))
@@ -97,11 +97,7 @@ class MetadataManager:
                 requires_rerun |= RemakeOn.INPUTS_CHANGED
                 changed_paths.append(path)
 
-        logger.info('2')
-        # Hits PathMetadata._load_metadata.
         task_md.generate_metadata()
-        logger.info('3')
-        # Hits PathMetadata._load_metadata.
         requires_rerun = task_md.task_requires_rerun()
         return changed_paths, requires_rerun
 
@@ -142,7 +138,7 @@ class TaskMetadata:
 
     def _load_metadata(self):
         if self.task_metadata_path.exists():
-            logger.info(f'Reading task metadata: {self.task}')
+            logger.debug(f'Reading task metadata: {self.task}')
             self.metadata = try_json_read(self.task_metadata_path)
         else:
             raise NoMetadata(f'No metadata for task: {self.task}')
@@ -303,7 +299,7 @@ class PathMetadata:
 
     def _load_metadata(self):
         if self.metadata_path.exists():
-            logger.info(f'Reading path metadata: {self.path}')
+            logger.debug(f'Reading path metadata: {self.path}')
             self.metadata = try_json_read(self.metadata_path)
         else:
             raise NoMetadata(f'No metadata for {self.path}')
@@ -316,7 +312,7 @@ class PathMetadata:
             self._load_metadata()
 
         # N.B. lstat dereferences symlinks.
-        logger.info(f'Stat path: {path}')
+        logger.debug(f'Stat path: {path}')
         stat = path.lstat()
         self.new_metadata.update({'st_size': stat.st_size, 'st_mtime': stat.st_mtime})
 
