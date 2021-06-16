@@ -115,6 +115,7 @@ class Task(BaseTask):
         self.rerun_on_mtime = True
         self.tmp_outputs = {}
         self.logger = None
+        self._path_hash_key = None
 
     def __repr__(self):
         return str(self)
@@ -152,19 +153,14 @@ class Task(BaseTask):
         return True
 
     def path_hash_key(self):
-        h = sha1(self.func.__code__.co_name.encode())
-        # Does not work! Can only do this when task_ctrl has been finalized.
-        # for input_path in self.inputs.values():
-        #     path_md = self.task_md.inputs_metadata_map[input_path]
-        #     h.update(str(path_md.metadata_base_path).encode())
-        # for output_path in self.outputs.values():
-        #     path_md = self.task_md.inputs_metadata_map[output_path]
-        #     h.update(str(path_md.metadata_base_path).encode())
-        for input_path in self.special_inputs.values():
-            h.update(str(input_path).encode())
-        for output_path in self.special_outputs.values():
-            h.update(str(output_path).encode())
-        return h.hexdigest()
+        if not self._path_hash_key:
+            h = sha1(self.func.__code__.co_name.encode())
+            for input_path in self.special_inputs.values():
+                h.update(str(input_path).encode())
+            for output_path in self.special_outputs.values():
+                h.update(str(output_path).encode())
+            self._path_hash_key = h.hexdigest()
+        return self._path_hash_key
 
     def run_task_rule(self, force=False):
         self.task_ctrl.run_task(self, force=force)
