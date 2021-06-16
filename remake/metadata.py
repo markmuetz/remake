@@ -214,17 +214,17 @@ class TaskMetadata:
                 self.requires_rerun |= RemakeOn.MISSING_OUTPUT
                 break
             earliest_output_path_mtime = min(earliest_output_path_mtime,
-                                             output.stat().st_mtime)
+                                             output.lstat().st_mtime)
         if not self.requires_rerun:
             latest_input_path_mtime = 0
             for input_path in self.task.inputs.values():
                 if not input_path.exists():
-                    self.rerun_reasons.append(('output_path_does_not_exist', output))
+                    self.rerun_reasons.append(('input_path_does_not_exist', input_path))
                     self.requires_rerun |= RemakeOn.MISSING_INPUT
                     break
 
                 latest_input_path_mtime = max(latest_input_path_mtime,
-                                              input_path.stat().st_mtime)
+                                              input_path.lstat().st_mtime)
             if latest_input_path_mtime > earliest_output_path_mtime:
                 self.requires_rerun |= RemakeOn.OLDER_OUTPUT
                 self.rerun_reasons.append(('output_is_older_than_input', None))
