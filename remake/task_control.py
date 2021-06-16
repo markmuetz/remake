@@ -289,12 +289,12 @@ class TaskControl:
 
     def task_requires_rerun(self, task, print_reasons=False):
         if isinstance(task, RescanFileTask):
-            return task.requires_rerun()
+            return RemakeOn.MISSING_OUTPUT
 
         changed_paths, requires_rerun = self.metadata_manager.check_task_status(task)
         # TODO: Possibly switch to one rescan task per task (instead of one per task input).
-        for path in changed_paths:
-            self.gen_rescan_task(path)
+        # for path in changed_paths:
+        #     self.gen_rescan_task(path)
 
         if requires_rerun:
             logger.debug(f'requires rerun: {requires_rerun}')

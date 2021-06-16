@@ -85,11 +85,11 @@ class MetadataManager:
                 task_md.rerun_reasons.append(('input_path_does_not_exist', path))
                 requires_rerun |= RemakeOn.MISSING_INPUT
                 continue
-            path_md = self.path_metadata_map[path]
-            if path_md.compare_path_with_previous():
-                task_md.rerun_reasons.append(('input_path_metadata_has_changed', path))
-                requires_rerun |= RemakeOn.INPUTS_CHANGED
-                changed_paths.append(path)
+            # path_md = self.path_metadata_map[path]
+            # if path_md.compare_path_with_previous():
+            #     task_md.rerun_reasons.append(('input_path_metadata_has_changed', path))
+            #     requires_rerun |= RemakeOn.INPUTS_CHANGED
+            #     changed_paths.append(path)
 
         task_md.generate_metadata()
         requires_rerun = task_md.task_requires_rerun()
@@ -150,11 +150,11 @@ class TaskMetadata:
         logger.debug(f'generate metadata for {self.task_path_hash_key}')
 
         task_source_sha1hex, task_bytecode_sha1hex, task_depends_on_sha1hex = self._task_sha1hex()
-        task_content_sha1hex = self._content_sha1hex()
+        # task_content_sha1hex = self._content_sha1hex()
         self.new_metadata['task_source_sha1hex'] = task_source_sha1hex
         self.new_metadata['task_bytecode_sha1hex'] = task_bytecode_sha1hex
         self.new_metadata['task_depends_on_sha1hex'] = task_depends_on_sha1hex
-        self.new_metadata['task_content_sha1hex'] = task_content_sha1hex
+        # self.new_metadata['task_content_sha1hex'] = task_content_sha1hex
 
     def _task_sha1hex(self):
         if hasattr(self.task, 'func_source'):
@@ -207,11 +207,27 @@ class TaskMetadata:
             self.rerun_reasons.append(('task_has_not_been_run', None))
             self.requires_rerun |= RemakeOn.NO_TASK_METADATA
 
-        for path in self.task.outputs.values():
-            if not path.exists():
-                self.rerun_reasons.append(('output_path_does_not_exist', path))
+        earliest_output_path_mtime = float('inf')
+        for output in self.task.outputs.values():
+            if not output.exists():
+                self.rerun_reasons.append(('output_path_does_not_exist', output))
                 self.requires_rerun |= RemakeOn.MISSING_OUTPUT
                 break
+            earliest_output_path_mtime = min(earliest_output_path_mtime,
+                                             output.stat().st_mtime)
+        if not self.requires_rerun:
+            latest_input_path_mtime = 0
+            for input_path in self.task.inputs.values():
+                if not input_path.exists():
+                    self.rerun_reasons.append(('output_path_does_not_exist', output))
+                    self.requires_rerun |= RemakeOn.MISSING_INPUT
+                    break
+
+                latest_input_path_mtime = max(latest_input_path_mtime,
+                                              input_path.stat().st_mtime)
+            if latest_input_path_mtime > earliest_output_path_mtime:
+                self.requires_rerun |= RemakeOn.OLDER_OUTPUT
+                self.rerun_reasons.append(('output_is_older_than_input', None))
 
         if not (self.requires_rerun & RemakeOn.NO_TASK_METADATA):
             if self.new_metadata['task_source_sha1hex'] != self.metadata['task_source_sha1hex']:
@@ -223,11 +239,11 @@ class TaskMetadata:
             if self.new_metadata['task_depends_on_sha1hex'] != self.metadata['task_depends_on_sha1hex']:
                 self.requires_rerun |= RemakeOn.DEPENDS_SOURCE_CHANGED
                 self.rerun_reasons.append(('task_depends_on_sha1hex_different', None))
-            if self.new_metadata['task_content_sha1hex'] != self.metadata['task_content_sha1hex']:
-                self.requires_rerun |= RemakeOn.INPUTS_CHANGED
-                self.rerun_reasons.append(('task_content_sha1hex_different', None))
+            # if self.new_metadata['task_content_sha1hex'] != self.metadata['task_content_sha1hex']:
+            #     self.requires_rerun |= RemakeOn.INPUTS_CHANGED
+            #     self.rerun_reasons.append(('task_content_sha1hex_different', None))
 
-        logger.debug(f'task requires rerun {self.requires_rerun}: {self.task_path_hash_key}')
+        logger.debug(f'task requires rerun {self.requires_rerun}: {self.task}')
         return self.requires_rerun
 
     def write_task_metadata(self):

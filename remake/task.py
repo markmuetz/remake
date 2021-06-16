@@ -134,25 +134,6 @@ class Task(BaseTask):
                 break
         return can_run
 
-    def requires_rerun(self):
-        rerun = RemakeOn.NOT_NEEDED
-        earliest_output_path_mtime = float('inf')
-        for output in self.outputs.values():
-            if not Path(output).exists():
-                rerun |= RemakeOn.MISSING_OUTPUT
-                break
-            earliest_output_path_mtime = min(earliest_output_path_mtime,
-                                             output.stat().st_mtime)
-        if self.rerun_on_mtime and not rerun:
-            latest_input_path_mtime = 0
-            for input_path in self.inputs.values():
-                latest_input_path_mtime = max(latest_input_path_mtime,
-                                              input_path.stat().st_mtime)
-            if latest_input_path_mtime > earliest_output_path_mtime:
-                rerun |= RemakeOn.OLDER_OUTPUT
-
-        return rerun
-
     def diff(self):
         if self.task_md and self.task_md.metadata:
             func_last = self.task_md.metadata['func_source']
@@ -188,7 +169,7 @@ class Task(BaseTask):
     def run_task_rule(self, force=False):
         self.task_ctrl.run_task(self, force=force)
 
-    def run(self, force=False, use_task_control=True):
+    def run(self, use_task_control=True):
         if use_task_control:
             self.task_ctrl.run_requested([self])
             return
@@ -202,38 +183,33 @@ class Task(BaseTask):
 
         logger_name = f'remake.task.{self.__class__.__name__}'
         try:
-            if self.requires_rerun() or force or self.force:
-                logger.debug('requires_rerun or force')
-                for output_dir in set([o.parent for o in self.outputs.values()]):
-                    output_dir.mkdir(parents=True, exist_ok=True)
-                logger.debug('atomic_write: make temp paths')
-                self.tmp_outputs = {k: tmp_atomic_path(v) for k, v in self.outputs.items()}
+            for output_dir in set([o.parent for o in self.outputs.values()]):
+                output_dir.mkdir(parents=True, exist_ok=True)
+            logger.debug('atomic_write: make temp paths')
+            self.tmp_outputs = {k: tmp_atomic_path(v) for k, v in self.outputs.items()}
 
-                logger.debug(f'run func {self.func}')
-                start = timer()
+            start = timer()
 
-                orig_outputs = self.outputs
-                self.outputs = self.tmp_outputs
+            orig_outputs = self.outputs
+            self.outputs = self.tmp_outputs
 
-                self.logger = getLogger(logger_name)
-                add_file_logging(self.task_md.log_path, 'DEBUG', logger_name)
+            self.logger = getLogger(logger_name)
+            add_file_logging(self.task_md.log_path, 'DEBUG', logger_name)
 
-                self.logger.debug(f'Running: {self}')
-                self.result = self.func(self)
-                self.logger.debug(f'Completed: {self}')
+            self.logger.debug(f'Running: {self}')
+            self.result = self.func(self)
+            self.logger.debug(f'Completed: {self}')
 
-                self.outputs = orig_outputs
+            self.outputs = orig_outputs
 
-                logger.debug(f'{self} completed in {timer() - start:.2f}s:'
-                             f' {[o.name for o in self.outputs.values()]}')
-                for output in self.tmp_outputs.values():
-                    if not output.exists():
-                        raise FileNotCreated(f'func {output} not created')
-                tmp_paths = self.tmp_outputs.values()
-                for tmp_path, path in zip(tmp_paths, self.outputs.values()):
-                    tmp_path.rename(path)
-            else:
-                logger.debug(f'already exist: {self.outputs}')
+            logger.debug(f'{self} completed in {timer() - start:.2f}s:'
+                         f' {[o.name for o in self.outputs.values()]}')
+            for output in self.tmp_outputs.values():
+                if not output.exists():
+                    raise FileNotCreated(f'func {output} not created')
+            tmp_paths = self.tmp_outputs.values()
+            for tmp_path, path in zip(tmp_paths, self.outputs.values()):
+                tmp_path.rename(path)
             self._post_run_with_content_check()
         except (Exception, FileNotCreated):
             self.update_status('ERROR')
@@ -283,10 +259,6 @@ class RescanFileTask(BaseTask):
                 can_run = False
                 break
         return can_run
-
-    def requires_rerun(self):
-        rerun = RemakeOn.MISSING_OUTPUT
-        return rerun
 
     def complete(self):
         metadata_has_changed = self.path_md.compare_path_with_previous()

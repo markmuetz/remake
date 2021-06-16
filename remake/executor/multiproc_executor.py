@@ -29,7 +29,7 @@ def worker(proc_id, remakefile_name, task_queue, task_complete_queue):
             else:
                 task = task_ctrl.task_from_path_hash_key[task_key]
             logger.debug(f'worker {current_process().name} running {task}')
-            task.run(force, use_task_control=False)
+            task.run(use_task_control=False)
             logger.debug(f'worker {current_process().name} complete {task}')
             task_complete_queue.put((task_key, True, None))
         except Exception as e:
