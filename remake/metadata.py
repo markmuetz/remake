@@ -208,7 +208,7 @@ class TaskMetadata:
             self.rerun_reasons.append(('task_has_not_been_run', None))
             self.requires_rerun |= RemakeOn.NO_TASK_METADATA
 
-        logger.debug('   stat all files')
+        logger.debug('    stat all files')
         earliest_output_path_mtime = float('inf')
         for output in self.task.outputs.values():
             if not output.exists():
@@ -230,7 +230,7 @@ class TaskMetadata:
             if latest_input_path_mtime > earliest_output_path_mtime:
                 self.requires_rerun |= RemakeOn.OLDER_OUTPUT
                 self.rerun_reasons.append(('output_is_older_than_input', None))
-        logger.debug('   statted all files')
+        logger.debug('    statted all files')
 
         if not (self.requires_rerun & RemakeOn.NO_TASK_METADATA):
             if self.new_metadata['task_source_sha1hex'] != self.metadata['task_source_sha1hex']:
