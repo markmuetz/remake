@@ -17,7 +17,7 @@ JSON_READ_ATTEMPTS = 3
 
 
 def flush_json_write(obj, path):
-    logger.debug(f'write json to: {path}')
+    logger.debug(f'    write json to: {path}')
     with path.open('w') as fp:
         json.dump(obj, fp, indent=2)
         fp.write('\n')
@@ -138,8 +138,9 @@ class TaskMetadata:
 
     def _load_metadata(self):
         if self.task_metadata_path.exists():
-            logger.debug(f'Reading task metadata: {self.task}')
+            logger.debug(f'    reading task metadata: {self.task}')
             self.metadata = try_json_read(self.task_metadata_path)
+            logger.debug(f'    read task metadata: {self.task}')
         else:
             raise NoMetadata(f'No metadata for task: {self.task}')
 
@@ -147,7 +148,7 @@ class TaskMetadata:
         print(self.log_path.read_text())
 
     def generate_metadata(self):
-        logger.debug(f'generate metadata for {self.task_path_hash_key}')
+        logger.debug(f'    generate metadata for {self.task}')
 
         task_source_sha1hex, task_bytecode_sha1hex, task_depends_on_sha1hex = self._task_sha1hex()
         # task_content_sha1hex = self._content_sha1hex()
@@ -183,7 +184,7 @@ class TaskMetadata:
         for path in self.task.inputs.values():
             assert path.is_absolute()
             if not path.exists():
-                logger.debug(f'no path exists: {path}')
+                logger.debug(f'    no path exists: {path}')
                 return ''
             input_path_md = self.inputs_metadata_map[path]
             if 'sha1hex' not in input_path_md.metadata:
@@ -207,6 +208,7 @@ class TaskMetadata:
             self.rerun_reasons.append(('task_has_not_been_run', None))
             self.requires_rerun |= RemakeOn.NO_TASK_METADATA
 
+        logger.debug('   stat all files')
         earliest_output_path_mtime = float('inf')
         for output in self.task.outputs.values():
             if not output.exists():
@@ -228,6 +230,7 @@ class TaskMetadata:
             if latest_input_path_mtime > earliest_output_path_mtime:
                 self.requires_rerun |= RemakeOn.OLDER_OUTPUT
                 self.rerun_reasons.append(('output_is_older_than_input', None))
+        logger.debug('   statted all files')
 
         if not (self.requires_rerun & RemakeOn.NO_TASK_METADATA):
             if self.new_metadata['task_source_sha1hex'] != self.metadata['task_source_sha1hex']:
@@ -243,11 +246,11 @@ class TaskMetadata:
             #     self.requires_rerun |= RemakeOn.INPUTS_CHANGED
             #     self.rerun_reasons.append(('task_content_sha1hex_different', None))
 
-        logger.debug(f'task requires rerun {self.requires_rerun}: {self.task}')
+        logger.debug(f'    task requires rerun {self.requires_rerun}: {self.task}')
         return self.requires_rerun
 
     def write_task_metadata(self):
-        logger.debug(f'write task metadata {self.task_path_hash_key} to {self.task_metadata_path}')
+        logger.debug(f'    write task metadata {self.task_path_hash_key} to {self.task_metadata_path}')
 
         self.task_metadata_dir_path.mkdir(parents=True, exist_ok=True)
         # Minimize the number of writes to file.
@@ -297,20 +300,20 @@ class PathMetadata:
 
     def _load_metadata(self):
         if self.metadata_path.exists():
-            logger.debug(f'Reading path metadata: {self.path}')
+            logger.debug(f'    reading path metadata: {self.path}')
             self.metadata = try_json_read(self.metadata_path)
         else:
             raise NoMetadata(f'No metadata for {self.path}')
 
     def compare_path_with_previous(self):
         path = self.path
-        logger.debug(f'comparing path with previous: {path}')
+        logger.debug(f'    comparing path with previous: {path}')
 
         if self.metadata_path.exists():
             self._load_metadata()
 
         # N.B. lstat dereferences symlinks.
-        logger.debug(f'Stat path: {path}')
+        logger.debug(f'    stat path: {path}')
         stat = path.lstat()
         self.new_metadata.update({'st_size': stat.st_size, 'st_mtime': stat.st_mtime})
 
@@ -340,6 +343,6 @@ class PathMetadata:
         # a task will have a different value for it if any of its inputs changed. If the task then runs
         # it will definitely set off a chain of runs in its downstream tasks, even though it may not be needed.
         # This is probably a bit of an edge case.
-        logger.debug(f'write new path metadata to {self.metadata_path}')
+        logger.debug(f'    write new path metadata to {self.metadata_path}')
         self.metadata_path.parent.mkdir(parents=True, exist_ok=True)
         flush_json_write(self.new_metadata, self.metadata_path)

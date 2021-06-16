@@ -372,6 +372,7 @@ class TaskControl:
                                   len(self.tasks))
             assert all_tasks_assigned, 'All tasks not assigned.'
 
+        logger.info('Finalized')
         self.output_paths = set(self.output_task_map.keys()) - self.input_only_paths
 
         self.finalized = True
@@ -385,6 +386,7 @@ class TaskControl:
         # remaining: task either needs to be rerun, or has previous tasks that need to be rerun.
         # import ipdb; ipdb.set_trace()
         for task in self.sorted_tasks.keys():
+            logger.debug(f'  assign task: {task}')
             requires_rerun = self.task_requires_rerun(task)
 
             if task.can_run():
