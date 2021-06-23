@@ -52,7 +52,7 @@ class Remake:
                 # e.g. in remake/examples/ex1.py:
                 # ex1.Bas<tab>
                 # traceback.print_stack()
-                logger.info(f'Remake {name} added twice')
+                logger.debug(f'Remake {name} added twice')
             Remake.remakes[name] = self
         else:
             logger.debug(f'Process {multiprocessing.current_process().name}')
