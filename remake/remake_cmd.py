@@ -6,11 +6,6 @@ from logging import getLogger
 from pathlib import Path
 from time import sleep
 from typing import List, Union, Optional, Sequence, Text
-try:
-    # Might not be installed.
-    import ipdb as debug
-except ImportError:
-    import pdb as debug
 
 try:
     import argcomplete
@@ -39,6 +34,11 @@ def log_error(ex_type, value, tb):
 def exception_info(ex_type, value, tb):
     import traceback
     traceback.print_exception(ex_type, value, tb)
+    try:
+        # Might not be installed.
+        import ipdb as debug
+    except ImportError:
+        import pdb as debug
     debug.pm()
 
 
@@ -87,7 +87,7 @@ class RemakeParser:
             Arg('--info', '-I', help='Enable info logging', action='store_true'),
             Arg('--warning', '-W', help='Warning logging only', action='store_true'),
         ),
-        Arg('--debug-exception', '-X', help=f'Launch {debug.__name__} on exception',
+        Arg('--debug-exception', '-X', help=f'Launch pdb/ipdb on exception',
             action='store_true'),
         Arg('--no-colour', '-B', help='Black and white logging', action='store_true'),
     ]
