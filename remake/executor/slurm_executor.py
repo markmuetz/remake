@@ -92,6 +92,13 @@ class SlurmExecutor(Executor):
             task_slurm_output = rule_slurm_output.joinpath(*task_dir)
         else:
             task_slurm_output = rule_slurm_output
+
+        slurm_kwargs = {**self.slurm_kwargs}
+        task_config = getattr(task, 'config', {})
+        if 'slurm' in task_config:
+            logger.debug(f'  updating {task} config: {task_config["slurm"]}')
+            slurm_kwargs.update(task_config['slurm'])
+
         logger.debug(f'  creating {task_slurm_output}')
         task_slurm_output.mkdir(exist_ok=True, parents=True)
         slurm_script_filepath = self.slurm_dir / f'{script_name}_{remakefile_name}_{task.path_hash_key()}.sbatch'
@@ -126,7 +133,7 @@ class SlurmExecutor(Executor):
                                                task_key=task_key,
                                                dependencies=dependencies,
                                                job_name=task_key[:10],  # Longer and a leading * is added.
-                                               **self.slurm_kwargs)
+                                               **slurm_kwargs)
 
         logger.debug(f'  writing {slurm_script_filepath}')
         with open(slurm_script_filepath, 'w') as fp:
