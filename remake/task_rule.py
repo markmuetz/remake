@@ -71,6 +71,7 @@ class RemakeMetaclass(type):
                         # e.g. var_matrix = {'a': [1, 2], 'b': [3, 4]}
                         # run for [(1, 3), (1, 4), (2, 3), (2, 4)].
                         fmt_dict = {k: v for k, v in zip(var_matrix.keys(), loop_vars)}
+                        fmt_dict = RemakeMetaclass._check_modify_fmt_dict(fmt_dict)
                         # e.g. for (1, 3): fmt_dict = {'a': 1, 'b': 3}
                         inputs = RemakeMetaclass._create_inputs_ouputs(attrs['rule_inputs'], fmt_dict)
                         outputs = RemakeMetaclass._create_inputs_ouputs(attrs['rule_outputs'], fmt_dict)
@@ -80,7 +81,13 @@ class RemakeMetaclass(type):
                                       depends_on=depends_on)
                         # Set up the instance variables so that e.g. within TaskRule.rule_run, self.a == 1.
                         for k, v in zip(var_matrix.keys(), loop_vars):
-                            setattr(task, k, v)
+                            if isinstance(k, tuple):
+                                if not isinstance(v, tuple) or len(k) != len(v):
+                                    raise Exception(f'{k} and {v} do not match')
+                                for kk, vv in zip(k, v):
+                                    setattr(task, kk, vv)
+                            else:
+                                setattr(task, k, v)
                         newcls.tasks.append(task)
                         remake.task_ctrl.add(task)
                 else:
@@ -95,6 +102,31 @@ class RemakeMetaclass(type):
 
                 remake.tasks.extend(newcls.tasks)
         return newcls
+
+    @staticmethod
+    def _check_modify_fmt_dict(fmt_dict):
+        errors = []
+        new_fmt_dict = {**fmt_dict}
+        for key, value in fmt_dict.items():
+            if isinstance(key, str):
+                continue
+            elif isinstance(key, tuple):
+                if not len(key) == len(value):
+                    errors.append(('length mismatch', key, value))
+                for kk, vv in zip(key, value):
+                    if not isinstance(kk, str):
+                        errors.append(('not tuple of strings', key, value))
+                        break
+                    else:
+                        new_fmt_dict[kk] = vv
+                new_fmt_dict.pop(key)
+            else:
+                errors.append(('not string', key, value))
+        if errors:
+            error_str = '\n'.join([f'  {msg}: {k}, {v}' for msg, k, v in errors])
+            raise Exception(f'input_rule/output_rule keys must be strings or tuples of strings:\n'
+                            f'{error_str}')
+        return new_fmt_dict
 
     @staticmethod
     def _create_inputs_ouputs(rule_inputs_outputs, fmt_dict):

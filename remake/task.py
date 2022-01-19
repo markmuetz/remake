@@ -122,7 +122,14 @@ class Task(BaseTask):
 
     def __str__(self):
         if hasattr(self, 'var_matrix'):
-            args = ', '.join([f'{k}={map_val(getattr(self, k))}' for k in self.var_matrix.keys()])
+            args = []
+            for k in self.var_matrix.keys():
+                if isinstance(k, str):
+                    args.append(f'{k}={map_val(getattr(self, k))}')
+                elif isinstance(k, tuple):
+                    for kk in k:
+                        args.append(f'{kk}={map_val(getattr(self, kk))}')
+            args = ', '.join(args)
             return f'{self.path_hash_key()[:10]} {self.__class__.__name__}({args})'
         else:
             return f'{self.path_hash_key()[:10]} {self.__class__.__name__}()'

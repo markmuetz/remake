@@ -127,6 +127,12 @@ class TaskQuerySet(list):
                         print(f'  {reason[0]}: {reason[1]}')
                     else:
                         print(f'  {reason[0]}')
+            if task.status == 'cannot_run':
+                print(f'  cannot_run:')
+                for k, p in task.inputs.items():
+                    if p.exists():
+                        continue
+                    print(f'    does not exist: {k}, {p}')
             if task_diff:
                 task_diff = task.diff()
                 if task_diff:
