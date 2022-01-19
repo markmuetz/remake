@@ -159,7 +159,7 @@ class RemakeParser:
             ]
         },
         'ls-files': {
-            'help': 'Remove files',
+            'help': 'List files',
             'args': [
                 Arg('remakefile', nargs='?', default='remakefile'),
                 Arg('--long', '-l', action='store_true'),
