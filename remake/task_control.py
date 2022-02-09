@@ -341,7 +341,7 @@ class TaskControl:
         if not self.tasks:
             raise Exception('No tasks have been added')
 
-        logger.info('Build task DAG')
+        logger.debug('Build task DAG')
         self.build_task_DAG()
 
         # missing paths are allowed now. I might want to re-instate this though with a --allow-missing = False
@@ -359,7 +359,7 @@ class TaskControl:
             assert len(self.sorted_tasks) == len(self.tasks)
             assert set(self.sorted_tasks) == set(self.tasks)
 
-        logger.info('Assign status to tasks')
+        logger.debug('Assign status to tasks')
         self._assign_tasks()
 
         if self.extra_checks:
@@ -372,7 +372,7 @@ class TaskControl:
                                   len(self.tasks))
             assert all_tasks_assigned, 'All tasks not assigned.'
 
-        logger.info('Finalized')
+        logger.debug('Finalized')
         self.output_paths = set(self.output_task_map.keys()) - self.input_only_paths
 
         self.finalized = True
@@ -427,7 +427,7 @@ class TaskControl:
 
     def build_task_DAG(self):
         if self._dag_built:
-            logger.info('DAG already built')
+            logger.debug('DAG already built')
             return
 
         # Work out whether it is possible to create a run schedule and find initial tasks.
@@ -453,7 +453,7 @@ class TaskControl:
                 self.input_tasks.add(task)
 
         self._dag_built = True
-        logger.info('Perform topological sort')
+        logger.debug('Perform topological sort')
         # Can now perform a topological sort.
         self.sorted_tasks = dict(self._topogological_tasks())
 
