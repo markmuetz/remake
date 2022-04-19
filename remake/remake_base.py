@@ -194,7 +194,7 @@ class Remake:
         if isinstance(task_path_hash_key, Task):
             return task_path_hash_key
         else:
-            return self.find_tasks([task_path_hash_key])[0].task
+            return self.find_tasks([task_path_hash_key])[0]
 
     def find_tasks(self, task_path_hash_keys):
         """Find all tasks given by their path hash keys
