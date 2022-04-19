@@ -344,6 +344,13 @@
     <a class="reference internal nav-link" href="#setup-examples">
      setup-examples
     </a>
+    <ul class="nav section-nav flex-column">
+     <li class="toc-h4 nav-item toc-entry">
+      <a class="reference internal nav-link" href="#Named Arguments_repeat12">
+       Named Arguments
+      </a>
+     </li>
+    </ul>
    </li>
    <li class="toc-h3 nav-item toc-entry">
     <a class="reference internal nav-link" href="#version">
@@ -351,7 +358,7 @@
     </a>
     <ul class="nav section-nav flex-column">
      <li class="toc-h4 nav-item toc-entry">
-      <a class="reference internal nav-link" href="#Named Arguments_repeat12">
+      <a class="reference internal nav-link" href="#Named Arguments_repeat13">
        Named Arguments
       </a>
      </li>
@@ -384,7 +391,9 @@
 <h1>Remake CLI<a class="headerlink" href="#remake-cli" title="Permalink to this headline">¶</a></h1>
 <p><p>remake command line tool</p>
 </p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">usage</span><span class="p">:</span> <span class="n">remake</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">debug</span> <span class="o">|</span> <span class="o">--</span><span class="n">info</span> <span class="o">|</span> <span class="o">--</span><span class="n">warning</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">debug</span><span class="o">-</span><span class="n">exception</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">no</span><span class="o">-</span><span class="n">colour</span><span class="p">]</span> <span class="p">{</span><span class="n">run</span><span class="p">,</span><span class="n">run</span><span class="o">-</span><span class="n">tasks</span><span class="p">,</span><span class="n">ls</span><span class="o">-</span><span class="n">rules</span><span class="p">,</span><span class="n">ls</span><span class="o">-</span><span class="n">tasks</span><span class="p">,</span><span class="n">ls</span><span class="o">-</span><span class="n">files</span><span class="p">,</span><span class="n">rm</span><span class="o">-</span><span class="n">files</span><span class="p">,</span><span class="n">info</span><span class="p">,</span><span class="n">rule</span><span class="o">-</span><span class="n">info</span><span class="p">,</span><span class="n">task</span><span class="o">-</span><span class="n">info</span><span class="p">,</span><span class="n">file</span><span class="o">-</span><span class="n">info</span><span class="p">,</span><span class="n">monitor</span><span class="p">,</span><span class="n">setup</span><span class="o">-</span><span class="n">examples</span><span class="p">,</span><span class="n">version</span><span class="p">}</span> <span class="o">...</span>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">usage</span><span class="p">:</span> <span class="n">remake</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">debug</span> <span class="o">|</span> <span class="o">--</span><span class="n">info</span> <span class="o">|</span> <span class="o">--</span><span class="n">warning</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">debug</span><span class="o">-</span><span class="n">exception</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">no</span><span class="o">-</span><span class="n">colour</span><span class="p">]</span>
+              <span class="p">{</span><span class="n">run</span><span class="p">,</span><span class="n">run</span><span class="o">-</span><span class="n">tasks</span><span class="p">,</span><span class="n">ls</span><span class="o">-</span><span class="n">rules</span><span class="p">,</span><span class="n">ls</span><span class="o">-</span><span class="n">tasks</span><span class="p">,</span><span class="n">ls</span><span class="o">-</span><span class="n">files</span><span class="p">,</span><span class="n">rm</span><span class="o">-</span><span class="n">files</span><span class="p">,</span><span class="n">info</span><span class="p">,</span><span class="n">rule</span><span class="o">-</span><span class="n">info</span><span class="p">,</span><span class="n">task</span><span class="o">-</span><span class="n">info</span><span class="p">,</span><span class="n">file</span><span class="o">-</span><span class="n">info</span><span class="p">,</span><span class="n">monitor</span><span class="p">,</span><span class="n">setup</span><span class="o">-</span><span class="n">examples</span><span class="p">,</span><span class="n">version</span><span class="p">}</span>
+              <span class="o">...</span>
 </pre></div>
 </div>
 <div class="section" id="Positional Arguments">
@@ -411,7 +420,7 @@
 <p>Default: False</p>
 </dd>
 <dt><kbd>--debug-exception, -X</kbd></dt>
-<dd><p>Launch ipdb on exception</p>
+<dd><p>Launch pdb/ipdb on exception</p>
 <p>Default: False</p>
 </dd>
 <dt><kbd>--no-colour, -B</kbd></dt>
@@ -425,14 +434,16 @@
 <div class="section" id="run">
 <h3>run<a class="headerlink" href="#run" title="Permalink to this headline">¶</a></h3>
 <p>Run all pending tasks</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">run</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">rescan</span><span class="o">-</span><span class="n">only</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">one</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">random</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">force</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">reasons</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">executor</span> <span class="n">EXECUTOR</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">display</span> <span class="p">{</span><span class="n">print_status</span><span class="p">,</span><span class="n">task_dag</span><span class="p">}]</span> <span class="p">[</span><span class="n">remakefiles</span> <span class="o">...</span><span class="p">]</span>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">run</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">rescan</span><span class="o">-</span><span class="n">only</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">one</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">random</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">force</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">reasons</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">executor</span> <span class="n">EXECUTOR</span><span class="p">]</span>
+           <span class="p">[</span><span class="o">--</span><span class="n">display</span> <span class="p">{</span><span class="n">print_status</span><span class="p">,</span><span class="n">task_dag</span><span class="p">}]</span>
+           <span class="p">[</span><span class="n">remakefile</span><span class="p">]</span>
 </pre></div>
 </div>
 <div class="section" id="Positional Arguments_repeat1">
 <h4>Positional Arguments<a class="headerlink" href="#Positional Arguments_repeat1" title="Permalink to this headline">¶</a></h4>
 <dl class="option-list">
-<dt><kbd>remakefiles</kbd></dt>
-<dd><p>Default: [‘remakefile’]</p>
+<dt><kbd>remakefile</kbd></dt>
+<dd><p>Default: “remakefile”</p>
 </dd>
 </dl>
 </div>
@@ -469,8 +480,11 @@
 <div class="section" id="run-tasks">
 <h3>run-tasks<a class="headerlink" href="#run-tasks" title="Permalink to this headline">¶</a></h3>
 <p>Run specified tasks (uses same flags as ls-tasks)</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">run</span><span class="o">-</span><span class="n">tasks</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">tasks</span> <span class="p">[</span><span class="n">TASKS</span> <span class="o">...</span><span class="p">]]</span> <span class="p">[</span><span class="o">--</span><span class="n">handle</span><span class="o">-</span><span class="n">dependencies</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">force</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">reasons</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">executor</span> <span class="n">EXECUTOR</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">display</span> <span class="p">{</span><span class="n">print_status</span><span class="p">,</span><span class="n">task_dag</span><span class="p">}]</span> <span class="p">[</span><span class="o">--</span><span class="nb">filter</span> <span class="n">FILTER</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">rule</span> <span class="n">RULE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">requires</span><span class="o">-</span><span class="n">rerun</span><span class="p">]</span>
-                 <span class="p">[</span><span class="o">--</span><span class="n">uses</span><span class="o">-</span><span class="n">file</span> <span class="n">USES_FILE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">produces</span><span class="o">-</span><span class="n">file</span> <span class="n">PRODUCES_FILE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">ancestor</span><span class="o">-</span><span class="n">of</span> <span class="n">ANCESTOR_OF</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">descendant</span><span class="o">-</span><span class="n">of</span> <span class="n">DESCENDANT_OF</span><span class="p">]</span>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">run</span><span class="o">-</span><span class="n">tasks</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">tasks</span> <span class="p">[</span><span class="n">TASKS</span> <span class="o">...</span><span class="p">]]</span> <span class="p">[</span><span class="o">--</span><span class="n">handle</span><span class="o">-</span><span class="n">dependencies</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">force</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">reasons</span><span class="p">]</span>
+                 <span class="p">[</span><span class="o">--</span><span class="n">executor</span> <span class="n">EXECUTOR</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">display</span> <span class="p">{</span><span class="n">print_status</span><span class="p">,</span><span class="n">task_dag</span><span class="p">}]</span> <span class="p">[</span><span class="o">--</span><span class="nb">filter</span> <span class="n">FILTER</span><span class="p">]</span>
+                 <span class="p">[</span><span class="o">--</span><span class="n">rule</span> <span class="n">RULE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">requires</span><span class="o">-</span><span class="n">rerun</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">uses</span><span class="o">-</span><span class="n">file</span> <span class="n">USES_FILE</span><span class="p">]</span>
+                 <span class="p">[</span><span class="o">--</span><span class="n">produces</span><span class="o">-</span><span class="n">file</span> <span class="n">PRODUCES_FILE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">ancestor</span><span class="o">-</span><span class="n">of</span> <span class="n">ANCESTOR_OF</span><span class="p">]</span>
+                 <span class="p">[</span><span class="o">--</span><span class="n">descendant</span><span class="o">-</span><span class="n">of</span> <span class="n">DESCENDANT_OF</span><span class="p">]</span>
                  <span class="p">[</span><span class="n">remakefile</span><span class="p">]</span>
 </pre></div>
 </div>
@@ -525,7 +539,8 @@
 <div class="section" id="ls-rules">
 <h3>ls-rules<a class="headerlink" href="#ls-rules" title="Permalink to this headline">¶</a></h3>
 <p>List rules</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">ls</span><span class="o">-</span><span class="n">rules</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">long</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="nb">filter</span> <span class="n">FILTER</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">uses</span><span class="o">-</span><span class="n">file</span> <span class="n">USES_FILE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">produces</span><span class="o">-</span><span class="n">file</span> <span class="n">PRODUCES_FILE</span><span class="p">]</span> <span class="p">[</span><span class="n">remakefile</span><span class="p">]</span>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">ls</span><span class="o">-</span><span class="n">rules</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">long</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="nb">filter</span> <span class="n">FILTER</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">uses</span><span class="o">-</span><span class="n">file</span> <span class="n">USES_FILE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">produces</span><span class="o">-</span><span class="n">file</span> <span class="n">PRODUCES_FILE</span><span class="p">]</span>
+                <span class="p">[</span><span class="n">remakefile</span><span class="p">]</span>
 </pre></div>
 </div>
 <div class="section" id="Positional Arguments_repeat3">
@@ -554,7 +569,10 @@
 <div class="section" id="ls-tasks">
 <h3>ls-tasks<a class="headerlink" href="#ls-tasks" title="Permalink to this headline">¶</a></h3>
 <p>List tasks</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">ls</span><span class="o">-</span><span class="n">tasks</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">long</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="nb">filter</span> <span class="n">FILTER</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">rule</span> <span class="n">RULE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">requires</span><span class="o">-</span><span class="n">rerun</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">uses</span><span class="o">-</span><span class="n">file</span> <span class="n">USES_FILE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">produces</span><span class="o">-</span><span class="n">file</span> <span class="n">PRODUCES_FILE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">ancestor</span><span class="o">-</span><span class="n">of</span> <span class="n">ANCESTOR_OF</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">descendant</span><span class="o">-</span><span class="n">of</span> <span class="n">DESCENDANT_OF</span><span class="p">]</span> <span class="p">[</span><span class="n">remakefile</span><span class="p">]</span>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">ls</span><span class="o">-</span><span class="n">tasks</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">long</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="nb">filter</span> <span class="n">FILTER</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">rule</span> <span class="n">RULE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">requires</span><span class="o">-</span><span class="n">rerun</span><span class="p">]</span>
+                <span class="p">[</span><span class="o">--</span><span class="n">uses</span><span class="o">-</span><span class="n">file</span> <span class="n">USES_FILE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">produces</span><span class="o">-</span><span class="n">file</span> <span class="n">PRODUCES_FILE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">ancestor</span><span class="o">-</span><span class="n">of</span> <span class="n">ANCESTOR_OF</span><span class="p">]</span>
+                <span class="p">[</span><span class="o">--</span><span class="n">descendant</span><span class="o">-</span><span class="n">of</span> <span class="n">DESCENDANT_OF</span><span class="p">]</span>
+                <span class="p">[</span><span class="n">remakefile</span><span class="p">]</span>
 </pre></div>
 </div>
 <div class="section" id="Positional Arguments_repeat4">
@@ -593,9 +611,10 @@
 </div>
 <div class="section" id="ls-files">
 <h3>ls-files<a class="headerlink" href="#ls-files" title="Permalink to this headline">¶</a></h3>
-<p>Remove files</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">ls</span><span class="o">-</span><span class="n">files</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">long</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="nb">input</span> <span class="o">|</span> <span class="o">--</span><span class="n">output</span> <span class="o">|</span> <span class="o">--</span><span class="nb">input</span><span class="o">-</span><span class="n">only</span> <span class="o">|</span> <span class="o">--</span><span class="n">output</span><span class="o">-</span><span class="n">only</span> <span class="o">|</span> <span class="o">--</span><span class="n">inout</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">produced</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">rule</span> <span class="n">PRODUCED_BY_RULE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">used</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">rule</span> <span class="n">USED_BY_RULE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">produced</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">task</span> <span class="n">PRODUCED_BY_TASK</span><span class="p">]</span>
-                <span class="p">[</span><span class="o">--</span><span class="n">used</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">task</span> <span class="n">USED_BY_TASK</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">exists</span><span class="p">]</span>
+<p>List files</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">ls</span><span class="o">-</span><span class="n">files</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">long</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="nb">input</span> <span class="o">|</span> <span class="o">--</span><span class="n">output</span> <span class="o">|</span> <span class="o">--</span><span class="nb">input</span><span class="o">-</span><span class="n">only</span> <span class="o">|</span> <span class="o">--</span><span class="n">output</span><span class="o">-</span><span class="n">only</span> <span class="o">|</span> <span class="o">--</span><span class="n">inout</span><span class="p">]</span>
+                <span class="p">[</span><span class="o">--</span><span class="n">produced</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">rule</span> <span class="n">PRODUCED_BY_RULE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">used</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">rule</span> <span class="n">USED_BY_RULE</span><span class="p">]</span>
+                <span class="p">[</span><span class="o">--</span><span class="n">produced</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">task</span> <span class="n">PRODUCED_BY_TASK</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">used</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">task</span> <span class="n">USED_BY_TASK</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">exists</span><span class="p">]</span>
                 <span class="p">[</span><span class="n">remakefile</span><span class="p">]</span>
 </pre></div>
 </div>
@@ -645,8 +664,9 @@
 <div class="section" id="rm-files">
 <h3>rm-files<a class="headerlink" href="#rm-files" title="Permalink to this headline">¶</a></h3>
 <p>Remove files</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">rm</span><span class="o">-</span><span class="n">files</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">force</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="nb">input</span> <span class="o">|</span> <span class="o">--</span><span class="n">output</span> <span class="o">|</span> <span class="o">--</span><span class="nb">input</span><span class="o">-</span><span class="n">only</span> <span class="o">|</span> <span class="o">--</span><span class="n">output</span><span class="o">-</span><span class="n">only</span> <span class="o">|</span> <span class="o">--</span><span class="n">inout</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">produced</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">rule</span> <span class="n">PRODUCED_BY_RULE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">used</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">rule</span> <span class="n">USED_BY_RULE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">produced</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">task</span> <span class="n">PRODUCED_BY_TASK</span><span class="p">]</span>
-                <span class="p">[</span><span class="o">--</span><span class="n">used</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">task</span> <span class="n">USED_BY_TASK</span><span class="p">]</span>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">rm</span><span class="o">-</span><span class="n">files</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">force</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="nb">input</span> <span class="o">|</span> <span class="o">--</span><span class="n">output</span> <span class="o">|</span> <span class="o">--</span><span class="nb">input</span><span class="o">-</span><span class="n">only</span> <span class="o">|</span> <span class="o">--</span><span class="n">output</span><span class="o">-</span><span class="n">only</span> <span class="o">|</span> <span class="o">--</span><span class="n">inout</span><span class="p">]</span>
+                <span class="p">[</span><span class="o">--</span><span class="n">produced</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">rule</span> <span class="n">PRODUCED_BY_RULE</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">used</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">rule</span> <span class="n">USED_BY_RULE</span><span class="p">]</span>
+                <span class="p">[</span><span class="o">--</span><span class="n">produced</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">task</span> <span class="n">PRODUCED_BY_TASK</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">used</span><span class="o">-</span><span class="n">by</span><span class="o">-</span><span class="n">task</span> <span class="n">USED_BY_TASK</span><span class="p">]</span>
                 <span class="p">[</span><span class="n">remakefile</span><span class="p">]</span>
 </pre></div>
 </div>
@@ -693,20 +713,23 @@
 <div class="section" id="info">
 <h3>info<a class="headerlink" href="#info" title="Permalink to this headline">¶</a></h3>
 <p>Information about remakefile status</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">info</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">long</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">display</span> <span class="p">{</span><span class="n">print_status</span><span class="p">,</span><span class="n">task_dag</span><span class="p">}]</span> <span class="p">[</span><span class="n">remakefiles</span> <span class="o">...</span><span class="p">]</span>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">info</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">short</span> <span class="o">|</span> <span class="o">--</span><span class="n">long</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">display</span> <span class="p">{</span><span class="n">print_status</span><span class="p">,</span><span class="n">task_dag</span><span class="p">}]</span> <span class="p">[</span><span class="n">remakefile</span><span class="p">]</span>
 </pre></div>
 </div>
 <div class="section" id="Positional Arguments_repeat7">
 <h4>Positional Arguments<a class="headerlink" href="#Positional Arguments_repeat7" title="Permalink to this headline">¶</a></h4>
 <dl class="option-list">
-<dt><kbd>remakefiles</kbd></dt>
-<dd><p>Default: [‘remakefile’]</p>
+<dt><kbd>remakefile</kbd></dt>
+<dd><p>Default: “remakefile”</p>
 </dd>
 </dl>
 </div>
 <div class="section" id="Named Arguments_repeat7">
 <h4>Named Arguments<a class="headerlink" href="#Named Arguments_repeat7" title="Permalink to this headline">¶</a></h4>
 <dl class="option-list">
+<dt><kbd>--short, -s</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
 <dt><kbd>--long, -l</kbd></dt>
 <dd><p>Default: False</p>
 </dd>
@@ -819,8 +842,16 @@
 <div class="section" id="setup-examples">
 <h3>setup-examples<a class="headerlink" href="#setup-examples" title="Permalink to this headline">¶</a></h3>
 <p>Setup examples directory</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">setup</span><span class="o">-</span><span class="n">examples</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">setup</span><span class="o">-</span><span class="n">examples</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">force</span><span class="p">]</span>
 </pre></div>
+</div>
+<div class="section" id="Named Arguments_repeat12">
+<h4>Named Arguments<a class="headerlink" href="#Named Arguments_repeat12" title="Permalink to this headline">¶</a></h4>
+<dl class="option-list">
+<dt><kbd>--force, -f</kbd></dt>
+<dd><p>Default: False</p>
+</dd>
+</dl>
 </div>
 </div>
 <div class="section" id="version">
@@ -829,8 +860,8 @@
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">remake</span> <span class="n">version</span> <span class="p">[</span><span class="o">-</span><span class="n">h</span><span class="p">]</span> <span class="p">[</span><span class="o">--</span><span class="n">long</span><span class="p">]</span>
 </pre></div>
 </div>
-<div class="section" id="Named Arguments_repeat12">
-<h4>Named Arguments<a class="headerlink" href="#Named Arguments_repeat12" title="Permalink to this headline">¶</a></h4>
+<div class="section" id="Named Arguments_repeat13">
+<h4>Named Arguments<a class="headerlink" href="#Named Arguments_repeat13" title="Permalink to this headline">¶</a></h4>
 <dl class="option-list">
 <dt><kbd>--long, -l</kbd></dt>
 <dd><p>long version</p>

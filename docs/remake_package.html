@@ -450,8 +450,13 @@ Contains a list of all tasks added by any <cite>TaskRule</cite>.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="remake.Remake.short_status">
-<span class="sig-name descname"><span class="pre">short_status</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.short_status" title="Permalink to this definition">¶</a></dt>
-<dd><p>Log a short status line</p>
+<span class="sig-name descname"><span class="pre">short_status</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mode</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'logger.info'</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.Remake.short_status" title="Permalink to this definition">¶</a></dt>
+<dd><p>Log/print a short status line.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>mode</strong> – ‘logger.info’ or ‘print’</p>
+</dd>
+</dl>
 </dd></dl>
 
 <dl class="py method">
@@ -508,7 +513,7 @@ path on each machine. E.g. on machine A:</p>
 
 <dl class="py class">
 <dt class="sig sig-object py" id="remake.TaskRule">
-<em class="property"><span class="pre">class</span> </em><span class="sig-prename descclassname"><span class="pre">remake.</span></span><span class="sig-name descname"><span class="pre">TaskRule</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">task_ctrl</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">func</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inputs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">outputs</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atomic_write</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">force</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">depends_on</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">()</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.TaskRule" title="Permalink to this definition">¶</a></dt>
+<em class="property"><span class="pre">class</span> </em><span class="sig-prename descclassname"><span class="pre">remake.</span></span><span class="sig-name descname"><span class="pre">TaskRule</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">task_ctrl</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">func</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inputs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">outputs</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">force</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">depends_on</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">()</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#remake.TaskRule" title="Permalink to this definition">¶</a></dt>
 <dd><p>Core class. Defines a set of tasks in a remakefile.</p>
 <p>Each class must have class-level properties: rule_inputs, rule_outputs, and each must have a method: rule_run.
 Each output file must be unique within a remakefile.
