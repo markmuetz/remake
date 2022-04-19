@@ -48,9 +48,10 @@ class NoMetadata(Exception):
 class MetadataManager:
     """Creates and stores maps of PathMetadata and TaskMetadata"""
     # Needed because it keeps track of all PathMetadata objs, and stops there being duplicate ones for inputs.
-    def __init__(self, task_control_name, dotremake_dir):
+    def __init__(self, task_control_name, dotremake_dir, content_checks):
         self.task_control_name = task_control_name
         self.dotremake_dir = dotremake_dir
+        self.content_checks = content_checks
         self.path_metadata_map = {}
         self.task_metadata_map = {}
 
@@ -71,7 +72,8 @@ class MetadataManager:
                 output_md = self.path_metadata_map[output_path]
             task_outputs_metadata_map[output_path] = output_md
         task_md = TaskMetadata(self.task_control_name, self.dotremake_dir,
-                               task, task_inputs_metadata_map, task_outputs_metadata_map)
+                               task, task_inputs_metadata_map, task_outputs_metadata_map,
+                               self.content_checks)
         self.task_metadata_map[task] = task_md
         return task_md
 
@@ -85,11 +87,12 @@ class MetadataManager:
                 task_md.rerun_reasons.append(('input_path_does_not_exist', path))
                 requires_rerun |= RemakeOn.MISSING_INPUT
                 continue
-            # path_md = self.path_metadata_map[path]
-            # if path_md.compare_path_with_previous():
-            #     task_md.rerun_reasons.append(('input_path_metadata_has_changed', path))
-            #     requires_rerun |= RemakeOn.INPUTS_CHANGED
-            #     changed_paths.append(path)
+            if self.content_checks:
+                path_md = self.path_metadata_map[path]
+                if path_md.compare_path_with_previous():
+                    task_md.rerun_reasons.append(('input_path_metadata_has_changed', path))
+                    requires_rerun |= RemakeOn.INPUTS_CHANGED
+                    changed_paths.append(path)
 
         task_md.generate_metadata()
         requires_rerun = task_md.task_requires_rerun()
@@ -103,13 +106,15 @@ class MetadataManager:
 
 
 class TaskMetadata:
-    def __init__(self, task_control_name, dotremake_dir, task, inputs_metadata_map, outputs_metadata_map):
+    def __init__(self, task_control_name, dotremake_dir, task,
+                 inputs_metadata_map, outputs_metadata_map, content_checks):
         self.task_control_name = task_control_name
         self.dotremake_dir = dotremake_dir
         self.metadata_dir = dotremake_dir / METADATA_VERSION
         self.task = task
         self.inputs_metadata_map = inputs_metadata_map
         self.outputs_metadata_map = outputs_metadata_map
+        self.content_checks = content_checks
 
         self.task_path_hash_key = self.task.path_hash_key()
 
@@ -151,11 +156,12 @@ class TaskMetadata:
         logger.debug(f'    generate metadata for {self.task}')
 
         task_source_sha1hex, task_bytecode_sha1hex, task_depends_on_sha1hex = self._task_sha1hex()
-        # task_content_sha1hex = self._content_sha1hex()
+        if self.content_checks:
+            task_content_sha1hex = self._content_sha1hex()
+            self.new_metadata['task_content_sha1hex'] = task_content_sha1hex
         self.new_metadata['task_source_sha1hex'] = task_source_sha1hex
         self.new_metadata['task_bytecode_sha1hex'] = task_bytecode_sha1hex
         self.new_metadata['task_depends_on_sha1hex'] = task_depends_on_sha1hex
-        # self.new_metadata['task_content_sha1hex'] = task_content_sha1hex
 
     def _task_sha1hex(self):
         if hasattr(self.task, 'func_source'):
@@ -242,9 +248,10 @@ class TaskMetadata:
             if self.new_metadata['task_depends_on_sha1hex'] != self.metadata['task_depends_on_sha1hex']:
                 self.requires_rerun |= RemakeOn.DEPENDS_SOURCE_CHANGED
                 self.rerun_reasons.append(('task_depends_on_sha1hex_different', None))
-            # if self.new_metadata['task_content_sha1hex'] != self.metadata['task_content_sha1hex']:
-            #     self.requires_rerun |= RemakeOn.INPUTS_CHANGED
-            #     self.rerun_reasons.append(('task_content_sha1hex_different', None))
+            if self.content_checks:
+                if self.new_metadata['task_content_sha1hex'] != self.metadata['task_content_sha1hex']:
+                    self.requires_rerun |= RemakeOn.INPUTS_CHANGED
+                    self.rerun_reasons.append(('task_content_sha1hex_different', None))
 
         logger.debug(f'    task requires rerun {self.requires_rerun}: {self.task}')
         return self.requires_rerun

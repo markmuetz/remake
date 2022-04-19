@@ -135,6 +135,7 @@ class TaskControl:
         self.path = Path(filename).absolute()
         self.name = self.path.stem
         self.remake_on = remake_on
+        self.content_checks = self.config.get('content_checks', True)
         self.print_reasons = print_reasons
         self.extra_checks = True
         self.tasks = []
@@ -148,7 +149,7 @@ class TaskControl:
         self.reset()
 
     def reset(self):
-        self.metadata_manager = MetadataManager(self.name, self.dotremake_dir)
+        self.metadata_manager = MetadataManager(self.name, self.dotremake_dir, self.content_checks)
         self.finalized = False
 
         self.output_task_map = {}
@@ -293,8 +294,9 @@ class TaskControl:
 
         changed_paths, requires_rerun = self.metadata_manager.check_task_status(task)
         # TODO: Possibly switch to one rescan task per task (instead of one per task input).
-        # for path in changed_paths:
-        #     self.gen_rescan_task(path)
+        if self.content_checks:
+            for path in changed_paths:
+                self.gen_rescan_task(path)
 
         if requires_rerun:
             logger.debug(f'requires rerun: {requires_rerun}')
