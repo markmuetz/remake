@@ -87,7 +87,7 @@ class RemakeParser:
             Arg('--info', '-I', help='Enable info logging', action='store_true'),
             Arg('--warning', '-W', help='Warning logging only', action='store_true'),
         ),
-        Arg('--debug-exception', '-X', help=f'Launch pdb/ipdb on exception',
+        Arg('--debug-exception', '-X', help='Launch pdb/ipdb on exception',
             action='store_true'),
         Arg('--no-colour', '-B', help='Black and white logging', action='store_true'),
     ]

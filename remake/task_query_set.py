@@ -128,7 +128,7 @@ class TaskQuerySet(list):
                     else:
                         print(f'  {reason[0]}')
             if task.status == 'cannot_run':
-                print(f'  cannot_run:')
+                print('  cannot_run:')
                 for k, p in task.inputs.items():
                     if p.exists():
                         continue
