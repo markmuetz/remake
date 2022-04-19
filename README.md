@@ -8,6 +8,8 @@ Remake is content aware - it tracks the contents of each file and task - and can
 Simple demonstration
 --------------------
 
+Here is a simple remake file `demo.py`.
+
 ```python
 """Simple remake file: in.txt -> fan_out1.txt -> out.txt
                               `> fan_out2.txt /
@@ -44,19 +46,26 @@ class Out(TaskRule):
             input_values.append(self.inputs[f'fan_out_{i}'].read_text())
         self.outputs['out'].write_text(''.join(input_values))
 
+```
 
-if __name__ == '__main__':
-    # N.B. this file is runnable on its own.
-    demo.finalize()
-    # Tasks are accessible using the classname of the TaskRule:
-    FanOut.tasks.status()
-    Out.tasks.status()
-    # Or by using the demo object:
-    demo.tasks.status()
-    # All (remaining) tasks can be run:
-    demo.run_all()
+This can be loaded in an interactive python shell using:
+
+```python
+>>> from remake import load_remake
+>>> demo = load_remake('demo.py').finalize()
+>>> # Tasks are accessible using the classname of the TaskRule:
+>>> demo.FanOut.tasks.status()
+>>> Out.tasks.status()
+>>> # Or by using the demo object:
+>>> demo.tasks.status()
+>>> # All (remaining) tasks can be run:
+>>> demo.run_all()
+>>> # edit one of the tasks in demo.py, then reload it:
+>>> demo = load_remake('demo.py').finalize()
 
 ```
+
+Alternatively, remake can be used as a command line tool:
 
 ```bash
 $ cat data/in.txt
@@ -64,9 +73,6 @@ input
 
 $ remake run demo
 => demo <=
-Build task DAG
-Perform topological sort
-Assign status to tasks
 Status (complete/rescan/pending/remaining/cannot run): 0/1/0/3/0
 Rescanning: /home/markmuetz/projects/remake/remake/examples/data/in.txt
 1/3: 3491ba8fdd FanOut(i=1)
@@ -77,9 +83,6 @@ Status (complete/rescan/pending/remaining/cannot run): 3/0/0/0/0
 # edit FanOut.rule_run so that its output is different
 $ remake run demo
 => demo <=
-Build task DAG
-Perform topological sort
-Assign status to tasks
 Status (complete/rescan/pending/remaining/cannot run): 0/0/2/1/0
 1/3: 3491ba8fdd FanOut(i=1)
 2/3: df3b4d6329 FanOut(i=2)
@@ -89,9 +92,6 @@ Status (complete/rescan/pending/remaining/cannot run): 3/0/0/0/0
 # edit Out.rule_run
 $ remake run demo
 => demo <=
-Build task DAG
-Perform topological sort
-Assign status to tasks
 Status (complete/rescan/pending/remaining/cannot run): 2/0/1/0/0
 3/3: a20a6e7a29 Out()
 Status (complete/rescan/pending/remaining/cannot run): 3/0/0/0/0
