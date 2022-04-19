@@ -55,7 +55,7 @@ This can be loaded in an interactive python shell using:
 >>> demo = load_remake('demo.py').finalize()
 >>> # Tasks are accessible using the classname of the TaskRule:
 >>> demo.FanOut.tasks.status()
->>> Out.tasks.status()
+>>> demo.Out.tasks.status()
 >>> # Or by using the demo object:
 >>> demo.tasks.status()
 >>> # All (remaining) tasks can be run:
