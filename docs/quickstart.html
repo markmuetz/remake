@@ -164,9 +164,9 @@ cat README.md
 </pre></div>
 </div>
 <p>Alternatively, any <code class="docutils literal notranslate"><span class="pre">remake</span></code> file can be run using Python (e.g. using IPython):</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">run</span> <span class="n">ex1</span><span class="o">.</span><span class="n">py</span>
-<span class="n">ex1</span><span class="o">.</span><span class="n">finalize</span><span class="p">()</span>
-<span class="n">ex1</span><span class="o">.</span><span class="n">run_all</span><span class="p">()</span>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="kn">from</span> <span class="nn">remake</span> <span class="kn">import</span> <span class="n">load_remake</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">ex1</span> <span class="o">=</span> <span class="n">load_remake</span><span class="p">(</span><span class="s1">&#39;ex1.py&#39;</span><span class="p">,</span> <span class="n">finalize</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">ex1</span><span class="o">.</span><span class="n">run_all</span><span class="p">()</span>
 </pre></div>
 </div>
 </div>
