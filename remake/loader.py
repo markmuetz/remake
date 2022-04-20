@@ -1,10 +1,21 @@
 from pathlib import Path
+from typing import Union
 
 from remake.util import load_module
 from remake.remake_exceptions import RemakeLoadError
 
 
-def load_remake(filename):
+def load_remake(filename: Union[str, Path], finalize: bool = False) -> 'Remake':
+    """Load a remake instance from a file.
+
+    >>> ex1 = load_remake('examples/ex1.py')
+    >>> ex1.finalized
+    False
+
+    :param filename: file that contains exactly one `remake = Remake()`
+    :param finalize: finalize the remake instance
+    :return: instance of `Remake`
+    """
     # Avoids circular import.
     from remake import Remake
     filename = Path(filename)
@@ -19,4 +30,7 @@ def load_remake(filename):
         raise RemakeLoadError(f'More than one remake defined in {filename}')
     elif not remakes:
         raise RemakeLoadError(f'No remake defined in {filename}')
-    return remakes[0]
+    if finalize:
+        return remakes[0].finalize()
+    else:
+        return remakes[0]

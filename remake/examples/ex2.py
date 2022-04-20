@@ -68,6 +68,3 @@ class Reduce2(TaskRule):
         for o in self.outputs.values():
             o.write_text(payload)
 
-
-if __name__ == '__main__':
-    ex2.finalize()

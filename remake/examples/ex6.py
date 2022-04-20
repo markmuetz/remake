@@ -48,6 +48,3 @@ class Chain(TaskRule):
     def rule_run(self):
         self.outputs['out'].touch()
 
-
-if __name__ == '__main__':
-    rmk.finalize()

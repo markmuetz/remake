@@ -25,6 +25,3 @@ class Basic2(TaskRule):
         for i, o in zip(self.inputs.values(), self.outputs.values()):
             o.write_text('\n'.join([f'f1 {line}' for line in i.read_text().split('\n')[:-1]]) + '\n')
 
-
-if __name__ == '__main__':
-    ex7.finalize()

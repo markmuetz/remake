@@ -143,8 +143,8 @@
   </a>
  </li>
  <li class="toc-h2 nav-item toc-entry">
-  <a class="reference internal nav-link" href="#simple-demonstration">
-   Simple demonstration
+  <a class="reference internal nav-link" href="#demonstration">
+   Demonstration
   </a>
   <ul class="nav section-nav flex-column">
   </ul>
@@ -182,8 +182,9 @@
 <p>Remake is a smart Python build tool, similar to <code class="docutils literal notranslate"><span class="pre">make</span></code>. It is file based – all inputs and outputs of each task are files. It uses a pure-Python implementation to define a set of tasks, where any tasks can depend on the output from previous tasks. It makes it easy to define complex task graphs, using a filename formatter for each task to define its inputs and outputs. It is smart, in that if any of the tasks or any of the input files to a task’s content changes, those tasks will be rerun. Subsequent tasks will only be rerun if their input has changed.</p>
 <p>Remake tracks the contents of each file and task, and can be used to generate a report of how any particular file was made. It is particularly suited to use in scientific settings, due to its ability to reliably recreate any set of output files, based on running only those tasks that are necessary.</p>
 </div>
-<div class="section" id="simple-demonstration">
-<h2>Simple demonstration<a class="headerlink" href="#simple-demonstration" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="demonstration">
+<h2>Demonstration<a class="headerlink" href="#demonstration" title="Permalink to this headline">¶</a></h2>
+<p>Here is a simple remake file <code class="docutils literal notranslate"><span class="pre">demo.py</span></code>.</p>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="sd">&quot;&quot;&quot;Simple remake file: in.txt -&gt; fan_out1.txt -&gt; out.txt</span>
 <span class="sd">                              `&gt; fan_out2.txt /</span>
 <span class="sd">&quot;&quot;&quot;</span>
@@ -218,28 +219,28 @@
         <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]:</span>
             <span class="n">input_values</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">inputs</span><span class="p">[</span><span class="sa">f</span><span class="s1">&#39;fan_out_</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">read_text</span><span class="p">())</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">outputs</span><span class="p">[</span><span class="s1">&#39;out&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="s1">&#39;&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">input_values</span><span class="p">))</span>
-
-
-<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
-    <span class="c1"># N.B. this file is runnable on its own.</span>
-    <span class="n">demo</span><span class="o">.</span><span class="n">finalize</span><span class="p">()</span>
-    <span class="c1"># Tasks are accessible using the classname of the TaskRule:</span>
-    <span class="n">FanOut</span><span class="o">.</span><span class="n">tasks</span><span class="o">.</span><span class="n">status</span><span class="p">()</span>
-    <span class="n">Out</span><span class="o">.</span><span class="n">tasks</span><span class="o">.</span><span class="n">status</span><span class="p">()</span>
-    <span class="c1"># Or by using the demo object:</span>
-    <span class="n">demo</span><span class="o">.</span><span class="n">tasks</span><span class="o">.</span><span class="n">status</span><span class="p">()</span>
-    <span class="c1"># All (remaining) tasks can be run:</span>
-    <span class="n">demo</span><span class="o">.</span><span class="n">run_all</span><span class="p">()</span>
 </pre></div>
 </div>
+<p>This can be loaded in an interactive python shell using:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="kn">from</span> <span class="nn">remake</span> <span class="kn">import</span> <span class="n">load_remake</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">demo</span> <span class="o">=</span> <span class="n">load_remake</span><span class="p">(</span><span class="s1">&#39;demo.py&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">finalize</span><span class="p">()</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="c1"># Tasks are accessible using the classname of the TaskRule:</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">demo</span><span class="o">.</span><span class="n">FanOut</span><span class="o">.</span><span class="n">tasks</span><span class="o">.</span><span class="n">status</span><span class="p">()</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">demo</span><span class="o">.</span><span class="n">Out</span><span class="o">.</span><span class="n">tasks</span><span class="o">.</span><span class="n">status</span><span class="p">()</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="c1"># Or by using the demo object:</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">demo</span><span class="o">.</span><span class="n">tasks</span><span class="o">.</span><span class="n">status</span><span class="p">()</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="c1"># All (remaining) tasks can be run:</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">demo</span><span class="o">.</span><span class="n">run_all</span><span class="p">()</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="c1"># edit one of the tasks in demo.py, then reload it:</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">demo</span> <span class="o">=</span> <span class="n">load_remake</span><span class="p">(</span><span class="s1">&#39;demo.py&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">finalize</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>Alternatively, remake can be used as a command line tool:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ cat data/in.txt
 input
 
 $ remake run <span class="nv">demo</span>
 <span class="o">=</span>&gt; demo &lt;<span class="o">=</span>
-Build task DAG
-Perform topological sort
-Assign status to tasks
 Status <span class="o">(</span>complete/rescan/pending/remaining/cannot run<span class="o">)</span>: <span class="m">0</span>/1/0/3/0
 Rescanning: /home/markmuetz/projects/remake/remake/examples/data/in.txt
 <span class="m">1</span>/3: 3491ba8fdd FanOut<span class="o">(</span><span class="nv">i</span><span class="o">=</span><span class="m">1</span><span class="o">)</span>
@@ -250,9 +251,6 @@ Status <span class="o">(</span>complete/rescan/pending/remaining/cannot run<span
 <span class="c1"># edit FanOut.rule_run so that its output is different</span>
 $ remake run <span class="nv">demo</span>
 <span class="o">=</span>&gt; demo &lt;<span class="o">=</span>
-Build task DAG
-Perform topological sort
-Assign status to tasks
 Status <span class="o">(</span>complete/rescan/pending/remaining/cannot run<span class="o">)</span>: <span class="m">0</span>/0/2/1/0
 <span class="m">1</span>/3: 3491ba8fdd FanOut<span class="o">(</span><span class="nv">i</span><span class="o">=</span><span class="m">1</span><span class="o">)</span>
 <span class="m">2</span>/3: df3b4d6329 FanOut<span class="o">(</span><span class="nv">i</span><span class="o">=</span><span class="m">2</span><span class="o">)</span>
@@ -262,9 +260,6 @@ Status <span class="o">(</span>complete/rescan/pending/remaining/cannot run<span
 <span class="c1"># edit Out.rule_run</span>
 $ remake run <span class="nv">demo</span>
 <span class="o">=</span>&gt; demo &lt;<span class="o">=</span>
-Build task DAG
-Perform topological sort
-Assign status to tasks
 Status <span class="o">(</span>complete/rescan/pending/remaining/cannot run<span class="o">)</span>: <span class="m">2</span>/0/1/0/0
 <span class="m">3</span>/3: a20a6e7a29 Out<span class="o">()</span>
 Status <span class="o">(</span>complete/rescan/pending/remaining/cannot run<span class="o">)</span>: <span class="m">3</span>/0/0/0/0
@@ -292,6 +287,7 @@ FanOut <span class="m">2</span>: input
 </li>
 <li class="toctree-l1"><a class="reference internal" href="remake_package.html">Python API</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="remake_package.html#remake-classes">Remake classes</a></li>
+<li class="toctree-l2"><a class="reference internal" href="remake_package.html#module-remake.loader">remake.loader</a></li>
 <li class="toctree-l2"><a class="reference internal" href="remake_package.html#module-remake.util">remake.util</a></li>
 </ul>
 </li>
