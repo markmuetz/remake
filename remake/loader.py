@@ -5,7 +5,8 @@ from remake.util import load_module
 from remake.remake_exceptions import RemakeLoadError
 
 
-def load_remake(filename: Union[str, Path], finalize: bool = False) -> 'Remake':
+# Remake cannot be loaded until body of function - ignore flake8 error.
+def load_remake(filename: Union[str, Path], finalize: bool = False) -> 'Remake':  # noqa: F821
     """Load a remake instance from a file.
 
     >>> ex1 = load_remake('examples/ex1.py')

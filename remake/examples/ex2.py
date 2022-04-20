@@ -67,4 +67,3 @@ class Reduce2(TaskRule):
         payload += ', '.join([i.read_text() for i in self.inputs.values()])
         for o in self.outputs.values():
             o.write_text(payload)
-

@@ -47,4 +47,3 @@ class Chain(TaskRule):
 
     def rule_run(self):
         self.outputs['out'].touch()
-

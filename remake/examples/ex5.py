@@ -21,4 +21,3 @@ class Basic2(TaskRule):
 
     def rule_run(self):
         self.outputs['dummy'].touch()
-

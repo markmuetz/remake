@@ -32,4 +32,3 @@ class Out(TaskRule):
         for i in [1, 2]:
             input_values.append(self.inputs[f'fan_out_{i}'].read_text())
         self.outputs['out'].write_text(''.join(input_values))
-

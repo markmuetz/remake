@@ -154,4 +154,3 @@ class TestEx1(TaskRule):
         ]
         run_commands(commands)
         self.outputs['dummy'].touch()
-
