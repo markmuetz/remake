@@ -14,11 +14,9 @@ from remake.executor.base_executor import Executor
 
 SLURM_SCRIPT_TPL = """#!/bin/bash
 #SBATCH --job-name={job_name}
-#SBATCH -p {queue}
 #SBATCH -o {task_slurm_output}/{task_type}_%j.out
 #SBATCH -e {task_slurm_output}/{task_type}_%j.err
-#SBATCH --time={max_runtime}
-#SBATCH --mem={mem}
+{extra_opts}
 {dependencies}
 
 python {script_path} {remakefile_path} {remakefile_path_hash} {task_type} {task_key}
@@ -123,6 +121,15 @@ class SlurmExecutor(Executor):
         else:
             raise ValueError(f'Unkown task type: {task}')
 
+        extra_opts = []
+        for k, v in slurm_kwargs.items():
+            if k == 'max_runtime':
+                extra_opts.append(f'#SBATCH --time={v}')
+            elif k == 'queue':
+                extra_opts.append(f'#SBATCH --partition={v}')
+            else:
+                extra_opts.append(f'#SBATCH --{k}={v}')
+        extra_opts = '\n'.join(extra_opts)
         slurm_script = SLURM_SCRIPT_TPL.format(script_name=script_name,
                                                script_path=script_path,
                                                task_slurm_output=task_slurm_output,
@@ -131,6 +138,7 @@ class SlurmExecutor(Executor):
                                                remakefile_path_hash=self.remakefile_path_hash,
                                                task_type=task_type,
                                                task_key=task_key,
+                                               extra_opts=extra_opts,
                                                dependencies=dependencies,
                                                job_name=task_key[:10],  # Longer and a leading * is added.
                                                **slurm_kwargs)
