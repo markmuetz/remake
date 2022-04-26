@@ -71,6 +71,23 @@ class SlurmExecutor(Executor):
         self.remakefile_path_hash = sha1(self.remakefile_path.read_bytes()).hexdigest()
         self.pending_tasks = []
 
+        try:
+            output = sysrun('squeue -u mmuetz -o "%.18i %.20P %.10j"').stdout
+            logger.debug(output.strip())
+        except sp.CalledProcessError as cpe:
+            logger.error(f'Error submitting {slurm_script_path}')
+            logger.error(cpe)
+            logger.error('===ERROR===')
+            logger.error(cpe.stderr)
+            logger.error('===ERROR===')
+            raise
+        self.currently_running_task_keys = {}
+        for l in output.split('\n'):
+            if not l:
+                continue
+            jobid, partition, task_key = l.split()
+            self.currently_running_task_keys[task_key] = {'jobid': jobid, 'partition': partition}
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         super().__exit__(exc_type, exc_val, exc_tb)
         for task in self.pending_tasks:
@@ -83,8 +100,8 @@ class SlurmExecutor(Executor):
         rule_name = task.__class__.__name__
         rule_slurm_output = self.slurm_output / rule_name
         if hasattr(task, 'var_matrix'):
-            task_path_hash_key = task.path_hash_key()
-            task_dir = [task_path_hash_key[:2], task_path_hash_key[2:]]
+            task_key = task.path_hash_key()
+            task_dir = [task_key[:2], task_key[2:]]
             # Doesn't work if val is e.g. a datetime.
             # task_dir = [f'{k}-{getattr(task, k)}' for k in task.var_matrix.keys()]
             task_slurm_output = rule_slurm_output.joinpath(*task_dir)
@@ -149,10 +166,15 @@ class SlurmExecutor(Executor):
         return slurm_script_filepath
 
     def _submit_task(self, task):
-        slurm_script_path = self._write_submit_script(task)
-        output = _submit_slurm_script(slurm_script_path)
-        logger.info(f'Submitted: {task}')
-        jobid = _parse_jobid(output)
+        task_key = task.path_hash_key()
+        if task_key[:10] in self.currently_running_task_keys:
+            logger.info(f'Already running: {task}')
+            jobid = self.currently_running_task_keys[task_key[:10]]['jobid']
+        else:
+            slurm_script_path = self._write_submit_script(task)
+            output = _submit_slurm_script(slurm_script_path)
+            logger.info(f'Submitted: {task}')
+            jobid = _parse_jobid(output)
         self.task_jobid_map[task] = jobid
 
     def can_accept_task(self):
