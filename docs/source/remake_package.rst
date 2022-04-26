@@ -20,6 +20,13 @@ Remake classes
     :members:
     :undoc-members:
 
+remake.loader
+-------------
+
+.. automodule:: remake.loader
+    :members:
+    :undoc-members:
+
 remake.util
 -----------
 

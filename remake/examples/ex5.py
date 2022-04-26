@@ -21,7 +21,3 @@ class Basic2(TaskRule):
 
     def rule_run(self):
         self.outputs['dummy'].touch()
-
-
-if __name__ == '__main__':
-    ex5.finalize()

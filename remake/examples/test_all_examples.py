@@ -154,7 +154,3 @@ class TestEx1(TaskRule):
         ]
         run_commands(commands)
         self.outputs['dummy'].touch()
-
-
-if __name__ == '__main__':
-    remake_all.finalize()

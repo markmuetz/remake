@@ -16,7 +16,7 @@ Alternatively, any ``remake`` file can be run using Python (e.g. using IPython):
 
 ::
 
-    run ex1.py
-    ex1.finalize()
-    ex1.run_all()
+    >>> from remake import load_remake
+    >>> ex1 = load_remake('ex1.py', finalize=True)
+    >>> ex1.run_all()
 

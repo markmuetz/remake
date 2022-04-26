@@ -13,8 +13,10 @@ Remake is a smart Python build tool, similar to ``make``. It is file based -- al
 
 Remake tracks the contents of each file and task, and can be used to generate a report of how any particular file was made. It is particularly suited to use in scientific settings, due to its ability to reliably recreate any set of output files, based on running only those tasks that are necessary.
 
-Simple demonstration
---------------------
+Demonstration
+-------------
+
+Here is a simple remake file ``demo.py``.
 
 ::
 
@@ -54,17 +56,23 @@ Simple demonstration
             self.outputs['out'].write_text(''.join(input_values))
 
 
-    if __name__ == '__main__':
-        # N.B. this file is runnable on its own.
-        demo.finalize()
-        # Tasks are accessible using the classname of the TaskRule:
-        FanOut.tasks.status()
-        Out.tasks.status()
-        # Or by using the demo object:
-        demo.tasks.status()
-        # All (remaining) tasks can be run:
-        demo.run_all()
+This can be loaded in an interactive python shell using:
 
+::
+
+    >>> from remake import load_remake
+    >>> demo = load_remake('demo.py').finalize()
+    >>> # Tasks are accessible using the classname of the TaskRule:
+    >>> demo.FanOut.tasks.status()
+    >>> demo.Out.tasks.status()
+    >>> # Or by using the demo object:
+    >>> demo.tasks.status()
+    >>> # All (remaining) tasks can be run:
+    >>> demo.run_all()
+    >>> # edit one of the tasks in demo.py, then reload it:
+    >>> demo = load_remake('demo.py').finalize()
+
+Alternatively, remake can be used as a command line tool:
 
 .. code-block:: bash
 
@@ -73,9 +81,6 @@ Simple demonstration
 
     $ remake run demo
     => demo <=
-    Build task DAG
-    Perform topological sort
-    Assign status to tasks
     Status (complete/rescan/pending/remaining/cannot run): 0/1/0/3/0
     Rescanning: /home/markmuetz/projects/remake/remake/examples/data/in.txt
     1/3: 3491ba8fdd FanOut(i=1)
@@ -86,9 +91,6 @@ Simple demonstration
     # edit FanOut.rule_run so that its output is different
     $ remake run demo
     => demo <=
-    Build task DAG
-    Perform topological sort
-    Assign status to tasks
     Status (complete/rescan/pending/remaining/cannot run): 0/0/2/1/0
     1/3: 3491ba8fdd FanOut(i=1)
     2/3: df3b4d6329 FanOut(i=2)
@@ -98,9 +100,6 @@ Simple demonstration
     # edit Out.rule_run
     $ remake run demo
     => demo <=
-    Build task DAG
-    Perform topological sort
-    Assign status to tasks
     Status (complete/rescan/pending/remaining/cannot run): 2/0/1/0/0
     3/3: a20a6e7a29 Out()
     Status (complete/rescan/pending/remaining/cannot run): 3/0/0/0/0

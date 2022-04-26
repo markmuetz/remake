@@ -5,8 +5,8 @@ Remake is a smart Python build tool, similar to `make`. It is file based - all i
 
 Remake is content aware - it tracks the contents of each file and task - and can be used to generate a report of how any particular file was made. It is particularly suited to use for scientific workflows, due to its ability to reliably recreate any set of output files, based on running only those tasks that are necessary.
 
-Simple demonstration
---------------------
+Demonstration
+-------------
 
 Here is a simple remake file `demo.py`.
 

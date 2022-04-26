@@ -32,15 +32,3 @@ class Out(TaskRule):
         for i in [1, 2]:
             input_values.append(self.inputs[f'fan_out_{i}'].read_text())
         self.outputs['out'].write_text(''.join(input_values))
-
-
-if __name__ == '__main__':
-    # N.B. this file is runnable on its own.
-    demo.finalize()
-    # Tasks are accessible using the classname of the TaskRule:
-    FanOut.tasks.status()
-    Out.tasks.status()
-    # Or by using the demo object:
-    demo.tasks.status()
-    # All (remaining) tasks can be run:
-    demo.run_all()
