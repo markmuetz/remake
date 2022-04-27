@@ -27,7 +27,14 @@ class TestSlurmExecutor(unittest.TestCase):
 
     @mock.patch('remake.executor.slurm_executor.sysrun')
     def test_slurm_executor(self, mock_sysrun):
-        sysrun_ret = []
+        # Mock first call to sysrun -- squeue.
+        mock_ret = mock.MagicMock()
+        mock_ret.stdout = '\n'.join([
+            '             JOBID            PARTITION       NAME',
+            '            123456               queue1 abcdefghij'
+        ])
+        sysrun_ret = [mock_ret]
+        # Mock first call to sysrun -- sbatch.
         for i in range(len(self.remake.task_ctrl.rescan_tasks),
                        len(self.remake.tasks)):
             mock_ret = mock.MagicMock()
@@ -39,7 +46,14 @@ class TestSlurmExecutor(unittest.TestCase):
 
     @mock.patch('remake.executor.slurm_executor.sysrun')
     def test_slurm_executor_error(self, mock_sysrun):
-        sysrun_ret = []
+        # Mock first call to sysrun -- squeue.
+        mock_ret = mock.MagicMock()
+        mock_ret.stdout = '\n'.join([
+            '             JOBID            PARTITION       NAME',
+            '            123456               queue1 abcdefghij'
+        ])
+        sysrun_ret = [mock_ret]
+        # Mock first call to sysrun -- sbatch.
         for i in range(len(self.remake.task_ctrl.rescan_tasks),
                        len(self.remake.tasks)):
             mock_ret = mock.MagicMock()
@@ -53,7 +67,14 @@ class TestSlurmExecutor(unittest.TestCase):
 
     @mock.patch('remake.executor.slurm_executor.sysrun')
     def test_slurm_remake_run_requested(self, mock_sysrun):
-        sysrun_ret = []
+        # Mock first call to sysrun -- squeue.
+        mock_ret = mock.MagicMock()
+        mock_ret.stdout = '\n'.join([
+            '             JOBID            PARTITION       NAME',
+            '            123456               queue1 abcdefghij'
+        ])
+        sysrun_ret = [mock_ret]
+        # Mock first call to sysrun -- sbatch.
         for i in range(len(self.remake.task_ctrl.rescan_tasks),
                        len(self.remake.tasks)):
             mock_ret = mock.MagicMock()
@@ -64,6 +85,32 @@ class TestSlurmExecutor(unittest.TestCase):
 
         self.remake.task_ctrl.set_executor('slurm')
         self.remake.run_requested(self.remake.tasks[:3], handle_dependencies=True)
+
+    @mock.patch('remake.executor.slurm_executor.SlurmExecutor._task_already_queued_running')
+    @mock.patch('remake.executor.slurm_executor.sysrun')
+    def test_slurm_executor_already_running(self, mock_sysrun, mock_already):
+        # First, pick a task to be already running.
+        running_task = self.remake.tasks[len(self.remake.tasks) // 2]
+        task_key = running_task.path_hash_key()[:10]
+        # Mock first call to sysrun -- squeue. Give it the task_key of the running task.
+        mock_ret = mock.MagicMock()
+        mock_ret.stdout = '\n'.join([
+            '             JOBID            PARTITION       NAME',
+            f'            123456               queue1 {task_key}'
+        ])
+        sysrun_ret = [mock_ret]
+        # Mock first call to sysrun -- sbatch (N.B. need one fewer).
+        for i in range(len(self.remake.task_ctrl.rescan_tasks),
+                       len(self.remake.tasks) - 1):
+            mock_ret = mock.MagicMock()
+            mock_ret.stdout = f'Submitted batch job {i + 100000}'
+            sysrun_ret.append(mock_ret)
+        mock_sysrun.side_effect = sysrun_ret
+        self.remake.task_ctrl.set_executor('slurm')
+        self.remake.run_all()
+
+        # Check that SlurmExecutor._task_already_queued_running was called with correct task.
+        mock_already.assert_called_with(running_task)
 
 
 class TestSlurmExecutorRunJob(unittest.TestCase):

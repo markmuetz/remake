@@ -71,21 +71,25 @@ class SlurmExecutor(Executor):
         self.remakefile_path_hash = sha1(self.remakefile_path.read_bytes()).hexdigest()
         self.pending_tasks = []
 
+        # Check to see whether this task is already running.
         try:
+            # get jobid, partition and job name.
+            # job name is 10 character task key.
             output = sysrun('squeue -u mmuetz -o "%.18i %.20P %.10j"').stdout
             logger.debug(output.strip())
         except sp.CalledProcessError as cpe:
-            logger.error(f'Error submitting {slurm_script_path}')
+            logger.error('Error on squeue command')
             logger.error(cpe)
             logger.error('===ERROR===')
             logger.error(cpe.stderr)
             logger.error('===ERROR===')
             raise
+        # Parse output. Skip first and blank lines.
         self.currently_running_task_keys = {}
-        for l in output.split('\n'):
-            if not l:
+        for line in output.split('\n')[1:]:
+            if not line:
                 continue
-            jobid, partition, task_key = l.split()
+            jobid, partition, task_key = line.split()
             self.currently_running_task_keys[task_key] = {'jobid': jobid, 'partition': partition}
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -165,10 +169,14 @@ class SlurmExecutor(Executor):
             fp.write(slurm_script)
         return slurm_script_filepath
 
+    def _task_already_queued_running(self, task):
+        logger.info(f'Already queued/running: {task}')
+
     def _submit_task(self, task):
         task_key = task.path_hash_key()
+        # Make sure task isn't already queued or running.
         if task_key[:10] in self.currently_running_task_keys:
-            logger.info(f'Already running: {task}')
+            self._task_already_queued_running(task)
             jobid = self.currently_running_task_keys[task_key[:10]]['jobid']
         else:
             slurm_script_path = self._write_submit_script(task)
