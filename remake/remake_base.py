@@ -69,6 +69,17 @@ class Remake:
         self.rules = []
         self.tasks = TaskQuerySet(task_ctrl=self.task_ctrl)
 
+    def __repr__(self):
+        return f'Remake[finalized={self.finalized}, ntasks={len(self.tasks)}]'
+
+    def _repr_html_(self):
+        tasks_li = "".join(f"<li class='xr-var-item'>{task}</li>"
+                                 for task in self.tasks)
+
+        tasks_list = f"<ul class='xr-var-list'>{tasks_li}</ul>"
+
+        return f'<h3>Remake[finalized={self.finalized}, ntasks={len(self.tasks)}]</h3>' + tasks_list
+
     @property
     def name(self):
         return self.task_ctrl.name
