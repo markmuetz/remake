@@ -16,7 +16,6 @@ SLURM_SCRIPT_TPL = """#!/bin/bash
 #SBATCH --job-name={job_name}
 #SBATCH -o {task_slurm_output}/{task_type}_%j.out
 #SBATCH -e {task_slurm_output}/{task_type}_%j.err
-#SBATCH --comment "{comment}"
 {extra_opts}
 {dependencies}
 
@@ -156,7 +155,6 @@ class SlurmExecutor(Executor):
         slurm_script = SLURM_SCRIPT_TPL.format(script_name=script_name,
                                                script_path=script_path,
                                                task_slurm_output=task_slurm_output,
-                                               comment=comment,
                                                remakefile_name=remakefile_name,
                                                remakefile_path=self.remakefile_path,
                                                remakefile_path_hash=self.remakefile_path_hash,

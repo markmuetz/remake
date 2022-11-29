@@ -74,7 +74,7 @@ class Remake:
 
     def _repr_html_(self):
         tasks_li = "".join(f"<li class='xr-var-item'>{task}</li>"
-                                 for task in self.tasks)
+                           for task in self.tasks)
 
         tasks_list = f"<ul class='xr-var-list'>{tasks_li}</ul>"
 
