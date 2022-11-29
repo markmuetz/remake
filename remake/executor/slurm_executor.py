@@ -16,6 +16,7 @@ SLURM_SCRIPT_TPL = """#!/bin/bash
 #SBATCH --job-name={job_name}
 #SBATCH -o {task_slurm_output}/{task_type}_%j.out
 #SBATCH -e {task_slurm_output}/{task_type}_%j.err
+#SBATCH --comment "{comment}"
 {extra_opts}
 {dependencies}
 
@@ -75,7 +76,7 @@ class SlurmExecutor(Executor):
         try:
             # get jobid, partition and job name.
             # job name is 10 character task key.
-            output = sysrun('squeue -u mmuetz -o "%.18i %.20P %.10j"').stdout
+            output = sysrun('squeue -u mmuetz -o "%.18i %.20P %.10j %.3t"').stdout
             logger.debug(output.strip())
         except sp.CalledProcessError as cpe:
             logger.error('Error on squeue command')
@@ -89,8 +90,9 @@ class SlurmExecutor(Executor):
         for line in output.split('\n')[1:]:
             if not line:
                 continue
-            jobid, partition, task_key = line.split()
-            self.currently_running_task_keys[task_key] = {'jobid': jobid, 'partition': partition}
+            jobid, partition, task_key, status = line.split()
+            if status in ['PD', 'R']:
+                self.currently_running_task_keys[task_key] = {'jobid': jobid, 'partition': partition}
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         super().__exit__(exc_type, exc_val, exc_tb)
@@ -154,6 +156,7 @@ class SlurmExecutor(Executor):
         slurm_script = SLURM_SCRIPT_TPL.format(script_name=script_name,
                                                script_path=script_path,
                                                task_slurm_output=task_slurm_output,
+                                               comment=comment,
                                                remakefile_name=remakefile_name,
                                                remakefile_path=self.remakefile_path,
                                                remakefile_path_hash=self.remakefile_path_hash,
