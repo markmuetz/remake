@@ -30,8 +30,8 @@ class TestSlurmExecutor(unittest.TestCase):
         # Mock first call to sysrun -- squeue.
         mock_ret = mock.MagicMock()
         mock_ret.stdout = '\n'.join([
-            '             JOBID            PARTITION       NAME',
-            '            123456               queue1 abcdefghij'
+            '             JOBID            PARTITION       NAME ST',
+            '            123456               queue1 abcdefghij  R'
         ])
         sysrun_ret = [mock_ret]
         # Mock first call to sysrun -- sbatch.
@@ -49,8 +49,8 @@ class TestSlurmExecutor(unittest.TestCase):
         # Mock first call to sysrun -- squeue.
         mock_ret = mock.MagicMock()
         mock_ret.stdout = '\n'.join([
-            '             JOBID            PARTITION       NAME',
-            '            123456               queue1 abcdefghij'
+            '             JOBID            PARTITION       NAME ST',
+            '            123456               queue1 abcdefghij PD'
         ])
         sysrun_ret = [mock_ret]
         # Mock first call to sysrun -- sbatch.
@@ -70,8 +70,8 @@ class TestSlurmExecutor(unittest.TestCase):
         # Mock first call to sysrun -- squeue.
         mock_ret = mock.MagicMock()
         mock_ret.stdout = '\n'.join([
-            '             JOBID            PARTITION       NAME',
-            '            123456               queue1 abcdefghij'
+            '             JOBID            PARTITION       NAME ST',
+            '            123456               queue1 abcdefghij  R'
         ])
         sysrun_ret = [mock_ret]
         # Mock first call to sysrun -- sbatch.
@@ -95,8 +95,8 @@ class TestSlurmExecutor(unittest.TestCase):
         # Mock first call to sysrun -- squeue. Give it the task_key of the running task.
         mock_ret = mock.MagicMock()
         mock_ret.stdout = '\n'.join([
-            '             JOBID            PARTITION       NAME',
-            f'            123456               queue1 {task_key}'
+            '             JOBID            PARTITION       NAME ST',
+            f'            123456               queue1 {task_key}  R'
         ])
         sysrun_ret = [mock_ret]
         # Mock first call to sysrun -- sbatch (N.B. need one fewer).
