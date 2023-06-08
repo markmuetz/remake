@@ -48,10 +48,13 @@ class NoMetadata(Exception):
 class MetadataManager:
     """Creates and stores maps of PathMetadata and TaskMetadata"""
     # Needed because it keeps track of all PathMetadata objs, and stops there being duplicate ones for inputs.
-    def __init__(self, task_control_name, dotremake_dir, content_checks):
+    def __init__(self, task_control_name, dotremake_dir, content_checks,
+                 no_check_input_exist=False, no_stat_inputs=False):
         self.task_control_name = task_control_name
         self.dotremake_dir = dotremake_dir
         self.content_checks = content_checks
+        self.no_check_input_exist = no_check_input_exist
+        self.no_stat_inputs = no_stat_inputs
         self.path_metadata_map = {}
         self.task_metadata_map = {}
 
@@ -82,17 +85,18 @@ class MetadataManager:
         # Issue #34: only hits PathMetadata._load_metadata once now per path.
         requires_rerun = RemakeOn.NOT_NEEDED
         task_md = self.task_metadata_map[task]
-        for path in task.inputs.values():
-            if not path.exists():
-                task_md.rerun_reasons.append(('input_path_does_not_exist', path))
-                requires_rerun |= RemakeOn.MISSING_INPUT
-                continue
-            if self.content_checks:
-                path_md = self.path_metadata_map[path]
-                if path_md.compare_path_with_previous():
-                    task_md.rerun_reasons.append(('input_path_metadata_has_changed', path))
-                    requires_rerun |= RemakeOn.INPUTS_CHANGED
-                    changed_paths.append(path)
+        if not self.no_check_input_exist:
+            for path in task.inputs.values():
+                if not path.exists():
+                    task_md.rerun_reasons.append(('input_path_does_not_exist', path))
+                    requires_rerun |= RemakeOn.MISSING_INPUT
+                    continue
+                if self.content_checks:
+                    path_md = self.path_metadata_map[path]
+                    if path_md.compare_path_with_previous():
+                        task_md.rerun_reasons.append(('input_path_metadata_has_changed', path))
+                        requires_rerun |= RemakeOn.INPUTS_CHANGED
+                        changed_paths.append(path)
 
         task_md.generate_metadata()
         requires_rerun = task_md.task_requires_rerun()
@@ -107,7 +111,8 @@ class MetadataManager:
 
 class TaskMetadata:
     def __init__(self, task_control_name, dotremake_dir, task,
-                 inputs_metadata_map, outputs_metadata_map, content_checks):
+                 inputs_metadata_map, outputs_metadata_map, content_checks,
+                 no_check_input_exist=False, no_stat_inputs=False):
         self.task_control_name = task_control_name
         self.dotremake_dir = dotremake_dir
         self.metadata_dir = dotremake_dir / METADATA_VERSION
@@ -115,6 +120,8 @@ class TaskMetadata:
         self.inputs_metadata_map = inputs_metadata_map
         self.outputs_metadata_map = outputs_metadata_map
         self.content_checks = content_checks
+        self.no_check_input_exist = no_check_input_exist
+        self.no_stat_inputs = no_stat_inputs
 
         self.task_path_hash_key = self.task.path_hash_key()
 
@@ -213,6 +220,7 @@ class TaskMetadata:
         except NoMetadata:
             self.rerun_reasons.append(('task_has_not_been_run', None))
             self.requires_rerun |= RemakeOn.NO_TASK_METADATA
+            return self.requires_rerun
 
         logger.debug('    stat all files')
         earliest_output_path_mtime = float('inf')
@@ -221,9 +229,10 @@ class TaskMetadata:
                 self.rerun_reasons.append(('output_path_does_not_exist', output))
                 self.requires_rerun |= RemakeOn.MISSING_OUTPUT
                 break
-            earliest_output_path_mtime = min(earliest_output_path_mtime,
-                                             output.lstat().st_mtime)
-        if not self.requires_rerun:
+            if not self.no_stat_inputs:
+                earliest_output_path_mtime = min(earliest_output_path_mtime,
+                                                 output.lstat().st_mtime)
+        if not self.requires_rerun and not self.no_check_input_exist:
             latest_input_path_mtime = 0
             for input_path in self.task.inputs.values():
                 if not input_path.exists():
@@ -231,6 +240,8 @@ class TaskMetadata:
                     self.requires_rerun |= RemakeOn.MISSING_INPUT
                     break
 
+                if self.no_stat_inputs:
+                    continue
                 latest_input_path_mtime = max(latest_input_path_mtime,
                                               input_path.lstat().st_mtime)
             if latest_input_path_mtime > earliest_output_path_mtime:

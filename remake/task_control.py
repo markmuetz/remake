@@ -136,6 +136,8 @@ class TaskControl:
         self.name = self.path.stem
         self.remake_on = remake_on
         self.content_checks = self.config.get('content_checks', True)
+        self.no_check_input_exist = self.config.get('no_check_input_exist', False)
+        self.no_stat_inputs = self.config.get('no_stat_inputs', False)
         self.print_reasons = print_reasons
         self.extra_checks = True
         self.tasks = []
@@ -149,7 +151,8 @@ class TaskControl:
         self.reset()
 
     def reset(self):
-        self.metadata_manager = MetadataManager(self.name, self.dotremake_dir, self.content_checks)
+        self.metadata_manager = MetadataManager(self.name, self.dotremake_dir, self.content_checks,
+                                                self.no_check_input_exist, self.no_stat_inputs)
         self.finalized = False
 
         self.output_task_map = {}
@@ -390,21 +393,28 @@ class TaskControl:
         for task in self.sorted_tasks.keys():
             logger.debug(f'  assign task: {task}')
             requires_rerun = self.task_requires_rerun(task)
+            logger.debug(f'  required_rerun: {requires_rerun}')
 
             if task.can_run():
+                logger.debug(f'  can run: {task}')
                 status = 'completed'
                 if task.force:
+                    logger.debug(f'  forcing status to pending: {task}')
                     status = 'pending'
                 else:
                     for prev_task in self.task_dag.predecessors(task):
                         if (prev_task in self.pending_tasks or
                                 prev_task in self.remaining_tasks or
                                 isinstance(prev_task, RescanFileTask)):
+                            logger.debug(f'  prev task is pending, remaining or Rescan: {task}')
+                            logger.debug(f'  set status to remaining: {task}')
                             status = 'remaining'
                             break
                     if status != 'remaining' and requires_rerun & self.remake_on:
+                        logger.debug(f'  set status to pending: {task}')
                         status = 'pending'
             else:
+                logger.debug(f'  cannot run (yet): {task}')
                 status = 'remaining'
                 # Reasons task can be cannot run:
                 # 1: one of its prev tasks cannot be run.
@@ -415,12 +425,15 @@ class TaskControl:
                 if prev_tasks:
                     for prev_task in prev_tasks:
                         if prev_task in self.cannot_run_tasks:
+                            logger.debug(f'  cannot run because previous task cannot run: {task}')
                             status = 'cannot_run'
                             break
                 else:
+                    logger.debug(f'  cannot run because no previous tasks: {task}')
                     status = 'cannot_run'
                 for input_path in task.inputs.values():
                     if input_path not in self.output_task_map and not input_path.exists():
+                        logger.debug(f'  cannot run because input created by any prev task and does not exist: {task}')
                         status = 'cannot_run'
                         break
 

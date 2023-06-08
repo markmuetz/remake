@@ -1,8 +1,11 @@
+from logging import getLogger
 from pathlib import Path
 from typing import Union
 
 from remake.util import load_module
 from remake.remake_exceptions import RemakeLoadError
+
+logger = getLogger(__name__)
 
 
 # Remake cannot be loaded until body of function - ignore flake8 error.
@@ -19,6 +22,7 @@ def load_remake(filename: Union[str, Path], finalize: bool = False) -> 'Remake':
     """
     # Avoids circular import.
     from remake import Remake
+    logger.debug(f'loading remakefile: {filename}')
     filename = Path(filename)
     if not filename.suffix:
         filename = filename.with_suffix('.py')

@@ -46,6 +46,7 @@ class RemakeMetaclass(type):
                 attrs['next_rules'] = set()
                 attrs['prev_rules'] = set()
 
+        logger.debug(f'instatiate class {clsname}')
         newcls = super(RemakeMetaclass, mcs).__new__(
             mcs, clsname, bases, attrs)
 
@@ -68,17 +69,23 @@ class RemakeMetaclass(type):
                     logger.debug(f'  creating {len(all_loop_vars)} instances of {clsname}')
 
                     for loop_vars in all_loop_vars:
+                        logger.debug(f'    creating fmt_dict for {loop_vars}')
                         # e.g. var_matrix = {'a': [1, 2], 'b': [3, 4]}
                         # run for [(1, 3), (1, 4), (2, 3), (2, 4)].
                         fmt_dict = {k: v for k, v in zip(var_matrix.keys(), loop_vars)}
                         fmt_dict = RemakeMetaclass._check_modify_fmt_dict(fmt_dict)
+                        logger.debug(f'    fmt_dict: {fmt_dict}')
                         # e.g. for (1, 3): fmt_dict = {'a': 1, 'b': 3}
+                        logger.debug(f'    create inputs: {fmt_dict}')
                         inputs = RemakeMetaclass._create_inputs_ouputs(attrs['rule_inputs'], fmt_dict)
+                        logger.debug(f'    create outputs: {fmt_dict}')
                         outputs = RemakeMetaclass._create_inputs_ouputs(attrs['rule_outputs'], fmt_dict)
                         # Creates an instance of the class. N.B. TaskRule inherits from Task, so Task.__init__ is
                         # called here.
+                        logger.debug(f'    instatiate object of {newcls}')
                         task = newcls(remake.task_ctrl, attrs['rule_run'], inputs, outputs,
                                       depends_on=depends_on)
+                        logger.debug(f'    set instance variables on new object')
                         # Set up the instance variables so that e.g. within TaskRule.rule_run, self.a == 1.
                         for k, v in zip(var_matrix.keys(), loop_vars):
                             if isinstance(k, tuple):
@@ -135,10 +142,13 @@ class RemakeMetaclass(type):
         # Method has not been bound yet, but you can call it using its __func__ attr.
         # N.B. both are possible, if e.g. a second rule uses a first rule's method.
         if hasattr(rule_inputs_outputs, '__func__'):
+            logger.debug(f'      create inputs from direct __func__ call of {rule_inputs_outputs} with {fmt_dict}')
             return rule_inputs_outputs.__func__(**fmt_dict)
         elif callable(rule_inputs_outputs):
+            logger.debug(f'      create inputs by calling func of {rule_inputs_outputs} with {fmt_dict}')
             return rule_inputs_outputs(**fmt_dict)
         else:
+            logger.debug(f'      create inputs from fmt_dict {fmt_dict}')
             return {k.format(**fmt_dict): format_path(v, **fmt_dict)
                     for k, v in rule_inputs_outputs.items()}
 

@@ -261,6 +261,8 @@ class RemakeParser:
 
     def dispatch(self):
         args = self.args
+        logger.debug(f'called with {args}')
+        logger.debug(f'dispatching command: {args.subcmd_name}')
         # Dispatch command.
         # N.B. args should always be dereferenced at this point,
         # not passed into any subsequent functions.
@@ -358,6 +360,8 @@ def remake_cmd(argv: Union[List[str], None] = None) -> None:
 
     if args.subcmd_name != 'monitor':
         setup_stdout_logging(loglevel, colour=colour)
+    logger.debug(' '.join(argv))
+    logger.debug('logger set up')
 
     parser.dispatch()
 

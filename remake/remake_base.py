@@ -449,6 +449,7 @@ class Remake:
 
     def finalize(self):
         """Finalize this Remake object"""
+        logger.debug('finalizing Remake')
         self.task_ctrl.finalize()
         Remake.current_remake[multiprocessing.current_process().name] = None
         return self

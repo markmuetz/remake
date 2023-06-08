@@ -116,6 +116,7 @@ class Task(BaseTask):
         self.tmp_outputs = {}
         self.logger = None
         self._path_hash_key = None
+        self._prev_time = {}
 
     def __repr__(self):
         return str(self)
@@ -238,6 +239,16 @@ class Task(BaseTask):
             requires_rerun &= ~RemakeOn.INPUTS_CHANGED
 
         assert not requires_rerun
+
+    def time_point(self, point=''):
+        if point:
+            msg = point + ': '
+
+        time = timer()
+        p = self.logger.info if self.logger else print
+        if point in self._prev_time:
+            p(f'{msg}{time - self._prev_time[point]:.2f}s')
+        self._prev_time[point] = time
 
 
 class RescanFileTask(BaseTask):
