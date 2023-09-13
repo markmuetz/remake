@@ -35,4 +35,3 @@ def display_remake_rule_graph(remakes):
     # net.show_buttons()
     net.from_nx(g)
     return net.show('ex.html')
-
