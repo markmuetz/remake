@@ -63,6 +63,8 @@ class TaskStatuses:
         self._task_status[task] = new_status
 
     def task_status(self, task):
+        if task not in self._task_status:
+            return '<unknown>'
         return self._task_status[task]
 
     @property
@@ -559,7 +561,8 @@ class TaskControl:
     def run_rescan_only(self):
         self.run_requested(self.rescan_tasks)
 
-    @check_finalized(True)
+    # No longer has to be finalized!
+    # @check_finalized(True)
     def run_requested(self, requested_tasks, force=False):
         if self.executor.handles_dependencies:
             with self.executor:

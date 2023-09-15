@@ -136,6 +136,7 @@ class RemakeParser:
                 Arg('remakefile', nargs='?', default='remakefile'),
                 Arg('--tasks', '-t', nargs='*'),
                 Arg('--handle-dependencies', '-H', action='store_true'),
+                Arg('--finalize', action='store_true'),
                 *run_ctrl_group,
                 *task_filter_group,
             ]
@@ -155,6 +156,7 @@ class RemakeParser:
             'args': [
                 Arg('remakefile', nargs='?', default='remakefile'),
                 Arg('--long', '-l', action='store_true'),
+                Arg('--finalize', action='store_true'),
                 *task_filter_group,
             ]
         },
@@ -272,14 +274,14 @@ class RemakeParser:
                              args.reasons, args.executor, args.display,
                              args.filter, args.rule,
                              args.requires_rerun, args.uses_file, args.produces_file,
-                             args.ancestor_of, args.descendant_of)
+                             args.ancestor_of, args.descendant_of, args.finalize)
         elif args.subcmd_name == 'ls-rules':
             ls_rules(args.remakefile, args.long, args.filter, args.uses_file, args.produces_file)
         elif args.subcmd_name == 'ls-tasks':
             ls_tasks(args.remakefile, args.long,
                      args.filter, args.rule,
                      args.requires_rerun, args.uses_file,
-                     args.produces_file, args.ancestor_of, args.descendant_of)
+                     args.produces_file, args.ancestor_of, args.descendant_of, args.finalize)
         elif args.subcmd_name in ['ls-files', 'rm-files']:
             if args.input:
                 filetype = 'input'
@@ -386,10 +388,13 @@ def remake_run_tasks(remakefile, task_path_hash_keys, handle_dependencies,
                      force, print_reasons, executor, display,
                      tfilter, rule,
                      requires_rerun, uses_file, produces_file,
-                     ancestor_of, descendant_of):
-    remake = load_remake(remakefile).finalize()
+                     ancestor_of, descendant_of, finalize):
+    if finalize:
+        remake = load_remake(remakefile).finalize()
+        remake.short_status()
+    else:
+        remake = load_remake(remakefile)
     remake.configure(print_reasons, executor, display)
-    remake.short_status()
     if task_path_hash_keys and (tfilter or rule):
         raise RemakeError('Can only use one of --tasks and (--filter or --rule)')
     if task_path_hash_keys:
@@ -415,8 +420,11 @@ def ls_rules(remakefile, long, tfilter, uses_file, produces_file):
 
 
 def ls_tasks(remakefile, long, tfilter, rule, requires_rerun, uses_file, produces_file,
-             ancestor_of, descendant_of):
-    remake = load_remake(remakefile).finalize()
+             ancestor_of, descendant_of, finalize):
+    if finalize:
+        remake = load_remake(remakefile).finalize()
+    else:
+        remake = load_remake(remakefile)
     if tfilter:
         tfilter = dict([kv.split('=') for kv in tfilter.split(',')])
     tasks = remake.list_tasks(tfilter, rule, requires_rerun, uses_file,

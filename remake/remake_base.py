@@ -178,19 +178,23 @@ class Remake:
         :param handle_dependencies: add all ancestor tasks to ensure given tasks can be run
         """
         # Work out whether it's possible to run requested tasks.
-        ancestors = self.all_ancestors(requested)
-        rerun_required_ancestors = ancestors & (self.pending_tasks |
-                                                self.remaining_tasks)
-        missing_tasks = rerun_required_ancestors - set(requested)
-        if missing_tasks:
-            logger.debug(f'{len(missing_tasks)} need to be added')
-            if not handle_dependencies:
-                logger.error('Impossible to run requested tasks')
-                raise RemakeError('Cannot run with requested tasks. Use --handle-dependencies to fix.')
-            else:
-                requested = list(rerun_required_ancestors)
-        requested = self.task_ctrl.rescan_tasks + requested
-        self.task_ctrl.run_requested(requested, force=force)
+        if self.finalized:
+            ancestors = self.all_ancestors(requested)
+            rerun_required_ancestors = ancestors & (self.pending_tasks |
+                                                    self.remaining_tasks)
+            missing_tasks = rerun_required_ancestors - set(requested)
+            if missing_tasks:
+                logger.debug(f'{len(missing_tasks)} need to be added')
+                if not handle_dependencies:
+                    logger.error('Impossible to run requested tasks')
+                    raise RemakeError('Cannot run with requested tasks. Use --handle-dependencies to fix.')
+                else:
+                    requested = list(rerun_required_ancestors)
+            requested = self.task_ctrl.rescan_tasks + requested
+            self.task_ctrl.run_requested(requested, force=force)
+        else:
+            self.task_ctrl.build_task_DAG()
+            self.task_ctrl.run_requested(requested, force=force)
 
     def list_rules(self):
         """List all rules"""
