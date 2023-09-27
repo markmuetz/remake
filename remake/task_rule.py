@@ -103,11 +103,24 @@ class RemakeMetaclass(type):
                         remake.task_ctrl.add(task)
                         loop_timer(5)
                     print(loop_timer)
-                    task_init_timer = get_global_timer(str(newcls) + '__init__')
-                    print(task_init_timer)
-                    cond_input_timer = get_global_timer('cond_input_timer')
-                    print(cond_input_timer)
-                    cond_input_timer.reset()
+
+                    task_ctrl_add_timer = get_global_timer('task_ctrl_add')
+                    print(task_ctrl_add_timer)
+                    task_ctrl_add_timer.reset()
+
+                    create_task_metadata_timer = get_global_timer('create_task_metadata_timer')
+                    print(create_task_metadata_timer)
+                    create_task_metadata_timer.reset()
+
+                    PathMetadata_timer = get_global_timer('PathMetadata_timer')
+                    print(PathMetadata_timer)
+                    PathMetadata_timer.reset()
+
+                    # task_init_timer = get_global_timer(str(newcls) + '__init__')
+                    # print(task_init_timer)
+                    # cond_input_timer = get_global_timer('cond_input_timer')
+                    # print(cond_input_timer)
+                    # cond_input_timer.reset()
                 else:
                     logger.debug(f'  creating instance of {clsname}')
                     inputs = create_inputs_fn(**{})

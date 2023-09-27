@@ -11,6 +11,7 @@ from remake.metadata import MetadataManager
 from remake.flags import RemakeOn
 from remake.executor import SingleprocExecutor, MultiprocExecutor, SlurmExecutor
 from remake.remake_exceptions import CyclicDependency
+from remake.global_timer import get_global_timer
 
 logger = getLogger(__name__)
 
@@ -222,23 +223,32 @@ class TaskControl:
 
     @check_finalized(False)
     def add(self, task):
+        task_ctrl_add_timer = get_global_timer('task_ctrl_add')
+        task_ctrl_add_timer(4.0)
+
         for output in task.outputs.values():
             if output in self.output_task_map:
                 raise Exception(f'Trying to add {output} twice')
+        task_ctrl_add_timer(4.1)
 
         task_path_hash_key = task.path_hash_key()
+        task_ctrl_add_timer(4.2)
         if task_path_hash_key in self.task_from_path_hash_key:
             raise Exception(f'Trying to add {task} twice')
         self.task_from_path_hash_key[task_path_hash_key] = task
 
+        task_ctrl_add_timer(4.3)
         self.tasks.append(task)
         for input_path in task.inputs.values():
             self.input_task_map[input_path].append(task)
         for output in task.outputs.values():
             self.output_task_map[output] = task
+        task_ctrl_add_timer(4.4)
 
         task_md = self.metadata_manager.create_task_metadata(task)
+        task_ctrl_add_timer(4.5)
         task.add_metadata(task_md)
+        task_ctrl_add_timer(4.6)
 
         return task
 
@@ -383,6 +393,7 @@ class TaskControl:
         return self
 
     def _assign_tasks(self):
+        task_ctrl_assign_task_timer = get_global_timer('task_ctrl_assign_task_timer')
         # Assign each task to one of four groups:
         # cannot_run: not possible to run task (missing inputs).
         # completed: task has been run and does not need to be rerun.
@@ -393,7 +404,8 @@ class TaskControl:
             logger.debug(f'  assign task: {task}')
             requires_rerun = self.task_requires_rerun(task)
 
-            if task.can_run():
+            # if task.can_run():
+            if not (requires_rerun & self.remake_on):
                 status = 'completed'
                 if task.force:
                     status = 'pending'

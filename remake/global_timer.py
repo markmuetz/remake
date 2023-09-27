@@ -22,8 +22,8 @@ class GlobalTimer:
         if self.curr_key is not None:
             self.timers[(self.curr_key, key)].append(time - self.last_time)
 
-        self.last_time = time
         self.curr_key = key
+        self.last_time = pd.Timestamp.now()
 
     def __str__(self):
         output = []
@@ -35,8 +35,9 @@ class GlobalTimer:
             time_total_ms = np.sum(times_ms)
             time_mean_ms = np.mean(times_ms)
             time_std_ms = np.std(times_ms)
-            output.append((f'{k1} -> {k2}', f'{time_total_ms / 1e6:.2g}s', f'{time_mean_ms / 1e6:.2g}s', f'(+/- {time_std_ms / 1e6:.2g}s)'))
-        return f'{self.name}\n' + '=' * len(self.name) + '\n' + tabulate(output, headers=('tx', 'total', 'mean', 'std'))
+            count = len(times_ms)
+            output.append((f'{k1} -> {k2}', f'{time_total_ms / 1e6:.2g}s', f'{time_mean_ms / 1e6:.2g}s', f'(+/- {time_std_ms / 1e6:.2g}s)', f'{count}'))
+        return f'{self.name}\n' + '=' * len(self.name) + '\n' + tabulate(output, headers=('tx', 'total', 'mean', 'std', 'count'))
 
     def start(self):
         # TODO:

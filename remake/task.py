@@ -53,7 +53,7 @@ class Task(BaseTask):
     def __init__(self, task_ctrl, func, inputs, outputs,
                  *, force=False, depends_on=tuple()):
         task_init_timer = get_global_timer(str(self.__class__) + '__init__')
-        task_init_timer(0)
+        task_init_timer('2.0')
         super().__init__(task_ctrl)
         # self.remake_on = True
         self.depends_on_sources = []
@@ -73,11 +73,11 @@ class Task(BaseTask):
                 Task.task_func_cache[depend_obj] = depend_func_source
 
         self.depends_on = depends_on
-        task_init_timer(1)
+        task_init_timer('2.1')
 
         if not callable(func):
             raise ValueError(f'{func} is not callable')
-        task_init_timer(2)
+        task_init_timer('2.2')
 
         self.func = func
         if self.func in Task.task_func_cache:
@@ -111,23 +111,23 @@ class Task(BaseTask):
 
         if not outputs:
             raise Exception('outputs must be set')
-        task_init_timer(3)
+        task_init_timer('2.3')
 
-        task_init_timer(3.1)
+        task_init_timer('2.3.1')
         #self.inputs = {k: Path(v).absolute() for k, v in inputs.items()}
         #self.outputs = {k: Path(v).absolute() for k, v in outputs.items()}
         self.inputs = inputs
         self.outputs = outputs
-        task_init_timer(3.2)
+        task_init_timer('2.3.2')
         self.special_inputs = map_special_paths(self.task_ctrl.special_paths, self.inputs)
         self.special_outputs = map_special_paths(self.task_ctrl.special_paths, self.outputs)
-        task_init_timer(3.3)
+        task_init_timer('2.3.3')
         self.result = None
         self.rerun_on_mtime = True
         self.tmp_outputs = {}
         self.logger = None
         self._path_hash_key = None
-        task_init_timer(4)
+        task_init_timer('2.4')
 
     def __repr__(self):
         return str(self)
