@@ -30,8 +30,8 @@ class SpecialPaths:
     >>> demo = Remake(special_paths=special_paths)
     """
     def __init__(self, **paths):
-        if 'CWD' not in paths:
-            paths['CWD'] = Path.cwd()
+        # if 'CWD' not in paths:
+        #     paths['CWD'] = Path.cwd()
         for k, v in paths.items():
             assert isinstance(k, str), f'{k} not a string'
             assert isinstance(v, Path) or isinstance(v, str), f'{v} not a Path or string'
@@ -53,6 +53,8 @@ def map_special_paths(special_paths, paths):
     >>> map_special_paths(special_paths, {'path1': Path('/A/data/path')})
     {'path1': PosixPath('DATA/path')}
     """
+    if not special_paths.paths:
+        return paths
     mapped_paths = {}
     for path_name, path in paths.items():
         mapped_path = None
