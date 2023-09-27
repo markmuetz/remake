@@ -5,8 +5,11 @@ import pandas as pd
 from tabulate import tabulate
 
 
-class LoopTimer:
-    def __init__(self):
+class GlobalTimer:
+    global_timers = {}
+
+    def __init__(self, name):
+        self.name = name
         self.timers = defaultdict(list)
         self.last_time = None
         self.curr_key = None
@@ -29,4 +32,14 @@ class LoopTimer:
             time_mean_ms = np.mean(times_ms)
             time_std_ms = np.std(times_ms)
             output.append((f'{k1} -> {k2}', f'{time_mean_ms / 1e6:.2g}s', f'(+/- {time_std_ms / 1e6:.2g}s)'))
-        return tabulate(output, headers=('tx', 'mean', 'std'))
+        return f'{self.name}\n' + tabulate(output, headers=('tx', 'mean', 'std'))
+
+
+def get_global_timer(name):
+    if name in GlobalTimer.global_timers:
+        return GlobalTimer.global_timers[name]
+    else:
+        global_timer = GlobalTimer(name)
+        GlobalTimer.global_timers[name] = global_timer
+        return global_timer
+
