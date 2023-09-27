@@ -416,10 +416,11 @@ class TaskControl:
                                 isinstance(prev_task, RescanFileTask)):
                             status = 'remaining'
                             break
-                    if status != 'remaining' and requires_rerun & self.remake_on:
-                        status = 'pending'
+                    # if status != 'remaining' and requires_rerun & self.remake_on:
+                    #     status = 'pending'
             else:
-                status = 'remaining'
+                # status = 'remaining'
+                # TODO: out of date.
                 # Reasons task can be cannot run:
                 # 1: one of its prev tasks cannot be run.
                 # 2: it has no previous tasks and thinks it cannot be run (task.can_run() == False).
@@ -428,15 +429,19 @@ class TaskControl:
                 prev_tasks = list(self.task_dag.predecessors(task))
                 if prev_tasks:
                     for prev_task in prev_tasks:
+                        if (prev_task in self.pending_tasks or
+                                prev_task in self.remaining_tasks or
+                                isinstance(prev_task, RescanFileTask)):
+                            status = 'remaining'
                         if prev_task in self.cannot_run_tasks:
                             status = 'cannot_run'
                             break
                 else:
-                    status = 'cannot_run'
-                for input_path in task.inputs.values():
-                    if input_path not in self.output_task_map and not input_path.exists():
-                        status = 'cannot_run'
-                        break
+                    status = 'pending'
+                # for input_path in task.inputs.values():
+                #     if input_path not in self.output_task_map and not input_path.exists():
+                #         status = 'cannot_run'
+                #         break
 
             logger.debug(f'  task status: {status} - {task}')
             self.statuses.add_task(task, status)
