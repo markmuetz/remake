@@ -31,12 +31,14 @@ class GlobalTimer:
         for k in self.timers.keys():
             k1, k2 = k
             timers = self.timers[k]
-            times_ms = [t.microseconds for t in timers]
-            time_total_ms = np.sum(times_ms)
-            time_mean_ms = np.mean(times_ms)
-            time_std_ms = np.std(times_ms)
-            count = len(times_ms)
-            output.append((f'{k1} -> {k2}', f'{time_total_ms / 1e6:.2g}s', f'{time_mean_ms / 1e6:.2g}s', f'(+/- {time_std_ms / 1e6:.2g}s)', f'{count}'))
+            # print(timers)
+            times = [t.total_seconds() for t in timers]
+            # print(times)
+            time_total = np.sum(times)
+            time_mean = np.mean(times)
+            time_std = np.std(times)
+            count = len(times)
+            output.append((f'{k1} -> {k2}', f'{time_total:.2g}s', f'{time_mean:.2g}s', f'(+/- {time_std:.2g}s)', f'{count}'))
         return f'{self.name}\n' + '=' * len(self.name) + '\n' + tabulate(output, headers=('tx', 'total', 'mean', 'std', 'count'))
 
     def start(self):

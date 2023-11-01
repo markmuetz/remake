@@ -399,8 +399,12 @@ class TaskControl:
         # completed: task has been run and does not need to be rerun.
         # pending: task has been run and needs to be rerun.
         # remaining: task either needs to be rerun, or has previous tasks that need to be rerun.
-        # import ipdb; ipdb.set_trace()
+        def trigger(task):
+            return False
+
         for task in self.sorted_tasks.keys():
+            if trigger(task):
+                import ipdb; ipdb.set_trace()
             logger.debug(f'  assign task: {task}')
             requires_rerun = self.task_requires_rerun(task)
 
@@ -419,7 +423,7 @@ class TaskControl:
                     # if status != 'remaining' and requires_rerun & self.remake_on:
                     #     status = 'pending'
             else:
-                # status = 'remaining'
+                status = 'pending'
                 # TODO: out of date.
                 # Reasons task can be cannot run:
                 # 1: one of its prev tasks cannot be run.
@@ -433,11 +437,9 @@ class TaskControl:
                                 prev_task in self.remaining_tasks or
                                 isinstance(prev_task, RescanFileTask)):
                             status = 'remaining'
-                        if prev_task in self.cannot_run_tasks:
-                            status = 'cannot_run'
-                            break
-                else:
-                    status = 'pending'
+                        # if prev_task in self.cannot_run_tasks:
+                        #     status = 'cannot_run'
+                        #     break
                 # for input_path in task.inputs.values():
                 #     if input_path not in self.output_task_map and not input_path.exists():
                 #         status = 'cannot_run'

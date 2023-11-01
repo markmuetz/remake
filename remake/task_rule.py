@@ -64,7 +64,8 @@ class RemakeMetaclass(type):
                 var_matrix = attrs.get('var_matrix', None)
                 depends_on.extend(attrs.get('depends_on', []))
                 logger.debug(f'  depends on: {depends_on}')
-                loop_timer = get_global_timer(str(clsname))
+
+                loop_timer = get_global_timer(str(clsname) + '_loop_var_timer')
 
                 create_inputs_fn = RemakeMetaclass._get_create_inputs_ouputs_fn(attrs['rule_inputs'])
                 create_outputs_fn = RemakeMetaclass._get_create_inputs_ouputs_fn(attrs['rule_outputs'])
@@ -102,25 +103,20 @@ class RemakeMetaclass(type):
                         newcls.tasks.append(task)
                         remake.task_ctrl.add(task)
                         loop_timer(5)
-                    print(loop_timer)
+
+                    logger.debug('\n' + str(loop_timer))
 
                     task_ctrl_add_timer = get_global_timer('task_ctrl_add')
-                    print(task_ctrl_add_timer)
+                    logger.debug('\n' + str(task_ctrl_add_timer))
                     task_ctrl_add_timer.reset()
 
                     create_task_metadata_timer = get_global_timer('create_task_metadata_timer')
-                    print(create_task_metadata_timer)
+                    logger.debug('\n' + str(create_task_metadata_timer))
                     create_task_metadata_timer.reset()
 
                     PathMetadata_timer = get_global_timer('PathMetadata_timer')
-                    print(PathMetadata_timer)
+                    logger.debug('\n' + str(PathMetadata_timer))
                     PathMetadata_timer.reset()
-
-                    # task_init_timer = get_global_timer(str(newcls) + '__init__')
-                    # print(task_init_timer)
-                    # cond_input_timer = get_global_timer('cond_input_timer')
-                    # print(cond_input_timer)
-                    # cond_input_timer.reset()
                 else:
                     logger.debug(f'  creating instance of {clsname}')
                     inputs = create_inputs_fn(**{})

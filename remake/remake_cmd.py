@@ -360,6 +360,7 @@ def remake_cmd(argv: Union[List[str], None] = None) -> None:
 
     if args.subcmd_name != 'monitor':
         setup_stdout_logging(loglevel, colour=colour)
+    logger.warn('using experimental version with no track_files')
 
     parser.dispatch()
 
