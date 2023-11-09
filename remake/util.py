@@ -1,3 +1,4 @@
+import os
 import sys
 import importlib.util
 import hashlib
@@ -104,3 +105,19 @@ def sysrun(cmd):
     raises CalledProcessError if cmd is bad.
     to access output: sysrun(cmd).stdout"""
     return sp.run(cmd, check=True, shell=True, stdout=sp.PIPE, stderr=sp.PIPE, encoding='utf8')
+
+
+def editor(paths, read_only=True):
+    """Opens an editor and reads the requested files
+
+    read_only only works if editor is vim"""
+    editor = os.environ.get('EDITOR', 'vim')
+    if read_only:
+        if editor == 'vim':
+            ed_cmd = 'vim -R'
+        else:
+            input('Not opening in readonly mode for editor {editor}! (hit return)')
+            ed_cmd = EDITOR
+
+    cmd = ed_cmd + ' ' + ' '.join(str(p) for p in paths)
+    sp.call(cmd.split())
