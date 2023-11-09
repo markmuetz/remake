@@ -13,6 +13,7 @@ from remake.task import Task
 from remake.task_control import TaskControl
 from remake.task_query_set import TaskQuerySet
 from remake.setup_logging import setup_stdout_logging
+from remake.util import editor
 
 logger = getLogger(__name__)
 
@@ -440,6 +441,41 @@ class Remake:
                 path_md = None
             info[filepath] = path_md, produced_by_task, used_by_tasks
         return info
+
+    def view_task_slurm_logs(self, tasks, logtype='both'):
+        # Logic heavily borrows from executors/slurm_executor.py
+        # TODO: DRY!
+        slurm_output = Path('.remake/slurm/output')
+        paths = []
+        msgs = []
+        for task in tasks:
+            rule_name = task.__class__.__name__
+            rule_slurm_output = slurm_output / rule_name
+            if hasattr(task, 'var_matrix'):
+                task_key = task.path_hash_key()
+                task_dir = [task_key[:2], task_key[2:]]
+                task_slurm_output = rule_slurm_output.joinpath(*task_dir)
+            else:
+                task_slurm_output = rule_slurm_output
+
+            if logtype in ['both', 'err']:
+                err_paths = list(task_slurm_output.glob('*.err'))
+                if not err_paths:
+                    msgs.append(f'No error paths for {task}')
+                err_path = sorted(err_paths, key=lambda p: p.lstat().st_mtime)[-1]
+                paths.append(err_path)
+
+            if logtype in ['both', 'out']:
+                out_paths = list(task_slurm_output.glob('*.out'))
+                if not out_paths:
+                    msgs.append(f'No output paths for {task}')
+                out_path = sorted(out_paths, key=lambda p: p.lstat().st_mtime)[-1]
+                paths.append(out_path)
+        if msgs:
+            print('\n'.join(msgs))
+            if input('Do you wish to continue? (y)/n: ') == 'n':
+                return
+        editor(paths)
 
     @property
     def finalized(self):

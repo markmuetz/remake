@@ -169,6 +169,7 @@ class SlurmExecutor(Executor):
                                                **slurm_kwargs)
 
         logger.debug(f'  writing {slurm_script_filepath}')
+        logger.debug('\n' + slurm_script)
         with open(slurm_script_filepath, 'w') as fp:
             fp.write(slurm_script)
         return slurm_script_filepath

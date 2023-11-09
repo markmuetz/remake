@@ -160,6 +160,14 @@ class RemakeParser:
                 *task_filter_group,
             ]
         },
+        'view-task-slurm-logs': {
+            'help': 'View slurm logs for all tasks',
+            'args': [
+                Arg('remakefile', nargs='?', default='remakefile'),
+                Arg('--logtype', '-t', default='both', choices=['both', 'err', 'out']),
+                *task_filter_group,
+            ]
+        },
         'ls-files': {
             'help': 'List files',
             'args': [
@@ -282,6 +290,11 @@ class RemakeParser:
                      args.filter, args.rule,
                      args.requires_rerun, args.uses_file,
                      args.produces_file, args.ancestor_of, args.descendant_of, args.no_finalize)
+        elif args.subcmd_name == 'view-task-slurm-logs':
+            view_task_slurm_logs(args.remakefile, args.logtype,
+                                 args.filter, args.rule,
+                                 args.requires_rerun, args.uses_file,
+                                 args.produces_file, args.ancestor_of, args.descendant_of)
         elif args.subcmd_name in ['ls-files', 'rm-files']:
             if args.input:
                 filetype = 'input'
@@ -431,6 +444,17 @@ def ls_tasks(remakefile, long, tfilter, rule, requires_rerun, uses_file, produce
     tasks = remake.list_tasks(tfilter, rule, requires_rerun, uses_file,
                               produces_file, ancestor_of, descendant_of)
     tasks.status(long, long)
+
+
+def view_task_slurm_logs(remakefile, logtype, tfilter, rule, requires_rerun, uses_file, produces_file,
+                         ancestor_of, descendant_of):
+    remake = load_remake(remakefile)
+    if tfilter:
+        tfilter = dict([kv.split('=') for kv in tfilter.split(',')])
+    tasks = remake.list_tasks(tfilter, rule, requires_rerun, uses_file,
+                              produces_file, ancestor_of, descendant_of)
+
+    remake.view_task_slurm_logs(tasks, logtype)
 
 
 def ls_files(remakefile, long, filetype, exists,
