@@ -146,6 +146,8 @@ class SlurmExecutor(Executor):
 
         extra_opts = []
         for k, v in slurm_kwargs.items():
+            if not v:
+                continue
             if k == 'max_runtime':
                 extra_opts.append(f'#SBATCH --time={v}')
             elif k == 'queue':
