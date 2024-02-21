@@ -86,7 +86,7 @@ class RemakeMetaclass(type):
                         outputs = create_outputs_fn(**fmt_dict)
                         # Creates an instance of the class. N.B. TaskRule inherits from Task, so Task.__init__ is
                         # called here.
-                        loop_timer(2)
+                        loop_timer(2, 'create task instance')
                         task = newcls(remake.task_ctrl, attrs['rule_run'], inputs, outputs,
                                       depends_on=depends_on)
                         loop_timer(3)
@@ -99,24 +99,12 @@ class RemakeMetaclass(type):
                                     setattr(task, kk, vv)
                             else:
                                 setattr(task, k, v)
-                        loop_timer(4)
+                        loop_timer(4, 'append task')
                         newcls.tasks.append(task)
                         remake.task_ctrl.add(task)
                         loop_timer(5)
 
-                    logger.debug('\n' + str(loop_timer))
-
-                    task_ctrl_add_timer = get_global_timer('task_ctrl_add')
-                    logger.debug('\n' + str(task_ctrl_add_timer))
-                    task_ctrl_add_timer.reset()
-
-                    create_task_metadata_timer = get_global_timer('create_task_metadata_timer')
-                    logger.debug('\n' + str(create_task_metadata_timer))
-                    create_task_metadata_timer.reset()
-
-                    PathMetadata_timer = get_global_timer('PathMetadata_timer')
-                    logger.debug('\n' + str(PathMetadata_timer))
-                    PathMetadata_timer.reset()
+                    logger.debug('\n' + loop_timer.output())
                 else:
                     logger.debug(f'  creating instance of {clsname}')
                     inputs = create_inputs_fn(**{})

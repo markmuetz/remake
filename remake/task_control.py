@@ -223,7 +223,7 @@ class TaskControl:
 
     @check_finalized(False)
     def add(self, task):
-        task_ctrl_add_timer = get_global_timer('task_ctrl_add')
+        task_ctrl_add_timer = get_global_timer()
         task_ctrl_add_timer(4.0)
 
         for output in task.outputs.values():
@@ -393,7 +393,7 @@ class TaskControl:
         return self
 
     def _assign_tasks(self):
-        task_ctrl_assign_task_timer = get_global_timer('task_ctrl_assign_task_timer')
+        task_ctrl_assign_task_timer = get_global_timer()
         # Assign each task to one of four groups:
         # cannot_run: not possible to run task (missing inputs).
         # completed: task has been run and does not need to be rerun.

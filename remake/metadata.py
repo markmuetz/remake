@@ -58,8 +58,8 @@ class MetadataManager:
         self.task_metadata_map = {}
 
     def create_task_metadata(self, task):
-        create_task_metadata_timer = get_global_timer('create_task_metadata_timer')
-        create_task_metadata_timer('4.4.0')
+        timer = get_global_timer()
+        timer('4.4.0')
 
         task_inputs_metadata_map = {}
         task_outputs_metadata_map = {}
@@ -71,7 +71,7 @@ class MetadataManager:
                 else:
                     input_md = self.path_metadata_map[input_path]
                 task_inputs_metadata_map[input_path] = input_md
-            create_task_metadata_timer('4.4.1')
+            timer('4.4.1')
 
             for output_path, special_output_path in zip(task.outputs.values(), task.special_outputs.values()):
                 if output_path not in self.path_metadata_map:
@@ -79,12 +79,13 @@ class MetadataManager:
                 else:
                     output_md = self.path_metadata_map[output_path]
                 task_outputs_metadata_map[output_path] = output_md
-            create_task_metadata_timer('4.4.2')
+            timer('4.4.2')
+        timer('4.4.3', 'create TaskMetadata instance')
         task_md = TaskMetadata(self.task_control_name, self.dotremake_dir,
                                task, task_inputs_metadata_map, task_outputs_metadata_map,
                                self.content_checks)
         self.task_metadata_map[task] = task_md
-        create_task_metadata_timer('4.4.3')
+        timer('4.4.4')
         return task_md
 
     def check_task_status(self, task):
@@ -119,6 +120,8 @@ class MetadataManager:
 class TaskMetadata:
     def __init__(self, task_control_name, dotremake_dir, task,
                  inputs_metadata_map, outputs_metadata_map, content_checks, track_files=False):
+        timer = get_global_timer()
+        timer('4.4.3.0')
         self.task_control_name = task_control_name
         self.dotremake_dir = dotremake_dir
         self.metadata_dir = dotremake_dir / METADATA_VERSION
@@ -128,8 +131,10 @@ class TaskMetadata:
         self.content_checks = content_checks
         self.track_files = track_files
 
+        timer('4.4.3.1')
         self.task_path_hash_key = self.task.path_hash_key()
 
+        timer('4.4.3.2')
         self.metadata = {}
         self.new_metadata = {'task_control_name': task_control_name}
         self.requires_rerun = True
@@ -147,6 +152,7 @@ class TaskMetadata:
 
         self.task_status_path = self.task_status_dir / 'task.status'
         self.log_path = self.task_status_dir / 'task.log'
+        timer('4.4.3.3')
 
     def update_status(self, status):
         self.task_status_path.parent.mkdir(parents=True, exist_ok=True)

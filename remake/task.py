@@ -52,7 +52,7 @@ class Task(BaseTask):
 
     def __init__(self, task_ctrl, func, inputs, outputs,
                  *, force=False, depends_on=tuple()):
-        task_init_timer = get_global_timer(str(self.__class__) + '__init__')
+        task_init_timer = get_global_timer()
         task_init_timer('2.0')
         super().__init__(task_ctrl)
         # self.remake_on = True
@@ -77,7 +77,7 @@ class Task(BaseTask):
 
         if not callable(func):
             raise ValueError(f'{func} is not callable')
-        task_init_timer('2.2')
+        task_init_timer('2.2', 'get func source')
 
         self.func = func
         if self.func in Task.task_func_cache:
@@ -172,13 +172,20 @@ class Task(BaseTask):
         return True
 
     def path_hash_key(self):
+        timer = get_global_timer()
+        timer('4.4.3.1.0')
         if not self._path_hash_key:
+            timer('4.4.3.1.1')
             h = sha1(self.func.__code__.co_name.encode())
-            for input_path in self.special_inputs.values():
+            timer('4.4.3.1.2')
+            for input_path in self.inputs.values():
                 h.update(str(input_path).encode())
-            for output_path in self.special_outputs.values():
+            timer('4.4.3.1.3')
+            for output_path in self.outputs.values():
                 h.update(str(output_path).encode())
+            timer('4.4.3.1.4')
             self._path_hash_key = h.hexdigest()
+        timer('4.4.3.1.5')
         return self._path_hash_key
 
     def run_task_rule(self, force=False):
