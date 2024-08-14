@@ -40,6 +40,7 @@ setup(
         'remake.examples',
         'remake.executor',
         'remake.experimental',
+        'remake2',
         ],
     python_requires='>=3.6',
     install_requires=[
