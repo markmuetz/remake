@@ -1,3 +1,4 @@
+from pathlib import Path
 import sqlite3
 
 from loguru import logger
@@ -64,7 +65,10 @@ ON task(key);
 
 class Sqlite3MetadataManager:
     def __init__(self):
+        create_db = not Path(dbloc).exists()
         self.conn = sqlite3.connect(dbloc)
+        if create_db:
+            self.create_db()
         # This works and is blazingly fast, but at the cost that you can no longer write to db :(
         # self.conn_disk = sqlite3.connect(dbloc)
         # self.conn = sqlite3.connect(':memory:')
