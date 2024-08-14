@@ -198,6 +198,8 @@ class Task(BaseTask):
 
         logger.debug(f'running {repr(self)}')
         if not self.can_run():
+            for path in self.inputs.values():
+                logger.debug(f'exists={path.exists()}: {path}')
             raise Exception('Not all files required for task exist')
 
         self.task_md.log_path.parent.mkdir(parents=True, exist_ok=True)

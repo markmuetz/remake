@@ -145,6 +145,7 @@ class SlurmExecutor(Executor):
             raise ValueError(f'Unkown task type: {task}')
 
         extra_opts = []
+        queue = 'default'
         for k, v in slurm_kwargs.items():
             if not v:
                 continue
@@ -152,6 +153,7 @@ class SlurmExecutor(Executor):
                 extra_opts.append(f'#SBATCH --time={v}')
             elif k == 'queue':
                 extra_opts.append(f'#SBATCH --partition={v}')
+                queue = v
             else:
                 extra_opts.append(f'#SBATCH --{k}={v}')
         comment = str(task)
@@ -174,7 +176,7 @@ class SlurmExecutor(Executor):
         logger.debug('\n' + slurm_script)
         with open(slurm_script_filepath, 'w') as fp:
             fp.write(slurm_script)
-        return slurm_script_filepath
+        return slurm_script_filepath, queue
 
     def _task_already_queued_running(self, task):
         logger.info(f'Already queued/running: {task}')
@@ -186,9 +188,9 @@ class SlurmExecutor(Executor):
             self._task_already_queued_running(task)
             jobid = self.currently_running_task_keys[task_key[:10]]['jobid']
         else:
-            slurm_script_path = self._write_submit_script(task)
+            slurm_script_path, queue = self._write_submit_script(task)
             output = _submit_slurm_script(slurm_script_path)
-            logger.info(f'Submitted: {task}')
+            logger.info(f'Submitted [{queue}]: {task}')
             jobid = _parse_jobid(output)
         self.task_jobid_map[task] = jobid
 
