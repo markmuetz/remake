@@ -32,16 +32,16 @@ class Task:
     def __hash__(self):
         if not hasattr(self, '_hash'):
             self._hash = hash(
-                ','.join(self.inputs.values()) +
-                ','.join(self.outputs.values())
+                ','.join(str(v) for v in self.inputs.values()) +
+                ','.join(str(v) for v in self.outputs.values())
             )
         return self._hash
 
     def key(self):
         if not hasattr(self, '_key'):
             self._key = sha1(
-                (','.join(self.inputs.values()) +
-                 ','.join(self.outputs.values())).encode()
+                (','.join(str(v) for v in self.inputs.values()) +
+                 ','.join(str(v) for v in self.outputs.values())).encode()
             ).hexdigest()
         return self._key
 

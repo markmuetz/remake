@@ -147,9 +147,9 @@ class Sqlite3MetadataManager:
         tasks_to_insert = []
 
         # This block of code is read only, and this speeds up access massively.
-        # mem_conn = sqlite3.connect(':memory:')
-        # self.conn.backup(mem_conn)
-        mem_conn = self.conn
+        mem_conn = sqlite3.connect(':memory:')
+        self.conn.backup(mem_conn)
+        # mem_conn = self.conn
 
         with mem_conn:
         # with self.conn:
