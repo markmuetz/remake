@@ -135,6 +135,7 @@ class RemakeParser:
         # Dispatch command.
         # N.B. args should always be dereferenced at this point,
         # not passed into any subsequent functions.
+        logger.trace(args.subcmd_name)
         if args.subcmd_name == 'run':
             self.remake_run(args.remakefile, args.executor)
         elif args.subcmd_name == 'run-tasks':
@@ -186,6 +187,9 @@ def remake_cmd(argv=None):
     elif args.warning:
         loglevel = 'WARNING'
         logger.add(sys.stdout, format='<bold>{message}</bold>', level=loglevel)
+
+    logger.debug('Called with args:')
+    logger.debug(argv)
 
     if args.debug_exception:
         # Handle top level exceptions with a debugger.

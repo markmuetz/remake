@@ -44,23 +44,49 @@ CREATE TABLE task (
 
 -- This speeds things up by an order of magnitude.
 -- When using :memory:
--- With commented out:
--- %timeit -n1 -r1 %run ex1.py
--- 40s
--- %timeit -n1 -r1 rmk.run()
--- 21s
--- %timeit -n1 -r1 %run -i ex1.py
--- 42s
--- With uncommented:
--- %timeit -n1 -r1 %run ex1.py
--- 985ms
--- %timeit -n1 -r1 rmk.run()
--- 594ms
--- %timeit -n1 -r1 %run -i ex1.py
--- 3.85s
 CREATE INDEX table_key_index
 ON task(key);
 """
+
+def retry(fn):
+    def inner(self, conn, *args, **kwargs):
+        nattempts = 1
+        logger.trace(f'>{fn.__name__}')
+        while True:
+            try:
+                with conn:
+                    ret = fn(self, conn, *args, **kwargs)
+                    logger.trace(f'<{fn.__name__}')
+                return ret
+            except sqlite3.OperationalError as oe:
+                logger.trace(f'    OperationalError: {oe}')
+            logger.trace(f'    retry {nattempts}')
+            nattempts += 1
+            sleep(2**nattempts * random.random())
+    return inner
+
+
+def retry_lock_commit(fn):
+    def inner(self, conn, *args, **kwargs):
+        nattempts = 1
+        logger.trace(f'>{fn.__name__}')
+        while True:
+            try:
+                with conn:
+                    conn.execute('BEGIN EXCLUSIVE')
+
+                    logger.trace('  locked')
+                    ret = fn(self, conn, *args, **kwargs)
+                    conn.commit()
+                    logger.trace('  commited')
+                    logger.trace(f'<{fn.__name__}')
+                return ret
+            except sqlite3.OperationalError as oe:
+                logger.trace(f'    OperationalError: {oe}')
+            logger.trace(f'    retry {nattempts}')
+            nattempts += 1
+            sleep(2**nattempts * random.random())
+    return inner
 
 
 class Sqlite3MetadataManager:
@@ -81,116 +107,125 @@ class Sqlite3MetadataManager:
     def create_db(self):
         self.conn.executescript(sql_schema)
 
+    @retry
+    def _select_db_rule(self, conn, rule):
+        return conn.execute('SELECT * FROM rule WHERE name = ?', (rule.__name__, )).fetchone()
+
+    @retry_lock_commit
+    def _create_db_rule(self, conn, rule):
+        code_ids = {}
+        for req_method in ['rule_inputs', 'rule_outputs', 'rule_run']:
+            code = rule.source[req_method]
+            conn.execute('INSERT INTO code(code) VALUES (?)', (code, ))
+            code_ids[req_method] = conn.execute('SELECT MAX(id) FROM code;').fetchone()[0]
+
+        conn.execute('INSERT INTO rule(name, inputs_code_id, outputs_code_id, run_code_id) VALUES (?, ?, ?, ?)',
+                     (rule.__name__, code_ids['rule_inputs'],
+                      code_ids['rule_outputs'], code_ids['rule_run']))
+
+    @retry
+    def _select_code_from_rule(self, conn, dbname, db_rule):
+        db_code = conn.execute(
+            f'SELECT code.id, code.code FROM rule INNER JOIN code ON rule.{dbname} = code.id WHERE rule.id = ?',
+            (db_rule[0], )
+        ).fetchone()
+        return db_code
+
+    @retry_lock_commit
+    def _insert_code(self, conn, code):
+        conn.execute('INSERT INTO code(code) VALUES (?)', (code, ))
+        return conn.execute('SELECT MAX(id) FROM code;').fetchone()[0]
+
+    @retry_lock_commit
+    def _update_rule_code(self, conn, db_rule, code_ids):
+        conn.execute('UPDATE rule SET inputs_code_id = ?, outputs_code_id = ?, run_code_id = ? WHERE id = ?',
+                     (code_ids['rule_inputs'], code_ids['rule_outputs'], code_ids['rule_run'], db_rule[0]))
+
     def get_or_create_rule_metadata(self, rule):
-        with self.conn:
-            db_rule = self.conn.execute('SELECT * FROM rule WHERE name = ?', (rule.__name__, )).fetchone()
-            if not db_rule:
-                logger.trace(f'creating {rule}')
-                self.conn.execute('BEGIN EXCLUSIVE')
-                code_ids = {}
-                for req_method in ['rule_inputs', 'rule_outputs', 'rule_run']:
+        db_rule = self._select_db_rule(self.conn, rule)
+        if not db_rule:
+            logger.trace(f'creating {rule}')
+            self._create_db_rule(self.conn, rule)
+            db_rule = self._select_db_rule(self.conn, rule)
+        else:
+            logger.trace(f'got {db_rule}')
+            code_ids = {}
+            for req_method, dbname, code_idx in [
+                ('rule_inputs', 'inputs_code_id', 2),
+                ('rule_outputs', 'outputs_code_id', 3),
+                ('rule_run', 'run_code_id', 4)]:
+                db_code = self._select_code_from_rule(self.conn, dbname, db_rule)
+                if not self.code_comparer(db_code[1], rule.source[req_method]):
+                    logger.trace(f'code different for {req_method}')
                     code = rule.source[req_method]
-                    self.conn.execute('INSERT INTO code(code) VALUES (?)', (code, ))
-                    code_ids[req_method] = self.conn.execute('SELECT MAX(id) FROM code;').fetchone()[0]
+                    max_code_id = self._insert_code(self.conn, code)
+                    code_ids[req_method] = max_code_id
+                else:
+                    code_ids[req_method] = db_rule[code_idx]
 
-                self.conn.execute('INSERT INTO rule(name, inputs_code_id, outputs_code_id, run_code_id) VALUES (?, ?, ?, ?)',
-                                  (rule.__name__, code_ids['rule_inputs'],
-                                   code_ids['rule_outputs'], code_ids['rule_run']))
-                self.conn.commit()
-                db_rule = self.conn.execute('SELECT * FROM rule WHERE name = ?', (rule.__name__, )).fetchone()
-            else:
-                logger.trace(f'got {db_rule}')
-                code_ids = {}
-                for req_method, dbname, code_idx in [
-                    ('rule_inputs', 'inputs_code_id', 2),
-                    ('rule_outputs', 'outputs_code_id', 3),
-                    ('rule_run', 'run_code_id', 4)]:
-                    db_code = self.conn.execute(
-                        f'SELECT code.id, code.code FROM rule INNER JOIN code ON rule.{dbname} = code.id WHERE rule.id = ?',
-                        (db_rule[0], )
-                    ).fetchone()
-                    if not self.code_comparer(db_code[1], rule.source[req_method]):
-                        logger.trace(f'code different for {req_method}')
-                        self.conn.execute('BEGIN EXCLUSIVE')
-                        code = rule.source[req_method]
-                        self.conn.execute('INSERT INTO code(code) VALUES (?)', (code, ))
-                        code_ids[req_method] = self.conn.execute('SELECT MAX(id) FROM code;').fetchone()[0]
-                        self.conn.commit()
-                    else:
-                        code_ids[req_method] = db_rule[code_idx]
-                self.conn.execute('BEGIN EXCLUSIVE')
-                self.conn.execute('UPDATE rule SET inputs_code_id = ?, outputs_code_id = ?, run_code_id = ? WHERE id = ?',
-                                  (code_ids['rule_inputs'], code_ids['rule_outputs'], code_ids['rule_run'], db_rule[0]))
-                self.conn.commit()
-                db_rule = self.conn.execute('SELECT * FROM rule WHERE name = ?', (rule.__name__, )).fetchone()
+            self._update_rule_code(self.conn, db_rule, code_ids)
+            db_rule = self._select_db_rule(self.conn, rule)
 
+        self.rule_map[rule] = db_rule
 
-            self.rule_map[rule] = db_rule
+    @retry_lock_commit
+    def _insert_tasks(self, conn, task_data):
+        conn.executemany('INSERT INTO task(key, rule_id, requires_rerun) VALUES (?, ?, ?)', task_data)
 
     def insert_tasks(self, tasks):
         task_data = [(t.key(), self.rule_map[t.rule][0], True) for t in tasks]
-        with self.conn:
-            logger.debug(f'Inserting {len(tasks)} tasks')
-            self.conn.execute('BEGIN EXCLUSIVE')
-            self.conn.executemany('INSERT INTO task(key, rule_id, requires_rerun) VALUES (?, ?, ?)', task_data)
-            self.conn.commit()
-            logger.debug(f'Inserted {len(tasks)} tasks')
+        logger.trace(f'Inserting {len(tasks)} tasks')
+        self._insert_tasks(self.conn, task_data)
+        logger.trace(f'Inserted {len(tasks)} tasks')
+
+    @retry
+    def _select_task_reqs_rerun_code(self, conn, task):
+        return conn.execute('SELECT task.requires_rerun, code.code FROM task INNER JOIN code ON task.code_id = code.id WHERE key = ?', (task.key(), )).fetchone()
 
     def tasks_requires_rerun(self, tasks):
-        # tasks_to_insert = []
-        # for task in tqdm(self.topo_tasks):
-        #     exists, requires_rerun = self.metadata_manager.task_requires_rerun(mem_conn, task)
-        #     if not exists:
-        #         tasks_to_insert.append(task)
-        #     if requires_rerun:
-        #         task.requires_rerun = True
-        #     else:
-        #         task.requires_rerun = False
-        # self.metadata_manager.insert_tasks(tasks_to_insert)
-
         tasks_to_insert = []
 
         # This block of code is read only, and this speeds up access massively.
-        # mem_conn = sqlite3.connect(':memory:')
-        # self.conn.backup(mem_conn)
-        mem_conn = self.conn
+        mem_conn = sqlite3.connect(':memory:')
+        self.conn.backup(mem_conn)
+        # mem_conn = self.conn
 
-        with mem_conn:
-        # with self.conn:
-            for task in tasks:
-                db_requires_rerun_code = mem_conn.execute('SELECT task.requires_rerun, code.code FROM task INNER JOIN code ON task.code_id = code.id WHERE key = ?', (task.key(), )).fetchone()
-                # db_task = mem_conn.execute('SELECT * FROM task WHERE key = ?', (task.key(), )).fetchone()
-                if not db_requires_rerun_code:
-                    requires_rerun = True
-                    exists = False
-                else:
-                    exists = True
-                    db_requires_rerun = db_requires_rerun_code[0]
-                    code = db_requires_rerun_code[1]
-                    # print(code == task.rule.source['rule_run'])
-                    requires_rerun = db_requires_rerun or not self.code_comparer(code, task.rule.source['rule_run'])
+        for task in tasks:
+            db_requires_rerun_code = self._select_task_reqs_rerun_code(mem_conn, task)
+            if not db_requires_rerun_code:
+                requires_rerun = True
+                exists = False
+            else:
+                exists = True
+                db_requires_rerun = db_requires_rerun_code[0]
+                code = db_requires_rerun_code[1]
+                # print(code == task.rule.source['rule_run'])
+                requires_rerun = db_requires_rerun or not self.code_comparer(code, task.rule.source['rule_run'])
 
-                if not exists:
-                    tasks_to_insert.append(task)
-                if requires_rerun:
-                    task.requires_rerun = True
-                else:
-                    task.requires_rerun = False
+            if not exists:
+                tasks_to_insert.append(task)
+            if requires_rerun:
+                task.requires_rerun = True
+            else:
+                task.requires_rerun = False
+        mem_conn.close()
 
         self.insert_tasks(tasks_to_insert)
 
+    @retry_lock_commit
+    def _update_task_metadata(self, conn, task, code_id):
+        conn.execute(f'UPDATE task SET code_id = (?), requires_rerun = ? WHERE key = ?', (code_id, False, task.key()))
+
     def update_task_metadata(self, task):
-        with self.conn:
-            code_id = self.rule_map[task.rule][4]
-            self.conn.execute('BEGIN EXCLUSIVE')
-            self.conn.execute(f'UPDATE task SET code_id = (?), requires_rerun = ? WHERE key = ?', (code_id, False, task.key()))
-            self.conn.commit()
+        code_id = self.rule_map[task.rule][4]
+        self._update_task_metadata(self.conn, task, code_id)
+
+    @retry_lock_commit
+    def _update_tasks(self, conn, tasks, requires_rerun):
+        for task in tasks:
+            self.conn.execute(f'UPDATE task SET requires_rerun = ? WHERE key = ?', (requires_rerun, task.key()))
 
     def update_tasks(self, tasks, requires_rerun):
-        with self.conn:
-            self.conn.execute('BEGIN EXCLUSIVE')
-            for task in tasks:
-                self.conn.execute(f'UPDATE task SET requires_rerun = ? WHERE key = ?', (requires_rerun, task.key()))
-            self.conn.commit()
+        self._update_tasks(self.conn, tasks, requires_rerun)
 
 

@@ -1,3 +1,6 @@
+from loguru import logger
+
+
 def tmp_atomic_path(p):
     return p.parent / ('.remake.tmp.' + p.name)
 
@@ -18,7 +21,9 @@ class Rule:
 
         for k, v in task.kwargs.items():
             setattr(rule, k, v)
+        logger.debug(f'Run task: {task}')
         rule.rule_run()
+        logger.debug(f'Completed: {task}')
 
         for output in tmp_outputs.values():
             if not output.exists():
@@ -28,5 +33,7 @@ class Rule:
 
         task.is_run = True
         task.requires_rerun = False
+        logger.debug(f'update task: {task}')
         cls.remake.update_task(task)
+        logger.debug(f'updated task: {task}')
 

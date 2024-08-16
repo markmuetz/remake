@@ -28,7 +28,8 @@ def descendants(task_dag, task):
 
 
 class Remake:
-    def __init__(self, *args, **kwargs):
+    def __init__(self, config, *args, **kwargs):
+        self.config = config
         self.args = args
         self.kwargs = kwargs
         self.rules = []
@@ -182,7 +183,7 @@ class Remake:
             if executor == 'SingleprocExecutor':
                 executor = SingleprocExecutor(self)
             elif executor == 'SlurmExecutor':
-                executor = SlurmExecutor(self)
+                executor = SlurmExecutor(self, self.config.get('slurm', {}))
             else:
                 raise ValueError(f'{executor} not a valid executor')
         elif not isinstance(executor, Executor):

@@ -22,8 +22,10 @@ SLURM_SCRIPT_TPL = """#!/bin/bash
 {extra_opts}
 {dependencies}
 
+echo "SLURM RUNNING {task_key}"
 cd {script_dir}
 remake2 -D run-tasks {remakefile_path} --remakefile-sha1 {remakefile_path_hash} --tasks {task_key}
+echo "SLURM COMPLETED {task_key}"
 """
 
 def _parse_slurm_jobid(output):
@@ -39,7 +41,7 @@ def _submit_slurm_script(slurm_script_path):
     try:
         comp_proc = sysrun(f'sbatch {slurm_script_path}')
         output = comp_proc.stdout
-        logger.debug(output.strip())
+        logger.trace(output.strip())
     except sp.CalledProcessError as cpe:
         logger.error(f'Error submitting {slurm_script_path}')
         logger.error(cpe)
@@ -65,7 +67,7 @@ class SingleprocExecutor(Executor):
         ntasks = len(rerun_tasks)
         ndigits = math.floor(math.log10(ntasks)) + 1
         for i, task in enumerate(rerun_tasks):
-            print(f'{i + 1:>{ndigits}}/{ntasks}: {task}')
+            logger.info(f'{i + 1:>{ndigits}}/{ntasks}: {task}')
             task.run()
 
 
@@ -100,7 +102,7 @@ class SlurmExecutor(Executor):
             # get jobid, partition and job name.
             # job name is 10 character task key.
             output = sysrun(f'squeue -u {username} -o "%.18i %.20P %.10j %.3t"').stdout
-            logger.debug(output.strip())
+            logger.trace(output.strip())
         except sp.CalledProcessError as cpe:
             logger.error('Error on squeue command')
             logger.error(cpe)
@@ -136,12 +138,12 @@ class SlurmExecutor(Executor):
             task_slurm_output = rule_slurm_output
 
         slurm_kwargs = {**self.slurm_kwargs}
-        task_config = getattr(task, 'config', {})
-        if 'slurm' in task_config:
-            logger.debug(f'  updating {task} config: {task_config["slurm"]}')
-            slurm_kwargs.update(task_config['slurm'])
+        rule_config = getattr(task.rule, 'config', {})
+        if 'slurm' in rule_config:
+            logger.debug(f'  updating {task} config: {rule_config["slurm"]}')
+            slurm_kwargs.update(rule_config['slurm'])
 
-        logger.debug(f'  creating {task_slurm_output}')
+        logger.trace(f'  creating {task_slurm_output}')
         task_slurm_output.mkdir(exist_ok=True, parents=True)
         slurm_script_filepath = self.slurm_dir.joinpath(*[task_key[:2], task_key[2:], f'{remakefile_name}_{task.key()}.sbatch'])
         slurm_script_filepath.parent.mkdir(exist_ok=True, parents=True)
@@ -175,26 +177,24 @@ class SlurmExecutor(Executor):
                                                job_name=task_key[:10],  # Longer and a leading * is added.
                                                **slurm_kwargs)
 
-        logger.debug(f'  writing {slurm_script_filepath}')
-        logger.debug('\n' + slurm_script)
+        logger.trace(f'  writing {slurm_script_filepath}')
+        logger.trace('\n' + slurm_script)
         with open(slurm_script_filepath, 'w') as fp:
             fp.write(slurm_script)
-        return slurm_script_filepath
-
-    def _task_already_queued_running(self, task):
-        logger.info(f'Already queued/running: {task}')
+        return slurm_script_filepath, slurm_kwargs['partition']
 
     def _submit_task(self, task):
         task_key = task.key()
         # Make sure task isn't already queued or running.
         if task_key[:10] in self.currently_running_task_keys:
-            self._task_already_queued_running(task)
+            partition = self.currently_running_task_keys[task_key[:10]]['partition']
+            logger.info(f'Already queued/running [{partition}]: {task}')
             jobid = self.currently_running_task_keys[task_key[:10]]['jobid']
         else:
             # N.B. you HAVE to write then submit, because you need to job ids for deps.
-            slurm_script_path = self._write_submit_script(task)
+            slurm_script_path, partition = self._write_submit_script(task)
             output = _submit_slurm_script(slurm_script_path)
-            logger.info(f'Submitted: {task}')
+            logger.info(f'Submitted [{partition}]: {task}')
             jobid = _parse_slurm_jobid(output)
         self.task_jobid_map[task] = jobid
 
