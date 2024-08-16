@@ -52,7 +52,7 @@ def sha1sum(path: Path, buf_size: int = SHA1_BUF_SIZE) -> str:
     return sha1.hexdigest()
 
 
-def load_module(local_filename: Union[str, Path]):
+def load_module(local_filename: Union[str, Path], module_attrs=None):
     """Use Python internals to load a Python module from a filename.
 
     >>> load_module('examples/ex1.py').__name__
@@ -74,6 +74,9 @@ def load_module(local_filename: Union[str, Path]):
         # See: https://stackoverflow.com/a/50395128/54557
         spec = importlib.util.spec_from_file_location(module_name, module_path)
         module = importlib.util.module_from_spec(spec)
+        if module_attrs:
+            for k, v in module_attrs.items():
+                setattr(module, k, v)
         spec.loader.exec_module(module)
     except SyntaxError:
         print(f'Bad syntax in module file {module_path}')

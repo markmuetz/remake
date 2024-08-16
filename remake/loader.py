@@ -22,7 +22,8 @@ def load_remake(filename: Union[str, Path], finalize: bool = False) -> 'Remake':
     filename = Path(filename)
     if not filename.suffix:
         filename = filename.with_suffix('.py')
-    remake_module = load_module(filename)
+
+    remake_module = load_module(filename, {'__remake__': '__old__'})
     # remakes = [o for o in [getattr(remake_module, m) for m in dir(remake_module)]
     #            if o.__class__.__name__ == 'Remake']
     remakes = [o for o in [getattr(remake_module, m) for m in dir(remake_module)]

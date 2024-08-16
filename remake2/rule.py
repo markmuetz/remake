@@ -18,6 +18,9 @@ class Rule:
 
         tmp_outputs = {k: tmp_atomic_path(v) for k, v in task.outputs.items()}
         rule.outputs = tmp_outputs
+        for output_dir in set(o.parent for o in task.outputs.values()):
+            if not output_dir.exists():
+                output_dir.mkdir(exist_ok=True, parents=True)
 
         for k, v in task.kwargs.items():
             setattr(rule, k, v)
