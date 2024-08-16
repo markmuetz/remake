@@ -26,3 +26,6 @@ docs/_build/
 # Examples dirs.
 remake/examples/.remake
 remake/examples/data/outputs/
+remake2/examples/.remake
+remake2/examples/data/outputs
+

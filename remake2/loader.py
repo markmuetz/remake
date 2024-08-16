@@ -6,10 +6,11 @@ from remake.util import load_module
 from remake.remake_exceptions import RemakeLoadError
 
 
-def load_remake(filename, finalize=False):
+def load_remake(filename, finalize=True):
     # Avoids circular import.
-    from .remake import Remake
+    from .remake_base import Remake
     from .rule import Rule
+
     filename = Path(filename)
     if not filename.suffix:
         filename = filename.with_suffix('.py')
@@ -24,8 +25,5 @@ def load_remake(filename, finalize=False):
     elif not remakes:
         raise RemakeLoadError(f'No remake defined in {filename}')
     rmk = remakes[0]
-    print(rules)
-    rmk.load_rules(rules)
-    if finalize:
-        rmk.finalize()
+    rmk.load_rules(rules, finalize)
     return rmk

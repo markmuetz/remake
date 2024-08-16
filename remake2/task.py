@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from hashlib import sha1
-import pathlib
 
 from .rule import Rule
 
@@ -15,19 +14,7 @@ class Task:
     is_run: bool = False
 
     def run(self):
-        # for task in self.prev_tasks:
-        #     assert task.is_run == True
-        for input_ in self.inputs.values():
-            # assert output in VirtFS
-            assert pathlib.Path(input_).exists(), f'{input_} does not exist'
-        ret = self.rule.run_task(self)
-        for output in self.outputs.values():
-            # assert output in VirtFS
-            assert pathlib.Path(output).exists(), f'{output} not created'
-        self.is_run = True
-        self.requires_rerun = False
-        self.rule.remake.update_task(self)
-        return ret
+        self.rule.run_task(self)
 
     def __hash__(self):
         if not hasattr(self, '_hash'):

@@ -55,7 +55,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'remake=remake.remake_cmd:remake_cmd'
+            'remake=remake.remake_cmd:remake_cmd',
+            'remake2=remake2.remake_cmd:remake_cmd',
         ]
     },
     classifiers=[

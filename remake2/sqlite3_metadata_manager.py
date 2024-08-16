@@ -35,7 +35,7 @@ CREATE TABLE task (
 	key VARCHAR(40) NOT NULL, --indexed.
 	rule_id INTEGER NOT NULL,
 	code_id INTEGER,
-    requires_rerun BOOL NOT NULL,
+        requires_rerun BOOL NOT NULL,
 	PRIMARY KEY (id),
 	FOREIGN KEY(rule_id) REFERENCES rule (id),
 	FOREIGN KEY(code_id) REFERENCES code (id)
@@ -151,23 +151,24 @@ class Sqlite3MetadataManager:
         tasks_to_insert = []
 
         # This block of code is read only, and this speeds up access massively.
-        mem_conn = sqlite3.connect(':memory:')
-        self.conn.backup(mem_conn)
-        # mem_conn = self.conn
+        # mem_conn = sqlite3.connect(':memory:')
+        # self.conn.backup(mem_conn)
+        mem_conn = self.conn
 
         with mem_conn:
         # with self.conn:
             for task in tasks:
-                db_code = mem_conn.execute('SELECT task.id, code.code FROM task INNER JOIN code ON task.code_id = code.id WHERE key = ?', (task.key(), )).fetchone()
+                db_requires_rerun_code = mem_conn.execute('SELECT task.requires_rerun, code.code FROM task INNER JOIN code ON task.code_id = code.id WHERE key = ?', (task.key(), )).fetchone()
                 # db_task = mem_conn.execute('SELECT * FROM task WHERE key = ?', (task.key(), )).fetchone()
-                if not db_code:
+                if not db_requires_rerun_code:
                     requires_rerun = True
                     exists = False
                 else:
                     exists = True
-                    code = db_code[1]
+                    db_requires_rerun = db_requires_rerun_code[0]
+                    code = db_requires_rerun_code[1]
                     # print(code == task.rule.source['rule_run'])
-                    requires_rerun = not self.code_comparer(code, task.rule.source['rule_run'])
+                    requires_rerun = db_requires_rerun or not self.code_comparer(code, task.rule.source['rule_run'])
 
                 if not exists:
                     tasks_to_insert.append(task)
