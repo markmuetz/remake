@@ -161,8 +161,10 @@ class Remake:
         if callable(inputs_outputs_fn_or_dict):
             return inputs_outputs_fn_or_dict(**fmt_dict)
         else:
-            return {k.format(**fmt_dict): format_path(v, **fmt_dict)
+            return {k.format(**fmt_dict): v.format(**fmt_dict)
                     for k, v in inputs_outputs_fn_or_dict.items()}
+            # return {k.format(**fmt_dict): format_path(v, **fmt_dict)
+            #         for k, v in inputs_outputs_fn_or_dict.items()}
 
     def finalize(self):
         logger.debug('getting task status')
