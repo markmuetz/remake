@@ -162,7 +162,12 @@ class SlurmExecutor(Executor):
         for k, v in slurm_kwargs.items():
             if not v:
                 continue
-            extra_opts.append(f'#SBATCH --{k}={v}')
+            if k == 'max_runtime':
+                extra_opts.append(f'#SBATCH --time={v}')
+            elif k == 'queue':
+                extra_opts.append(f'#SBATCH --partition={v}')
+            else:
+                extra_opts.append(f'#SBATCH --{k}={v}')
         comment = str(task)
         extra_opts = '\n'.join(extra_opts)
         slurm_script = SLURM_SCRIPT_TPL.format(script_dir=Path.cwd(),

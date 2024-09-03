@@ -14,6 +14,7 @@ class Rule:
     @classmethod
     def run_task(cls, task):
         rule = cls()
+        rule.logger = logger
         rule.inputs = task.inputs.copy()
 
         tmp_outputs = {k: tmp_atomic_path(v) for k, v in task.outputs.items()}
