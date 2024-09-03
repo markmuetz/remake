@@ -1,7 +1,10 @@
+from pathlib import Path
+
 from loguru import logger
 
 
 def tmp_atomic_path(p):
+    p = Path(p)
     return p.parent / ('.remake.tmp.' + p.name)
 
 
@@ -19,7 +22,7 @@ class Rule:
 
         tmp_outputs = {k: tmp_atomic_path(v) for k, v in task.outputs.items()}
         rule.outputs = tmp_outputs
-        for output_dir in set(o.parent for o in task.outputs.values()):
+        for output_dir in set(Path(o).parent for o in task.outputs.values()):
             if not output_dir.exists():
                 output_dir.mkdir(exist_ok=True, parents=True)
 
