@@ -5,7 +5,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from .loader import load_remake
+from remake2.loader import load_remake
 
 def log_error(ex_type, value, tb):
     import traceback
@@ -97,6 +97,12 @@ class RemakeParser:
                 Arg('--tasks', '-t', nargs='*'),
             ],
         },
+        'info': {
+            'help': 'Info on remake status of all tasks',
+            'args': [
+                Arg('remakefile', nargs='?', default='remakefile'),
+            ],
+        },
         'ls-tasks': {
             'help': 'List specified tasks',
             'args': [
@@ -142,10 +148,12 @@ class RemakeParser:
             self.remake_run_tasks(args.remakefile, args.executor, args.remakefile_sha1, args.tasks)
         elif args.subcmd_name == 'ls-tasks':
             self.remake_ls_tasks(args.remakefile)
+        elif args.subcmd_name == 'info':
+            self.remake_info(args.remakefile)
         return self.rmk
 
     def remake_run(self, remakefile, executor):
-        rmk = load_remake(remakefile)
+        rmk = load_remake(remakefile, run=True)
         rmk.run(executor=executor + 'Executor')
         self.rmk = rmk
 
@@ -154,7 +162,7 @@ class RemakeParser:
             curr_remakefile_sha1 = sha1(Path(remakefile).read_bytes()).hexdigest()
             assert remakefile_sha1 == curr_remakefile_sha1
 
-        rmk = load_remake(remakefile, finalize=False)
+        rmk = load_remake(remakefile, finalize=False, run=True)
         rmk.run_tasks_from_keys(task_keys, executor=executor + 'Executor')
         self.rmk = rmk
 
@@ -162,6 +170,13 @@ class RemakeParser:
         rmk = load_remake(remakefile)
         for task in rmk.tasks:
             print(task)
+        self.rmk = rmk
+
+    def remake_info(self, remakefile):
+        rmk = load_remake(remakefile)
+        for task in rmk.topo_tasks:
+            status = 'R' if task.requires_rerun else 'C'
+            print(status, task)
         self.rmk = rmk
 
 
@@ -202,6 +217,9 @@ def remake_cmd(argv=None):
     else:
         parser.dispatch()
 
+    if args.return_remake:
+        return parser.rmk
+
 
 if __name__ == '__main__':
-    remake_cmd()
+    rmk = remake_cmd()

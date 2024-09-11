@@ -55,11 +55,14 @@ class Remake:
     def load_rules(self, rules, finalize=True):
         logger.debug('Loading rules')
         for rule in rules:
+            if hasattr(rule, 'enabled') and not rule.enabled:
+                continue
             self.load_rule(rule)
             setattr(self, rule.__name__, rule)
 
         for task in self.tasks:
             # import ipdb; ipdb.set_trace()
+            self.task_dag.add_node(task)
             input_tasks = []
             for input_ in task.inputs.values():
                 if input_ in self._outputs:

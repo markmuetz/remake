@@ -39,7 +39,18 @@ class CodeComparer:
         key = tuple(sorted([code1, code2]))
         if key in self.compare_cache:
             return self.compare_cache[key]
-        res = compare_ast(ast.parse(code1), ast.parse(code2))
+        try:
+            res = compare_ast(ast.parse(code1), ast.parse(code2))
+        except RecursionError as re:
+            # TODO: investigate how this happens.
+            print('code1:')
+            print(code1)
+            print('code2:')
+            print(code2)
+            # Why not just raise? (to raise first error)
+            # If you do this, the debugger will be stuck down the
+            # recursion loop, and you cannot inspect vars.
+            raise re
         self.compare_cache[key] = res
         return res
 

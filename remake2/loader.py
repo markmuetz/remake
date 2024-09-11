@@ -6,7 +6,7 @@ from remake.util import load_module
 from remake.remake_exceptions import RemakeLoadError
 
 
-def load_remake(filename, finalize=True):
+def load_remake(filename, finalize=True, run=False):
     # Avoids circular import.
     from .remake_base import Remake
     from .rule import Rule
@@ -14,7 +14,7 @@ def load_remake(filename, finalize=True):
     filename = Path(filename)
     if not filename.suffix:
         filename = filename.with_suffix('.py')
-    remake_module = load_module(filename, {'__remake__': '__new__'})
+    remake_module = load_module(filename, {'__remake__': '__new__', '__remake_run__': run})
     module_vars = [getattr(remake_module, m) for m in dir(remake_module)]
     remakes = [o for o in module_vars
                if isinstance(o, Remake)]

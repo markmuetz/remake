@@ -200,6 +200,13 @@ class Sqlite3MetadataManager:
                 db_requires_rerun = db_requires_rerun_code[0]
                 code = db_requires_rerun_code[1]
                 # print(code == task.rule.source['rule_run'])
+                # TODO: Need to record more info about WHY rerun necessary.
+                # 2 cases:
+                # 1. because previous task has changed.
+                # 2. because code has changed.
+                # The reason I need more info is as follows:
+                # I need to handle the case where a precursor task is changed (hence store requires rerun in db_requires_rerun.
+                # I also need to handle code change, followed by code change back to orig (requires_rerun should be F).
                 requires_rerun = db_requires_rerun or not self.code_comparer(code, task.rule.source['rule_run'])
 
             if not exists:
