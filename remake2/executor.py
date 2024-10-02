@@ -62,6 +62,34 @@ class Executor(abc.ABC):
         pass
 
 
+class DaskExecutor(Executor):
+    def __init__(self, rmk, dask_config=None):
+        if not dask_config:
+            dask_config = {}
+        super().__init__(rmk)
+
+    def run_tasks(self, rerun_tasks):
+        import dask
+        from dask.distributed import LocalCluster
+        raise Exception('Does not work because task cannot be pickled.')
+        dsk = {}
+        def dask_task_run(task, input_task_keys):
+            task.run()
+
+        def complete(input_task_keys):
+            pass
+
+        for task in rerun_tasks:
+            input_task_keys = [t.key for t in task.prev_tasks]
+            dsk[task.key] = (dask_task_run, task, input_task_keys)
+        dsk['complete'] = (complete, [t.key for t in rerun_tasks])
+
+        cluster = LocalCluster()          # Fully-featured local Dask cluster
+        # cluster.scale(8)
+        client = cluster.get_client()
+        client.get(dsk, 'complete')
+
+
 class SingleprocExecutor(Executor):
     def run_tasks(self, rerun_tasks):
         ntasks = len(rerun_tasks)

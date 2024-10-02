@@ -9,7 +9,7 @@ import networkx as nx
 from remake.util import format_path
 
 from .code_compare import dedent
-from .executor import Executor, SingleprocExecutor, SlurmExecutor
+from .executor import Executor, SingleprocExecutor, SlurmExecutor, DaskExecutor
 from .sqlite3_metadata_manager import Sqlite3MetadataManager
 from .rule import Rule
 from .task import Task
@@ -169,15 +169,20 @@ class Remake:
             # return {k.format(**fmt_dict): format_path(v, **fmt_dict)
             #         for k, v in inputs_outputs_fn_or_dict.items()}
 
+    def set_task_statuses(tasks):
+        for task in tasks:
+            db_requires_rerun = any(
+                (prev_task.requires_rerun or task.last_run_timestamp < prev_task.last_run_timestamp)
+                for prev_task in task.prev_tasks
+            )
+            # print(code == task.rule.source['rule_run'])
+            requires_rerun = db_requires_rerun or not self.metadata_manager.code_comparer(task.prev_code, task.rule.source['rule_run'])
+            task.requires_rerun = requires_rerun
+
     def finalize(self):
         logger.debug('getting task status')
-        self.metadata_manager.tasks_requires_rerun(self.topo_tasks)
-
-        descendant_tasks = all_descendants(self.task_dag, [t for t in self.topo_tasks if t.requires_rerun])
-        for descendant_task in descendant_tasks:
-            descendant_task.requires_rerun = True
-
-        self.metadata_manager.update_tasks([t for t in self.topo_tasks if t.requires_rerun], True)
+        self.metadata_manager.get_or_create_tasks_metadata(self.topo_tasks)
+        self.set_task_statuses(self.topo_tasks)
 
     def update_task(self, task):
         if task.is_run:
@@ -189,6 +194,8 @@ class Remake:
                 executor = SingleprocExecutor(self)
             elif executor == 'SlurmExecutor':
                 executor = SlurmExecutor(self, self.config.get('slurm', {}))
+            elif executor == 'DaskExecutor':
+                executor = DaskExecutor(self, self.config.get('dask', {}))
             else:
                 raise ValueError(f'{executor} not a valid executor')
         elif not isinstance(executor, Executor):

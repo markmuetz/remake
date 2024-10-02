@@ -37,7 +37,8 @@ CREATE TABLE task (
 	key VARCHAR(40) NOT NULL, --indexed.
 	rule_id INTEGER NOT NULL,
 	code_id INTEGER,
-        requires_rerun BOOL NOT NULL,
+    last_run_timestamp TIMESTAMP,
+    last_run_status INTEGER,
 	PRIMARY KEY (id),
 	FOREIGN KEY(rule_id) REFERENCES rule (id),
 	FOREIGN KEY(code_id) REFERENCES code (id)
@@ -94,7 +95,7 @@ def retry_lock_commit(fn):
 class Sqlite3MetadataManager:
     def __init__(self):
         create_db = not Path(dbloc).exists()
-        self.conn = sqlite3.connect(dbloc)
+        self.conn = sqlite3.connect(dbloc, detect_types=sqlite3.PARSE_DECLTYPES)
         if create_db:
             self.create_db()
         # This works and is blazingly fast, but at the cost that you can no longer write to db :(
@@ -107,6 +108,7 @@ class Sqlite3MetadataManager:
         self.code_comparer = CodeComparer()
 
     def create_db(self):
+        Path('.remake').mkdir(exists_ok=True)
         self.conn.executescript(sql_schema)
 
     @retry
@@ -181,42 +183,33 @@ class Sqlite3MetadataManager:
         logger.trace(f'Inserted {len(tasks)} tasks')
 
     @retry
-    def _select_task_reqs_rerun_code(self, conn, task):
-        return conn.execute('SELECT task.requires_rerun, code.code FROM task INNER JOIN code ON task.code_id = code.id WHERE key = ?', (task.key(), )).fetchone()
+    def _select_task_last_run_code(self, conn, task):
+        return conn.execute('SELECT datetime("task.last_run_timestamp"), task.last_run_status code.code FROM task INNER JOIN code ON task.code_id = code.id WHERE key = ?', (task.key(), )).fetchone()
 
-    def tasks_requires_rerun(self, tasks):
+    def get_or_create_tasks_metadata(self, tasks):
         tasks_to_insert = []
 
         # This block of code is read only, and this speeds up access massively.
-        mem_conn = sqlite3.connect(':memory:')
+        mem_conn = sqlite3.connect(':memory:', detect_types=sqlite3.PARSE_DECLTYPES)
         self.conn.backup(mem_conn)
         # mem_conn = self.conn
 
         for task in tasks:
-            db_requires_rerun_code = self._select_task_reqs_rerun_code(mem_conn, task)
-            if not db_requires_rerun_code:
+            db_task_last_run_code = self._select_task_last_run_code(mem_conn, task)
+            if not db_task_last_run_code:
                 requires_rerun = True
-                exists = False
+                db_exists = False
             else:
-                exists = True
-                db_requires_rerun = db_requires_rerun_code[0]
-                code = db_requires_rerun_code[1]
-                # print(code == task.rule.source['rule_run'])
-                # TODO: Need to record more info about WHY rerun necessary.
-                # 2 cases:
-                # 1. because previous task has changed.
-                # 2. because code has changed.
-                # The reason I need more info is as follows:
-                # I need to handle the case where a precursor task is changed (hence store requires rerun in db_requires_rerun.
-                # I also need to handle code change, followed by code change back to orig (requires_rerun should be F).
-                requires_rerun = db_requires_rerun or not self.code_comparer(code, task.rule.source['rule_run'])
+                db_exists = True
+                db_last_run_timestamp = db_task_last_run_code[0]
+                db_last_run_status = db_task_last_run_code[1]
+                db_code = db_task_last_run_code[2]
+                task.last_run_timestamp = db_last_run_timestamp
+                task.last_run_status = db_last_run_status
+                task.last_run_code = db_code
 
-            if not exists:
+            if not db_exists:
                 tasks_to_insert.append(task)
-            if requires_rerun:
-                task.requires_rerun = True
-            else:
-                task.requires_rerun = False
         mem_conn.close()
 
         self.insert_tasks(tasks_to_insert)
