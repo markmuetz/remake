@@ -74,6 +74,7 @@ class Remake:
     def __init__(self, config, *args, **kwargs):
         self.config = Config({
             'slurm': {},
+            'content_checks': False,
             'check_inputs_exist': False,
             'check_outputs_exist': False,
             'check_outputs_older_than_inputs': False,
