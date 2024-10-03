@@ -2,9 +2,12 @@ import inspect
 import itertools
 import math
 import traceback
+from pathlib import Path
 
 from loguru import logger
 import networkx as nx
+
+from pyquerylist import QueryList
 
 from remake.util import format_path
 
@@ -13,6 +16,39 @@ from .executor import Executor, SingleprocExecutor, SlurmExecutor, DaskExecutor
 from .sqlite3_metadata_manager import Sqlite3MetadataManager
 from .rule import Rule
 from .task import Task
+
+class Config:
+    def __init__(self, defaults, allow_other_keys=False):
+        self.cfg = {
+            k: ([f'default:{v}'], v)
+            for k, v in defaults.items()
+        }
+        self.allow_other_keys = allow_other_keys
+
+    def update(self, setby, updates):
+        for k, v in updates.items():
+            if k in self.cfg:
+                prev_setby, prev_v = self.cfg[k]
+                self.cfg[k] = ([f'{setby}:{v}'] + prev_setby, v)
+            else:
+                if not self.allow_other_keys:
+                    raise Exception(f'Trying to add new key {k} and allow_other_keys = False')
+                self.cfg[k] = (setby, v)
+
+    def copy(self):
+        cp = Config({}, allow_other_keys=self.allow_other_keys)
+        cp.cfg = self.cfg.copy()
+        return cp
+
+    def __getitem__(self, key):
+        return self.cfg[key][1]
+
+    def print(self):
+        for k, (setby, v) in self.cfg.items():
+            setby_str = ' > '.join(setby)
+            print(f'{k}: {v} ({setby_str})')
+
+
 
 def all_descendants(task_dag, tasks):
     task_descendants = set()
@@ -26,10 +62,23 @@ def all_descendants(task_dag, tasks):
 def descendants(task_dag, task):
     return set(nx.bfs_tree(task_dag, task))
 
+def compare_task_timestamps(t1, t2):
+    if t1 is None or t2 is None:
+        return False
+    else:
+        return t1 < t2
+
+
 
 class Remake:
     def __init__(self, config, *args, **kwargs):
-        self.config = config
+        self.config = Config({
+            'slurm': {},
+            'check_inputs_exist': False,
+            'check_outputs_exist': False,
+            'check_outputs_older_than_inputs': False,
+        })
+        self.config.update('remake_config', config)
         self.args = args
         self.kwargs = kwargs
         self.rules = []
@@ -76,7 +125,7 @@ class Remake:
 
         assert nx.is_directed_acyclic_graph(self.task_dag), 'Not a dag!'
         self.input_tasks = [v for v, d in self.task_dag.in_degree() if d == 0]
-        self.topo_tasks = list(nx.topological_sort(self.task_dag))
+        self.topo_tasks = QueryList(nx.topological_sort(self.task_dag))
 
         logger.debug('inserting rules')
         for rule in self.rules:
@@ -134,9 +183,11 @@ class Remake:
                 task_kwargs = {k: v for k, v in zip(rule.var_matrix.keys(), rule_var)}
                 task_kwargs = self._check_modify_fmt_dict(task_kwargs)
 
-                inputs = self.get_inputs_outputs(rule.rule_inputs, task_kwargs)
-                outputs = self.get_inputs_outputs(rule.rule_outputs, task_kwargs)
+                inputs = self._get_inputs_outputs(rule.rule_inputs, task_kwargs)
+                outputs = self._get_inputs_outputs(rule.rule_outputs, task_kwargs)
                 task = Task(rule, inputs, outputs, task_kwargs, [], [])
+                for k, v in task_kwargs.items():
+                    setattr(task, k, v)
                 self.task_key_map[task.key()] = task
 
                 rule.tasks.append(task)
@@ -147,8 +198,8 @@ class Remake:
                         raise Exception(output)
                     self._outputs[output] = task
         else:
-            inputs = self.get_inputs_outputs(rule.rule_inputs, {})
-            outputs = self.get_inputs_outputs(rule.rule_outputs, {})
+            inputs = self._get_inputs_outputs(rule.rule_inputs, {})
+            outputs = self._get_inputs_outputs(rule.rule_outputs, {})
             task = Task(rule, inputs, outputs, {}, [], [])
             self.task_key_map[task.key()] = task
 
@@ -160,7 +211,7 @@ class Remake:
                     raise Exception(output)
                 self._outputs[output] = task
 
-    def get_inputs_outputs(self, inputs_outputs_fn_or_dict, fmt_dict):
+    def _get_inputs_outputs(self, inputs_outputs_fn_or_dict, fmt_dict):
         if callable(inputs_outputs_fn_or_dict):
             return inputs_outputs_fn_or_dict(**fmt_dict)
         else:
@@ -169,24 +220,79 @@ class Remake:
             # return {k.format(**fmt_dict): format_path(v, **fmt_dict)
             #         for k, v in inputs_outputs_fn_or_dict.items()}
 
-    def set_task_statuses(tasks):
+    def _set_task_statuses(self, tasks):
         for task in tasks:
-            db_requires_rerun = any(
-                (prev_task.requires_rerun or task.last_run_timestamp < prev_task.last_run_timestamp)
-                for prev_task in task.prev_tasks
-            )
-            # print(code == task.rule.source['rule_run'])
-            requires_rerun = db_requires_rerun or not self.metadata_manager.code_comparer(task.prev_code, task.rule.source['rule_run'])
+            if hasattr(task.rule, 'config'):
+                config = self.config.copy()
+                config.update(str(task), task.rule.config)
+            else:
+                config = self.config
+
+            requires_rerun = False
+            rerun_reasons = []
+            if task.last_run_status == 0:
+                requires_rerun = True
+                rerun_reasons.append('task_not_run')
+            elif task.last_run_status == 2:
+                # Note, we do not know *why* the task failed.
+                # It could have nothing to do with the Python code, e.g. out of memory/time etc.
+                # Mark as requires_rerun so that if these have been fixed, the task can be rerun.
+                requires_rerun = True
+                rerun_reasons.append('task_failed')
+
+            prev_task_requires_rerun = False
+            for prev_task in task.prev_tasks:
+                if prev_task.inputs_missing:
+                    task.inputs_missing = True
+                    rerun_reasons.append(f'prev_task_input_missing {prev_task}')
+                if prev_task.requires_rerun:
+                    prev_task_requires_rerun = True
+                    requires_rerun = True
+                    rerun_reasons.append(f'prev_task_requires_rerun {prev_task}')
+                if compare_task_timestamps(task.last_run_timestamp, prev_task.last_run_timestamp):
+                    requires_rerun = True
+                    rerun_reasons.append(f'prev_task_run_more_recently {prev_task}')
+
+            earliest_output_path_mtime = float('inf')
+            latest_input_path_mtime = 0
+            if config['check_outputs_older_than_inputs'] or config['check_inputs_exist']:
+                for path in task.inputs.values():
+                    if not Path(path).exists():
+                        if path in self._outputs and self._outputs[path].requires_rerun:
+                            pass
+                        else:
+                            requires_rerun = False
+                            rerun_reasons.append(f'input_missing {path}')
+                            task.inputs_missing = True
+                    else:
+                        latest_input_path_mtime = max(latest_input_path_mtime, Path(path).lstat().st_mtime)
+
+            if config['check_outputs_older_than_inputs'] or config['check_outputs_exist']:
+                for path in task.outputs.values():
+                    if not Path(path).exists():
+                        requires_rerun = True
+                        rerun_reasons.append(f'output_missing {path}')
+                    else:
+                        earliest_output_path_mtime = min(earliest_output_path_mtime, Path(path).lstat().st_mtime)
+
+            if config['check_outputs_older_than_inputs']:
+                if latest_input_path_mtime > earliest_output_path_mtime:
+                    requires_rerun = True
+                    rerun_reasons.append('input_is_older_than_output')
+
+            if not self.metadata_manager.code_comparer(task.last_run_code, task.rule.source['rule_run']):
+                requires_rerun = True
+                rerun_reasons.append('task_run_source_changed')
             task.requires_rerun = requires_rerun
+            task.rerun_reasons = rerun_reasons
 
     def finalize(self):
         logger.debug('getting task status')
         self.metadata_manager.get_or_create_tasks_metadata(self.topo_tasks)
-        self.set_task_statuses(self.topo_tasks)
+        self._set_task_statuses(self.topo_tasks)
 
-    def update_task(self, task):
-        if task.is_run:
-            self.metadata_manager.update_task_metadata(task)
+    def update_task(self, task, exception=''):
+        self.metadata_manager.update_task_metadata(task, exception)
 
     def _get_executor(self, executor):
         if isinstance(executor, str):
@@ -202,8 +308,17 @@ class Remake:
             raise ValueError(f'{executor} must be a string or a subtype of Executor')
         return executor
 
-    def run(self, executor='SingleprocExecutor'):
-        rerun_tasks = [t for t in self.topo_tasks if t.requires_rerun]
+    def run(self, executor='SingleprocExecutor', query='', force=False):
+        if query:
+            tasks = self.topo_tasks.where(query[0])
+        else:
+            tasks = self.topo_tasks
+
+        if not force:
+            rerun_tasks = [t for t in tasks if t.requires_rerun]
+        else:
+            rerun_tasks = tasks
+
         if not rerun_tasks:
             logger.info('No tasks require rerun')
             return

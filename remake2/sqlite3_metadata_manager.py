@@ -39,6 +39,7 @@ CREATE TABLE task (
 	code_id INTEGER,
     last_run_timestamp TIMESTAMP,
     last_run_status INTEGER,
+    exception TEXT,
 	PRIMARY KEY (id),
 	FOREIGN KEY(rule_id) REFERENCES rule (id),
 	FOREIGN KEY(code_id) REFERENCES code (id)
@@ -62,7 +63,7 @@ def retry(fn):
                     logger.trace(f'<{fn.__name__}')
                 return ret
             except sqlite3.OperationalError as oe:
-                logger.trace(f'    OperationalError: {oe}')
+                logger.debug(f'    OperationalError: {oe}')
             logger.trace(f'    retry {nattempts}')
             nattempts += 1
             sleep(2**nattempts * random.random())
@@ -85,7 +86,7 @@ def retry_lock_commit(fn):
                     logger.trace(f'<{fn.__name__}')
                 return ret
             except sqlite3.OperationalError as oe:
-                logger.trace(f'    OperationalError: {oe}')
+                logger.debug(f'    OperationalError: {oe}')
             logger.trace(f'    retry {nattempts}')
             nattempts += 1
             sleep(2**nattempts * random.random())
@@ -95,9 +96,12 @@ def retry_lock_commit(fn):
 class Sqlite3MetadataManager:
     def __init__(self):
         create_db = not Path(dbloc).exists()
+        if create_db:
+            logger.info(f'creating db: {dbloc}')
+            Path('.remake').mkdir(exist_ok=True)
         self.conn = sqlite3.connect(dbloc, detect_types=sqlite3.PARSE_DECLTYPES)
         if create_db:
-            self.create_db()
+            self.conn.executescript(sql_schema)
         # This works and is blazingly fast, but at the cost that you can no longer write to db :(
         # self.conn_disk = sqlite3.connect(dbloc)
         # self.conn = sqlite3.connect(':memory:')
@@ -106,10 +110,6 @@ class Sqlite3MetadataManager:
 
         self.rule_map = {}
         self.code_comparer = CodeComparer()
-
-    def create_db(self):
-        Path('.remake').mkdir(exists_ok=True)
-        self.conn.executescript(sql_schema)
 
     @retry
     def _select_db_rule(self, conn, rule):
@@ -174,17 +174,30 @@ class Sqlite3MetadataManager:
 
     @retry_lock_commit
     def _insert_tasks(self, conn, task_data):
-        conn.executemany('INSERT INTO task(key, rule_id, requires_rerun) VALUES (?, ?, ?)', task_data)
+        conn.executemany('INSERT INTO task(key, rule_id, last_run_status) VALUES (?, ?, ?)', task_data)
 
     def insert_tasks(self, tasks):
-        task_data = [(t.key(), self.rule_map[t.rule][0], True) for t in tasks]
+        task_data = [(t.key(), self.rule_map[t.rule][0], 0) for t in tasks]
         logger.trace(f'Inserting {len(tasks)} tasks')
         self._insert_tasks(self.conn, task_data)
         logger.trace(f'Inserted {len(tasks)} tasks')
 
     @retry
     def _select_task_last_run_code(self, conn, task):
-        return conn.execute('SELECT datetime("task.last_run_timestamp"), task.last_run_status code.code FROM task INNER JOIN code ON task.code_id = code.id WHERE key = ?', (task.key(), )).fetchone()
+        logger.trace(f'_select_task_last_run_code: {task.key()}')
+        # return conn.execute('SELECT task.last_run_timestamp, task.last_run_status, code.code FROM task INNER JOIN code ON task.code_id = code.id WHERE task.key = ?', (task.key(), )).fetchone()
+        db_ret = conn.execute('SELECT last_run_timestamp, last_run_status, exception, code_id FROM task WHERE key = ?', (task.key(), )).fetchone()
+        if db_ret:
+            last_run_timestamp, last_run_status, last_run_exception, last_run_code_id = db_ret
+            logger.trace(db_ret)
+            if last_run_code_id:
+                code, = conn.execute('SELECT code.code FROM task INNER JOIN code ON task.code_id = code.id WHERE task.key = ?', (task.key(), )).fetchone()
+                return (last_run_timestamp, last_run_status, last_run_exception, code)
+            else:
+                return (last_run_timestamp, last_run_status, last_run_exception, '')
+        else:
+            return db_ret
+
 
     def get_or_create_tasks_metadata(self, tasks):
         tasks_to_insert = []
@@ -196,6 +209,7 @@ class Sqlite3MetadataManager:
 
         for task in tasks:
             db_task_last_run_code = self._select_task_last_run_code(mem_conn, task)
+            logger.trace(db_task_last_run_code)
             if not db_task_last_run_code:
                 requires_rerun = True
                 db_exists = False
@@ -203,9 +217,11 @@ class Sqlite3MetadataManager:
                 db_exists = True
                 db_last_run_timestamp = db_task_last_run_code[0]
                 db_last_run_status = db_task_last_run_code[1]
-                db_code = db_task_last_run_code[2]
+                db_exception = db_task_last_run_code[2]
+                db_code = db_task_last_run_code[3]
                 task.last_run_timestamp = db_last_run_timestamp
                 task.last_run_status = db_last_run_status
+                task.last_run_exception = db_exception
                 task.last_run_code = db_code
 
             if not db_exists:
@@ -215,19 +231,19 @@ class Sqlite3MetadataManager:
         self.insert_tasks(tasks_to_insert)
 
     @retry_lock_commit
-    def _update_task_metadata(self, conn, task, code_id):
-        conn.execute(f'UPDATE task SET code_id = (?), requires_rerun = ? WHERE key = ?', (code_id, False, task.key()))
+    def _update_task_metadata(self, conn, task, code_id, exception=''):
+        conn.execute(f'UPDATE task SET code_id = (?), last_run_timestamp = datetime(\'now\'), last_run_status = ?, exception = ? WHERE key = ?', (code_id, task.last_run_status, exception, task.key()))
 
-    def update_task_metadata(self, task):
+    def update_task_metadata(self, task, exception=''):
         code_id = self.rule_map[task.rule][4]
-        self._update_task_metadata(self.conn, task, code_id)
+        self._update_task_metadata(self.conn, task, code_id, exception)
 
-    @retry_lock_commit
-    def _update_tasks(self, conn, tasks, requires_rerun):
-        for task in tasks:
-            self.conn.execute(f'UPDATE task SET requires_rerun = ? WHERE key = ?', (requires_rerun, task.key()))
+    # @retry_lock_commit
+    # def _update_tasks(self, conn, tasks, requires_rerun):
+    #     for task in tasks:
+    #         self.conn.execute(f'UPDATE task SET requires_rerun = ? WHERE key = ?', (requires_rerun, task.key()))
 
-    def update_tasks(self, tasks, requires_rerun):
-        self._update_tasks(self.conn, tasks, requires_rerun)
+    # def update_tasks(self, tasks, requires_rerun):
+    #     self._update_tasks(self.conn, tasks, requires_rerun)
 
 

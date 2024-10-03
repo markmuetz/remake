@@ -1,4 +1,5 @@
 from pathlib import Path
+import traceback
 
 from loguru import logger
 
@@ -29,7 +30,20 @@ class Rule:
         for k, v in task.kwargs.items():
             setattr(rule, k, v)
         logger.debug(f'Run task: {task}')
-        rule.rule_run()
+        try:
+            rule.rule_run()
+            task.last_run_status = 1
+        except:
+            e = traceback.format_exc()
+            # task.last_run
+            # Set task state to failed.
+            logger.error(f'failed: {task}')
+            logger.error(f'failed: {e}')
+            task.last_run_status = 2
+            logger.debug(f'update task: {task}')
+            cls.remake.update_task(task, exception=str(e))
+            logger.debug(f'updated task: {task}')
+            raise
         logger.debug(f'Completed: {task}')
 
         for output in tmp_outputs.values():

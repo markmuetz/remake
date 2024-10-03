@@ -84,8 +84,10 @@ class RemakeParser:
         'run': {
             'help': 'Run all pending tasks',
             'args': [
-                Arg('remakefile', nargs='?', default='remakefile'),
+                Arg('--query', '-Q', help='Filter tasks based on query', nargs=1),
                 Arg('--executor', '-E', default='Singleproc'),
+                Arg('--force', '-F', action='store_true'),
+                Arg('remakefile', nargs='?', default='remakefile'),
             ],
         },
         'run-tasks': {
@@ -100,13 +102,35 @@ class RemakeParser:
         'info': {
             'help': 'Info on remake status of all tasks',
             'args': [
+                Arg('--query', '-Q', help='Filter tasks based on query', nargs=1),
+                Arg('--show-failures', '-F', help='Show any failure messages', action='store_true'),
+                Arg('--show-task-code-diff', '-D', help='Show any code diffs for class', action='store_true'),
+                Arg('--show-reasons', '-R', help='Show reasons for rerun', action='store_true'),
                 Arg('remakefile', nargs='?', default='remakefile'),
             ],
         },
         'ls-tasks': {
             'help': 'List specified tasks',
             'args': [
+                Arg('--query', '-Q', help='Filter tasks based on query', nargs=1),
                 Arg('remakefile', nargs='?', default='remakefile'),
+            ],
+        },
+        'run-tasks': {
+            'help': 'Run specified tasks (uses same flags as ls-tasks)',
+            'args': [
+                Arg('remakefile', nargs='?', default='remakefile'),
+                Arg('--executor', '-E', default='Singleproc'),
+                Arg('--remakefile-sha1', default=None),
+                Arg('--tasks', '-t', nargs='*'),
+            ],
+        },
+        'set-tasks-status': {
+            'help': 'Set tasks status using given code (0=not run, 1=run, 2=failed)',
+            'args': [
+                Arg('--query', '-Q', help='Filter tasks based on query', nargs=1),
+                Arg('remakefile', nargs='?', default='remakefile'),
+                Arg('--last-run-status-code', '-S', type=int),
             ],
         },
     }
@@ -143,18 +167,20 @@ class RemakeParser:
         # not passed into any subsequent functions.
         logger.trace(args.subcmd_name)
         if args.subcmd_name == 'run':
-            self.remake_run(args.remakefile, args.executor)
+            self.remake_run(args.remakefile, args.executor, args.query, args.force)
         elif args.subcmd_name == 'run-tasks':
             self.remake_run_tasks(args.remakefile, args.executor, args.remakefile_sha1, args.tasks)
         elif args.subcmd_name == 'ls-tasks':
-            self.remake_ls_tasks(args.remakefile)
+            self.remake_ls_tasks(args.remakefile, args.query)
         elif args.subcmd_name == 'info':
-            self.remake_info(args.remakefile)
+            self.remake_info(args.remakefile, args.query, args.show_failures, args.show_task_code_diff, args.show_reasons)
+        elif args.subcmd_name == 'set-tasks-status':
+            self.remake_set_tasks_status(args.remakefile, args.query, args.last_run_status_code)
         return self.rmk
 
-    def remake_run(self, remakefile, executor):
+    def remake_run(self, remakefile, executor, query, force):
         rmk = load_remake(remakefile, run=True)
-        rmk.run(executor=executor + 'Executor')
+        rmk.run(executor=executor + 'Executor', query=query, force=force)
         self.rmk = rmk
 
     def remake_run_tasks(self, remakefile, executor, remakefile_sha1, task_keys):
@@ -166,17 +192,64 @@ class RemakeParser:
         rmk.run_tasks_from_keys(task_keys, executor=executor + 'Executor')
         self.rmk = rmk
 
-    def remake_ls_tasks(self, remakefile):
-        rmk = load_remake(remakefile)
-        for task in rmk.tasks:
+    def remake_ls_tasks(self, remakefile, query):
+        rmk = load_remake(remakefile, finalize=False)
+        if query:
+            tasks = rmk.topo_tasks.where(query)
+        else:
+            tasks = rmk.topo_tasks
+        for task in tasks:
             print(task)
         self.rmk = rmk
 
-    def remake_info(self, remakefile):
+    def remake_set_tasks_status(self, remakefile, query, last_run_status_code):
         rmk = load_remake(remakefile)
+        if query:
+            tasks = rmk.topo_tasks.where(query[0])
+        else:
+            tasks = rmk.topo_tasks
+
+        r = input(f'Set status for {len(tasks)} task(s)? y/[n] ')
+        if r == 'y':
+            for task in tasks:
+                task.last_run_status = last_run_status_code
+                rmk.update_task(task)
+        self.rmk = rmk
+
+    def remake_info(self, remakefile, query, show_failures, show_task_code_diff, show_reasons):
+        rmk = load_remake(remakefile)
+        status_map = {
+            0: 'R',
+            1: 'C',
+            2: 'RF',
+        }
         for task in rmk.topo_tasks:
-            status = 'R' if task.requires_rerun else 'C'
-            print(status, task)
+            status = status_map[task.last_run_status]
+            if task.requires_rerun and 'R' not in status:
+                status = 'R'
+            if task.inputs_missing:
+                status = 'X' + status
+            task.status = status
+
+        if query:
+            print('Filter on: ', query[0])
+            filtered_tasks = rmk.topo_tasks.where(query[0])
+        else:
+            filtered_tasks = rmk.topo_tasks
+
+        for task in filtered_tasks:
+            print(f'{task.status:<2s} {task}')
+            if 'F' in task.status and show_failures:
+                print('==>  FAILURE TRACEBACK  <==')
+                print(task.last_run_exception)
+                print('==>END FAILURE TRACEBACK<==')
+            if ('R' in task.status or 'X' in task.status) and show_reasons:
+                for reason in task.rerun_reasons:
+                    print(f'   - {reason}')
+            if show_task_code_diff and 'task_run_source_changed' in task.rerun_reasons:
+                print('==>  DIFF  <==')
+                print('\n'.join(task.diff()))
+                print('==>END DIFF<==')
         self.rmk = rmk
 
 
