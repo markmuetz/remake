@@ -7,8 +7,8 @@ from loguru import logger
 
 from .code_compare import CodeComparer
 
-dbloc = '.remake/remake2.db'
-# dbloc = '/work/scratch-nopw2/mmuetz/remake2.db'
+dbloc = '.remake/remake.db'
+# dbloc = '/work/scratch-nopw2/mmuetz/remake.db'
 
 sql_schema = """
 CREATE TABLE code (

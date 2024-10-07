@@ -36,11 +36,12 @@ setup(
         'Bug Tracker': 'https://github.com/markmuetz/remake/issues',
     },
     packages=[
+        # 'remake_legacy',
+        # 'remake_legacy.examples',
+        # 'remake_legacy.executor',
+        # 'remake_legacy.experimental',
         'remake',
-        'remake.examples',
         'remake.executor',
-        'remake.experimental',
-        'remake2',
         ],
     python_requires='>=3.6',
     install_requires=[
@@ -49,14 +50,14 @@ setup(
         ],
     extras_require={
         'debug': ['ipdb'],
-        'display': ['matplotlib'],
-        'experimental': ['numpy'],
-        'testing': ['coverage', 'flake8', 'matplotlib', 'nose', 'numpy'],
+        # 'display': ['matplotlib'],
+        # 'experimental': ['numpy'],
+        # 'testing': ['coverage', 'flake8', 'matplotlib', 'nose', 'numpy'],
     },
     entry_points={
         'console_scripts': [
             'remake=remake.remake_cmd:remake_cmd',
-            'remake2=remake2.remake_cmd:remake_cmd',
+            # 'remake2=remake2.remake_cmd:remake_cmd',
         ]
     },
     classifiers=[

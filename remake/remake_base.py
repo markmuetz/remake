@@ -1,494 +1,341 @@
-from logging import getLogger
-import multiprocessing
-from pathlib import Path
-import random
+import sys
+import inspect
+import itertools
+import math
 import traceback
-from typing import Union
+from pathlib import Path
 
+from loguru import logger
 import networkx as nx
 
-from remake.remake_exceptions import RemakeError
-from remake.special_paths import SpecialPaths
-from remake.task import Task
-from remake.task_control import TaskControl
-from remake.task_query_set import TaskQuerySet
-from remake.setup_logging import setup_stdout_logging
-from remake.util import editor
+from pyquerylist import QueryList
 
-logger = getLogger(__name__)
+# from remake.util import format_path
+
+from .code_compare import dedent
+from .config import Config
+from .executors import Executor, SingleprocExecutor, SlurmExecutor, DaskExecutor
+from .sqlite3_metadata_manager import Sqlite3MetadataManager
+from .rule import Rule
+from .task import Task
+
+logger.remove()
+logger.add(sys.stdout, format='<bold>{message}</bold>', level='INFO')
+
+
+def all_descendants(task_dag, tasks):
+    task_descendants = set()
+    for task in tasks:
+        if task in task_descendants:
+            continue
+        task_descendants |= descendants(task_dag, task)
+    return task_descendants
+
+
+def descendants(task_dag, task):
+    return set(nx.bfs_tree(task_dag, task))
+
+
+def compare_task_timestamps(t1, t2):
+    if t1 is None or t2 is None:
+        return False
+    else:
+        return t1 < t2
 
 
 class Remake:
-    """Core class. A remakefile is defined by creating an instance of Remake.
-
-    Acts as an entry point to running all tasks via python, and retrieving information about the state of any task.
-    Contains a list of all tasks added by any `TaskRule`.
-
-    A remakefile must contain:
-
-    >>> demo = Remake()
-
-    This must be near the top of the file - after the imports but before any `TaskRule` is defined.
-    """
-    remakes = {}
-    current_remake = {}
-
-    def __init__(self, name: str = None, config: dict = None, special_paths: SpecialPaths = None):
-        """Constructor.
-
-        :param name: name to use for remakefile (defaults to its filename)
-        :param config: configuration for executors
-        :param special_paths: special paths to use for all input/output filenames
-        """
-        setup_stdout_logging('INFO', colour=True)
-        if not name:
+    def __init__(self, config, *args, **kwargs):
+        self.config = Config({
+            'slurm': {},
+            'old_style_class': False,
+            'content_checks': False,
+            'check_inputs_exist': False,
+            'check_outputs_exist': False,
+            'check_outputs_older_than_inputs': False,
+        })
+        self.config.update('remake_config', config)
+        self.args = args
+        self.kwargs = kwargs
+        self.rules = []
+        self.tasks = []
+        self._inputs = {}
+        self._outputs = {}
+        self.task_dag = nx.DiGraph()
+        self.rule_dag = nx.DiGraph()
+        self.metadata_manager = Sqlite3MetadataManager()
+        # Different between Python 3.10 and 3.12.
+        if True:
             stack = next(traceback.walk_stack(None))
             frame = stack[0]
-            name = frame.f_globals['__file__']
-        # This is needed for when MultiprocExecutor makes its own Remakes in worker procs.
-        if multiprocessing.current_process().name == 'MainProcess':
-            if name in Remake.remakes:
-                # Can happen on ipython run remakefile.
-                # Can also happen on tab completion of Remake obj.
-                # e.g. in remake/examples/ex1.py:
-                # ex1.Bas<tab>
-                # traceback.print_stack()
-                logger.debug(f'Remake {name} added twice')
-            Remake.remakes[name] = self
+            self.full_path = frame.f_locals['module'].__file__
+            self.name = Path(self.full_path).name
         else:
-            logger.debug(f'Process {multiprocessing.current_process().name}')
-            logger.debug(Remake.current_remake)
-            logger.debug(Remake.remakes)
+            stack = next(traceback.walk_stack(None))
+            frame = stack[0]
+            self.name = frame.f_globals['__file__']
+        self.task_key_map = {}
 
-        Remake.current_remake[multiprocessing.current_process().name] = self
+    def autoload_rules(self, finalize=True):
+        stack = next(traceback.walk_stack(None))
+        frame = stack[0]
+        rules = []
+        for varname, var in frame.f_locals.items():
+            if isinstance(var, type) and issubclass(var, Rule) and not var is Rule:
+                rules.append(var)
+        return self.load_rules(rules)
 
-        self.config = config
-        if not special_paths:
-            special_paths = SpecialPaths()
-        self.special_paths = special_paths
-        self.task_ctrl = TaskControl(name, config, special_paths)
-        self.rules = []
-        self.tasks = TaskQuerySet(task_ctrl=self.task_ctrl)
+    def load_rules(self, rules, finalize=True):
+        logger.debug('Loading rules')
+        for rule in rules:
+            if hasattr(rule, 'enabled') and not rule.enabled:
+                continue
+            self.load_rule(rule)
+            setattr(self, rule.__name__, rule)
+            self.rule_dag.add_node(rule)
 
-    def __repr__(self):
-        return f'Remake[finalized={self.finalized}, ntasks={len(self.tasks)}]'
+        for task in self.tasks:
+            # import ipdb; ipdb.set_trace()
+            self.task_dag.add_node(task)
+            input_tasks = []
+            for input_ in task.inputs.values():
+                if input_ in self._outputs:
+                    prev_task = self._outputs[input_]
+                    if prev_task not in task.prev_tasks:
+                        task.prev_tasks.append(prev_task)
+                    if task not in prev_task.next_tasks:
+                        prev_task.next_tasks.append(task)
 
-    def _repr_html_(self):
-        tasks_li = "".join(f"<li class='xr-var-item'>{task}</li>"
-                           for task in self.tasks)
+                    self.task_dag.add_edge(prev_task, task)
+                    self.rule_dag.add_edge(prev_task.rule, task.rule)
 
-        tasks_list = f"<ul class='xr-var-list'>{tasks_li}</ul>"
+                self._inputs[input_] = task
 
-        return f'<h3>Remake[finalized={self.finalized}, ntasks={len(self.tasks)}]</h3>' + tasks_list
+        assert nx.is_directed_acyclic_graph(self.task_dag), 'Not a dag!'
+        assert nx.is_directed_acyclic_graph(self.rule_dag), 'Not a dag!'
+        self.input_tasks = [v for v, d in self.task_dag.in_degree() if d == 0]
+        self.topo_tasks = QueryList(nx.topological_sort(self.task_dag))
 
-    @property
-    def name(self):
-        return self.task_ctrl.name
-
-    @property
-    def pending_tasks(self):
-        return self.task_ctrl.pending_tasks
-
-    @property
-    def remaining_tasks(self):
-        return self.task_ctrl.remaining_tasks
-
-    @property
-    def completed_tasks(self):
-        return self.task_ctrl.completed_tasks
-
-    def task_status(self, task: Task) -> str:
-        """Get the status of a task.
-
-        :param task: task to get status for
-        :return: status
-        """
-        return self.task_ctrl.statuses.task_status(task)
-
-    def rerun_required(self):
-        """Rerun status of this Remake object.
-
-        :return: True if any tasks remain to be run
-        """
-        assert self.finalized
-        return self.task_ctrl.rescan_tasks or self.task_ctrl.pending_tasks
-
-    def configure(self, print_reasons: bool, executor: str, display: str):
-        """Allow Remake object to be configured after creation.
-
-        :param print_reasons: print reason for running individual task
-        :param executor: name of which `remake.executor` to use
-        :param display: how to display task status after each task is run
-        """
-        self.task_ctrl.print_reasons = print_reasons
-        self.task_ctrl.set_executor(executor)
-        if display == 'print_status':
-            self.task_ctrl.display_func = self.task_ctrl.__class__.print_status
-        elif display == 'task_dag':
-            from remake.experimental.networkx_displays import display_task_status
-            self.task_ctrl.display_func = display_task_status
-        elif display:
-            raise Exception(f'display {display} not recognized')
-
-    def short_status(self, mode='logger.info'):
-        """Log/print a short status line.
-
-        :param mode: 'logger.info' or 'print'
-        """
-        if mode == 'logger.info':
-            displayer = logger.info
-        elif mode == 'print':
-            displayer = print
-        else:
-            raise ValueError(f'Unrecognized mode: {mode}')
-        displayer(f'Status (complete/rescan/pending/remaining/cannot run): '
-                  f'{len(self.completed_tasks)}/{len(self.task_ctrl.rescan_tasks)}/'
-                  f'{len(self.pending_tasks)}/{len(self.remaining_tasks)}/{len(self.task_ctrl.cannot_run_tasks)}')
-
-    def display_task_dag(self):
-        """Display all tasks as a Directed Acyclic Graph (DAG)"""
-        from remake.experimental.networkx_displays import display_task_status
-        import matplotlib.pyplot as plt
-        display_task_status(self.task_ctrl)
-        plt.show()
-
-    def run_all(self, force=False):
-        """Run all tasks.
-
-        :param force: force rerun of each task
-        """
-        self.task_ctrl.run_all(force=force)
-
-    def run_one(self):
-        """Run the next pending task"""
-        all_pending = list(self.task_ctrl.rescan_tasks + self.task_ctrl.statuses.ordered_pending_tasks)
-        if all_pending:
-            task = all_pending[0]
-            self.task_ctrl.run_requested([task], force=False)
-
-    def run_random(self):
-        """Run a random task (pot luck out of pending)"""
-        task = random.choice(list(self.task_ctrl.pending_tasks))
-        self.run_requested([task], force=False)
-
-    def run_requested(self, requested, force=False, handle_dependencies=False):
-        """Run requested tasks.
-
-        :param requested:
-        :param force: force rerun of each task
-        :param handle_dependencies: add all ancestor tasks to ensure given tasks can be run
-        """
-        # Work out whether it's possible to run requested tasks.
-        if self.finalized:
-            ancestors = self.all_ancestors(requested)
-            rerun_required_ancestors = ancestors & (self.pending_tasks |
-                                                    self.remaining_tasks)
-            missing_tasks = rerun_required_ancestors - set(requested)
-            if missing_tasks:
-                logger.debug(f'{len(missing_tasks)} need to be added')
-                if not handle_dependencies:
-                    logger.error('Impossible to run requested tasks')
-                    raise RemakeError('Cannot run with requested tasks. Use --handle-dependencies to fix.')
+        logger.debug('inserting rules')
+        for rule in self.rules:
+            rule.source = {}
+            for req_method in ['rule_inputs', 'rule_outputs', 'rule_run']:
+                method = getattr(rule, req_method)
+                if callable(method):
+                    rule.source[req_method] = dedent(inspect.getsource(method))
                 else:
-                    requested = list(rerun_required_ancestors)
-            requested = self.task_ctrl.rescan_tasks + requested
-            self.task_ctrl.run_requested(requested, force=force)
-        else:
-            self.task_ctrl.build_task_DAG()
-            self.task_ctrl.run_requested(requested, force=force)
+                    rule.source[req_method] = ''
+            self.metadata_manager.get_or_create_rule_metadata(rule)
 
-    def list_rules(self):
-        """List all rules"""
-        return self.rules
-
-    def find_task(self, task_path_hash_key: Union[Task, str]):
-        """Find a task from its path_hash_key.
-
-        :param task_path_hash_key: key of task
-        :return: found task
-        """
-        if isinstance(task_path_hash_key, Task):
-            return task_path_hash_key
-        else:
-            return self.find_tasks([task_path_hash_key])[0]
-
-    def find_tasks(self, task_path_hash_keys):
-        """Find all tasks given by their path hash keys
-
-        :param task_path_hash_keys: list of path hash keys
-        :return: all found tasks
-        """
-        tasks = TaskQuerySet([], self.task_ctrl)
-        for task_path_hash_key in task_path_hash_keys:
-            if len(task_path_hash_key) == 40:
-                tasks.append(self.task_ctrl.task_from_path_hash_key[task_path_hash_key])
-            else:
-                # TODO: Make less bad.
-                # I know this is terribly inefficient!
-                _tasks = []
-                for k, v in self.task_ctrl.task_from_path_hash_key.items():
-                    if k[:len(task_path_hash_key)] == task_path_hash_key:
-                        _tasks.append(v)
-                if len(_tasks) == 0:
-                    raise KeyError(task_path_hash_key)
-                elif len(_tasks) > 1:
-                    raise KeyError(f'{task_path_hash_key} matches multiple keys')
-                tasks.append(_tasks[0])
-        return tasks
-
-    def list_tasks(self, tfilter=None, rule=None, requires_rerun=False,
-                   uses_file=None, produces_file=None,
-                   ancestor_of=None, descendant_of=None):
-        """List all tasks subject to requirements.
-
-        :param tfilter: dict of key/value pairs to filter tasks on
-        :param rule: rule that tasks belongs to
-        :param requires_rerun: whether tasks require rerun
-        :param uses_file: whether tasks use a given file
-        :param produces_file: whether tasks produce a given file
-        :param ancestor_of: whether tasks are an ancestor of this task (path hash key)
-        :param descendant_of: whether tasks are a descendant of this task (path hash key)
-        :return: all matching tasks
-        """
-        tasks = TaskQuerySet([t for t in self.tasks], self.task_ctrl)
-        if tfilter:
-            tasks = tasks.filter(cast_to_str=True, **tfilter)
-        if rule:
-            tasks = tasks.in_rule(rule)
-        if uses_file:
-            uses_file = Path(uses_file).absolute()
-            tasks = [t for t in tasks if uses_file in t.inputs.values()]
-        if produces_file:
-            produces_file = Path(produces_file).absolute()
-            tasks = [t for t in tasks if produces_file in t.outputs.values()]
-        if ancestor_of:
-            ancestor_of = self.find_task(ancestor_of)
-            ancestor_tasks = self.ancestors(ancestor_of)
-            tasks = sorted(ancestor_tasks & set(tasks), key=self.task_ctrl.sorted_tasks.get)
-        if descendant_of:
-            descendant_of = self.find_task(descendant_of)
-            descendant_tasks = self.descendants(descendant_of)
-            tasks = sorted(descendant_tasks & set(tasks), key=self.task_ctrl.sorted_tasks.get)
-        if requires_rerun:
-            tasks = [t for t in tasks
-                     if self.task_ctrl.statuses.task_status(t) in ['pending', 'remaining']]
-
-        return TaskQuerySet(tasks, self.task_ctrl)
-
-    def all_descendants(self, tasks):
-        """Find all descendants of tasks
-
-        :param tasks: tasks to start from
-        :return: all descendants
-        """
-        descendants = set()
-        for task in tasks:
-            if task in descendants:
-                continue
-            descendants |= self.descendants(task)
-        return descendants
-
-    def all_ancestors(self, tasks):
-        """Find all ancestors of tasks
-
-        :param tasks: tasks to start from
-        :return: all ancestors
-        """
-        ancestors = set()
-        for task in tasks:
-            if task in ancestors:
-                continue
-            ancestors |= self.ancestors(task)
-        return ancestors
-
-    def descendants(self, task):
-        """All descendants of a given task.
-
-        :param task: task to start from
-        :return: all descendants
-        """
-        return set(nx.bfs_tree(self.task_ctrl.task_dag, task))
-
-    def ancestors(self, task):
-        """All ancestors of a given task.
-
-        :param task: task to start from
-        :return: all ancestors
-        """
-        return set(nx.bfs_tree(self.task_ctrl.task_dag, task, reverse=True))
-
-    def list_files(self, filetype=None, exists=False,
-                   produced_by_rule=None, used_by_rule=None,
-                   produced_by_task=None, used_by_task=None):
-        """List all files subject to criteria.
-
-        :param filetype: one of input_only, output_only, input, output, inout
-        :param exists: whether file exists
-        :param produced_by_rule: whether file is produced by rule
-        :param used_by_rule: whether file is used by rule
-        :param produced_by_task: whether file is produced by task (path hash key)
-        :param used_by_task: whether file is used by task (path hash key)
-        :return: all matching files
-        """
-        input_paths = set(self.task_ctrl.input_task_map.keys())
-        output_paths = set(self.task_ctrl.output_task_map.keys())
-        input_only_paths = input_paths - output_paths
-        output_only_paths = output_paths - input_paths
-        inout_paths = input_paths & output_paths
-        files = input_paths | output_only_paths
-
-        if filetype is None:
-            files = sorted(files)
-        elif filetype == 'input_only':
-            files = sorted(input_only_paths)
-        elif filetype == 'output_only':
-            files = sorted(output_only_paths)
-        elif filetype == 'input':
-            files = sorted(input_paths)
-        elif filetype == 'output':
-            files = sorted(output_paths)
-        elif filetype == 'inout':
-            files = sorted(inout_paths)
-        else:
-            raise ValueError(f'Unknown filetype: {filetype}')
-        if exists:
-            files = [f for f in files if f.exists()]
-        if used_by_rule:
-            _files = set()
-            for f in files:
-                if f not in self.task_ctrl.input_task_map:
-                    continue
-                for t in self.task_ctrl.input_task_map[f]:
-                    if t.__class__.__name__ == used_by_rule:
-                        _files.add(f)
-            files = sorted(_files)
-        if produced_by_rule:
-            _files = set()
-            for f in files:
-                if f not in self.task_ctrl.output_task_map:
-                    continue
-                t = self.task_ctrl.output_task_map[f]
-                if t.__class__.__name__ == produced_by_rule:
-                    _files.add(f)
-            files = sorted(_files)
-        if used_by_task:
-            used_by_task = self.find_task(used_by_task)
-            _files = set()
-            for f in files:
-                if f not in self.task_ctrl.input_task_map:
-                    continue
-                for t in self.task_ctrl.input_task_map[f]:
-                    if t is used_by_task:
-                        _files.add(f)
-            files = sorted(_files)
-        if produced_by_task:
-            produced_by_task = self.find_task(produced_by_task)
-            _files = set()
-            for f in files:
-                if f not in self.task_ctrl.output_task_map:
-                    continue
-                t = self.task_ctrl.output_task_map[f]
-                if t is produced_by_task:
-                    _files.add(f)
-            files = sorted(_files)
-
-        filelist = []
-        for file in files:
-            if file in input_only_paths:
-                ftype = 'input-only'
-            elif file in output_only_paths:
-                ftype = 'output-only'
-            elif file in inout_paths:
-                ftype = 'inout'
-            filelist.append((file, ftype, file.exists()))
-
-        return filelist
-
-    def task_info(self, task_path_hash_keys):
-        """Task info for all given tasks.
-
-        :param task_path_hash_keys: task hash keys for tasks
-        :return: dict containing all info
-        """
-        assert self.finalized
-        info = {}
-        tasks = self.find_tasks(task_path_hash_keys)
-        for task_path_hash_key, task in zip(task_path_hash_keys, tasks):
-            task_md = self.task_ctrl.metadata_manager.task_metadata_map[task]
-            status = self.task_ctrl.statuses.task_status(task)
-            info[task_path_hash_key] = (task, task_md, status)
-        return info
-
-    def file_info(self, filenames):
-        """File info for all given files.
-
-        :param filenames: filenames to get info for
-        :return: dict containing all info
-        """
-        info = {}
-        for filepath in (Path(fn).absolute() for fn in filenames):
-            if filepath in self.task_ctrl.input_task_map:
-                used_by_tasks = self.task_ctrl.input_task_map[filepath]
-            else:
-                used_by_tasks = []
-            if filepath in self.task_ctrl.output_task_map:
-                produced_by_task = self.task_ctrl.output_task_map[filepath]
-            else:
-                produced_by_task = None
-            if used_by_tasks or produced_by_task:
-                path_md = self.task_ctrl.metadata_manager.path_metadata_map[filepath]
-            else:
-                path_md = None
-            info[filepath] = path_md, produced_by_task, used_by_tasks
-        return info
-
-    def view_task_slurm_logs(self, tasks, logtype='both'):
-        # Logic heavily borrows from executors/slurm_executor.py
-        # TODO: DRY!
-        slurm_output = Path('.remake/slurm/output')
-        paths = []
-        msgs = []
-        for task in tasks:
-            rule_name = task.__class__.__name__
-            rule_slurm_output = slurm_output / rule_name
-            if hasattr(task, 'var_matrix'):
-                task_key = task.path_hash_key()
-                task_dir = [task_key[:2], task_key[2:]]
-                task_slurm_output = rule_slurm_output.joinpath(*task_dir)
-            else:
-                task_slurm_output = rule_slurm_output
-
-            if logtype in ['both', 'err']:
-                err_paths = list(task_slurm_output.glob('*.err'))
-                if not err_paths:
-                    msgs.append(f'No error paths for {task}')
-                err_path = sorted(err_paths, key=lambda p: p.lstat().st_mtime)[-1]
-                paths.append(err_path)
-
-            if logtype in ['both', 'out']:
-                out_paths = list(task_slurm_output.glob('*.out'))
-                if not out_paths:
-                    msgs.append(f'No output paths for {task}')
-                out_path = sorted(out_paths, key=lambda p: p.lstat().st_mtime)[-1]
-                paths.append(out_path)
-        if msgs:
-            print('\n'.join(msgs))
-            if input('Do you wish to continue? (y)/n: ') == 'n':
-                return
-        editor(paths)
-
-    @property
-    def finalized(self):
-        """Is this finalized (i.e. ready to be run)?"""
-        return self.task_ctrl.finalized
-
-    def reset(self):
-        """Reset the internal state"""
-        self.task_ctrl.reset()
+        if finalize:
+            self.finalize()
+        logger.debug('Loaded rules')
         return self
+
+    @staticmethod
+    def _check_modify_fmt_dict(fmt_dict):
+        errors = []
+        new_fmt_dict = {**fmt_dict}
+        for key, value in fmt_dict.items():
+            if isinstance(key, str):
+                continue
+            elif isinstance(key, tuple):
+                if not len(key) == len(value):
+                    errors.append(('length mismatch', key, value))
+                for kk, vv in zip(key, value):
+                    if not isinstance(kk, str):
+                        errors.append(('not tuple of strings', key, value))
+                        break
+                    else:
+                        new_fmt_dict[kk] = vv
+                new_fmt_dict.pop(key)
+            else:
+                errors.append(('not string', key, value))
+        if errors:
+            error_str = '\n'.join([f'  {msg}: {k}, {v}' for msg, k, v in errors])
+            raise Exception(f'input_rule/output_rule keys must be strings or tuples of strings:\n'
+                            f'{error_str}')
+        return new_fmt_dict
+
+    def load_rule(self, rule):
+        logger.debug(f'loading rule: {rule}')
+        rule.remake = self
+        self.rules.append(rule)
+        for req_method in ['rule_inputs', 'rule_outputs', 'rule_run']:
+            assert hasattr(rule, req_method), f'{rule} does not have method {req_method}'
+            if not self.config['old_style_class']:
+                assert callable(getattr(rule, req_method))
+            # assert getattr(rule, req_method).is_rule_dec
+
+        rule.tasks = QueryList()
+        if hasattr(rule, 'var_matrix'):
+            assert self.config['old_style_class']
+            rule_vars = list(itertools.product(*rule.var_matrix.values()))
+            rule_matrix_keys = rule.var_matrix.keys()
+        elif hasattr(rule, 'rule_matrix'):
+            assert not self.config['old_style_class']
+            rule_matrix = rule.rule_matrix()
+            rule_vars = list(itertools.product(*rule_matrix.values()))
+            rule_matrix_keys = rule_matrix.keys()
+        else:
+            rule_vars = [None]
+            rule_matrix_keys = []
+
+            # inputs = self._get_inputs_outputs(rule.rule_inputs, {})
+            # outputs = self._get_inputs_outputs(rule.rule_outputs, {})
+            # task = Task(rule, inputs, outputs, {}, [], [])
+            # self.task_key_map[task.key()] = task
+
+            # rule.tasks.append(task)
+            # self.tasks.append(task)
+
+            # for output in outputs.values():
+            #     if output in self._outputs:
+            #         raise Exception(output)
+            #     self._outputs[output] = task
+
+        for rule_var in rule_vars:
+            if rule_var is not None:
+                task_kwargs = {k: v for k, v in zip(rule_matrix_keys, rule_var)}
+                task_kwargs = self._check_modify_fmt_dict(task_kwargs)
+            else:
+                task_kwargs = {}
+
+            inputs = self._get_inputs_outputs(rule.rule_inputs, task_kwargs)
+            outputs = self._get_inputs_outputs(rule.rule_outputs, task_kwargs)
+            task = Task(rule, inputs, outputs, task_kwargs, [], [])
+            task.remake = self
+            for k, v in task_kwargs.items():
+                setattr(task, k, v)
+            self.task_key_map[task.key()] = task
+
+            rule.tasks.append(task)
+            self.tasks.append(task)
+
+            for output in outputs.values():
+                if output in self._outputs:
+                    raise Exception(output)
+                self._outputs[output] = task
+
+    def _get_inputs_outputs(self, inputs_outputs_fn_or_dict, fmt_dict):
+        if callable(inputs_outputs_fn_or_dict):
+            return inputs_outputs_fn_or_dict(**fmt_dict)
+        else:
+            return {k.format(**fmt_dict): v.format(**fmt_dict)
+                    for k, v in inputs_outputs_fn_or_dict.items()}
+            # return {k.format(**fmt_dict): format_path(v, **fmt_dict)
+            #         for k, v in inputs_outputs_fn_or_dict.items()}
+
+    def _set_task_statuses(self, tasks):
+        for task in tasks:
+            if hasattr(task.rule, 'config'):
+                config = self.config.copy()
+                config.update(str(task), task.rule.config)
+            else:
+                config = self.config
+
+            requires_rerun = False
+            rerun_reasons = []
+            if task.last_run_status == 0:
+                requires_rerun = True
+                rerun_reasons.append('task_not_run')
+            elif task.last_run_status == 2:
+                # Note, we do not know *why* the task failed.
+                # It could have nothing to do with the Python code, e.g. out of memory/time etc.
+                # Mark as requires_rerun so that if these have been fixed, the task can be rerun.
+                requires_rerun = True
+                rerun_reasons.append('task_failed')
+
+            prev_task_requires_rerun = False
+            for prev_task in task.prev_tasks:
+                if prev_task.inputs_missing:
+                    task.inputs_missing = True
+                    rerun_reasons.append(f'prev_task_input_missing {prev_task}')
+                if prev_task.requires_rerun:
+                    prev_task_requires_rerun = True
+                    requires_rerun = True
+                    rerun_reasons.append(f'prev_task_requires_rerun {prev_task}')
+                if compare_task_timestamps(task.last_run_timestamp, prev_task.last_run_timestamp):
+                    requires_rerun = True
+                    rerun_reasons.append(f'prev_task_run_more_recently {prev_task}')
+
+            earliest_output_path_mtime = float('inf')
+            latest_input_path_mtime = 0
+            if config['check_outputs_older_than_inputs'] or config['check_inputs_exist']:
+                for path in task.inputs.values():
+                    if not Path(path).exists():
+                        if path in self._outputs and self._outputs[path].requires_rerun:
+                            pass
+                        else:
+                            requires_rerun = False
+                            rerun_reasons.append(f'input_missing {path}')
+                            task.inputs_missing = True
+                    else:
+                        latest_input_path_mtime = max(latest_input_path_mtime, Path(path).lstat().st_mtime)
+
+            if config['check_outputs_older_than_inputs'] or config['check_outputs_exist']:
+                for path in task.outputs.values():
+                    if not Path(path).exists():
+                        requires_rerun = True
+                        rerun_reasons.append(f'output_missing {path}')
+                    else:
+                        earliest_output_path_mtime = min(earliest_output_path_mtime, Path(path).lstat().st_mtime)
+
+            if config['check_outputs_older_than_inputs']:
+                if latest_input_path_mtime > earliest_output_path_mtime:
+                    requires_rerun = True
+                    rerun_reasons.append('input_is_older_than_output')
+
+            if not self.metadata_manager.code_comparer(task.last_run_code, task.rule.source['rule_run']):
+                requires_rerun = True
+                rerun_reasons.append('task_run_source_changed')
+            task.requires_rerun = requires_rerun
+            task.rerun_reasons = rerun_reasons
 
     def finalize(self):
-        """Finalize this Remake object"""
-        self.task_ctrl.finalize()
-        Remake.current_remake[multiprocessing.current_process().name] = None
-        return self
+        logger.debug('getting task status')
+        self.metadata_manager.get_or_create_tasks_metadata(self.topo_tasks)
+        self._set_task_statuses(self.topo_tasks)
+
+    def update_task(self, task, exception=''):
+        self.metadata_manager.update_task_metadata(task, exception)
+
+    def _get_executor(self, executor):
+        if isinstance(executor, str):
+            if executor == 'SingleprocExecutor':
+                executor = SingleprocExecutor(self)
+            elif executor == 'SlurmExecutor':
+                executor = SlurmExecutor(self, self.config.get('slurm', {}))
+            elif executor == 'DaskExecutor':
+                executor = DaskExecutor(self, self.config.get('dask', {}))
+            else:
+                raise ValueError(f'{executor} not a valid executor')
+        elif not isinstance(executor, Executor):
+            raise ValueError(f'{executor} must be a string or a subtype of Executor')
+        return executor
+
+    def run(self, executor='SingleprocExecutor', query='', force=False):
+        if query:
+            tasks = self.topo_tasks.where(query[0])
+        else:
+            tasks = self.topo_tasks
+
+        if not force:
+            rerun_tasks = [t for t in tasks if t.requires_rerun]
+        else:
+            rerun_tasks = tasks
+
+        if not rerun_tasks:
+            logger.info('No tasks require rerun')
+            return
+        logger.info(f'Running {len(rerun_tasks)} tasks')
+        executor = self._get_executor(executor)
+        logger.debug(f'using {executor}')
+        executor.run_tasks(rerun_tasks)
+
+    def run_tasks_from_keys(self, task_keys, executor='SingleprocExecutor'):
+        tasks = [self.task_key_map[task_key] for task_key in task_keys]
+        logger.info(f'Running {len(tasks)} tasks')
+        executor = self._get_executor(executor)
+        logger.debug(f'using {executor}')
+        executor.run_tasks(tasks)
+

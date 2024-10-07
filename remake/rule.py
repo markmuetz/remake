@@ -17,21 +17,23 @@ class Rule:
 
     @classmethod
     def run_task(cls, task):
-        rule = cls()
-        rule.logger = logger
-        rule.inputs = task.inputs.copy()
-
         tmp_outputs = {k: tmp_atomic_path(v) for k, v in task.outputs.items()}
-        rule.outputs = tmp_outputs
         for output_dir in set(Path(o).parent for o in task.outputs.values()):
             if not output_dir.exists():
                 output_dir.mkdir(exist_ok=True, parents=True)
 
-        for k, v in task.kwargs.items():
-            setattr(rule, k, v)
         logger.debug(f'Run task: {task}')
         try:
-            rule.rule_run()
+            if cls.remake.config['old_style_class']:
+                rule = cls()
+                rule.logger = logger
+                rule.inputs = task.inputs.copy()
+                rule.outputs = tmp_outputs
+                for k, v in task.kwargs.items():
+                    setattr(rule, k, v)
+                rule.rule_run()
+            else:
+                cls.rule_run(task.inputs, tmp_outputs, **task.kwargs)
             task.last_run_status = 1
         except:
             e = traceback.format_exc()

@@ -1,6 +1,4 @@
 import os
-import abc
-import math
 import re
 import subprocess as sp
 from hashlib import sha1
@@ -10,8 +8,7 @@ from loguru import logger
 
 from remake.util import sysrun
 
-from .task import Task
-from .loader import load_remake
+from .executor import Executor
 
 
 SLURM_SCRIPT_TPL = """#!/bin/bash
@@ -24,12 +21,12 @@ SLURM_SCRIPT_TPL = """#!/bin/bash
 
 echo "SLURM RUNNING {task_key}"
 cd {script_dir}
-remake2 -D run-tasks {remakefile_path} --remakefile-sha1 {remakefile_path_hash} --tasks {task_key}
+remake -D run-tasks {remakefile_path} --remakefile-sha1 {remakefile_path_hash} --tasks {task_key}
 echo "SLURM COMPLETED {task_key}"
 """
 
 def _parse_slurm_jobid(output):
-    match = re.match('Submitted batch job (?P<jobid>\d+)', output)
+    match = re.match(r'Submitted batch job (?P<jobid>\d+)', output)
     if match:
         jobid = match['jobid']
         return jobid
@@ -50,53 +47,6 @@ def _submit_slurm_script(slurm_script_path):
         logger.error('===ERROR===')
         raise
     return output
-
-
-
-class Executor(abc.ABC):
-    def __init__(self, rmk):
-        self.rmk = rmk
-
-    @abc.abstractmethod
-    def run_tasks(self, rerun_tasks):
-        pass
-
-
-class DaskExecutor(Executor):
-    def __init__(self, rmk, dask_config=None):
-        if not dask_config:
-            dask_config = {}
-        super().__init__(rmk)
-
-    def run_tasks(self, rerun_tasks):
-        import dask
-        from dask.distributed import LocalCluster
-        raise Exception('Does not work because task cannot be pickled.')
-        dsk = {}
-        def dask_task_run(task, input_task_keys):
-            task.run()
-
-        def complete(input_task_keys):
-            pass
-
-        for task in rerun_tasks:
-            input_task_keys = [t.key for t in task.prev_tasks]
-            dsk[task.key] = (dask_task_run, task, input_task_keys)
-        dsk['complete'] = (complete, [t.key for t in rerun_tasks])
-
-        cluster = LocalCluster()          # Fully-featured local Dask cluster
-        # cluster.scale(8)
-        client = cluster.get_client()
-        client.get(dsk, 'complete')
-
-
-class SingleprocExecutor(Executor):
-    def run_tasks(self, rerun_tasks):
-        ntasks = len(rerun_tasks)
-        ndigits = math.floor(math.log10(ntasks)) + 1
-        for i, task in enumerate(rerun_tasks):
-            logger.info(f'{i + 1:>{ndigits}}/{ntasks}: {task}')
-            task.run()
 
 
 class SlurmExecutor(Executor):
@@ -230,4 +180,5 @@ class SlurmExecutor(Executor):
             logger.info(f'Submitted [{partition}]: {task}')
             jobid = _parse_slurm_jobid(output)
         self.task_jobid_map[task] = jobid
+
 
