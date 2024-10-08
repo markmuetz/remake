@@ -97,9 +97,9 @@ class SlurmExecutor(Executor):
             if status in ['PD', 'R']:
                 self.currently_running_task_keys[task_key] = {'jobid': jobid, 'partition': partition}
 
-    def run_tasks(self, rerun_tasks):
+    def run_tasks(self, rerun_tasks, show_reasons=False, stdout_to_log=False):
         for task in rerun_tasks:
-            self._submit_task(task)
+            self._submit_task(task, show_reasons, show_task_code_diff)
 
     def _write_submit_script(self, task):
         remakefile_name = self.remakefile_path.stem
@@ -166,7 +166,8 @@ class SlurmExecutor(Executor):
             fp.write(slurm_script)
         return slurm_script_filepath, slurm_kwargs['partition']
 
-    def _submit_task(self, task):
+    def _submit_task(self, task, show_reasons, show_task_code_diff):
+        diffs = {}
         task_key = task.key()
         # Make sure task isn't already queued or running.
         if task_key[:10] in self.currently_running_task_keys:
@@ -178,6 +179,10 @@ class SlurmExecutor(Executor):
             slurm_script_path, partition = self._write_submit_script(task)
             output = _submit_slurm_script(slurm_script_path)
             logger.info(f'Submitted [{partition}]: {task}')
+            if show_reasons:
+                self.rmk.show_task_reasons(task)
+            if show_task_code_diff:
+                diffs = self.rmk.show_task_code_diff(task, diffs)
             jobid = _parse_slurm_jobid(output)
         self.task_jobid_map[task] = jobid
 

@@ -5,7 +5,9 @@ from pathlib import Path
 
 from loguru import logger
 
+# Note, relative imports do not always work for this entry point.
 from remake.loader import load_remake, load_archive
+from remake.util import Arg, MutuallyExclusiveGroup, add_argset, load_module
 
 def log_error(ex_type, value, tb):
     import traceback
@@ -31,45 +33,8 @@ def exception_info(ex_type, value, tb):
     debug.pm()
 
 
-class Arg:
-    def __init__(self, *args, **kwargs):
-        self.args = args
-        self.kwargs = kwargs
-
-    def __call__(self):
-        return self.args, self.kwargs
-
-    def __str__(self):
-        return f'Arg({self.args}, {self.kwargs})'
-
-    def __repr__(self):
-        return str(self)
-
-
-class MutuallyExclusiveGroup:
-    def __init__(self, *args):
-        self.args = args
-
-    def __str__(self):
-        argstr = '\n  '.join(str(a) for a in self.args)
-        return f'MutuallyExclusiveGroup(\n  {argstr})'
-
-    def __repr__(self):
-        return str(self)
-
-
-def add_argset(parser, argset):
-    if isinstance(argset, MutuallyExclusiveGroup):
-        group = parser.add_mutually_exclusive_group()
-        for arg in argset.args:
-            group.add_argument(*arg.args, **arg.kwargs)
-    elif isinstance(argset, Arg):
-        parser.add_argument(*argset.args, **argset.kwargs)
-    else:
-        raise Exception(f'Unrecognized argset type {argset}')
-
-
 class RemakeParser:
+    """Command line args and dispatch"""
     args = [
         MutuallyExclusiveGroup(
             Arg('--trace', '-T', help='Enable trace logging', action='store_true'),
@@ -77,6 +42,7 @@ class RemakeParser:
             Arg('--info', '-I', help='Enable info logging', action='store_true', default=True),
             Arg('--warning', '-W', help='Warning logging only', action='store_true'),
         ),
+        Arg('--log-filter', '-L', help='Filter log based on value', default=''),
         Arg('--debug-exception', '-X', help='Launch pdb/ipdb on exception', action='store_true'),
         Arg('--return-remake', '-R', help='Return remake object', action='store_true'),
     ]
@@ -84,16 +50,19 @@ class RemakeParser:
         'run': {
             'help': 'Run all pending tasks',
             'args': [
+                Arg('remakefile', nargs='?', default=''),
                 Arg('--query', '-Q', help='Filter tasks based on query', nargs=1),
                 Arg('--executor', '-E', default='Singleproc'),
                 Arg('--force', '-f', action='store_true'),
-                Arg('remakefile', nargs='?', default='remakefile'),
+                Arg('--show-reasons', '-R', help='Show reasons for rerun', action='store_true'),
+                Arg('--show-task-code-diff', '-D', help='Show any code diffs for class', action='store_true'),
+                Arg('--stdout-to-log', '-S', help='Capture and log stdout instead of displaying', action='store_true'),
             ],
         },
         'run-tasks': {
             'help': 'Run specified tasks (uses same flags as ls-tasks)',
             'args': [
-                Arg('remakefile', nargs='?', default='remakefile'),
+                Arg('remakefile', nargs='?', default=''),
                 Arg('--executor', '-E', default='Singleproc'),
                 Arg('--remakefile-sha1', default=None),
                 Arg('--tasks', '-t', nargs='*'),
@@ -102,24 +71,26 @@ class RemakeParser:
         'info': {
             'help': 'Info on remake status of all tasks',
             'args': [
+                Arg('remakefile', nargs='?', default=''),
                 Arg('--query', '-Q', help='Filter tasks based on query', nargs=1),
+                Arg('--show-reasons', '-R', help='Show reasons for rerun', action='store_true'),
                 Arg('--show-failures', '-F', help='Show any failure messages', action='store_true'),
                 Arg('--show-task-code-diff', '-D', help='Show any code diffs for class', action='store_true'),
-                Arg('--show-reasons', '-R', help='Show reasons for rerun', action='store_true'),
-                Arg('remakefile', nargs='?', default='remakefile'),
+                Arg('--short', '-S', help='Short output', action='store_true'),
+                Arg('--rule', help='Show summary for each rule', action='store_true'),
             ],
         },
         'ls-tasks': {
             'help': 'List specified tasks',
             'args': [
+                Arg('remakefile', nargs='?', default=''),
                 Arg('--query', '-Q', help='Filter tasks based on query', nargs=1),
-                Arg('remakefile', nargs='?', default='remakefile'),
             ],
         },
         'run-tasks': {
             'help': 'Run specified tasks (uses same flags as ls-tasks)',
             'args': [
-                Arg('remakefile', nargs='?', default='remakefile'),
+                Arg('remakefile', nargs='?', default=''),
                 Arg('--executor', '-E', default='Singleproc'),
                 Arg('--remakefile-sha1', default=None),
                 Arg('--tasks', '-t', nargs='*'),
@@ -128,8 +99,8 @@ class RemakeParser:
         'set-tasks-status': {
             'help': 'Set tasks status using given code (0=not run, 1=run, 2=failed)',
             'args': [
+                Arg('remakefile', nargs='?', default=''),
                 Arg('--query', '-Q', help='Filter tasks based on query', nargs=1),
-                Arg('remakefile', nargs='?', default='remakefile'),
                 Arg('--last-run-status-code', '-S', type=int),
             ],
         },
@@ -165,98 +136,70 @@ class RemakeParser:
 
     def dispatch(self):
         args = self.args
+        if hasattr(args, 'remakefile') and not args.remakefile:
+            if Path('.remake/config.py').exists():
+                c = load_module('.remake/config.py')
+                if hasattr(c, 'config'):
+                    args.remakefile = c.config.get('default_remakefile', '')
+                    logger.debug(f'loaded remakefile name from .remake/config.py: {args.remakefile}')
+            if not args.remakefile:
+                raise Exception('remakefile must be set')
+
         self.rmk = None
         # Dispatch command.
-        # N.B. args should always be dereferenced at this point,
-        # not passed into any subsequent functions.
         logger.trace(args.subcmd_name)
-        if args.subcmd_name == 'run':
-            self.remake_run(args.remakefile, args.executor, args.query, args.force)
-        elif args.subcmd_name == 'run-tasks':
-            self.remake_run_tasks(args.remakefile, args.executor, args.remakefile_sha1, args.tasks)
-        elif args.subcmd_name == 'ls-tasks':
-            self.remake_ls_tasks(args.remakefile, args.query)
-        elif args.subcmd_name == 'info':
-            self.remake_info(args.remakefile, args.query, args.show_failures, args.show_task_code_diff, args.show_reasons)
-        elif args.subcmd_name == 'set-tasks-status':
-            self.remake_set_tasks_status(args.remakefile, args.query, args.last_run_status_code)
-        elif args.subcmd_name == 'archive':
-            self.remake_archive()
+        method_name = 'remake_{subcmd_name}'.format(subcmd_name=args.subcmd_name.replace('-', '_'))
+        dispatch_method = getattr(self, method_name)
+        dispatch_method(args)
+
         return self.rmk
 
-    def remake_run(self, remakefile, executor, query, force):
-        rmk = load_remake(remakefile, run=True)
-        rmk.run(executor=executor + 'Executor', query=query, force=force)
+    def remake_run(self, args):
+        rmk = load_remake(args.remakefile, run=True)
+        if args.query:
+            query = args.query[0]
+        else:
+            query = None
+        rmk.run(executor=args.executor + 'Executor', query=query, force=args.force, show_reasons=args.show_reasons, show_task_code_diff=args.show_task_code_diff, stdout_to_log=args.stdout_to_log)
         self.rmk = rmk
 
-    def remake_run_tasks(self, remakefile, executor, remakefile_sha1, task_keys):
+    def remake_run_tasks(self, args):
         if remakefile_sha1:
-            curr_remakefile_sha1 = sha1(Path(remakefile).read_bytes()).hexdigest()
+            curr_remakefile_sha1 = sha1(Path(args.remakefile).read_bytes()).hexdigest()
             assert remakefile_sha1 == curr_remakefile_sha1
 
-        rmk = load_remake(remakefile, finalize=False, run=True)
-        rmk.run_tasks_from_keys(task_keys, executor=executor + 'Executor')
+        rmk = load_remake(args.remakefile, finalize=False, run=True)
+        rmk.run_tasks_from_keys(args.task_keys, executor=args.executor + 'Executor')
         self.rmk = rmk
 
-    def remake_ls_tasks(self, remakefile, query):
-        rmk = load_remake(remakefile, finalize=False)
-        if query:
-            tasks = rmk.topo_tasks.where(query)
+    def remake_ls_tasks(self, args):
+        rmk = load_remake(args.remakefile, finalize=False)
+        if args.query:
+            tasks = rmk.topo_tasks.where(args.query[0])
         else:
             tasks = rmk.topo_tasks
         for task in tasks:
             print(task)
         self.rmk = rmk
 
-    def remake_set_tasks_status(self, remakefile, query, last_run_status_code):
-        rmk = load_remake(remakefile)
-        if query:
-            tasks = rmk.topo_tasks.where(query[0])
+    def remake_set_tasks_status(self, args):
+        rmk = load_remake(args.remakefile)
+        if args.query:
+            tasks = rmk.topo_tasks.where(args.query[0])
         else:
             tasks = rmk.topo_tasks
 
         r = input(f'Set status for {len(tasks)} task(s)? y/[n] ')
         if r == 'y':
             for task in tasks:
-                task.last_run_status = last_run_status_code
+                task.last_run_status = args.last_run_status_code
                 rmk.update_task(task)
         self.rmk = rmk
 
-    def remake_info(self, remakefile, query, show_failures, show_task_code_diff, show_reasons):
-        rmk = load_remake(remakefile)
-        # print(rmk.name)
-        status_map = {
-            0: 'R',
-            1: 'C',
-            2: 'RF',
-        }
-        for task in rmk.topo_tasks:
-            status = status_map[task.last_run_status]
-            if task.requires_rerun and 'R' not in status:
-                status = 'R'
-            if task.inputs_missing:
-                status = 'X' + status
-            task.status = status
-
-        if query:
-            print('Filter on: ', query[0])
-            filtered_tasks = rmk.topo_tasks.where(query[0])
-        else:
-            filtered_tasks = rmk.topo_tasks
-
-        for task in filtered_tasks:
-            print(f'{task.status:<2s} {task}')
-            if 'F' in task.status and show_failures:
-                print('==>  FAILURE TRACEBACK  <==')
-                print(task.last_run_exception)
-                print('==>END FAILURE TRACEBACK<==')
-            if ('R' in task.status or 'X' in task.status) and show_reasons:
-                for reason in task.rerun_reasons:
-                    print(f'   - {reason}')
-            if show_task_code_diff and 'task_run_source_changed' in task.rerun_reasons:
-                print('==>  DIFF  <==')
-                print('\n'.join(task.diff()))
-                print('==>END DIFF<==')
+    def remake_info(self, args):
+        rmk = load_remake(args.remakefile)
+        query = args.query[0] if args.query else None
+        rmk.info(query, args.show_failures, args.show_reasons, args.show_task_code_diff, args.short, args.rule)
         self.rmk = rmk
 
     def remake_archive(self):
@@ -272,6 +215,7 @@ class RemakeParser:
 
 
 def remake_cmd(argv=None):
+    """Main entry point"""
     if argv is None:
         argv = sys.argv
     parser = RemakeParser()
@@ -282,17 +226,19 @@ def remake_cmd(argv=None):
 
     logger.remove()
     if args.trace:
-        loglevel = 'TRACE'
-        logger.add(sys.stdout, level=loglevel)
+        logger.add(sys.stdout, colorize=True, filter=args.log_filter, level='TRACE')
     elif args.debug:
-        loglevel = 'DEBUG'
-        logger.add(sys.stdout, level=loglevel)
+        logger.add(sys.stdout, colorize=True, filter=args.log_filter, level='DEBUG')
     elif args.info:
-        loglevel = 'INFO'
-        logger.add(sys.stdout, format='<bold>{message}</bold>', level=loglevel)
+        logger.add(sys.stdout, colorize=True, format='<bold><lvl>{message}</lvl></bold>', level='INFO')
     elif args.warning:
-        loglevel = 'WARNING'
-        logger.add(sys.stdout, format='<bold>{message}</bold>', level=loglevel)
+        logger.add(sys.stdout, colorize=True, format='<bold><lvl>{message}</lvl></bold>', level='WARNING')
+
+    if hasattr(args, 'remakefile'):
+        file_log = f'.remake/log/{args.remakefile}/remake.log'
+    else:
+        file_log = f'.remake/log/remake.log'
+    logger.add(file_log, rotation='00:00', level='TRACE' if args.trace else 'DEBUG')
 
     logger.debug('Called with args:')
     logger.debug(argv)
@@ -307,9 +253,6 @@ def remake_cmd(argv=None):
         return parser.dispatch()
     else:
         parser.dispatch()
-
-    if args.return_remake:
-        return parser.rmk
 
 
 if __name__ == '__main__':

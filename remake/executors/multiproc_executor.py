@@ -1,36 +1,19 @@
 import sys
 import math
-from io import StringIO
 from pathlib import Path
 from multiprocessing import Process, Queue, current_process, cpu_count
 
 from loguru import logger
 
 from ..loader import load_remake
+from ..util import Capturing
 from .executor import Executor
-
-
-class Capturing(list):
-    """Capture stdout from function.
-
-    https://stackoverflow.com/a/16571630/54557
-    """
-    def __enter__(self):
-        self._stdout = sys.stdout
-        sys.stdout = self._stringio = StringIO()
-        return self
-
-    def __exit__(self, *args):
-        self.extend(self._stringio.getvalue().splitlines())
-        del self._stringio    # free up some memory
-        sys.stdout = self._stdout
 
 
 def worker(proc_id, remakefile_name, task_queue, task_complete_queue):
     logger.remove()
-    logfile = Path(f'.remake/{remakefile_name}/worker.{proc_id}.log')
-    logfile.parent.mkdir(exist_ok=True, parents=True)
-    logger.add(logfile, level='DEBUG')
+    logfile = Path(f'.remake/log/{remakefile_name}/worker.{proc_id}.log')
+    logger.add(logfile, rotation='00:00', level='DEBUG')
 
     rmk = load_remake(remakefile_name, finalize=False)
     logger.debug('starting')
@@ -130,13 +113,14 @@ class MultiprocExecutor(Executor):
         logger.trace(f'completed: {completed_task}')
         return completed_task
 
-    def run_tasks(self, rerun_tasks):
+    def run_tasks(self, rerun_tasks, show_reasons=False, show_task_code_diff=False, stdout_to_log=False):
         ntasks = len(rerun_tasks)
         ndigits = math.floor(math.log10(ntasks)) + 1
         ntasks_run = 0
 
         tasks_to_run = [*rerun_tasks]
         self.all_tasks.update(tasks_to_run)
+        diffs = {}
         try:
             self._init_queues_procs()
             while len(self.already_run_tasks) < len(rerun_tasks):
@@ -150,6 +134,10 @@ class MultiprocExecutor(Executor):
                 if can_run:
                     tasks_to_run.pop(0)
                     logger.info(f'{ntasks_run + 1:>{ndigits}}/{ntasks}: {task} enqueued')
+                    if show_reasons:
+                        self.rmk.show_task_reasons(task)
+                    if show_task_code_diff:
+                        diffs = self.rmk.show_task_code_diff(task, diffs)
                     self._enqueue_task(task)
                     ntasks_run += 1
                 else:

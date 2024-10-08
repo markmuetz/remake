@@ -29,7 +29,7 @@ class DaskExecutor(Executor):
         self.dask_config = dask_config
         super().__init__(rmk)
 
-    def run_tasks(self, rerun_tasks):
+    def run_tasks(self, rerun_tasks, show_reasons=False, show_task_code_diff=False, stdout_to_log=False):
         import dask
         from dask.distributed import LocalCluster
 
@@ -40,11 +40,16 @@ class DaskExecutor(Executor):
         # remake_path = Path.cwd() / f'{self.rmk.name}.py'
         # remake_path = Path('/home/markmuetz/projects/remake2_examples/ex1/') / 'ex1.py'
 
+        diffs = {}
         dask_task_graph = {}
         rules = {t: t.rule for t in rerun_tasks}
         for task in rerun_tasks:
             input_task_keys = [t.key() for t in task.prev_tasks]
             dask_task_graph[task.key()] = (dask_task_run, str(remake_path), task.key(), *input_task_keys)
+            if show_reasons:
+                self.rmk.show_task_reasons(task)
+            if show_task_code_diff:
+                diffs = self.rmk.show_task_code_diff(task, diffs)
 
         dask_task_graph['complete'] = (complete, *[t.key() for t in rerun_tasks])
         for k, v in dask_task_graph.items():

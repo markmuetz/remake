@@ -1,5 +1,6 @@
 import sys
 import importlib
+from io import StringIO
 from pathlib import Path, PosixPath
 from typing import Union
 
@@ -65,3 +66,20 @@ def tmp_to_actual_path(path: Path) -> Path:
         raise ValueError(f'Path must be a remake tmp path (start with ".remake.tmp."): {path}')
 
     return path.parent / path.name[12:]
+
+
+class Capturing(list):
+    """Capture stdout from function.
+
+    https://stackoverflow.com/a/16571630/54557
+    """
+    def __enter__(self):
+        self._stdout = sys.stdout
+        sys.stdout = self._stringio = StringIO()
+        return self
+
+    def __exit__(self, *args):
+        self.extend(self._stringio.getvalue().splitlines())
+        del self._stringio    # free up some memory
+        sys.stdout = self._stdout
+

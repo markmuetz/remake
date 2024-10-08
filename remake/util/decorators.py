@@ -2,6 +2,7 @@ import functools
 import types
 import typing
 
+
 class RemakeReducedScope(Exception):
     pass
 

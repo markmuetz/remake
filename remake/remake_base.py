@@ -3,21 +3,20 @@ import inspect
 import itertools
 import math
 import traceback
+from collections import Counter
 from pathlib import Path
 
 from loguru import logger
 import networkx as nx
+from tabulate import tabulate, SEPARATING_LINE
 
 from pyquerylist import QueryList
 
-# from remake.util import format_path
-
-from .code_compare import dedent
-from .config import Config
 from .executors import Executor, SingleprocExecutor, SlurmExecutor, DaskExecutor, MultiprocExecutor
-from .sqlite3_metadata_manager import Sqlite3MetadataManager
+from .metadata import Sqlite3MetadataManager
 from .rule import Rule
 from .task import Task
+from .util import dedent, Config, load_module
 
 logger.remove()
 logger.add(sys.stdout, format='<bold>{message}</bold>', level='INFO')
@@ -36,11 +35,45 @@ def descendants(task_dag, task):
     return set(nx.bfs_tree(task_dag, task))
 
 
-def compare_task_timestamps(t1, t2):
+def _compare_task_timestamps(t1, t2):
     if t1 is None or t2 is None:
         return False
     else:
         return t1 < t2
+
+
+def _get_inputs_outputs(inputs_outputs_fn_or_dict, fmt_dict):
+    if callable(inputs_outputs_fn_or_dict):
+        return inputs_outputs_fn_or_dict(**fmt_dict)
+    else:
+        return {k.format(**fmt_dict): v.format(**fmt_dict)
+                for k, v in inputs_outputs_fn_or_dict.items()}
+
+
+def _check_modify_fmt_dict(fmt_dict):
+    errors = []
+    new_fmt_dict = {**fmt_dict}
+    for key, value in fmt_dict.items():
+        if isinstance(key, str):
+            continue
+        elif isinstance(key, tuple):
+            if not len(key) == len(value):
+                errors.append(('length mismatch', key, value))
+            for kk, vv in zip(key, value):
+                if not isinstance(kk, str):
+                    errors.append(('not tuple of strings', key, value))
+                    break
+                else:
+                    new_fmt_dict[kk] = vv
+            new_fmt_dict.pop(key)
+        else:
+            errors.append(('not string', key, value))
+    if errors:
+        error_str = '\n'.join([f'  {msg}: {k}, {v}' for msg, k, v in errors])
+        raise Exception(f'input_rule/output_rule keys must be strings or tuples of strings:\n'
+                        f'{error_str}')
+    return new_fmt_dict
+
 
 
 class Remake:
@@ -57,23 +90,25 @@ class Remake:
         self.args = args
         self.kwargs = kwargs
         self.rules = []
-        self.tasks = []
+        self.tasks = QueryList()
         self._inputs = {}
         self._outputs = {}
         self.task_dag = nx.DiGraph()
-        self.rule_dag = nx.DiGraph()
+        self.rule_dg = nx.DiGraph()  # Not nec. a DAG!
+        self.task_key_map = {}
+
         self.metadata_manager = Sqlite3MetadataManager()
         # Different between Python 3.10 and 3.12.
-        if True:
+        if sys.version_info[0] == 3 and sys.version_info[1] == 12:
             stack = next(traceback.walk_stack(None))
             frame = stack[0]
             self.full_path = frame.f_locals['module'].__file__
             self.name = Path(self.full_path).name
-        else:
+        elif sys.version_info[0] == 3 and sys.version_info[1] == 10:
             stack = next(traceback.walk_stack(None))
             frame = stack[0]
             self.name = frame.f_globals['__file__']
-        self.task_key_map = {}
+            self.full_path = str(Path(frame.f_locals['module'].__file__).absolute())
 
     def autoload_rules(self, finalize=True):
         stack = next(traceback.walk_stack(None))
@@ -88,13 +123,13 @@ class Remake:
         logger.debug('Loading rules')
         for rule in rules:
             if hasattr(rule, 'enabled') and not rule.enabled:
+                logger.trace(f'skipping disabled rule: {rule}')
                 continue
             self.load_rule(rule)
             setattr(self, rule.__name__, rule)
-            self.rule_dag.add_node(rule)
+            self.rule_dg.add_node(rule)
 
         for task in self.tasks:
-            # import ipdb; ipdb.set_trace()
             self.task_dag.add_node(task)
             input_tasks = []
             for input_ in task.inputs.values():
@@ -106,12 +141,13 @@ class Remake:
                         prev_task.next_tasks.append(task)
 
                     self.task_dag.add_edge(prev_task, task)
-                    self.rule_dag.add_edge(prev_task.rule, task.rule)
+                    self.rule_dg.add_edge(prev_task.rule, task.rule)
 
                 self._inputs[input_] = task
 
         assert nx.is_directed_acyclic_graph(self.task_dag), 'Not a dag!'
-        assert nx.is_directed_acyclic_graph(self.rule_dag), 'Not a dag!'
+        # rule_dg is not necessarily a DAG!
+        # assert nx.is_directed_acyclic_graph(self.rule_dg), 'Not a dag!'
         self.input_tasks = [v for v, d in self.task_dag.in_degree() if d == 0]
         self.topo_tasks = QueryList(nx.topological_sort(self.task_dag))
 
@@ -131,39 +167,14 @@ class Remake:
         logger.debug('Loaded rules')
         return self
 
-    @staticmethod
-    def _check_modify_fmt_dict(fmt_dict):
-        errors = []
-        new_fmt_dict = {**fmt_dict}
-        for key, value in fmt_dict.items():
-            if isinstance(key, str):
-                continue
-            elif isinstance(key, tuple):
-                if not len(key) == len(value):
-                    errors.append(('length mismatch', key, value))
-                for kk, vv in zip(key, value):
-                    if not isinstance(kk, str):
-                        errors.append(('not tuple of strings', key, value))
-                        break
-                    else:
-                        new_fmt_dict[kk] = vv
-                new_fmt_dict.pop(key)
-            else:
-                errors.append(('not string', key, value))
-        if errors:
-            error_str = '\n'.join([f'  {msg}: {k}, {v}' for msg, k, v in errors])
-            raise Exception(f'input_rule/output_rule keys must be strings or tuples of strings:\n'
-                            f'{error_str}')
-        return new_fmt_dict
-
     def load_rule(self, rule):
         logger.debug(f'loading rule: {rule}')
         rule.remake = self
         self.rules.append(rule)
         for req_method in ['rule_inputs', 'rule_outputs', 'rule_run']:
             assert hasattr(rule, req_method), f'{rule} does not have method {req_method}'
-            if not self.config['old_style_class']:
-                assert callable(getattr(rule, req_method))
+            # if not self.config['old_style_class']:
+            #     assert callable(getattr(rule, req_method))
             # assert getattr(rule, req_method).is_rule_dec
 
         rule.tasks = QueryList()
@@ -173,37 +184,28 @@ class Remake:
             rule_matrix_keys = rule.var_matrix.keys()
         elif hasattr(rule, 'rule_matrix'):
             assert not self.config['old_style_class']
-            rule_matrix = rule.rule_matrix()
-            rule_vars = list(itertools.product(*rule_matrix.values()))
+            if callable(rule.rule_matrix):
+                rule_matrix = rule.rule_matrix()
+            else:
+                rule_matrix = rule.rule_matrix
             rule_matrix_keys = rule_matrix.keys()
+            rule_vars = list(itertools.product(*rule_matrix.values()))
         else:
-            rule_vars = [None]
             rule_matrix_keys = []
-
-            # inputs = self._get_inputs_outputs(rule.rule_inputs, {})
-            # outputs = self._get_inputs_outputs(rule.rule_outputs, {})
-            # task = Task(rule, inputs, outputs, {}, [], [])
-            # self.task_key_map[task.key()] = task
-
-            # rule.tasks.append(task)
-            # self.tasks.append(task)
-
-            # for output in outputs.values():
-            #     if output in self._outputs:
-            #         raise Exception(output)
-            #     self._outputs[output] = task
+            rule_vars = [None]
 
         for rule_var in rule_vars:
             if rule_var is not None:
                 task_kwargs = {k: v for k, v in zip(rule_matrix_keys, rule_var)}
-                task_kwargs = self._check_modify_fmt_dict(task_kwargs)
+                task_kwargs = _check_modify_fmt_dict(task_kwargs)
             else:
                 task_kwargs = {}
 
-            inputs = self._get_inputs_outputs(rule.rule_inputs, task_kwargs)
-            outputs = self._get_inputs_outputs(rule.rule_outputs, task_kwargs)
-            task = Task(rule, inputs, outputs, task_kwargs, [], [])
-            task.remake = self
+            inputs = _get_inputs_outputs(rule.rule_inputs, task_kwargs)
+            outputs = _get_inputs_outputs(rule.rule_outputs, task_kwargs)
+            task = Task(rule, inputs, outputs, task_kwargs, prev_tasks=[], next_tasks=[])
+
+            # Makes task queryable using QueryList
             for k, v in task_kwargs.items():
                 setattr(task, k, v)
             self.task_key_map[task.key()] = task
@@ -215,15 +217,6 @@ class Remake:
                 if output in self._outputs:
                     raise Exception(output)
                 self._outputs[output] = task
-
-    def _get_inputs_outputs(self, inputs_outputs_fn_or_dict, fmt_dict):
-        if callable(inputs_outputs_fn_or_dict):
-            return inputs_outputs_fn_or_dict(**fmt_dict)
-        else:
-            return {k.format(**fmt_dict): v.format(**fmt_dict)
-                    for k, v in inputs_outputs_fn_or_dict.items()}
-            # return {k.format(**fmt_dict): format_path(v, **fmt_dict)
-            #         for k, v in inputs_outputs_fn_or_dict.items()}
 
     def _set_task_statuses(self, tasks):
         for task in tasks:
@@ -254,7 +247,7 @@ class Remake:
                     prev_task_requires_rerun = True
                     requires_rerun = True
                     rerun_reasons.append(f'prev_task_requires_rerun {prev_task}')
-                if compare_task_timestamps(task.last_run_timestamp, prev_task.last_run_timestamp):
+                if _compare_task_timestamps(task.last_run_timestamp, prev_task.last_run_timestamp):
                     requires_rerun = True
                     rerun_reasons.append(f'prev_task_run_more_recently {prev_task}')
 
@@ -315,9 +308,107 @@ class Remake:
             raise ValueError(f'{executor} must be a string or a subtype of Executor')
         return executor
 
-    def run(self, executor='SingleprocExecutor', query='', force=False):
+    def show_task_reasons(self, task):
+        for reason in task.rerun_reasons:
+            logger.info(f'  -- {reason}')
+
+    def show_task_failure(self, task):
+        logger.error('==>  FAILURE TRACEBACK  <==')
+        logger.error(task.last_run_exception)
+        logger.error('==>END FAILURE TRACEBACK<==')
+
+    def show_task_code_diff(self, task, diffs=None):
+        if not diffs:
+            diffs = {}
+        diff_lines = task.diff()
+        diff = '\n'.join(diff_lines)
+        if diff in diffs:
+            prev_task_with_same_diff = diffs[diff]
+            logger.info('==>  DIFF  <==')
+            logger.info(f'Diff of {task} the same as {prev_task_with_same_diff}')
+            logger.info('==>END DIFF<==')
+            return diffs
+        diffs[diff] = task
+        try:
+            logger.level('DIFF_ADDED')
+        except ValueError:
+            logger.level('DIFF_ADDED', no=42, color='<green>')
+            logger.level('DIFF_REMOVED', no=43, color='<red>')
+            logger.level('DIFF_Q', no=44, color='<yellow>')
+        logger.info('==>  DIFF  <==')
+        for line in task.diff():
+            if line and line[0] == '-':
+                logger.log('DIFF_REMOVED', line)
+            elif line and line[0] == '+':
+                logger.log('DIFF_ADDED', line)
+            elif line and line[0] == '?':
+                logger.log('DIFF_Q', line)
+            else:
+                logger.info(line)
+        logger.info('==>END DIFF<==')
+        return diffs
+
+    def info(self, query, show_failures, show_reasons, show_task_code_diff, short, rule):
+        # print(rmk.name)
+        status_map = {
+            0: 'R',
+            1: 'C',
+            2: 'RF',
+        }
+        counter = Counter()
+        logger.info(f'==> {self.name} <==')
+        if query or not rule:
+            logger.info(f'Filter on: {query}')
+            filtered_tasks = self.topo_tasks.where(query)
+        else:
+            filtered_tasks = self.topo_tasks
+
+        for task in filtered_tasks:
+            status = status_map[task.last_run_status]
+            if task.requires_rerun and 'R' not in status:
+                status = 'R'
+            if task.inputs_missing:
+                status = 'X' + status
+            task.status = status
+            counter[status] += 1
+
+        status_keys = ['C', 'R', 'RF', 'XC', 'XR', 'XRF']
+        if short:
+            for k in status_keys:
+                logger.info(f'{k:<3}: {counter.get(k, 0)}')
+            return
+
+        if rule:
+            rows = []
+            row = ['name', 'ntasks', *status_keys]
+            rows.append(row)
+            rows.append(SEPARATING_LINE)
+
+            for rule in self.rules:
+                rule_counter = Counter()
+                for task in rule.tasks:
+                    rule_counter[task.status] += 1
+                row = [rule.__name__, len(rule.tasks), *[rule_counter.get(k, 0) for k in status_keys]]
+                rows.append(row)
+            rows.append(SEPARATING_LINE)
+            row = ['Total', len(self.tasks), *[counter.get(k, 0) for k in status_keys]]
+            rows.append(row)
+            logger.info(tabulate(rows))
+            return
+
+        diffs = {}
+        for task in filtered_tasks:
+            logger.info(f'{task.status:<2s} {task}')
+            if 'F' in task.status and show_failures:
+                show_task_failure(task)
+            if ('R' in task.status or 'X' in task.status) and show_reasons:
+                self.show_task_reasons(task)
+            if show_task_code_diff and 'task_run_source_changed' in task.rerun_reasons:
+                diffs = self.show_task_code_diff(task, diffs)
+
+    def run(self, executor='SingleprocExecutor', query='', force=False, show_reasons=False, show_task_code_diff=False, stdout_to_log=False):
         if query:
-            tasks = self.topo_tasks.where(query[0])
+            tasks = self.topo_tasks.where(query)
         else:
             tasks = self.topo_tasks
 
@@ -325,14 +416,17 @@ class Remake:
             rerun_tasks = [t for t in tasks if t.requires_rerun]
         else:
             rerun_tasks = tasks
+            for task in rerun_tasks:
+                task.rerun_reasons.insert(0, 'force_rerun')
 
+        logger.info(f'==> {self.name} <==')
         if not rerun_tasks:
             logger.info('No tasks require rerun')
             return
         logger.info(f'Running {len(rerun_tasks)} tasks using {executor}')
         executor = self._get_executor(executor)
         logger.debug(f'using {executor}')
-        executor.run_tasks(rerun_tasks)
+        executor.run_tasks(rerun_tasks, show_reasons=show_reasons, show_task_code_diff=show_task_code_diff, stdout_to_log=stdout_to_log)
 
     def run_tasks_from_keys(self, task_keys, executor='SingleprocExecutor'):
         tasks = [self.task_key_map[task_key] for task_key in task_keys]
