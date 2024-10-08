@@ -99,7 +99,9 @@ class SlurmExecutor(Executor):
                     'partition': partition,
                 }
 
-    def run_tasks(self, rerun_tasks, show_reasons=False, show_task_code_diff=False, stdout_to_log=False):
+    def run_tasks(
+        self, rerun_tasks, show_reasons=False, show_task_code_diff=False, stdout_to_log=False
+    ):
         for task in rerun_tasks:
             self._submit_task(task, show_reasons, show_task_code_diff)
 
