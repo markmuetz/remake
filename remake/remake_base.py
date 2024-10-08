@@ -392,7 +392,8 @@ class Remake:
         status_keys = ['C', 'R', 'RF', 'XC', 'XR', 'XRF']
         if short:
             for k in status_keys:
-                logger.info(f'{k:<3}: {counter.get(k, 0)}')
+                level = status_loggers[k]
+                logger.log(level, f'{k:<3}: {counter.get(k, 0)}')
             return
 
         if rule:
@@ -401,21 +402,35 @@ class Remake:
             rows.append(row)
             rows.append(SEPARATING_LINE)
 
+            statuses = []
             for rule in self.rules:
+                max_status = 0
                 rule_counter = Counter()
                 for task in rule.tasks:
                     rule_counter[task.status] += 1
+                    max_status = max(status_keys.index(task.status), max_status)
+                statuses.append(max_status)
                 row = [rule.__name__, len(rule.tasks), *[rule_counter.get(k, 0) for k in status_keys]]
                 rows.append(row)
             rows.append(SEPARATING_LINE)
             row = ['Total', len(self.tasks), *[counter.get(k, 0) for k in status_keys]]
             rows.append(row)
-            logger.info(tabulate(rows))
+            lines = tabulate(rows).split('\n')
+            for line in lines[:3]:
+                logger.info(line)
+            for status, line in zip(statuses, lines[3:-3]):
+                level = status_loggers[status_keys[status]]
+                logger.log(level, line)
+            logger.info(lines[-3])
+            level = status_loggers[status_keys[max(statuses)]]
+            logger.log(level, lines[-2])
+            logger.info(lines[-1])
             return
 
         diffs = {}
         for task in filtered_tasks:
-            logger.info(f'{task.status:<2s} {task}')
+            level = status_loggers[task.status]
+            logger.log(level, f'{task.status:<2s} {task}')
             if 'F' in task.status and show_failures:
                 show_task_failure(task)
             if ('R' in task.status or 'X' in task.status) and show_reasons:
