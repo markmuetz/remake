@@ -51,6 +51,7 @@ CREATE INDEX table_key_index
 ON task(key);
 """
 
+
 def retry(fn):
     def inner(self, conn, *args, **kwargs):
         nattempts = 1
@@ -66,6 +67,7 @@ def retry(fn):
             logger.trace(f'    retry {nattempts}')
             nattempts += 1
             sleep(2**nattempts * random.random())
+
     return inner
 
 
@@ -89,6 +91,7 @@ def retry_lock_commit(fn):
             logger.trace(f'    retry {nattempts}')
             nattempts += 1
             sleep(2**nattempts * random.random())
+
     return inner
 
 
@@ -113,37 +116,45 @@ class Sqlite3MetadataManager(MetadataManager):
 
     @retry
     def _select_db_rule(self, conn, rule):
-        return conn.execute('SELECT * FROM rule WHERE name = ?', (rule.__name__, )).fetchone()
+        return conn.execute('SELECT * FROM rule WHERE name = ?', (rule.__name__,)).fetchone()
 
     @retry_lock_commit
     def _create_db_rule(self, conn, rule):
         code_ids = {}
         for req_method in ['rule_inputs', 'rule_outputs', 'rule_run']:
             code = rule.source[req_method]
-            conn.execute('INSERT INTO code(code) VALUES (?)', (code, ))
+            conn.execute('INSERT INTO code(code) VALUES (?)', (code,))
             code_ids[req_method] = conn.execute('SELECT MAX(id) FROM code;').fetchone()[0]
 
-        conn.execute('INSERT INTO rule(name, inputs_code_id, outputs_code_id, run_code_id) VALUES (?, ?, ?, ?)',
-                     (rule.__name__, code_ids['rule_inputs'],
-                      code_ids['rule_outputs'], code_ids['rule_run']))
+        conn.execute(
+            'INSERT INTO rule(name, inputs_code_id, outputs_code_id, run_code_id) VALUES (?, ?, ?, ?)',
+            (
+                rule.__name__,
+                code_ids['rule_inputs'],
+                code_ids['rule_outputs'],
+                code_ids['rule_run'],
+            ),
+        )
 
     @retry
     def _select_code_from_rule(self, conn, dbname, db_rule):
         db_code = conn.execute(
             f'SELECT code.id, code.code FROM rule INNER JOIN code ON rule.{dbname} = code.id WHERE rule.id = ?',
-            (db_rule[0], )
+            (db_rule[0],),
         ).fetchone()
         return db_code
 
     @retry_lock_commit
     def _insert_code(self, conn, code):
-        conn.execute('INSERT INTO code(code) VALUES (?)', (code, ))
+        conn.execute('INSERT INTO code(code) VALUES (?)', (code,))
         return conn.execute('SELECT MAX(id) FROM code;').fetchone()[0]
 
     @retry_lock_commit
     def _update_rule_code(self, conn, db_rule, code_ids):
-        conn.execute('UPDATE rule SET inputs_code_id = ?, outputs_code_id = ?, run_code_id = ? WHERE id = ?',
-                     (code_ids['rule_inputs'], code_ids['rule_outputs'], code_ids['rule_run'], db_rule[0]))
+        conn.execute(
+            'UPDATE rule SET inputs_code_id = ?, outputs_code_id = ?, run_code_id = ? WHERE id = ?',
+            (code_ids['rule_inputs'], code_ids['rule_outputs'], code_ids['rule_run'], db_rule[0]),
+        )
 
     def get_or_create_rule_metadata(self, rule):
         db_rule = self._select_db_rule(self.conn, rule)
@@ -157,7 +168,8 @@ class Sqlite3MetadataManager(MetadataManager):
             for req_method, dbname, code_idx in [
                 ('rule_inputs', 'inputs_code_id', 2),
                 ('rule_outputs', 'outputs_code_id', 3),
-                ('rule_run', 'run_code_id', 4)]:
+                ('rule_run', 'run_code_id', 4),
+            ]:
                 db_code = self._select_code_from_rule(self.conn, dbname, db_rule)
                 if not self.code_comparer(db_code[1], rule.source[req_method]):
                     logger.trace(f'code different for {req_method}')
@@ -176,12 +188,18 @@ class Sqlite3MetadataManager(MetadataManager):
     def _select_task_last_run_code(self, conn, task):
         logger.trace(f'_select_task_last_run_code: {task.key()}')
         # return conn.execute('SELECT task.last_run_timestamp, task.last_run_status, code.code FROM task INNER JOIN code ON task.code_id = code.id WHERE task.key = ?', (task.key(), )).fetchone()
-        db_ret = conn.execute('SELECT last_run_timestamp, last_run_status, exception, code_id FROM task WHERE key = ?', (task.key(), )).fetchone()
+        db_ret = conn.execute(
+            'SELECT last_run_timestamp, last_run_status, exception, code_id FROM task WHERE key = ?',
+            (task.key(),),
+        ).fetchone()
         if db_ret:
             last_run_timestamp, last_run_status, last_run_exception, last_run_code_id = db_ret
             logger.trace(db_ret)
             if last_run_code_id:
-                code, = conn.execute('SELECT code.code FROM task INNER JOIN code ON task.code_id = code.id WHERE task.key = ?', (task.key(), )).fetchone()
+                (code,) = conn.execute(
+                    'SELECT code.code FROM task INNER JOIN code ON task.code_id = code.id WHERE task.key = ?',
+                    (task.key(),),
+                ).fetchone()
                 return (last_run_timestamp, last_run_status, last_run_exception, code)
             else:
                 return (last_run_timestamp, last_run_status, last_run_exception, '')
@@ -192,7 +210,9 @@ class Sqlite3MetadataManager(MetadataManager):
     def _insert_tasks(self, conn, tasks):
         task_data = [(t.key(), self.rule_map[t.rule][0], 0) for t in tasks]
         logger.trace(f'inserting {len(tasks)} tasks')
-        conn.executemany('INSERT INTO task(key, rule_id, last_run_status) VALUES (?, ?, ?)', task_data)
+        conn.executemany(
+            'INSERT INTO task(key, rule_id, last_run_status) VALUES (?, ?, ?)', task_data
+        )
         logger.trace(f'inserted {len(tasks)} tasks')
 
     def get_or_create_tasks_metadata(self, tasks):
@@ -223,9 +243,11 @@ class Sqlite3MetadataManager(MetadataManager):
 
     @retry_lock_commit
     def _update_task_metadata(self, conn, task, code_id, exception=''):
-        conn.execute(f'UPDATE task SET code_id = (?), last_run_timestamp = datetime(\'now\'), last_run_status = ?, exception = ? WHERE key = ?', (code_id, task.last_run_status, exception, task.key()))
+        conn.execute(
+            f'UPDATE task SET code_id = (?), last_run_timestamp = datetime(\'now\'), last_run_status = ?, exception = ? WHERE key = ?',
+            (code_id, task.last_run_status, exception, task.key()),
+        )
 
     def update_task_metadata(self, task, exception=''):
         code_id = self.rule_map[task.rule][4]
         self._update_task_metadata(self.conn, task, code_id, exception)
-

@@ -1,9 +1,6 @@
 class Config:
     def __init__(self, defaults, allow_other_keys=False):
-        self.cfg = {
-            k: ([f'default:{v}'], v)
-            for k, v in defaults.items()
-        }
+        self.cfg = {k: ([f'default:{v}'], v) for k, v in defaults.items()}
         self.allow_other_keys = allow_other_keys
 
     def update(self, setby, updates):
@@ -33,7 +30,3 @@ class Config:
         for k, (setby, v) in self.cfg.items():
             setby_str = ' > '.join(setby)
             print(f'{k}: {v} ({setby_str})')
-
-
-
-

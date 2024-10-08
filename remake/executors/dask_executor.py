@@ -7,6 +7,7 @@ from ..loader import load_remake
 
 from .executor import Executor
 
+
 def dask_task_run(remake_path, task_key, *input_task_keys):
     print(f'dask_task_run: {remake_path} {task_key} {input_task_keys}')
     cwd = os.getcwd()
@@ -17,6 +18,7 @@ def dask_task_run(remake_path, task_key, *input_task_keys):
     os.chdir(cwd)
 
     return task_key
+
 
 def complete(*input_task_keys):
     print(f'complete: {input_task_keys}')
@@ -29,7 +31,9 @@ class DaskExecutor(Executor):
         self.dask_config = dask_config
         super().__init__(rmk)
 
-    def run_tasks(self, rerun_tasks, show_reasons=False, show_task_code_diff=False, stdout_to_log=False):
+    def run_tasks(
+        self, rerun_tasks, show_reasons=False, show_task_code_diff=False, stdout_to_log=False
+    ):
         import dask
         from dask.distributed import LocalCluster
 
@@ -45,7 +49,12 @@ class DaskExecutor(Executor):
         rules = {t: t.rule for t in rerun_tasks}
         for task in rerun_tasks:
             input_task_keys = [t.key() for t in task.prev_tasks]
-            dask_task_graph[task.key()] = (dask_task_run, str(remake_path), task.key(), *input_task_keys)
+            dask_task_graph[task.key()] = (
+                dask_task_run,
+                str(remake_path),
+                task.key(),
+                *input_task_keys,
+            )
             if show_reasons:
                 self.rmk.show_task_reasons(task)
             if show_task_code_diff:
@@ -58,10 +67,9 @@ class DaskExecutor(Executor):
         if 'cluster' in self.dask_config:
             cluster = self.dast_config['cluster']
         else:
-            cluster = LocalCluster(**self.dask_config)          # Fully-featured local Dask cluster
+            cluster = LocalCluster(**self.dask_config)  # Fully-featured local Dask cluster
         if 'client' in self.dask_config:
             client = self.dast_config['client']
         else:
             client = cluster.get_client()
         client.get(dask_task_graph, 'complete')
-

@@ -25,6 +25,7 @@ remake -D run-tasks {remakefile_path} --remakefile-sha1 {remakefile_path_hash} -
 echo "SLURM COMPLETED {task_key}"
 """
 
+
 def _parse_slurm_jobid(output):
     match = re.match(r'Submitted batch job (?P<jobid>\d+)', output)
     if match:
@@ -55,9 +56,7 @@ class SlurmExecutor(Executor):
             slurm_config = {}
         super().__init__(rmk)
         self.rmk = rmk
-        default_slurm_kwargs = {'partition': 'short-serial',
-                                'time': '4:00:00',
-                                'mem': 50000}
+        default_slurm_kwargs = {'partition': 'short-serial', 'time': '4:00:00', 'mem': 50000}
         slurm_kwargs = {**default_slurm_kwargs}
         slurm_kwargs.update(slurm_config)
 
@@ -95,7 +94,10 @@ class SlurmExecutor(Executor):
                 continue
             jobid, partition, task_key, status = line.split()
             if status in ['PD', 'R']:
-                self.currently_running_task_keys[task_key] = {'jobid': jobid, 'partition': partition}
+                self.currently_running_task_keys[task_key] = {
+                    'jobid': jobid,
+                    'partition': partition,
+                }
 
     def run_tasks(self, rerun_tasks, show_reasons=False, stdout_to_log=False):
         for task in rerun_tasks:
@@ -123,7 +125,9 @@ class SlurmExecutor(Executor):
 
         logger.trace(f'  creating {task_slurm_output}')
         task_slurm_output.mkdir(exist_ok=True, parents=True)
-        slurm_script_filepath = self.slurm_dir.joinpath(*[task_key[:2], task_key[2:], f'{remakefile_name}_{task.key()}.sbatch'])
+        slurm_script_filepath = self.slurm_dir.joinpath(
+            *[task_key[:2], task_key[2:], f'{remakefile_name}_{task.key()}.sbatch']
+        )
         slurm_script_filepath.parent.mkdir(exist_ok=True, parents=True)
 
         prev_jobids = []
@@ -148,17 +152,19 @@ class SlurmExecutor(Executor):
                 extra_opts.append(f'#SBATCH --{k}={v}')
         comment = str(task)
         extra_opts = '\n'.join(extra_opts)
-        slurm_script = SLURM_SCRIPT_TPL.format(script_dir=Path.cwd(),
-                                               task_slurm_output=task_slurm_output,
-                                               comment=comment,
-                                               remakefile_name=remakefile_name,
-                                               remakefile_path=self.remakefile_path,
-                                               remakefile_path_hash=self.remakefile_path_hash,
-                                               task_key=task_key,
-                                               extra_opts=extra_opts,
-                                               dependencies=dependencies,
-                                               job_name=task_key[:10],  # Longer and a leading * is added.
-                                               **slurm_kwargs)
+        slurm_script = SLURM_SCRIPT_TPL.format(
+            script_dir=Path.cwd(),
+            task_slurm_output=task_slurm_output,
+            comment=comment,
+            remakefile_name=remakefile_name,
+            remakefile_path=self.remakefile_path,
+            remakefile_path_hash=self.remakefile_path_hash,
+            task_key=task_key,
+            extra_opts=extra_opts,
+            dependencies=dependencies,
+            job_name=task_key[:10],  # Longer and a leading * is added.
+            **slurm_kwargs,
+        )
 
         logger.trace(f'  writing {slurm_script_filepath}')
         logger.trace('\n' + slurm_script)
@@ -185,5 +191,3 @@ class SlurmExecutor(Executor):
                 diffs = self.rmk.show_task_code_diff(task, diffs)
             jobid = _parse_slurm_jobid(output)
         self.task_jobid_map[task] = jobid
-
-

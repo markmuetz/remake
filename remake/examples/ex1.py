@@ -1,5 +1,6 @@
 import sys
 from loguru import logger
+
 logger.remove()
 logger.add(sys.stdout, level='TRACE')
 logger.trace('importing')
@@ -7,18 +8,16 @@ logger.trace('importing')
 if sys.argv[1] == 'remake_legacy':
     from remake_legacy import Remake, TaskRule
     from pathlib import Path
+
     P2 = Path
 elif sys.argv[1] == 'remake':
     from remake import Remake, TaskRule
     from pathlib import Path
+
     P2 = Path
 
 
 logger.trace('imported')
-
-
-
-
 
 
 logger.trace('create rmk')
@@ -30,6 +29,8 @@ logger.trace('created rmk')
 
 
 logger.trace('create Rule1')
+
+
 class Rule1(TaskRule):
     var_matrix = {
         'a': [f'a{i}' for i in range(30)],
@@ -38,8 +39,7 @@ class Rule1(TaskRule):
 
     @staticmethod
     def rule_inputs(a, b):
-        return {f'input_{i}': P2(f'data/{a}/{b}_{i}.in')
-                for i in range(20)}
+        return {f'input_{i}': P2(f'data/{a}/{b}_{i}.in') for i in range(20)}
 
     @staticmethod
     def rule_outputs(a, b):
@@ -49,9 +49,13 @@ class Rule1(TaskRule):
         # ''
         for o in self.outputs.values():
             Path(o).write_text(f'run {self.a}, {self.b}')
+
+
 logger.trace('created Rule1')
 
 logger.trace('create Rule2')
+
+
 class Rule2(TaskRule):
     var_matrix = {
         'a': [f'a{i}' for i in range(30)],
@@ -67,12 +71,14 @@ class Rule2(TaskRule):
         return {'output': P2(f'data/{a}/{b}.{sys.argv[1]}.rule2.out')}
 
     def rule_run(self):
-        ''
+        ''''''
         for i in self.inputs.values():
             pass
 
         for o in self.outputs.values():
             Path(o).write_text('run')
+
+
 logger.trace('create Rule2')
 
 if __name__ == '__main__':
@@ -92,4 +98,3 @@ if __name__ == '__main__':
         logger.trace('run')
         rmk.run()
         logger.trace('run finished')
-

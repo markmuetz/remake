@@ -4,4 +4,3 @@ class RemakeError(Exception):
 
 class RemakeLoadError(RemakeError):
     pass
-

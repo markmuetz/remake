@@ -6,6 +6,7 @@ rmk = Remake(config=dict(content_checks=False))
 
 paths = ['a', 'b']
 
+
 def f1():
     print('hi')
 
@@ -18,15 +19,14 @@ class Rule1(TaskRule):
 
     @staticmethod
     def rule_inputs(a, b):
-        return {f'input_{i}': Path.cwd() / f'data/{a}/{b}_{i}.in'
-                for i in range(20)}
+        return {f'input_{i}': Path.cwd() / f'data/{a}/{b}_{i}.in' for i in range(20)}
 
     @staticmethod
     def rule_outputs(a, b):
         return {'output': Path.cwd() / f'data/{a}/{b}.orig_out'}
 
     def rule_run(self):
-        ''
+        ''''''
         # print('hi')
         # ''
         # f1()

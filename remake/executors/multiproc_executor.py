@@ -68,9 +68,9 @@ class MultiprocExecutor(Executor):
 
         logger.trace(f'creating {self.nproc} workers')
         for i in range(self.nproc):
-            proc = Process(target=worker, args=(i, self.rmk.name,
-                                                self.task_queue,
-                                                self.task_complete_queue))
+            proc = Process(
+                target=worker, args=(i, self.rmk.name, self.task_queue, self.task_complete_queue)
+            )
             proc.daemon = True
             logger.trace(f'created proc {proc}')
             proc.start()
@@ -113,7 +113,9 @@ class MultiprocExecutor(Executor):
         logger.trace(f'completed: {completed_task}')
         return completed_task
 
-    def run_tasks(self, rerun_tasks, show_reasons=False, show_task_code_diff=False, stdout_to_log=False):
+    def run_tasks(
+        self, rerun_tasks, show_reasons=False, show_task_code_diff=False, stdout_to_log=False
+    ):
         ntasks = len(rerun_tasks)
         ndigits = math.floor(math.log10(ntasks)) + 1
         ntasks_run = 0

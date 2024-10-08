@@ -46,8 +46,9 @@ def _get_inputs_outputs(inputs_outputs_fn_or_dict, fmt_dict):
     if callable(inputs_outputs_fn_or_dict):
         return inputs_outputs_fn_or_dict(**fmt_dict)
     else:
-        return {k.format(**fmt_dict): v.format(**fmt_dict)
-                for k, v in inputs_outputs_fn_or_dict.items()}
+        return {
+            k.format(**fmt_dict): v.format(**fmt_dict) for k, v in inputs_outputs_fn_or_dict.items()
+        }
 
 
 def _check_modify_fmt_dict(fmt_dict):
@@ -70,22 +71,24 @@ def _check_modify_fmt_dict(fmt_dict):
             errors.append(('not string', key, value))
     if errors:
         error_str = '\n'.join([f'  {msg}: {k}, {v}' for msg, k, v in errors])
-        raise Exception(f'input_rule/output_rule keys must be strings or tuples of strings:\n'
-                        f'{error_str}')
+        raise Exception(
+            f'input_rule/output_rule keys must be strings or tuples of strings:\n' f'{error_str}'
+        )
     return new_fmt_dict
-
 
 
 class Remake:
     def __init__(self, config, *args, **kwargs):
-        self.config = Config({
-            'slurm': {},
-            'old_style_class': False,
-            'content_checks': False,
-            'check_inputs_exist': False,
-            'check_outputs_exist': False,
-            'check_outputs_older_than_inputs': False,
-        })
+        self.config = Config(
+            {
+                'slurm': {},
+                'old_style_class': False,
+                'content_checks': False,
+                'check_inputs_exist': False,
+                'check_outputs_exist': False,
+                'check_outputs_older_than_inputs': False,
+            }
+        )
         self.config.update('remake_config', config)
         self.args = args
         self.kwargs = kwargs
@@ -263,7 +266,9 @@ class Remake:
                             rerun_reasons.append(f'input_missing {path}')
                             task.inputs_missing = True
                     else:
-                        latest_input_path_mtime = max(latest_input_path_mtime, Path(path).lstat().st_mtime)
+                        latest_input_path_mtime = max(
+                            latest_input_path_mtime, Path(path).lstat().st_mtime
+                        )
 
             if config['check_outputs_older_than_inputs'] or config['check_outputs_exist']:
                 for path in task.outputs.values():
@@ -271,14 +276,18 @@ class Remake:
                         requires_rerun = True
                         rerun_reasons.append(f'output_missing {path}')
                     else:
-                        earliest_output_path_mtime = min(earliest_output_path_mtime, Path(path).lstat().st_mtime)
+                        earliest_output_path_mtime = min(
+                            earliest_output_path_mtime, Path(path).lstat().st_mtime
+                        )
 
             if config['check_outputs_older_than_inputs']:
                 if latest_input_path_mtime > earliest_output_path_mtime:
                     requires_rerun = True
                     rerun_reasons.append('input_is_older_than_output')
 
-            if not self.metadata_manager.code_comparer(task.last_run_code, task.rule.source['rule_run']):
+            if not self.metadata_manager.code_comparer(
+                task.last_run_code, task.rule.source['rule_run']
+            ):
                 requires_rerun = True
                 rerun_reasons.append('task_run_source_changed')
             task.requires_rerun = requires_rerun
@@ -388,7 +397,11 @@ class Remake:
                 rule_counter = Counter()
                 for task in rule.tasks:
                     rule_counter[task.status] += 1
-                row = [rule.__name__, len(rule.tasks), *[rule_counter.get(k, 0) for k in status_keys]]
+                row = [
+                    rule.__name__,
+                    len(rule.tasks),
+                    *[rule_counter.get(k, 0) for k in status_keys],
+                ]
                 rows.append(row)
             rows.append(SEPARATING_LINE)
             row = ['Total', len(self.tasks), *[counter.get(k, 0) for k in status_keys]]
@@ -406,7 +419,15 @@ class Remake:
             if show_task_code_diff and 'task_run_source_changed' in task.rerun_reasons:
                 diffs = self.show_task_code_diff(task, diffs)
 
-    def run(self, executor='SingleprocExecutor', query='', force=False, show_reasons=False, show_task_code_diff=False, stdout_to_log=False):
+    def run(
+        self,
+        executor='SingleprocExecutor',
+        query='',
+        force=False,
+        show_reasons=False,
+        show_task_code_diff=False,
+        stdout_to_log=False,
+    ):
         if query:
             tasks = self.topo_tasks.where(query)
         else:
@@ -426,7 +447,12 @@ class Remake:
         logger.info(f'Running {len(rerun_tasks)} tasks using {executor}')
         executor = self._get_executor(executor)
         logger.debug(f'using {executor}')
-        executor.run_tasks(rerun_tasks, show_reasons=show_reasons, show_task_code_diff=show_task_code_diff, stdout_to_log=stdout_to_log)
+        executor.run_tasks(
+            rerun_tasks,
+            show_reasons=show_reasons,
+            show_task_code_diff=show_task_code_diff,
+            stdout_to_log=stdout_to_log,
+        )
 
     def run_tasks_from_keys(self, task_keys, executor='SingleprocExecutor'):
         tasks = [self.task_key_map[task_key] for task_key in task_keys]
@@ -434,4 +460,3 @@ class Remake:
         executor = self._get_executor(executor)
         logger.debug(f'using {executor}')
         executor.run_tasks(tasks)
-

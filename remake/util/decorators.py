@@ -50,6 +50,7 @@ def _call_with_reduced_scope(method, scoped_vars, *args, **kwargs):
     finally:
         globals().update(_g)
 
+
 def rule_dec(method_or_scoped_vars=None):
     if callable(method_or_scoped_vars):
         method = method_or_scoped_vars
@@ -59,6 +60,7 @@ def rule_dec(method_or_scoped_vars=None):
         @functools.wraps(method)
         def inner(*args, **kwargs):
             return _call_with_reduced_scope(method, scoped_vars, *args, **kwargs)
+
         return inner
     if method_or_scoped_vars is None:
         scoped_vars = []
@@ -71,8 +73,7 @@ def rule_dec(method_or_scoped_vars=None):
         @functools.wraps(method)
         def inner(*args, **kwargs):
             return _call_with_reduced_scope(method, scoped_vars, *args, **kwargs)
+
         return inner
+
     return outer
-
-
-

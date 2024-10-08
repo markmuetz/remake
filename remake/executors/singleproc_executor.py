@@ -7,7 +7,9 @@ from .executor import Executor
 
 
 class SingleprocExecutor(Executor):
-    def run_tasks(self, rerun_tasks, show_reasons=False, show_task_code_diff=False, stdout_to_log=False):
+    def run_tasks(
+        self, rerun_tasks, show_reasons=False, show_task_code_diff=False, stdout_to_log=False
+    ):
         ntasks = len(rerun_tasks)
         ndigits = math.floor(math.log10(ntasks)) + 1
         diffs = {}
@@ -25,6 +27,3 @@ class SingleprocExecutor(Executor):
                     logger.debug(line)
             else:
                 task.run()
-
-
-

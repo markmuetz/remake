@@ -4,4 +4,3 @@ from .archive import Archive
 from .task import Task
 from .rule import Rule
 from .rule import Rule as TaskRule
-

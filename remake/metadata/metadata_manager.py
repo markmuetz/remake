@@ -18,4 +18,3 @@ class MetadataManager(abc.ABC):
     @abc.abstractmethod
     def update_task_metadata(self, task, exception=''):
         pass
-

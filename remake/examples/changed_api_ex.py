@@ -1,4 +1,5 @@
 from remake import Remake, Rule, rule_dec
+
 # https://stackoverflow.com/questions/67631/how-can-i-import-a-module-dynamically-given-the-full-path/50395128#50395128
 # https://haggis.readthedocs.io/en/latest/api.html#haggis.load.load_module
 import sys
@@ -6,12 +7,12 @@ import itertools
 import pathlib
 
 from loguru import logger
+
 # from tqdm import tqdm
 
 logger.remove()
 logger.add(sys.stdout, level='INFO')
 # logger.add(sys.stdout, level='DEBUG')
-
 
 
 try:
@@ -32,8 +33,10 @@ rmk = Remake()
 
 paths = ['a', 'b']
 
+
 def f1():
     print('hi')
+
 
 class Rule1(Rule):
     rule_matrix = {
@@ -44,8 +47,7 @@ class Rule1(Rule):
     # @rule_dec(['paths'])
     @rule_dec
     def rule_inputs(a, b):
-        return {f'input_{i}': f'data/{a}/{b}_{i}.in'
-                for i in range(100)}
+        return {f'input_{i}': f'data/{a}/{b}_{i}.in' for i in range(100)}
 
     @rule_dec
     def rule_outputs(a, b):
@@ -53,12 +55,13 @@ class Rule1(Rule):
 
     @rule_dec(['f1', 'VirtFS'])
     def rule_run(inputs, outputs, a, b):
-        ''
+        ''''''
         # f1()
         print(f'Rule1 {a}, {b}')
         for o in outputs.values():
             # VirtFS[o] = f'run {a}, {b}'
             pathlib.Path(o).write_text(f'run {a}, {b}')
+
 
 class Rule2(Rule):
     rule_matrix = {
@@ -94,6 +97,7 @@ class Rule2(Rule):
         for o in outputs.values():
             VirtFS[o] = 'run'
             pathlib.Path(o).write_text('run')
+
 
 if __name__ == '__main__':
     rmk.autoload_rules()

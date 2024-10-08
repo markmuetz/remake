@@ -1,5 +1,6 @@
 class Arg:
     """Declarative representation of command line arg"""
+
     def __init__(self, *args, **kwargs):
         self.args = args
         self.kwargs = kwargs
@@ -16,6 +17,7 @@ class Arg:
 
 class MutuallyExclusiveGroup:
     """Declarative representation of command line mutually exclusive group"""
+
     def __init__(self, *args):
         self.args = args
 

@@ -59,4 +59,3 @@ class Rule:
         logger.debug(f'update task: {task}')
         cls.remake.update_task(task)
         logger.debug(f'updated task: {task}')
-

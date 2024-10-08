@@ -12,7 +12,9 @@ def dedent(s):
 
 
 # https://stackoverflow.com/a/66733795/54557
-def _compare_ast(node1: Union[ast.expr, list[ast.expr]], node2: Union[ast.expr, list[ast.expr]]) -> bool:
+def _compare_ast(
+    node1: Union[ast.expr, list[ast.expr]], node2: Union[ast.expr, list[ast.expr]]
+) -> bool:
     if type(node1) is not type(node2):
         return False
 
@@ -28,7 +30,6 @@ def _compare_ast(node1: Union[ast.expr, list[ast.expr]], node2: Union[ast.expr, 
         return all(_compare_ast(n1, n2) for n1, n2 in zip_longest(node1, node2))
     else:
         return node1 == node2
-
 
 
 class CodeComparer:
@@ -60,6 +61,3 @@ class CodeComparer:
             raise re
         self.compare_cache[key] = res
         return res
-
-
-
