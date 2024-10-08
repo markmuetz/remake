@@ -6,6 +6,9 @@ class Config:
         }
         self.allow_other_keys = allow_other_keys
 
+    def asdict(self):
+        return {k:v[1] for k, v in self.cfg.items()}
+
     def update(self, setby, updates):
         for k, v in updates.items():
             if k in self.cfg:
@@ -23,8 +26,9 @@ class Config:
 
     def get(self, key, default):
         if key in self.cfg:
-            return self[key]
-        return default
+            return self.cfg[key][1]
+        else:
+            return default
 
     def __getitem__(self, key):
         return self.cfg[key][1]
