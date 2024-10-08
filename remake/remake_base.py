@@ -19,7 +19,7 @@ from .task import Task
 from .util import dedent, Config, load_module
 
 logger.remove()
-logger.add(sys.stdout, format='<bold>{message}</bold>', level='INFO')
+logger.add(sys.stdout, format='<bold><lvl>{message}</lvl></bold>', level='INFO')
 
 
 def all_descendants(task_dag, tasks):
@@ -107,8 +107,8 @@ class Remake:
         elif sys.version_info[0] == 3 and sys.version_info[1] == 10:
             stack = next(traceback.walk_stack(None))
             frame = stack[0]
-            self.name = frame.f_globals['__file__']
-            self.full_path = str(Path(frame.f_locals['module'].__file__).absolute())
+            self.full_path = frame.f_globals['__file__']
+            self.name = Path(self.full_path).name
 
     def autoload_rules(self, finalize=True):
         stack = next(traceback.walk_stack(None))
@@ -164,6 +164,7 @@ class Remake:
 
         if finalize:
             self.finalize()
+
         logger.debug('Loaded rules')
         return self
 
@@ -285,8 +286,9 @@ class Remake:
             task.rerun_reasons = rerun_reasons
 
     def finalize(self):
-        logger.debug('getting task status')
+        logger.debug('finalize')
         self.metadata_manager.get_or_create_tasks_metadata(self.topo_tasks)
+        logger.debug('getting task status')
         self._set_task_statuses(self.topo_tasks)
 
     def update_task(self, task, exception=''):
@@ -355,9 +357,24 @@ class Remake:
             1: 'C',
             2: 'RF',
         }
+        status_loggers = {
+            'R': 'RERUN',
+            'C': 'COMPLETE',
+            'RF': 'FAILED',
+            'XR': 'FAILED',
+            'XC': 'FAILED',
+            'XRF': 'FAILED',
+        }
+        try:
+            logger.level('RERUN')
+        except ValueError:
+            logger.level('RERUN', no=45, color='<blue>')
+            logger.level('COMPLETE', no=46, color='<green>')
+            logger.level('FAILED', no=47, color='<red>')
+
         counter = Counter()
         logger.info(f'==> {self.name} <==')
-        if query or not rule:
+        if query and not rule:
             logger.info(f'Filter on: {query}')
             filtered_tasks = self.topo_tasks.where(query)
         else:

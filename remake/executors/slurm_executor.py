@@ -97,7 +97,7 @@ class SlurmExecutor(Executor):
             if status in ['PD', 'R']:
                 self.currently_running_task_keys[task_key] = {'jobid': jobid, 'partition': partition}
 
-    def run_tasks(self, rerun_tasks, show_reasons=False, stdout_to_log=False):
+    def run_tasks(self, rerun_tasks, show_reasons=False, show_task_code_diff=False, stdout_to_log=False):
         for task in rerun_tasks:
             self._submit_task(task, show_reasons, show_task_code_diff)
 
@@ -107,7 +107,7 @@ class SlurmExecutor(Executor):
         rule_name = task.rule.__name__
         rule_slurm_output = self.slurm_output / rule_name
         task_key = task.key()
-        if hasattr(task.rule, 'var_matrix'):
+        if hasattr(task.rule, 'var_matrix') or hasattr(task.rule, 'rule_matrix'):
             task_dir = [task_key[:2], task_key[2:]]
             # Doesn't work if val is e.g. a datetime.
             # task_dir = [f'{k}-{getattr(task, k)}' for k in task.var_matrix.keys()]

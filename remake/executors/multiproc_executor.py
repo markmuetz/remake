@@ -15,7 +15,7 @@ def worker(proc_id, remakefile_name, task_queue, task_complete_queue):
     logfile = Path(f'.remake/log/{remakefile_name}/worker.{proc_id}.log')
     logger.add(logfile, rotation='00:00', level='DEBUG')
 
-    rmk = load_remake(remakefile_name, finalize=False)
+    rmk = load_remake(remakefile_name, finalize=False, run=True)
     logger.debug('starting')
     task = None
     while True:
@@ -25,18 +25,16 @@ def worker(proc_id, remakefile_name, task_queue, task_complete_queue):
                 break
             task_key, force = item
             logger.debug(f'worker {current_process().name} running {task}')
+            task = rmk.task_key_map[task_key]
             with Capturing() as output:
-                rmk.run_tasks_from_keys([task_key], 'SingleprocExecutor')
+                task.rule.run_task(task, save_status=False)
             logger.debug(f'worker {current_process().name} stdout')
             for line in output:
                 logger.debug(line)
-            # task.run(use_task_control=False)
             logger.debug(f'worker {current_process().name} complete {task}')
             task_complete_queue.put((task_key, True, None))
         except Exception as e:
             logger.error(e)
-            if task:
-                logger.error(str(task))
             task_complete_queue.put((task_key, False, e))
 
             item = task_queue.get()
@@ -105,10 +103,18 @@ class MultiprocExecutor(Executor):
         remote_task_key, success, error = self.task_complete_queue.get()
         if not success:
             logger.error(f'Error running {remote_task_key}')
+            logger.error(error)
+            failed_task, key = self.running_tasks.pop(remote_task_key)
+            failed_task.last_run_status = 2
+            self.rmk.update_task(failed_task, exception=error)
             raise Exception(error)
         logger.trace(f'ctrl receieved: {remote_task_key}')
         completed_task, key = self.running_tasks.pop(remote_task_key)
+
         completed_task.requires_rerun = False
+        completed_task.last_run_status = 1
+        self.rmk.update_task(task)
+
         self.already_run_tasks.add(completed_task)
         logger.trace(f'completed: {completed_task}')
         return completed_task
