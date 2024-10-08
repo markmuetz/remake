@@ -3,7 +3,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from remake.loader import load_remake
+from ..loader import load_remake
 
 from .executor import Executor
 
@@ -59,6 +59,4 @@ class DaskExecutor(Executor):
         else:
             client = cluster.get_client()
         client.get(dask_task_graph, 'complete')
-
-
 

@@ -14,7 +14,7 @@ from pyquerylist import QueryList
 
 from .code_compare import dedent
 from .config import Config
-from .executors import Executor, SingleprocExecutor, SlurmExecutor, DaskExecutor
+from .executors import Executor, SingleprocExecutor, SlurmExecutor, DaskExecutor, MultiprocExecutor
 from .sqlite3_metadata_manager import Sqlite3MetadataManager
 from .rule import Rule
 from .task import Task
@@ -307,6 +307,8 @@ class Remake:
                 executor = SlurmExecutor(self, self.config.get('slurm', {}))
             elif executor == 'DaskExecutor':
                 executor = DaskExecutor(self, self.config.get('dask', {}))
+            elif executor == 'MultiprocExecutor':
+                executor = MultiprocExecutor(self, self.config.get('multiproc', {}))
             else:
                 raise ValueError(f'{executor} not a valid executor')
         elif not isinstance(executor, Executor):
@@ -327,7 +329,7 @@ class Remake:
         if not rerun_tasks:
             logger.info('No tasks require rerun')
             return
-        logger.info(f'Running {len(rerun_tasks)} tasks')
+        logger.info(f'Running {len(rerun_tasks)} tasks using {executor}')
         executor = self._get_executor(executor)
         logger.debug(f'using {executor}')
         executor.run_tasks(rerun_tasks)
