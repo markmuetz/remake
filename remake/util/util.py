@@ -1,5 +1,6 @@
 import sys
 import importlib
+import subprocess as sp
 from io import StringIO
 from pathlib import Path, PosixPath
 from typing import Union
@@ -66,6 +67,19 @@ def tmp_to_actual_path(path: Path) -> Path:
         raise ValueError(f'Path must be a remake tmp path (start with ".remake.tmp."): {path}')
 
     return path.parent / path.name[12:]
+
+
+def format_path(path: Union[Path, str], **kwargs) -> Path:
+    """Format a path based on `**kwargs`.
+
+    >>> format_path(Path('some/path/{dirname}/{filename}'), dirname='output', filename='out.txt')
+    PosixPath('some/path/output/out.txt')
+
+    :param path: path with python format-style braces
+    :param kwargs: keyword args to substitute
+    :return: formatted path
+    """
+    return Path(str(path).format(**kwargs))
 
 
 class Capturing(list):

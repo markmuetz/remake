@@ -19,7 +19,7 @@ from .task import Task
 from .util import dedent, Config, load_module
 
 logger.remove()
-logger.add(sys.stdout, format='<bold>{message}</bold>', level='INFO')
+logger.add(sys.stdout, format='<bold><lvl>{message}</lvl></bold>', level='INFO')
 
 
 def all_descendants(task_dag, tasks):
@@ -110,8 +110,8 @@ class Remake:
         elif sys.version_info[0] == 3 and sys.version_info[1] == 10:
             stack = next(traceback.walk_stack(None))
             frame = stack[0]
-            self.name = frame.f_globals['__file__']
-            self.full_path = str(Path(frame.f_locals['module'].__file__).absolute())
+            self.full_path = frame.f_globals['__file__']
+            self.name = Path(self.full_path).name
 
     def autoload_rules(self, finalize=True):
         stack = next(traceback.walk_stack(None))
@@ -167,6 +167,7 @@ class Remake:
 
         if finalize:
             self.finalize()
+
         logger.debug('Loaded rules')
         return self
 
@@ -294,8 +295,9 @@ class Remake:
             task.rerun_reasons = rerun_reasons
 
     def finalize(self):
-        logger.debug('getting task status')
+        logger.debug('finalize')
         self.metadata_manager.get_or_create_tasks_metadata(self.topo_tasks)
+        logger.debug('getting task status')
         self._set_task_statuses(self.topo_tasks)
 
     def update_task(self, task, exception=''):
@@ -364,9 +366,24 @@ class Remake:
             1: 'C',
             2: 'RF',
         }
+        status_loggers = {
+            'R': 'RERUN',
+            'C': 'COMPLETE',
+            'RF': 'FAILED',
+            'XR': 'FAILED',
+            'XC': 'FAILED',
+            'XRF': 'FAILED',
+        }
+        try:
+            logger.level('RERUN')
+        except ValueError:
+            logger.level('RERUN', no=45, color='<blue>')
+            logger.level('COMPLETE', no=46, color='<green>')
+            logger.level('FAILED', no=47, color='<red>')
+
         counter = Counter()
         logger.info(f'==> {self.name} <==')
-        if query or not rule:
+        if query and not rule:
             logger.info(f'Filter on: {query}')
             filtered_tasks = self.topo_tasks.where(query)
         else:
@@ -384,7 +401,8 @@ class Remake:
         status_keys = ['C', 'R', 'RF', 'XC', 'XR', 'XRF']
         if short:
             for k in status_keys:
-                logger.info(f'{k:<3}: {counter.get(k, 0)}')
+                level = status_loggers[k]
+                logger.log(level, f'{k:<3}: {counter.get(k, 0)}')
             return
 
         if rule:
@@ -393,10 +411,14 @@ class Remake:
             rows.append(row)
             rows.append(SEPARATING_LINE)
 
+            statuses = []
             for rule in self.rules:
+                max_status = 0
                 rule_counter = Counter()
                 for task in rule.tasks:
                     rule_counter[task.status] += 1
+                    max_status = max(status_keys.index(task.status), max_status)
+                statuses.append(max_status)
                 row = [
                     rule.__name__,
                     len(rule.tasks),
@@ -406,12 +428,22 @@ class Remake:
             rows.append(SEPARATING_LINE)
             row = ['Total', len(self.tasks), *[counter.get(k, 0) for k in status_keys]]
             rows.append(row)
-            logger.info(tabulate(rows))
+            lines = tabulate(rows).split('\n')
+            for line in lines[:3]:
+                logger.info(line)
+            for status, line in zip(statuses, lines[3:-3]):
+                level = status_loggers[status_keys[status]]
+                logger.log(level, line)
+            logger.info(lines[-3])
+            level = status_loggers[status_keys[max(statuses)]]
+            logger.log(level, lines[-2])
+            logger.info(lines[-1])
             return
 
         diffs = {}
         for task in filtered_tasks:
-            logger.info(f'{task.status:<2s} {task}')
+            level = status_loggers[task.status]
+            logger.log(level, f'{task.status:<2s} {task}')
             if 'F' in task.status and show_failures:
                 show_task_failure(task)
             if ('R' in task.status or 'X' in task.status) and show_reasons:

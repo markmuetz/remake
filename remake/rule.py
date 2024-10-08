@@ -16,7 +16,7 @@ class Rule:
             cls.run_task(task)
 
     @classmethod
-    def run_task(cls, task):
+    def run_task(cls, task, save_status=True):
         tmp_outputs = {k: tmp_atomic_path(v) for k, v in task.outputs.items()}
         for output_dir in set(Path(o).parent for o in task.outputs.values()):
             if not output_dir.exists():
@@ -42,9 +42,10 @@ class Rule:
             logger.error(f'failed: {task}')
             logger.error(f'failed: {e}')
             task.last_run_status = 2
-            logger.debug(f'update task: {task}')
-            cls.remake.update_task(task, exception=str(e))
-            logger.debug(f'updated task: {task}')
+            if save_status:
+                logger.debug(f'update task: {task}')
+                cls.remake.update_task(task, exception=str(e))
+                logger.debug(f'updated task: {task}')
             raise
         logger.debug(f'Completed: {task}')
 
@@ -56,6 +57,7 @@ class Rule:
 
         task.is_run = True
         task.requires_rerun = False
-        logger.debug(f'update task: {task}')
-        cls.remake.update_task(task)
-        logger.debug(f'updated task: {task}')
+        if save_status:
+            logger.debug(f'update task: {task}')
+            cls.remake.update_task(task)
+            logger.debug(f'updated task: {task}')

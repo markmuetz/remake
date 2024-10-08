@@ -105,15 +105,6 @@ class RemakeParser:
                 Arg('--query', '-Q', help='Filter tasks based on query', nargs=1),
             ],
         },
-        'run-tasks': {
-            'help': 'Run specified tasks (uses same flags as ls-tasks)',
-            'args': [
-                Arg('remakefile', nargs='?', default=''),
-                Arg('--executor', '-E', default='Singleproc'),
-                Arg('--remakefile-sha1', default=None),
-                Arg('--tasks', '-t', nargs='*'),
-            ],
-        },
         'set-tasks-status': {
             'help': 'Set tasks status using given code (0=not run, 1=run, 2=failed)',
             'args': [
@@ -188,12 +179,13 @@ class RemakeParser:
         self.rmk = rmk
 
     def remake_run_tasks(self, args):
-        if remakefile_sha1:
+        if args.remakefile_sha1:
             curr_remakefile_sha1 = sha1(Path(args.remakefile).read_bytes()).hexdigest()
-            assert remakefile_sha1 == curr_remakefile_sha1
+            assert args.remakefile_sha1 == curr_remakefile_sha1
 
+        task_keys = args.tasks
         rmk = load_remake(args.remakefile, finalize=False, run=True)
-        rmk.run_tasks_from_keys(args.task_keys, executor=args.executor + 'Executor')
+        rmk.run_tasks_from_keys(task_keys, executor=args.executor + 'Executor')
         self.rmk = rmk
 
     def remake_ls_tasks(self, args):

@@ -13,7 +13,7 @@ def dask_task_run(remake_path, task_key, *input_task_keys):
     cwd = os.getcwd()
     remake_path = Path(remake_path)
     os.chdir(remake_path.parent)
-    rmk = load_remake(remake_path.name, finalize=False)
+    rmk = load_remake(remake_path.name, finalize=False, run=True)
     rmk.run_tasks_from_keys([task_key], 'SingleprocExecutor')
     os.chdir(cwd)
 
