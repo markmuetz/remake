@@ -445,11 +445,35 @@ class Remake:
             level = status_loggers[task.status]
             logger.log(level, f'{task.status:<2s} {task}')
             if 'F' in task.status and show_failures:
-                show_task_failure(task)
+                self.show_task_failure(task)
             if ('R' in task.status or 'X' in task.status) and show_reasons:
                 self.show_task_reasons(task)
             if show_task_code_diff and 'task_run_source_changed' in task.rerun_reasons:
                 diffs = self.show_task_code_diff(task, diffs)
+
+    def touch(self, input_files=True, all_files=False):
+        if all_files:
+            tasks = self.topo_tasks
+        elif input_files:
+            tasks = self.input_tasks
+
+        io_dirs = set()
+        topo_paths = []
+        for task in tasks:
+            for input_file in task.inputs.values():
+                ipath = Path(input_file)
+                io_dirs.add(ipath.parent)
+                topo_paths.append(ipath)
+            if all_files:
+                for output_file in task.outputs.values():
+                    opath = Path(output_file)
+                    io_dirs.add(opath.parent)
+                    topo_paths.append(opath)
+        for d in io_dirs:
+            d.mkdir(exist_ok=True, parents=True)
+
+        for path in topo_paths:
+            path.touch()
 
     def run(
         self,

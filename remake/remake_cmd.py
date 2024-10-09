@@ -7,7 +7,8 @@ from loguru import logger
 
 # Note, relative imports do not always work for this entry point.
 from remake.loader import load_remake, load_archive
-from remake.util import Arg, MutuallyExclusiveGroup, add_argset, load_module
+from remake.util import Arg, MutuallyExclusiveGroup, add_argset, load_module, sysrun
+from remake.archive import restore
 
 
 def log_error(ex_type, value, tb):
@@ -98,6 +99,16 @@ class RemakeParser:
                 Arg('--rule', help='Show summary for each rule', action='store_true'),
             ],
         },
+        'touch': {
+            'help': 'Use touch to create/update timestamps of files',
+            'args': [
+                Arg('remakefile', nargs='?', default=''),
+                MutuallyExclusiveGroup(
+                    Arg('--inputs', '-I', help='touch inputs-only files', action='store_true', default=True),
+                    Arg('--all', '-A', help='touch all files in topological order', action='store_true'),
+                ),
+            ],
+        },
         'ls-tasks': {
             'help': 'List specified tasks',
             'args': [
@@ -113,7 +124,18 @@ class RemakeParser:
                 Arg('--last-run-status-code', '-S', type=int),
             ],
         },
-        'archive': {'help': 'archive the project according to info in archive.py', 'args': []},
+        'archive': {
+            'help': 'archive the project according to info in archive.py',
+            'args': [
+                Arg('archive', nargs='?', default='archive.py'),
+                Arg('--dry-run', '-n', action='store_true'),
+
+        ]},
+        'restore': {
+            'help': 'restore the project',
+            'args': [
+                Arg('archive', nargs='?', default=''),
+        ]},
     }
 
     def __init__(self):
@@ -225,15 +247,22 @@ class RemakeParser:
         )
         self.rmk = rmk
 
-    def remake_archive(self):
-        archive = load_archive('archive.py')
-        for f in dir(archive):
-            if not f.startswith('__'):
-                print(f'{f} = {getattr(archive, f)}')
+    def remake_touch(self, args):
+        rmk = load_remake(args.remakefile)
+        rmk.touch(args.inputs, args.all)
+        self.rmk = rmk
+
+    def remake_archive(self, args):
+        archive = load_archive(args.archive)
+        # for f in dir(archive):
+        #     if not f.startswith('__'):
+        #         print(f'{f} = {getattr(archive, f)}')
         rmk = load_remake(archive.remakefile)
-        for rule in rmk.rules:
-            if hasattr(rule, 'archive'):
-                print([p for t in rule.tasks for p in t.inputs.values()])
+        archive.add_remake(rmk)
+        archive.archive(args.dry_run)
+
+    def remake_restore(self, args):
+        restore(args.archive)
 
 
 def remake_cmd(argv=None):

@@ -1,6 +1,6 @@
 from .loader import load_remake
 from .remake_base import Remake
-from .archive import Archive
+from .archive import Archive, ArchiveRule
 from .task import Task
 from .rule import Rule
 

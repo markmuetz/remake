@@ -113,7 +113,7 @@ class MultiprocExecutor(Executor):
 
         completed_task.requires_rerun = False
         completed_task.last_run_status = 1
-        self.rmk.update_task(task)
+        self.rmk.update_task(completed_task)
 
         self.already_run_tasks.add(completed_task)
         logger.trace(f'completed: {completed_task}')

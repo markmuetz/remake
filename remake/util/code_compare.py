@@ -40,11 +40,11 @@ class CodeComparer:
         logger.trace('code1:\n' + code1)
         logger.trace('code2:\n' + code2)
         if code1 == code2:
-            logger.debug('code1 == code2')
+            logger.trace('code1 == code2')
             return True
         key = tuple(sorted([code1, code2]))
         if key in self.compare_cache:
-            logger.debug('already compared')
+            logger.trace('already compared')
             return self.compare_cache[key]
         try:
             res = _compare_ast(ast.parse(code1), ast.parse(code2))
