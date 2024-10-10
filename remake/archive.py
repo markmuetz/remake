@@ -2,12 +2,14 @@ import os
 import abc
 import json
 import tarfile
+from hashlib import sha1
 from pathlib import Path
 
 from loguru import logger
 
 from .util import sysrun, get_git_info, git_archive
 from .version import __version__
+from .task import Task
 
 def humanbytes(B):
     """Return the given bytes as a human friendly KB, MB, GB, or TB string."""
@@ -29,11 +31,47 @@ def humanbytes(B):
         return '{0:.2f} TB'.format(B / TB)
 
 
+class ArchiveTask(Task):
+    def __init__(self, archive_file, archive_path, file_manifest):
+        self.archive_file = archive_file
+        self.archive_path = archive_path
+        self.file_manifest = file_manifest
+        class _ArchRule:
+            pass
+        super().__init__(_ArchRule, {}, {}, {}, [], [])
+
+    def key(self):
+        return sha1(
+            (
+                ','.join(str(v[1]) for v in self.file_manifest)
+            ).encode()
+        ).hexdigest()
+
+    def run(self):
+        logger.info(f'Archive to: {self.archive_path}')
+        total_size = sum([f[3] for f in self.file_manifest])
+        # with tarfile.open(archive_path, 'w:gz') as tar:
+        with tarfile.open(self.archive_path, 'w') as tar:
+            size_archived = 0
+            for prepend, path, shorten, size in [(prepend, Path(path), shorten, size) for prepend, path, shorten, size in self.file_manifest]:
+                logger.trace((prepend, path, shorten, size))
+                if shorten:
+                    tar.add(str(path), str(Path(prepend) / path.name))
+                else:
+                    if path.is_absolute():
+                        # Convert to relative path.
+                        tarpath = Path('').joinpath(*path.parts[1:])
+                    else:
+                        tarpath = path
+                    tar.add(str(path), str(Path(prepend) / tarpath))
+                size_archived += size
+                logger.debug(f'archived {size_archived}/{total_size} ({size_archived / total_size * 100:.1f}%)')
+
+
 class BaseArchive(abc.ABC):
     @abc.abstractmethod
     def version(self):
         pass
-
 
 class ArchiveV1(BaseArchive):
     def __init__(
@@ -65,13 +103,12 @@ class ArchiveV1(BaseArchive):
     def add(self, archive_rule):
         self.archive_rules.append(archive_rule)
 
-    def archive(self, dry_run):
-        total_size = 0
+    def archive(self, archive_file, dry_run, executor='SingleprocExecutor'):
         file_manifest = []
         archive_dir = Path(f'.remake/archive/{self.name}').absolute()
 
         git_info = get_git_info()
-        if git_info.is_repo and git_info.status == 'clean':
+        if git_info.is_repo: # and git_info.status == 'clean':
             orig_cwd = Path.cwd()
             cwd = orig_cwd
             while not (cwd / '.git').exists():
@@ -84,8 +121,7 @@ class ArchiveV1(BaseArchive):
             git_archive_path = git_archive(self.name, 'main', archive_dir / 'code.git_archive.tar.gz')
             os.chdir(orig_cwd)
 
-            file_manifest.append(('archive_code', str(git_archive_path), True))
-            total_size += git_archive_path.lstat().st_size
+            file_manifest.append(('archive_code', str(git_archive_path), True, git_archive_path.lstat().st_size))
         else:
             raise Exception('Not a git repo or not clean')
 
@@ -99,12 +135,10 @@ class ArchiveV1(BaseArchive):
                 if archive_rule.inputs:
                     for path in task.inputs.values():
                         size = Path(path).lstat().st_size
-                        total_size += size
-                        file_manifest.append(('archive_data', str(path), False))
+                        file_manifest.append(('archive_data', str(path), False, size))
                         data_files.append(dict(path=str(path), size=size))
 
-        logger.info(f'Total file size: {humanbytes(total_size)}')
-
+        total_size = sum([f[3] for f in file_manifest])
         archive_metadata = {
             'archive_version': self._version,
             'name': self.name,
@@ -129,31 +163,26 @@ class ArchiveV1(BaseArchive):
 
         metadata_file = archive_dir / 'metadata.json'
         metadata_file.write_text(json.dumps(archive_metadata, indent=4))
-        file_manifest.append(('archive_metadata', str(metadata_file), True))
+        file_manifest.append(('archive_metadata', str(metadata_file), True, metadata_file.lstat().st_size))
 
         conda_env_file = archive_dir / 'conda_env.yml'
         conda_env_file.write_text(conda_env_yml)
-        file_manifest.append(('archive_metadata', str(conda_env_file), True))
+        file_manifest.append(('archive_metadata', str(conda_env_file), True, conda_env_file.lstat().st_size))
 
         data_files_file = archive_dir / 'data_files.json'
         data_files_file.write_text(json.dumps(data_files, indent=4))
-        file_manifest.append(('archive_metadata', str(data_files_file), True))
+        file_manifest.append(('archive_metadata', str(data_files_file), True, data_files_file.lstat().st_size))
+        file_manifest = sorted(set(file_manifest), key=lambda x: x[1])
+
+        logger.info(f'Total file size: {humanbytes(total_size)}')
 
         if not dry_run:
-            archive_path = Path(f'{self.archive_loc}') / f'{self.name}.remake_archive.tar.gz'
-            logger.info(f'Archive to: {archive_path}')
-            with tarfile.open(archive_path, 'w:gz') as tar:
-                for prepend, path, shorten in [(prepend, Path(path), shorten) for prepend, path, shorten in file_manifest]:
-                    logger.trace((prepend, path, shorten))
-                    if shorten:
-                        tar.add(str(path), str(Path(prepend) / path.name))
-                    else:
-                        if path.is_absolute():
-                            # Convert to relative path.
-                            tarpath = Path('').joinpath(*path.parts[1:])
-                        else:
-                            tarpath = path
-                        tar.add(str(path), str(Path(prepend) / tarpath))
+            # archive_path = Path(f'{self.archive_loc}') / f'{self.name}.remake_archive.tar.gz'
+            archive_path = Path(f'{self.archive_loc}') / f'{self.name}.remake_archive.tar'
+            archive_task = ArchiveTask(archive_file, archive_path, file_manifest)
+            executor = self.rmk._get_executor(executor)
+            executor.run_tasks([archive_task])
+
 
 class ArchiveV1Rule:
     def __init__(self, rule, inputs=None):
@@ -163,7 +192,8 @@ class ArchiveV1Rule:
 
 def restore(archive_file, data_dir=None):
     logger.info(f'Restoring code and data from: {archive_file}')
-    with tarfile.open(f'{archive_file}', 'r:gz') as tar:
+    # with tarfile.open(f'{archive_file}', 'r:gz') as tar:
+    with tarfile.open(f'{archive_file}', 'r') as tar:
         logger.trace(f'read metadata')
         archive_metadata = json.loads(tar.extractfile('archive_metadata/metadata.json').read())
         logger.debug(archive_metadata)

@@ -9,6 +9,7 @@ from loguru import logger
 from remake.util import sysrun
 
 from .executor import Executor
+from ..archive import ArchiveTask
 
 
 SLURM_SCRIPT_TPL = """#!/bin/bash
@@ -20,9 +21,18 @@ SLURM_SCRIPT_TPL = """#!/bin/bash
 {dependencies}
 
 echo "SLURM RUNNING {task_key}"
+{remake_cmd}
+echo "SLURM COMPLETED {task_key}"
+"""
+
+REMAKE_RUN_CMD_TPL = """
 cd {script_dir}
 remake -D run-tasks {remakefile_path} --remakefile-sha1 {remakefile_path_hash} --tasks {task_key}
-echo "SLURM COMPLETED {task_key}"
+"""
+
+REMAKE_ARCHIVE_CMD_TPL = """
+cd {script_dir}
+remake -D archive {archive_file}
 """
 
 
@@ -154,17 +164,29 @@ class SlurmExecutor(Executor):
                 extra_opts.append(f'#SBATCH --{k}={v}')
         comment = str(task)
         extra_opts = '\n'.join(extra_opts)
+        if isinstance(task, ArchiveTask):
+            remake_cmd = REMAKE_ARCHIVE_CMD_TPL.format(script_dir=Path.cwd(), archive_file=task.archive_file)
+        else:
+            # cd {script_dir}
+            # remake -D run-tasks {remakefile_path} --remakefile-sha1 {remakefile_path_hash} --tasks {task_key}
+            remake_cmd = REMAKE_RUN_CMD_TPL.format(
+                script_dir=Path.cwd(),
+                remakefile_path=remakefile_path,
+                remakefile_path_hash=remakefile_path_hash,
+                task_key=task_key,
+            )
         slurm_script = SLURM_SCRIPT_TPL.format(
-            script_dir=Path.cwd(),
+            # script_dir=Path.cwd(),
             task_slurm_output=task_slurm_output,
             comment=comment,
             remakefile_name=remakefile_name,
-            remakefile_path=self.remakefile_path,
-            remakefile_path_hash=self.remakefile_path_hash,
+            # remakefile_path=self.remakefile_path,
+            # remakefile_path_hash=self.remakefile_path_hash,
             task_key=task_key,
             extra_opts=extra_opts,
             dependencies=dependencies,
             job_name=task_key[:10],  # Longer and a leading * is added.
+            remake_cmd=remake_cmd,
             **slurm_kwargs,
         )
 

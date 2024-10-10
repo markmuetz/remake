@@ -128,6 +128,7 @@ class RemakeParser:
             'help': 'archive the project according to info in archive.py',
             'args': [
                 Arg('archive', nargs='?', default='archive.py'),
+                Arg('--executor', '-E', default='Singleproc'),
                 Arg('--dry-run', '-n', action='store_true'),
 
         ]},
@@ -260,7 +261,7 @@ class RemakeParser:
         #         print(f'{f} = {getattr(archive, f)}')
         rmk = load_remake(archive.remakefile)
         archive.add_remake(rmk)
-        archive.archive(args.dry_run)
+        archive.archive(args.archive, args.dry_run, executor=args.executor + 'Executor')
 
     def remake_restore(self, args):
         restore(args.archive, args.data_dir)
