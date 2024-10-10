@@ -135,6 +135,7 @@ class RemakeParser:
             'help': 'restore the project',
             'args': [
                 Arg('archive', nargs='?', default=''),
+                Arg('--data-dir', default=None),
         ]},
     }
 
@@ -262,7 +263,7 @@ class RemakeParser:
         archive.archive(args.dry_run)
 
     def remake_restore(self, args):
-        restore(args.archive)
+        restore(args.archive, args.data_dir)
 
 
 def remake_cmd(argv=None):
@@ -289,11 +290,12 @@ def remake_cmd(argv=None):
             sys.stdout, colorize=True, format='<bold><lvl>{message}</lvl></bold>', level='WARNING'
         )
 
-    if hasattr(args, 'remakefile'):
-        file_log = f'.remake/log/{args.remakefile}/remake.log'
-    else:
-        file_log = f'.remake/log/remake.log'
-    logger.add(file_log, rotation='00:00', level='TRACE' if args.trace else 'DEBUG')
+    if args.subcmd_name not in {'restore'}:
+        if hasattr(args, 'remakefile'):
+            file_log = f'.remake/log/{args.remakefile}/remake.log'
+        else:
+            file_log = f'.remake/log/remake.log'
+        logger.add(file_log, rotation='00:00', level='TRACE' if args.trace else 'DEBUG')
 
     logger.debug('Called with args:')
     logger.debug(argv)

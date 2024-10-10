@@ -29,14 +29,14 @@ def load_remake(filename, finalize=True, run=False):
 
 def load_archive(filename):
     # Avoids circular import.
-    from .archive import Archive
+    from .archive import BaseArchive
 
     filename = Path(filename)
     if not filename.suffix:
         filename = filename.with_suffix('.py')
     archive_module = load_module(filename, {})
     module_vars = [getattr(archive_module, m) for m in dir(archive_module)]
-    archives = [o for o in module_vars if isinstance(o, Archive)]
+    archives = [o for o in module_vars if isinstance(o, BaseArchive)]
     if len(archives) > 1:
         raise RemakeLoadError(f'More than one archive defined in {filename}')
     elif not archives:
