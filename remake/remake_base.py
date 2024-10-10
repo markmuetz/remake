@@ -211,6 +211,8 @@ class Remake:
 
             # Makes task queryable using QueryList
             for k, v in task_kwargs.items():
+                if k == 'kwargs':
+                    raise Exception('Cannot have a rule_matrix key called "kwargs"')
                 setattr(task, k, v)
             self.task_key_map[task.key()] = task
 
@@ -241,14 +243,12 @@ class Remake:
                 # Mark as requires_rerun so that if these have been fixed, the task can be rerun.
                 requires_rerun = True
                 rerun_reasons.append('task_failed')
-
-            prev_task_requires_rerun = False
             for prev_task in task.prev_tasks:
                 if prev_task.inputs_missing:
                     task.inputs_missing = True
                     rerun_reasons.append(f'prev_task_input_missing {prev_task}')
-                if prev_task.requires_rerun:
-                    prev_task_requires_rerun = True
+                    requires_rerun = False
+                if prev_task.requires_rerun and not prev_task.inputs_missing:
                     requires_rerun = True
                     rerun_reasons.append(f'prev_task_requires_rerun {prev_task}')
                 if _compare_task_timestamps(task.last_run_timestamp, prev_task.last_run_timestamp):
@@ -259,6 +259,7 @@ class Remake:
             latest_input_path_mtime = 0
             if config['check_outputs_older_than_inputs'] or config['check_inputs_exist']:
                 for path in task.inputs.values():
+                    all_inputs_present = True
                     if not Path(path).exists():
                         if path in self._outputs and self._outputs[path].requires_rerun:
                             pass
@@ -266,10 +267,14 @@ class Remake:
                             requires_rerun = False
                             rerun_reasons.append(f'input_missing {path}')
                             task.inputs_missing = True
+                        all_inputs_present = False
                     else:
                         latest_input_path_mtime = max(
                             latest_input_path_mtime, Path(path).lstat().st_mtime
                         )
+                    if all_inputs_present:
+                        task.inputs_missing = False
+                        rerun_reasons = [r for r in rerun_reasons if not r.startswith('prev_task_input_missing')]
 
             if config['check_outputs_older_than_inputs'] or config['check_outputs_exist']:
                 for path in task.outputs.values():
@@ -291,6 +296,7 @@ class Remake:
             ):
                 requires_rerun = True
                 rerun_reasons.append('task_run_source_changed')
+
             task.requires_rerun = requires_rerun
             task.rerun_reasons = rerun_reasons
 
@@ -490,7 +496,7 @@ class Remake:
             tasks = self.topo_tasks
 
         if not force:
-            rerun_tasks = [t for t in tasks if t.requires_rerun]
+            rerun_tasks = [t for t in tasks if t.requires_rerun and not t.inputs_missing]
         else:
             rerun_tasks = tasks
             for task in rerun_tasks:
