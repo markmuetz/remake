@@ -106,8 +106,19 @@ class RemakeParser:
             'args': [
                 Arg('remakefile', nargs='?', default=''),
                 MutuallyExclusiveGroup(
-                    Arg('--inputs', '-I', help='touch inputs-only files', action='store_true', default=True),
-                    Arg('--all', '-A', help='touch all files in topological order', action='store_true'),
+                    Arg(
+                        '--inputs',
+                        '-I',
+                        help='touch inputs-only files',
+                        action='store_true',
+                        default=True,
+                    ),
+                    Arg(
+                        '--all',
+                        '-A',
+                        help='touch all files in topological order',
+                        action='store_true',
+                    ),
                 ),
             ],
         },
@@ -132,14 +143,15 @@ class RemakeParser:
                 Arg('archive', nargs='?', default='archive.py'),
                 Arg('--executor', '-E', default='Singleproc'),
                 Arg('--dry-run', '-n', action='store_true'),
-
-        ]},
+            ],
+        },
         'restore': {
             'help': 'restore the project',
             'args': [
                 Arg('archive', nargs='?', default=''),
                 Arg('--data-dir', default=None),
-        ]},
+            ],
+        },
     }
 
     def __init__(self):

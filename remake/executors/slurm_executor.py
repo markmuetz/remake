@@ -166,7 +166,9 @@ class SlurmExecutor(Executor):
         comment = str(task)
         extra_opts = '\n'.join(extra_opts)
         if isinstance(task, ArchiveTask):
-            remake_cmd = REMAKE_ARCHIVE_CMD_TPL.format(script_dir=Path.cwd(), archive_file=task.archive_file)
+            remake_cmd = REMAKE_ARCHIVE_CMD_TPL.format(
+                script_dir=Path.cwd(), archive_file=task.archive_file
+            )
         else:
             # cd {script_dir}
             # remake -D run-tasks {remakefile_path} --remakefile-sha1 {remakefile_path_hash} --tasks {task_key}

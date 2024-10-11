@@ -126,6 +126,7 @@ def get_git_info(location='.'):
     finally:
         os.chdir(cwd)
 
+
 def git_archive(name, commitish, archive_path):
     archive_path.parent.mkdir(exist_ok=True, parents=True)
     sysrun(f'git archive --format tar.gz {commitish} -o {archive_path}')

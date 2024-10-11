@@ -282,7 +282,9 @@ class Remake:
                 if all_inputs_present:
                     logger.trace('all_inputs_present')
                     task.inputs_missing = False
-                    rerun_reasons = [r for r in rerun_reasons if not r.startswith('prev_task_input_missing')]
+                    rerun_reasons = [
+                        r for r in rerun_reasons if not r.startswith('prev_task_input_missing')
+                    ]
 
             if config['check_outputs_older_than_inputs'] or config['check_outputs_exist']:
                 for path in task.outputs.values():
@@ -380,7 +382,9 @@ class Remake:
         logger.info('==>END DIFF<==')
         return diffs
 
-    def info(self, query, show_failures, show_reasons, show_task_code_diff, short, rule, filter_status):
+    def info(
+        self, query, show_failures, show_reasons, show_task_code_diff, short, rule, filter_status
+    ):
         # print(rmk.name)
         status_map = {
             0: 'R',
@@ -521,7 +525,7 @@ class Remake:
             for task in rerun_tasks:
                 task.rerun_reasons.insert(0, 'force_rerun')
         if number != 'all':
-            rerun_tasks = rerun_tasks[:int(number)]
+            rerun_tasks = rerun_tasks[: int(number)]
 
         logger.info(f'==> {self.name} <==')
         if not rerun_tasks:
