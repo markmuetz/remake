@@ -380,7 +380,7 @@ class Remake:
         logger.info('==>END DIFF<==')
         return diffs
 
-    def info(self, query, show_failures, show_reasons, show_task_code_diff, short, rule):
+    def info(self, query, show_failures, show_reasons, show_task_code_diff, short, rule, filter_status):
         # print(rmk.name)
         status_map = {
             0: 'R',
@@ -425,6 +425,9 @@ class Remake:
                 level = status_loggers[k]
                 logger.log(level, f'{k:<3}: {counter.get(k, 0)}')
             return
+
+        if filter_status:
+            filtered_tasks = [t for t in filtered_tasks if t.status == filter_status]
 
         if rule:
             rows = []
@@ -504,6 +507,7 @@ class Remake:
         show_reasons=False,
         show_task_code_diff=False,
         stdout_to_log=False,
+        number='all',
     ):
         if query:
             tasks = self.topo_tasks.where(query)
@@ -516,6 +520,8 @@ class Remake:
             rerun_tasks = tasks
             for task in rerun_tasks:
                 task.rerun_reasons.insert(0, 'force_rerun')
+        if number != 'all':
+            rerun_tasks = rerun_tasks[:int(number)]
 
         logger.info(f'==> {self.name} <==')
         if not rerun_tasks:

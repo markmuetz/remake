@@ -71,6 +71,7 @@ class RemakeParser:
                     help='Capture and log stdout instead of displaying',
                     action='store_true',
                 ),
+                Arg('--number', '-N', help='Just run first N tasks', default='all'),
             ],
         },
         'run-tasks': {
@@ -97,6 +98,7 @@ class RemakeParser:
                 ),
                 Arg('--short', '-S', help='Short output', action='store_true'),
                 Arg('--rule', help='Show summary for each rule', action='store_true'),
+                Arg('--status', help='Filter on status', nargs='?'),
             ],
         },
         'touch': {
@@ -199,6 +201,7 @@ class RemakeParser:
             show_reasons=args.show_reasons,
             show_task_code_diff=args.show_task_code_diff,
             stdout_to_log=args.stdout_to_log,
+            number=args.number,
         )
         self.rmk = rmk
 
@@ -246,6 +249,7 @@ class RemakeParser:
             args.show_task_code_diff,
             args.short,
             args.rule,
+            args.status,
         )
         self.rmk = rmk
 

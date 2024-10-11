@@ -165,6 +165,7 @@ class Sqlite3MetadataManager(MetadataManager):
         else:
             logger.debug(f'got {db_rule}')
             code_ids = {}
+            code_differences = False
             for req_method, dbname, code_idx in [
                 ('rule_inputs', 'inputs_code_id', 2),
                 ('rule_outputs', 'outputs_code_id', 3),
@@ -176,11 +177,13 @@ class Sqlite3MetadataManager(MetadataManager):
                     code = rule.source[req_method]
                     max_code_id = self._insert_code(self.conn, code)
                     code_ids[req_method] = max_code_id
+                    code_differences = True
                 else:
                     code_ids[req_method] = db_rule[code_idx]
 
-            self._update_rule_code(self.conn, db_rule, code_ids)
-            db_rule = self._select_db_rule(self.conn, rule)
+            if code_differences:
+                self._update_rule_code(self.conn, db_rule, code_ids)
+                db_rule = self._select_db_rule(self.conn, rule)
 
         self.rule_map[rule] = db_rule
 

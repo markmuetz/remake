@@ -69,6 +69,7 @@ class SlurmExecutor(Executor):
         default_slurm_kwargs = {'partition': 'short-serial', 'time': '4:00:00', 'mem': 50000}
         slurm_kwargs = {**default_slurm_kwargs}
         slurm_kwargs.update(slurm_config)
+        logger.trace(slurm_kwargs)
 
         self.slurm_dir = Path('.remake/slurm/scripts')
         self.slurm_dir.mkdir(exist_ok=True, parents=True)
@@ -171,8 +172,8 @@ class SlurmExecutor(Executor):
             # remake -D run-tasks {remakefile_path} --remakefile-sha1 {remakefile_path_hash} --tasks {task_key}
             remake_cmd = REMAKE_RUN_CMD_TPL.format(
                 script_dir=Path.cwd(),
-                remakefile_path=remakefile_path,
-                remakefile_path_hash=remakefile_path_hash,
+                remakefile_path=self.remakefile_path,
+                remakefile_path_hash=self.remakefile_path_hash,
                 task_key=task_key,
             )
         slurm_script = SLURM_SCRIPT_TPL.format(
