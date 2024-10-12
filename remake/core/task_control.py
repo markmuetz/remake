@@ -21,13 +21,13 @@ class TaskControl:
         path = Path(path)
         if path not in self._path_cache:
             self._path_cache[path] = {'exists': path.exists()}
-        return self._path_cache['exists']
+        return self._path_cache[path]['exists']
 
     def _path_mtime(self, path):
         path = Path(path)
         if path not in self._path_cache or 'mtime' not in self._path_cache[path]:
             self._path_cache[path]['mtime'] = Path(path).lstat().st_mtime
-        return self._path_cache['mtime']
+        return self._path_cache[path]['mtime']
 
     def _file_system_checks(self, task, config, requires_rerun, rerun_reasons):
         earliest_output_path_mtime = float('inf')

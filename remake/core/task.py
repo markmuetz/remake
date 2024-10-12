@@ -19,6 +19,10 @@ class Task:
     last_run_code: str = ''
     inputs_missing: bool = False
 
+    def __post_init__(self):
+        if not self.outputs:
+            raise ValueError('Task.outputs must be set')
+
     def run(self):
         self.rule.run_task(self)
 

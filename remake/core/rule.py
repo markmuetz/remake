@@ -17,6 +17,7 @@ class Rule:
 
     @classmethod
     def run_task(cls, task, save_status=True):
+        assert task.rule == cls, f'Task has wrong rule: {task.rule} != {cls}'
         tmp_outputs = {k: tmp_atomic_path(v) for k, v in task.outputs.items()}
         for output_dir in set(Path(o).parent for o in task.outputs.values()):
             if not output_dir.exists():
