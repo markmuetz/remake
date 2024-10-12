@@ -4,6 +4,7 @@ import inspect
 from pathlib import Path
 from typing import Union
 
+
 def load_module(local_filename: Union[str, Path], module_attrs=None):
     """Use Python internals to load a Python module from a filename.
 
@@ -41,8 +42,6 @@ def load_remake(filename, finalize=True, run=False):
     # Avoids circular import.
     from ..core import Remake, Rule
     from ..core.remake_exceptions import RemakeLoadError
-
-
 
     filename = Path(filename)
     if not filename.suffix:

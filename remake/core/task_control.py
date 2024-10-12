@@ -94,9 +94,7 @@ class TaskControl:
                     logger.trace('input_is_older_than_output')
                     rerun_reasons.append('input_is_older_than_output')
 
-            if not self.code_comparer(
-                task.last_run_code, task.rule.source['rule_run']
-            ):
+            if not self.code_comparer(task.last_run_code, task.rule.source['rule_run']):
                 if not task.inputs_missing:
                     requires_rerun = True
                 logger.trace('task_run_source_changed')
@@ -107,5 +105,3 @@ class TaskControl:
             logger.debug(f'R={task.requires_rerun}, M={task.inputs_missing}: {task}')
             # if task.rule.__name__ == 'RegridImergToN216':
             #     raise Exception()
-
-
