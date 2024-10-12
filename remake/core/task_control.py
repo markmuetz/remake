@@ -15,6 +15,61 @@ def _compare_task_timestamps(t1, t2):
 class TaskControl:
     def __init__(self):
         self.code_comparer = CodeComparer()
+        self._path_cache = {}
+
+    def _path_exists(self, path):
+        path = Path(path)
+        if path not in self._path_cache:
+            self._path_cache[path] = {'exists': path.exists()}
+        return self._path_cache['exists']
+
+    def _path_mtime(self, path):
+        path = Path(path)
+        if path not in self._path_cache or 'mtime' not in self._path_cache[path]:
+            self._path_cache[path]['mtime'] = Path(path).lstat().st_mtime
+        return self._path_cache['mtime']
+
+    def _file_system_checks(self, task, config, requires_rerun, rerun_reasons):
+        earliest_output_path_mtime = float('inf')
+        latest_input_path_mtime = 0
+        if config['check_outputs_older_than_inputs'] or config['check_inputs_exist']:
+            all_inputs_present = True
+            for path in task.inputs.values():
+                if not self._path_exists(path):
+                    if path in remake_outputs and remake_outputs[path].requires_rerun:
+                        pass
+                    else:
+                        requires_rerun = False
+                        logger.trace(f'input_missing {path}')
+                        rerun_reasons.append(f'input_missing {path}')
+                        task.inputs_missing = True
+                    all_inputs_present = False
+                elif config['check_outputs_older_than_inputs']:
+                    latest_input_path_mtime = max(latest_input_path_mtime, self._path_mtime(path))
+            if all_inputs_present:
+                logger.trace('all_inputs_present')
+                task.inputs_missing = False
+                rerun_reasons = [
+                    r for r in rerun_reasons if not r.startswith('prev_task_input_missing')
+                ]
+
+        if config['check_outputs_older_than_inputs'] or config['check_outputs_exist']:
+            for path in task.outputs.values():
+                if not self._path_exists(path):
+                    requires_rerun = True
+                    logger.trace(f'output_missing {path}')
+                    rerun_reasons.append(f'output_missing {path}')
+                elif config['check_outputs_older_than_inputs']:
+                    earliest_output_path_mtime = min(
+                        earliest_output_path_mtime, self._path_mtime(path)
+                    )
+
+        if config['check_outputs_older_than_inputs']:
+            if latest_input_path_mtime > earliest_output_path_mtime:
+                requires_rerun = True
+                logger.trace('input_is_older_than_output')
+                rerun_reasons.append('input_is_older_than_output')
+        return requires_rerun
 
     def set_task_statuses(self, tasks, remake_outputs, config):
         for task in tasks:
@@ -51,48 +106,14 @@ class TaskControl:
                     logger.trace(f'prev_task_run_more_recently {prev_task}')
                     rerun_reasons.append(f'prev_task_run_more_recently {prev_task}')
 
-            earliest_output_path_mtime = float('inf')
-            latest_input_path_mtime = 0
-            if config['check_outputs_older_than_inputs'] or config['check_inputs_exist']:
-                # TODO: Cache files to avoid hitting FS more than once per file.
-                all_inputs_present = True
-                for path in task.inputs.values():
-                    if not Path(path).exists():
-                        if path in self.remake_outputs and self.remake_outputs[path].requires_rerun:
-                            pass
-                        else:
-                            requires_rerun = False
-                            logger.trace(f'input_missing {path}')
-                            rerun_reasons.append(f'input_missing {path}')
-                            task.inputs_missing = True
-                        all_inputs_present = False
-                    else:
-                        latest_input_path_mtime = max(
-                            latest_input_path_mtime, Path(path).lstat().st_mtime
-                        )
-                if all_inputs_present:
-                    logger.trace('all_inputs_present')
-                    task.inputs_missing = False
-                    rerun_reasons = [
-                        r for r in rerun_reasons if not r.startswith('prev_task_input_missing')
-                    ]
-
-            if config['check_outputs_older_than_inputs'] or config['check_outputs_exist']:
-                for path in task.outputs.values():
-                    if not Path(path).exists():
-                        requires_rerun = True
-                        logger.trace(f'output_missing {path}')
-                        rerun_reasons.append(f'output_missing {path}')
-                    else:
-                        earliest_output_path_mtime = min(
-                            earliest_output_path_mtime, Path(path).lstat().st_mtime
-                        )
-
-            if config['check_outputs_older_than_inputs']:
-                if latest_input_path_mtime > earliest_output_path_mtime:
-                    requires_rerun = True
-                    logger.trace('input_is_older_than_output')
-                    rerun_reasons.append('input_is_older_than_output')
+            if (
+                config['check_outputs_older_than_inputs']
+                or config['check_inputs_exist']
+                or config['check_outputs_exist']
+            ):
+                requires_rerun = self._file_system_checks(
+                    task, config, requires_rerun, rerun_reasons
+                )
 
             if not self.code_comparer(task.last_run_code, task.rule.source['rule_run']):
                 if not task.inputs_missing:
@@ -103,5 +124,5 @@ class TaskControl:
             task.requires_rerun = requires_rerun
             task.rerun_reasons = rerun_reasons
             logger.debug(f'R={task.requires_rerun}, M={task.inputs_missing}: {task}')
-            # if task.rule.__name__ == 'RegridImergToN216':
+            # if task.key().startswith() == 'ab123':
             #     raise Exception()
