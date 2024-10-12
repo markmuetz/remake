@@ -6,9 +6,9 @@ from pathlib import Path
 from loguru import logger
 
 # Note, relative imports do not always work for this entry point.
-from remake.loader import load_remake, load_archive
-from remake.util import Arg, MutuallyExclusiveGroup, add_argset, load_module, sysrun
-from remake.archive import restore
+from remake.loader import load_remake, load_archive, load_module
+from remake.util import Arg, MutuallyExclusiveGroup, add_argset, sysrun
+from remake.core import restore
 
 
 def log_error(ex_type, value, tb):

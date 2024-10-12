@@ -6,10 +6,9 @@ from pathlib import Path
 
 from loguru import logger
 
-from remake.util import sysrun
+from ..util import sysrun
 
 from .executor import Executor
-from ..archive import ArchiveTask
 
 
 SLURM_SCRIPT_TPL = """#!/bin/bash
@@ -165,6 +164,9 @@ class SlurmExecutor(Executor):
                 extra_opts.append(f'#SBATCH --{k}={v}')
         comment = str(task)
         extra_opts = '\n'.join(extra_opts)
+        # Avoid circular imports.
+        from ..core import ArchiveTask
+
         if isinstance(task, ArchiveTask):
             remake_cmd = REMAKE_ARCHIVE_CMD_TPL.format(
                 script_dir=Path.cwd(), archive_file=task.archive_file

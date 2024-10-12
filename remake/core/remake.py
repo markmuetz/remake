@@ -12,11 +12,11 @@ from tabulate import tabulate, SEPARATING_LINE
 
 from pyquerylist import QueryList
 
-from .executors import Executor, SingleprocExecutor, SlurmExecutor, DaskExecutor, MultiprocExecutor
-from .metadata import Sqlite3MetadataManager
+from ..executors import Executor, SingleprocExecutor, SlurmExecutor, DaskExecutor, MultiprocExecutor
+from ..metadata import Sqlite3MetadataManager
 from .rule import Rule
 from .task import Task
-from .util import dedent, Config, load_module
+from ..util import dedent, Config
 
 logger.remove()
 logger.add(sys.stdout, format='<bold><lvl>{message}</lvl></bold>', level='INFO')

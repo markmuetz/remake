@@ -7,8 +7,8 @@ from pathlib import Path
 
 from loguru import logger
 
-from .util import sysrun, get_git_info, git_archive
-from .version import __version__
+from ..util import sysrun, get_git_info, git_archive
+from ..version import __version__
 from .task import Task
 
 

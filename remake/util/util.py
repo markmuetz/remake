@@ -1,44 +1,10 @@
 import os
 import sys
-import importlib
 import subprocess as sp
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path, PosixPath
 from typing import Union
-
-
-def load_module(local_filename: Union[str, Path], module_attrs=None):
-    """Use Python internals to load a Python module from a filename.
-
-    >>> load_module('examples/ex1.py').__name__
-    'ex1'
-
-    :param local_filename: name of module to load
-    :return: module
-    """
-    module_path = Path.cwd() / local_filename
-    if not module_path.exists():
-        raise Exception(f'Module file {module_path} does not exist')
-
-    # No longer needed due to sys.modules line below.
-    # Make sure any local imports in the module script work.
-    sys.path.append(str(module_path.parent))
-    module_name = Path(local_filename).stem
-
-    try:
-        # See: https://stackoverflow.com/a/50395128/54557
-        spec = importlib.util.spec_from_file_location(module_name, module_path)
-        module = importlib.util.module_from_spec(spec)
-        if module_attrs:
-            for k, v in module_attrs.items():
-                setattr(module, k, v)
-        spec.loader.exec_module(module)
-    except SyntaxError:
-        print(f'Bad syntax in module file {module_path}')
-        raise
-
-    return module
 
 
 def sysrun(cmd):
