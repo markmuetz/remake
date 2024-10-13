@@ -3,6 +3,8 @@ import traceback
 
 from loguru import logger
 
+from .remake_exceptions import RemakeOutputNotCreated
+
 
 def tmp_atomic_path(p):
     p = Path(p)
@@ -10,11 +12,6 @@ def tmp_atomic_path(p):
 
 
 class Rule:
-    @classmethod
-    def run_tasks(cls):
-        for task in cls.tasks:
-            cls.run_task(task)
-
     @classmethod
     def run_task(cls, task, save_status=True):
         assert task.rule == cls, f'Task has wrong rule: {task.rule} != {cls}'
@@ -25,20 +22,17 @@ class Rule:
 
         logger.debug(f'Run task: {task}')
         try:
-            if cls.remake.config['old_style_class']:
-                rule = cls()
-                rule.logger = logger
-                rule.inputs = task.inputs.copy()
-                rule.outputs = tmp_outputs
-                for k, v in task.kwargs.items():
-                    setattr(rule, k, v)
-                rule.rule_run()
-            else:
-                cls.rule_run(task.inputs, tmp_outputs, **task.kwargs)
-            task.last_run_status = 1
+            cls.rule_run(task.inputs, tmp_outputs, **task.kwargs)
+            for output in tmp_outputs.values():
+                if not output.exists():
+                    # TODO:
+                    # This should really have a different fail status.
+                    # Reason being: if this happens, then no amount of rerunning will fix it.
+                    raise RemakeOutputNotCreated(f'{task}: {output} not created')
+            for tmp_path, output_path in zip(tmp_outputs.values(), task.outputs.values()):
+                tmp_path.rename(output_path)
         except:
             e = traceback.format_exc()
-            # task.last_run
             # Set task state to failed.
             logger.error(f'failed: {task}')
             logger.error(f'failed: {e}')
@@ -48,16 +42,12 @@ class Rule:
                 cls.remake.update_task(task, exception=str(e))
                 logger.debug(f'updated task: {task}')
             raise
+
         logger.debug(f'Completed: {task}')
-
-        for output in tmp_outputs.values():
-            if not output.exists():
-                raise Exception(f'{task}: {output} not created')
-        for tmp_path, output_path in zip(tmp_outputs.values(), task.outputs.values()):
-            tmp_path.rename(output_path)
-
+        task.last_run_status = 1
         task.is_run = True
         task.requires_rerun = False
+
         if save_status:
             logger.debug(f'update task: {task}')
             cls.remake.update_task(task)

@@ -41,7 +41,7 @@ class ArchiveTask(Task):
         class _ArchRule:
             pass
 
-        super().__init__(_ArchRule, {}, {}, {}, [], [])
+        super().__init__(_ArchRule, {}, {}, {'archive_path': self.archive_path})
 
     def key(self):
         return sha1((','.join(str(v[1]) for v in self.file_manifest)).encode()).hexdigest()

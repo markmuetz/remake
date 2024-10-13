@@ -157,6 +157,8 @@ class Remake:
                 if callable(method):
                     rule.source[req_method] = dedent(inspect.getsource(method))
                 else:
+                    # TODO: Would this work for non-callables?
+                    # rule.source[req_method] = repr(method)
                     rule.source[req_method] = ''
             self.metadata_manager.get_or_create_rule_metadata(rule)
 
@@ -202,15 +204,9 @@ class Remake:
 
             inputs = _get_inputs_outputs(rule.rule_inputs, task_kwargs)
             outputs = _get_inputs_outputs(rule.rule_outputs, task_kwargs)
-            task = Task(rule, inputs, outputs, task_kwargs, prev_tasks=[], next_tasks=[])
+            task = Task(rule, inputs, outputs, task_kwargs)
 
-            # Makes task queryable using QueryList
-            for k, v in task_kwargs.items():
-                if k == 'kwargs':
-                    raise Exception('Cannot have a rule_matrix key called "kwargs"')
-                setattr(task, k, v)
             self.task_key_map[task.key()] = task
-
             rule.tasks.append(task)
             self.tasks.append(task)
 

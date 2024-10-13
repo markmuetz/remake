@@ -88,6 +88,8 @@ class TaskControl:
                 # Note, we do not know *why* the task failed.
                 # It could have nothing to do with the Python code, e.g. out of memory/time etc.
                 # Mark as requires_rerun so that if these have been fixed, the task can be rerun.
+                # TODO: separate code for if the task failed because of not producing output. See
+                # rule.py.
                 requires_rerun = True
                 logger.trace('task_failed')
                 rerun_reasons.append('task_failed')

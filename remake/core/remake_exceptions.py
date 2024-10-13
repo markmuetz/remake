@@ -4,3 +4,7 @@ class RemakeError(Exception):
 
 class RemakeLoadError(RemakeError):
     pass
+
+
+class RemakeOutputNotCreated(RemakeError):
+    pass

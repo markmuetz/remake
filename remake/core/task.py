@@ -15,9 +15,26 @@ class Task:
     next_tasks: list
     is_run: bool = False
     last_run_status: int = 0
-    last_run_timestamp: int = 0  # should be timestamp.
+    last_run_timestamp: int = 0  # TODO: should be timestamp.
     last_run_code: str = ''
     inputs_missing: bool = False
+
+    def __init__(self, rule, inputs, outputs, kwargs):
+        self.rule = rule
+        self.inputs = inputs
+        if not outputs:
+            raise ValueError('Task.outputs must be set')
+        self.outputs = outputs
+
+        # Makes task queryable using QueryList
+        for k, v in kwargs.items():
+            if not isinstance(k, str):
+                raise ValueError('Task.kwargs keys must be strings')
+            setattr(self, k, v)
+        self.kwargs = kwargs
+
+        self.prev_tasks = []
+        self.next_tasks = []
 
     def __post_init__(self):
         if not self.outputs:
