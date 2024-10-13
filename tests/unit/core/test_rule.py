@@ -6,7 +6,7 @@ from unittest import mock
 
 from remake import Task, Rule
 from remake.core.rule import tmp_atomic_path
-from remake.core.remake_exceptions import RemakeOutputNotCreated
+from remake.core.exceptions import RemakeOutputNotCreated
 
 class R1(Rule):
     remake = mock.Mock()

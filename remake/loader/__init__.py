@@ -41,7 +41,7 @@ def load_module(local_filename: Union[str, Path], module_attrs=None):
 def load_remake(filename, finalize=True, run=False):
     # Avoids circular import.
     from ..core import Remake, Rule
-    from ..core.remake_exceptions import RemakeLoadError
+    from ..core.exceptions import RemakeLoadError
 
     filename = Path(filename)
     if not filename.suffix:
