@@ -72,7 +72,9 @@ def _check_modify_fmt_dict(fmt_dict):
 
 
 class Remake:
-    def __init__(self, config, *args, **kwargs):
+    def __init__(self, config=None, *args, **kwargs):
+        if config == None:
+            config = {}
         self.config = Config(
             {
                 'slurm': {},

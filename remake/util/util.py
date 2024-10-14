@@ -51,6 +51,7 @@ def format_path(path: Union[Path, str], **kwargs) -> Path:
 
 
 class Capturing(list):
+    # TODO: Not necessary? https://stackoverflow.com/a/40984270/54557
     """Capture stdout from function.
 
     https://stackoverflow.com/a/16571630/54557

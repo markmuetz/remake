@@ -72,6 +72,7 @@ def retry(fn):
 
 
 def retry_lock_commit(fn):
+    # TODO: because self is passed in, I could drop conn altogether.
     def inner(self, conn, *args, **kwargs):
         nattempts = 1
         logger.trace(f'>{fn.__name__}')
