@@ -6,10 +6,11 @@ import unittest
 from contextlib import redirect_stdout
 
 
+import remake
 from remake.remake_cmd import remake_cmd
 from remake.util import sysrun
 
-examples_dir = Path(__file__).parent.parent.parent / 'remake' / 'examples'
+examples_dir = Path(remake.__file__).parent / 'examples'
 
 
 class Layer:
