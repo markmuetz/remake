@@ -38,10 +38,10 @@ setup(
     packages=[
         'remake',
         'remake.examples',
-        'remake.executor',
+        'remake.executors',
         'remake.loader',
         'remake.metadata',
-        'remake.utils',
+        'remake.util',
         ],
     python_requires='>=3.6',
     install_requires=[

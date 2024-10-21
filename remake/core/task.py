@@ -1,4 +1,5 @@
 import difflib
+import datetime as dt
 from dataclasses import dataclass
 from hashlib import sha1
 
@@ -15,7 +16,7 @@ class Task:
     next_tasks: list
     is_run: bool = False
     last_run_status: int = 0
-    last_run_timestamp: int = 0  # TODO: should be timestamp.
+    last_run_timestamp: dt.datetime = None  # TODO: should be timestamp.
     last_run_code: str = ''
     inputs_missing: bool = False
 
