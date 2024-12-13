@@ -204,9 +204,9 @@ class Sqlite3MetadataManager(MetadataManager):
                     'SELECT code.code FROM task INNER JOIN code ON task.code_id = code.id WHERE task.key = ?',
                     (task.key(),),
                 ).fetchone()
-                return (last_run_timestamp, last_run_status, last_run_exception, code)
+                return last_run_timestamp, last_run_status, last_run_exception, code
             else:
-                return (last_run_timestamp, last_run_status, last_run_exception, '')
+                return last_run_timestamp, last_run_status, last_run_exception, ''
         else:
             return db_ret
 
