@@ -45,7 +45,9 @@ setup(
         ],
     python_requires='>=3.6',
     install_requires=[
+        'loguru',
         'networkx',
+        'pyquerylist',
         'tabulate',
         ],
     extras_require={
