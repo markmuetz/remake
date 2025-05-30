@@ -99,7 +99,7 @@ class Remake:
         self.task_control = TaskControl()
         self.metadata_manager = Sqlite3MetadataManager()
         # Different between Python 3.10 and 3.12.
-        if sys.version_info[0] == 3 and sys.version_info[1] == 12:
+        if sys.version_info[0] == 3 and sys.version_info[1] >= 12:
             stack = next(traceback.walk_stack(None))
             frame = stack[0]
             self.full_path = frame.f_locals['module'].__file__
