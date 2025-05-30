@@ -162,7 +162,7 @@ class SlurmExecutor(Executor):
                 extra_opts.append(f'#SBATCH --partition={v}')
             else:
                 extra_opts.append(f'#SBATCH --{k}={v}')
-        comment = str(task)
+        comment = str(task)[:100]  # Can't be too long.
         extra_opts = '\n'.join(extra_opts)
         # Avoid circular imports.
         from ..core import ArchiveTask

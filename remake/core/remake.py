@@ -197,6 +197,12 @@ class Remake:
             rule_matrix_keys = []
             rule_vars = [None]
 
+        if hasattr(rule, 'depends_on'):
+            setattr(rule, 'deps', {})
+            for obj in rule.depends_on:
+                setattr(rule, obj.__name__, obj)
+                rule.deps[obj.__name__] = obj
+
         for rule_var in rule_vars:
             if rule_var is not None:
                 task_kwargs = {k: v for k, v in zip(rule_matrix_keys, rule_var)}
@@ -214,7 +220,8 @@ class Remake:
 
             for output in outputs.values():
                 if output in self._outputs:
-                    raise Exception(output)
+                    logger.error(f'Output already added by {self._outputs[output]}: {output}')
+                    raise Exception(f'Duplicate output: {output}')
                 self._outputs[output] = task
 
     def finalize(self):
@@ -434,6 +441,13 @@ class Remake:
         logger.info(f'Running {len(rerun_tasks)} tasks using {executor}')
         executor = self._get_executor(executor)
         logger.debug(f'using {executor}')
+
+        # TODO?
+        # for task in rerun_tasks:
+        #     if task.last_run_status != 0:
+        #         task.last_run_status = 0
+        #         self.metadata_manager.update_task_metadata(task, None)
+
         executor.run_tasks(
             rerun_tasks,
             show_reasons=show_reasons,
