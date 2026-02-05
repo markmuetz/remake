@@ -14,8 +14,14 @@ def tmp_atomic_path(p):
 class Rule:
     @classmethod
     def run_task(cls, task, save_status=True):
+        atomic_output = getattr(cls, 'atomic_output', True)
         assert task.rule == cls, f'Task has wrong rule: {task.rule} != {cls}'
-        tmp_outputs = {k: tmp_atomic_path(v) for k, v in task.outputs.items()}
+
+        if atomic_output:
+            tmp_outputs = {k: tmp_atomic_path(v) for k, v in task.outputs.items()}
+        else:
+            tmp_outputs = {k: v for k, v in task.outputs.items()}
+
         for output_dir in set(Path(o).parent for o in task.outputs.values()):
             if not output_dir.exists():
                 output_dir.mkdir(exist_ok=True, parents=True)
@@ -23,14 +29,15 @@ class Rule:
         logger.debug(f'Run task: {task}')
         try:
             cls.rule_run(task.inputs, tmp_outputs, **task.kwargs)
-            for output in tmp_outputs.values():
-                if not output.exists():
-                    # TODO:
-                    # This should really have a different fail status.
-                    # Reason being: if this happens, then no amount of rerunning will fix it.
-                    raise RemakeOutputNotCreated(f'{task}: {output} not created')
-            for tmp_path, output_path in zip(tmp_outputs.values(), task.outputs.values()):
-                tmp_path.rename(output_path)
+            if atomic_output:
+                for output in tmp_outputs.values():
+                    if not output.exists():
+                        # TODO:
+                        # This should really have a different fail status.
+                        # Reason being: if this happens, then no amount of rerunning will fix it.
+                        raise RemakeOutputNotCreated(f'{task}: {output} not created')
+                for tmp_path, output_path in zip(tmp_outputs.values(), task.outputs.values()):
+                    tmp_path.rename(output_path)
         except:
             e = traceback.format_exc()
             # Set task state to failed.
