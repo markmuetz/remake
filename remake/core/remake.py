@@ -335,6 +335,15 @@ class Remake:
             for k in status_keys:
                 level = status_loggers[k]
                 logger.log(level, f'{k:<3}: {counter.get(k, 0)}')
+
+            if show_failures:
+                counter = Counter()
+                for task in filtered_tasks:
+                    counter[task.last_run_exception] += 1
+
+                for k, v in counter.items():
+                    logger.info(f'{v:<3}:')
+                    logger.info(f'{k}')
             return
 
         if filter_status:
