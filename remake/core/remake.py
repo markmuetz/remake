@@ -315,7 +315,7 @@ class Remake:
 
         counter = Counter()
         logger.info(f'==> {self.name} <==')
-        if query and not rule:
+        if query:
             logger.info(f'Filter on: {query}')
             filtered_tasks = self.topo_tasks.where(query)
         else:
@@ -357,9 +357,12 @@ class Remake:
 
             statuses = []
             for rule in self.rules:
+                tasks = [t for t in filtered_tasks if t.rule == rule]
+                if not tasks:
+                    continue
                 max_status = 0
                 rule_counter = Counter()
-                for task in rule.tasks:
+                for task in tasks:
                     rule_counter[task.status] += 1
                     max_status = max(status_keys.index(task.status), max_status)
                 statuses.append(max_status)
@@ -370,7 +373,7 @@ class Remake:
                 ]
                 rows.append(row)
             rows.append(SEPARATING_LINE)
-            row = ['Total', len(self.tasks), *[counter.get(k, 0) for k in status_keys]]
+            row = ['Total', len(filtered_tasks), *[counter.get(k, 0) for k in status_keys]]
             rows.append(row)
             lines = tabulate(rows).split('\n')
             for line in lines[:3]:
