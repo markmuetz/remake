@@ -249,11 +249,31 @@ def build_rule_dag(rules: list[Rule]) -> nx.DiGraph:
     return g
 
 def expand_rule(rule: Rule) -> list[Task]:
-    """Expand the matrix for one rule into Task objects (no I/O)."""
-    combos = list(itertools.product(*rule.matrix.values()))
-    keys   = list(rule.matrix.keys())
-    return [Task(rule=rule, kwargs=dict(zip(keys, combo))) for combo in combos]
+    """Expand the matrix for one rule into Task objects (no I/O).
+
+    list[dict] is the canonical internal format. The {key: [values]}
+    cartesian shorthand is normalised to list[dict] here.
+    May raise MatrixNotReady if matrix is a callable whose required
+    upstream outputs do not yet exist.
+    """
+    kwargs_list = _resolve_matrix(rule.matrix)  # always returns list[dict]
+    return [Task(rule=rule, kwargs=kw) for kw in kwargs_list]
+
+
+def _resolve_matrix(matrix) -> list[dict]:
+    """Normalise all matrix forms to list[dict]."""
+    if callable(matrix):
+        return matrix()   # raises MatrixNotReady if not yet resolvable
+    if isinstance(matrix, list):
+        return matrix     # already list[dict]
+    # {key: [values]} cartesian shorthand
+    combos = list(itertools.product(*matrix.values()))
+    return [dict(zip(matrix.keys(), combo)) for combo in combos]
 ```
+
+`list[dict]` is the canonical internal format throughout — `{key: [values]}`
+is syntactic sugar. This matters for dynamic matrices where combinations are
+not a cartesian product (e.g. year 1980 has 3 clusters, year 1981 has 7).
 
 Because these are pure functions they are trivially unit-testable.
 
@@ -266,16 +286,19 @@ def plan(
     metadata: MetadataManager,
     query:    str | None = None,
     force:    bool = False,
-) -> list[Task]:
+) -> tuple[list[Task], list[Rule]]:
     """
-    Return the ordered list of tasks that need running.
+    Return (runnable_tasks, deferred_rules).
+    runnable_tasks: ordered list of tasks that need running now.
+    deferred_rules: rules whose matrix callable raised MatrixNotReady.
     Pure except for metadata reads (injected).
     """
 ```
 
 The planner reads task status from the metadata backend and returns a flat
-ordered list. It never writes to the DB, never touches the filesystem. The
-returned list is passed to an executor.
+ordered list plus any rules that could not yet be expanded. It never writes
+to the DB, never touches the filesystem. The returned tasks are passed to an
+executor; deferred rules are retried after the current wave completes.
 
 ---
 
@@ -494,6 +517,149 @@ def extract(inputs, outputs, model, year): ...
 
 Global defaults come from `Remake(config={'slurm': {...}})`. Per-rule config is
 merged on top of global defaults and written into the rule's `.sbatch` script.
+
+---
+
+## Dynamic matrices
+
+### The problem
+
+Not all task counts are known at load time. Common cases:
+
+- A clustering rule produces N clusters; N is unknown until the algorithm runs
+- An event-detection rule finds M events in a time series
+- A QC rule filters an ensemble; only passing members proceed
+- An input rule scans a directory; processes whatever files are present
+
+These cannot be expressed as a static `matrix` dict defined at decoration time.
+
+### API
+
+`matrix` accepts a callable that returns `list[dict]`. The callable is called
+during planning; if the required upstream outputs do not yet exist it raises
+`MatrixNotReady`, which the planner treats as a deferral signal rather than
+an error.
+
+```python
+from remake3 import Remake, MatrixNotReady
+import json
+from pathlib import Path
+
+rmk = Remake()
+YEARS = list(range(1980, 2021))
+
+
+@rmk.rule(
+    inputs  = {'raw': 'data/raw/{year}.nc'},
+    outputs = {'clusters': 'data/clusters/{year}.json'},
+    matrix  = {'year': YEARS},
+)
+def cluster(inputs, outputs, year):
+    # Writes a JSON list of discovered cluster IDs — count unknown upfront
+    ids = run_clustering(inputs['raw'])
+    Path(outputs['clusters']).write_text(json.dumps(ids))
+
+
+def process_matrix():
+    """Called during planning, after cluster has run."""
+    rows = []
+    for year in YEARS:
+        path = Path(f'data/clusters/{year}.json')
+        if not path.exists():
+            raise MatrixNotReady(str(path))
+        for cid in json.loads(path.read_text()):
+            rows.append({'year': year, 'cluster_id': cid})
+    return rows   # list[dict] — not a cartesian product
+
+
+@rmk.rule(
+    inputs     = lambda year, cluster_id: {
+        'data': f'data/clusters/{year}/{cluster_id}.nc'
+    },
+    outputs    = {'result': 'data/results/{year}/{cluster_id}.nc'},
+    matrix     = process_matrix,
+    depends_on = [cluster],
+)
+def process_cluster(inputs, outputs, year, cluster_id):
+    ...
+```
+
+`MatrixNotReady` accepts one or more path strings as context, which remake3
+surfaces in its output so the user knows what is blocking resolution.
+
+### Execution model — local executors
+
+For singleproc and multiproc executors, the executor drives a replanning loop
+internally. From the user's perspective, `remake3 run` is still a single
+command:
+
+```
+loop:
+    runnable, deferred = plan(rules, dag, metadata)
+    if not runnable and not deferred: break          # fully complete
+    if not runnable and deferred:
+        report_blocked(deferred); break              # stuck — upstream failed
+    execute(runnable)
+    # deferred rules may now be resolvable — continue loop
+```
+
+After each wave of tasks completes, the planner retries all deferred rules. If
+a rule remains deferred despite its `depends_on` tasks all completing, remake3
+reports it as blocked (the matrix callable raised `MatrixNotReady` but all
+upstream tasks are done — likely a bug in the callable or a missing output).
+
+### Execution model — SLURM executor
+
+A Python process cannot be kept alive between SLURM job waves. Instead, the
+SLURM executor submits a lightweight **continuation job** after any rule with a
+dynamic matrix:
+
+```bash
+# submit.sh (generated)
+JOB_cluster=$(sbatch --parsable .remake/slurm/cluster.sbatch)
+echo "{\"slurm_array_job_id\": \"$JOB_cluster\"}" > .remake/jobs/cluster.jobids.json
+
+# Continuation: reruns remake3 after cluster completes.
+# remake3 will resolve process_matrix, write process_cluster.json,
+# generate process_cluster.sbatch, and submit it.
+sbatch --dependency=afterok:$JOB_cluster \
+       --job-name=remake3_continue \
+       .remake/slurm/continuation.sbatch
+```
+
+`.remake/slurm/continuation.sbatch`:
+```bash
+#!/bin/bash
+#SBATCH --mem=1G --time=00:10:00 --partition=short-serial
+remake3 run mypipeline.py --executor slurm
+```
+
+The continuation job is cheap (planning + submission only, no computation).
+`remake3 run` is idempotent — already-complete tasks are skipped. Arbitrarily
+deep chains of dynamic rules are handled naturally: each invocation emits
+another continuation job if further deferred rules remain.
+
+The `.remake/jobs/process_cluster.json` file is written by the continuation job,
+not the initial submission. The SLURM array for `process_cluster` is submitted
+at that point with the correct size. The initial `submit.sh` does not reference
+`process_cluster` at all.
+
+### Task key stability
+
+Task keys are `sha1(f'{rule_name}:{kwargs!r}')`. Because kwargs values are
+stable (e.g. `{'year': 1980, 'cluster_id': 'c42'}` is always the same string
+regardless of when it was discovered), DB entries for previously-completed
+dynamic tasks are found and reused correctly across replanning runs. Adding new
+cluster IDs in a subsequent run only creates new task entries; existing ones are
+untouched.
+
+### Dynamic matrices and SLURM array eligibility
+
+A rule with a dynamic matrix **cannot** be submitted as an array job from the
+initial `submit.sh` because its size is not yet known. It is always submitted
+from within a continuation job. Array eligibility rules (same matrix as
+upstream, no intra-rule deps) still apply once the matrix is resolved — the
+continuation job submits an array if eligible.
 
 ---
 
