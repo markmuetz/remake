@@ -59,5 +59,7 @@ class CodeComparer:
             # If you do this, the debugger will be stuck down the
             # recursion loop, and you cannot inspect vars.
             raise re
+        except:
+            res = False
         self.compare_cache[key] = res
         return res
