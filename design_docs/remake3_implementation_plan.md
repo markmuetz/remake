@@ -19,6 +19,10 @@ doc in `design_docs/` when work on it starts.
 - [ ] Dynamic matrices (replanning loop, SLURM continuation jobs)
   - local replanning loop done; SLURM continuation jobs pending
 - [ ] CLI
+  - Decision: argparse (stdlib, zero deps; CLI is small and the declarative
+    wrapper in `util/command_line_args.py` already exists), not click.
+    Barebones CLI done: run, run-task, info, version. resubmit lands with
+    the SLURM executor; migrate is its own item.
 - [ ] Unit tests
 - [ ] Integration tests
 - [ ] Runnable examples

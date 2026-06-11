@@ -91,10 +91,13 @@ class Remake:
         return tasks
 
     def task_from_key(self, key):
-        for task in self.tasks():
-            if task.key == key:
-                return task
-        raise RemakeError(f'No task with key {key}')
+        """Find a task by key or unambiguous key prefix."""
+        matches = [task for task in self.tasks() if task.key.startswith(key)]
+        if len(matches) > 1:
+            raise RemakeError(f'Task key prefix {key} is ambiguous ({len(matches)} matches)')
+        if not matches:
+            raise RemakeError(f'No task with key {key}')
+        return matches[0]
 
     # --- execution ---
 
