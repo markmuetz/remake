@@ -23,8 +23,11 @@ doc in `design_docs/` when work on it starts.
     wrapper in `util/command_line_args.py` already exists), not click.
     Barebones CLI done: run, run-task, info, version. resubmit lands with
     the SLURM executor; migrate is its own item.
-- [ ] Unit tests
-- [ ] Integration tests
+- [x] Unit tests
+- [x] Integration tests
+  - 77 tests under tests/unit and tests/integration; examples are loaded
+    and planned as part of the suite. Grow alongside remaining items
+    (multiproc/SLURM, CLI additions).
 - [ ] Runnable examples
 - [ ] Documentation + deployment (GitHub Pages)
 - [ ] GitHub Actions: CI, docs, PyPI release
