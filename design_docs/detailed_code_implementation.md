@@ -142,6 +142,41 @@ A much smaller `Remake` class:
   a remake2 feature with no place in the remake3 design; it can be
   resurrected from git history as a post-1.0 feature if wanted.
 
+### Task filtering — pyquerylist removal confirmed
+
+remake2 filters tasks by materialising every Task, splatting its kwargs
+onto it as attributes, and running `pyquerylist.where(query)` over the
+list. In remake3 a task is `(rule, kwargs)` and nothing else, so filtering
+reduces to filtering plain dicts — no library, no attribute splatting, and
+no Task construction for filtered-out tasks. Three filter kinds, three
+sites:
+
+1. **Rule filters** (`--rule extract`) — applied *before expansion*:
+   select `Rule` objects by name. Excluded rules are never expanded.
+2. **kwargs filters** (the planner's `query` parameter) — applied *during
+   expansion, before Task construction*, as a predicate over the
+   `list[dict]` from `_resolve_matrix()`. Inputs/outputs are never
+   resolved for filtered-out tasks. The whole query mechanism is:
+
+   ```python
+   def make_predicate(query: str):
+       """e.g. "year > 1985 and model == 'era5'" """
+       code = compile(query, '<query>', 'eval')
+       return lambda kwargs: eval(code, {'__builtins__': {}}, kwargs)
+   ```
+
+   eval of a user-supplied query is fine — it runs at the same trust
+   level as the remakefile itself. An expression query subsumes
+   `key=value` syntax (`year == 1980`), so it is the only mechanism.
+3. **Status filters** (`--status failed`) — applied *after planning*, from
+   one batched `get_tasks_status()` call; per-rule summaries
+   (`info --rule`) are a `collections.Counter` over the same records.
+
+Caveat to carry into the planner: a filtered run (`year == 1980`) must not
+let downstream propagation assume the other years ran. DB-first status
+handles this naturally — unrun tasks simply remain unrun and reappear in
+the next plan — but tests should pin it.
+
 ### Keep / adapt / delete — core
 
 | File | Action |
