@@ -1,4 +1,4 @@
-# remake3_examples/ex5_callable_inputs_matrix.py
+# examples/ex5_callable_inputs_matrix.py
 #
 # Shows the full range of input/output specification styles:
 #   - plain dict (static)
@@ -9,7 +9,7 @@
 # Also demonstrates matrix inheritance and subsetting.
 
 from pathlib import Path
-from remake3 import Remake, rule
+from remake import Remake, rule
 
 rmk = Remake()
 

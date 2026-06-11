@@ -1,4 +1,4 @@
-# remake3_examples/ex7_multifile/pipeline.py
+# examples/ex7_multifile/pipeline.py
 #
 # Top-level pipeline file combining rules defined in other modules.
 #
@@ -8,9 +8,9 @@
 # wholesale with rmk.rules_from_modules(rules_extract, rules_analysis),
 # or pass an explicit list: Remake(rules=[extract, process, aggregate]).
 #
-# Run: remake3 run pipeline.py
+# Run: remake run pipeline.py
 
-from remake3 import Remake
+from remake import Remake
 
 from rules_extract import extract
 from rules_analysis import process, aggregate

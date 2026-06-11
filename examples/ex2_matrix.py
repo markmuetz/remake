@@ -1,4 +1,4 @@
-# remake3_examples/ex2_matrix.py
+# examples/ex2_matrix.py
 #
 # Matrix expansion: process multiple sites and years independently,
 # then aggregate per-site across years.
@@ -13,7 +13,7 @@
 #   report               (1 task — fan-in across sites)
 
 from pathlib import Path
-from remake3 import Remake, rule
+from remake import Remake, rule
 
 rmk = Remake()
 

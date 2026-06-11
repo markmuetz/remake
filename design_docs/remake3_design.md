@@ -68,7 +68,7 @@ expansion, and SLURM support.
 ```python
 # climate_pipeline.py
 from pathlib import Path
-from remake3 import Remake, ZarrStore, rule
+from remake import Remake, ZarrStore, rule
 
 rmk = Remake()
 
@@ -156,7 +156,7 @@ accesses on the imported `Rule`:
 
 ```python
 # pipeline.py
-from remake3 import Remake
+from remake import Remake
 from rules_extract import *      # extract
 from rules_analysis import *     # anomalies, aggregate
 
@@ -310,7 +310,7 @@ list (stdlib modules, builtins).
 ## Architecture
 
 ```
-remake3/
+remake/
 ├── core/
 │   ├── remake.py          # Remake class — wires everything together
 │   ├── rule.py            # Rule descriptor (produced by @rule)
@@ -532,7 +532,7 @@ class MetadataManager(ABC):
 From the user's perspective there is one command:
 
 ```bash
-remake3 run mypipeline.py --executor slurm
+remake run mypipeline.py --executor slurm
 ```
 
 Internally this is a two-stage process — generate job specs and submit scripts,
@@ -542,11 +542,11 @@ detail, not a workflow the user has to manage.
 Two additional commands are available:
 
 ```bash
-remake3 run mypipeline.py --executor slurm --dry-run
+remake run mypipeline.py --executor slurm --dry-run
 # Stage 1+2 only: writes .remake/jobs/ and .remake/submit.sh without submitting.
 # Useful for inspecting what would be submitted before touching the cluster.
 
-remake3 resubmit mypipeline.py
+remake resubmit mypipeline.py
 # Re-executes .remake/submit.sh directly, skipping planning entirely.
 # Useful when the cluster goes down mid-run and jobs need resubmitting.
 ```
@@ -601,12 +601,12 @@ import json
 print(json.load(open('.remake/jobs/extract.json'))[$SLURM_ARRAY_TASK_ID]['task_key'])
 ")
 echo "SLURM RUNNING $TASK_KEY"
-remake3 run-task mypipeline.py $TASK_KEY
+remake run-task mypipeline.py $TASK_KEY
 echo "SLURM COMPLETED $TASK_KEY"
 ```
 
 The script is intentionally dumb — it reads the JSON array to find its task key
-and delegates to `remake3 run-task`. No task-specific information needs to be
+and delegates to `remake run-task`. No task-specific information needs to be
 embedded in the job name or comment, which sidesteps the array job identification
 problem entirely.
 
@@ -634,7 +634,7 @@ echo "{\"slurm_array_job_id\": \"$JOB_aggregate\"}" > .remake/jobs/aggregate.job
 
 ### Stage 3 — submission
 
-`remake3 run --executor slurm` executes `.remake/submit.sh` immediately after
+`remake run --executor slurm` executes `.remake/submit.sh` immediately after
 generating it, unless `--dry-run` is given.
 
 ### Detecting already-running tasks
@@ -701,7 +701,7 @@ during planning; if the required upstream outputs do not yet exist it raises
 an error.
 
 ```python
-from remake3 import Remake, MatrixNotReady, rule
+from remake import Remake, MatrixNotReady, rule
 import json
 from pathlib import Path
 
@@ -753,7 +753,7 @@ surfaces in its output so the user knows what is blocking resolution.
 ### Execution model — local executors
 
 For singleproc and multiproc executors, the executor drives a replanning loop
-internally. From the user's perspective, `remake3 run` is still a single
+internally. From the user's perspective, `remake run` is still a single
 command:
 
 ```
@@ -786,7 +786,7 @@ echo "{\"slurm_array_job_id\": \"$JOB_cluster\"}" > .remake/jobs/cluster.jobids.
 # remake3 will resolve process_matrix, write process_cluster.json,
 # generate process_cluster.sbatch, and submit it.
 sbatch --dependency=afterok:$JOB_cluster \
-       --job-name=remake3_continue \
+       --job-name=remake_continue \
        .remake/slurm/continuation.sbatch
 ```
 
@@ -794,11 +794,11 @@ sbatch --dependency=afterok:$JOB_cluster \
 ```bash
 #!/bin/bash
 #SBATCH --mem=1G --time=00:10:00 --partition=short-serial
-remake3 run mypipeline.py --executor slurm
+remake run mypipeline.py --executor slurm
 ```
 
 The continuation job is cheap (planning + submission only, no computation).
-`remake3 run` is idempotent — already-complete tasks are skipped. Arbitrarily
+`remake run` is idempotent — already-complete tasks are skipped. Arbitrarily
 deep chains of dynamic rules are handled naturally: each invocation emits
 another continuation job if further deferred rules remain.
 
@@ -920,7 +920,7 @@ created — the store itself is written by zarr. Non-path tokens
 - **`'always'`** — every planned task's outputs are checked. Detects
   outputs deleted behind the DB's back — e.g. scratch-filesystem purges —
   at the cost of touching the filesystem (or S3) for every output. Also
-  available per-invocation as `remake3 run --check-outputs`.
+  available per-invocation as `remake run --check-outputs`.
 
 In every mode, tasks with no declared outputs are DB-authoritative: there
 is nothing to check, and that is fine.
@@ -1069,7 +1069,7 @@ remake2 remakefiles can be adapted to remake3 with a script that:
 5. Inserts `rmk = Remake()` at the top and `rmk.rules_from_current_module()`
    at the end of the file
 
-A `remake3 migrate myfile.py` CLI command will run this conversion.
+A `remake migrate myfile.py` CLI command will run this conversion.
 
 ---
 

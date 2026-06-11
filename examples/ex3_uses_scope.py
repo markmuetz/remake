@@ -1,4 +1,4 @@
-# remake3_examples/ex3_uses_scope.py
+# examples/ex3_uses_scope.py
 #
 # Demonstrates the `uses` mechanism for tracking external dependencies.
 #
@@ -10,7 +10,7 @@
 # into errors rather than warnings.
 
 from pathlib import Path
-from remake3 import Remake, rule
+from remake import Remake, rule
 
 rmk = Remake()          # use Remake(strict_scope=True) to enforce hard boundary
 

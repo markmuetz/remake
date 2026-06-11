@@ -1,4 +1,4 @@
-# remake3_examples/ex7_multifile/rules_analysis.py
+# examples/ex7_multifile/rules_analysis.py
 #
 # Cross-file rule wiring: inputs=extract.outputs, matrix=extract.matrix
 # and depends_on=[extract] are ordinary attribute accesses on the
@@ -6,7 +6,7 @@
 
 from pathlib import Path
 
-from remake3 import rule
+from remake import rule
 
 from rules_extract import extract, SITES, YEARS
 

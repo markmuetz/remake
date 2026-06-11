@@ -1,4 +1,4 @@
-# remake3_examples/ex7_multifile/rules_extract.py
+# examples/ex7_multifile/rules_extract.py
 #
 # Rules defined in a standalone module — no Remake instance here.
 # @rule is the module-level decorator; it produces free-standing Rule
@@ -6,7 +6,7 @@
 
 from pathlib import Path
 
-from remake3 import rule
+from remake import rule
 
 SITES = ['oxford', 'cambridge', 'bristol']
 YEARS = list(range(2010, 2021))

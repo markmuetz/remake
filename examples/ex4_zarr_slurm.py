@@ -1,4 +1,4 @@
-# remake3_examples/ex4_zarr_slurm.py
+# examples/ex4_zarr_slurm.py
 #
 # Full climate pipeline using:
 #   - ZarrStore output tokens (non-file outputs)
@@ -7,11 +7,11 @@
 #   - SLURM array jobs for the two largest rules (same matrix, 1-to-1)
 #   - Fan-in to per-model aggregation, then a single final task
 #
-# Run locally:   remake3 run ex4_zarr_slurm.py
-# Run on SLURM:  remake3 run ex4_zarr_slurm.py --executor slurm
+# Run locally:   remake run ex4_zarr_slurm.py
+# Run on SLURM:  remake run ex4_zarr_slurm.py --executor slurm
 
 from pathlib import Path
-from remake3 import Remake, ZarrStore, rule
+from remake import Remake, ZarrStore, rule
 
 rmk = Remake(
     config={

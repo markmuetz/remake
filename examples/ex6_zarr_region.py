@@ -1,4 +1,4 @@
-# remake3_examples/ex6_zarr_region.py
+# examples/ex6_zarr_region.py
 #
 # Demonstrates optional inputs and outputs:
 #   - create_store: a source rule (no inputs) that initialises an empty
@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from remake3 import Remake, ZarrStore, rule
+from remake import Remake, ZarrStore, rule
 
 rmk = Remake()
 

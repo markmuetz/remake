@@ -1,4 +1,4 @@
-# remake3_examples/ex1_simple.py
+# examples/ex1_simple.py
 #
 # Simplest possible pipeline: one input file, two chained rules.
 # Shows the basic decorator syntax, no matrix.
@@ -6,7 +6,7 @@
 # DAG: preprocess --> summarise
 
 from pathlib import Path
-from remake3 import Remake, rule
+from remake import Remake, rule
 
 rmk = Remake()
 
