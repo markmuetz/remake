@@ -9,6 +9,7 @@ from collections import Counter
 
 from loguru import logger
 
+from .core import RemakeError
 from .loader import load_remake
 from .metadata import TASK_STATUS_FAILED, TASK_STATUS_SUCCESS
 from .util import Arg, MutuallyExclusiveGroup, add_argset
@@ -20,13 +21,30 @@ STATUS_NAMES = {
     TASK_STATUS_FAILED: 'failed',
 }
 
-EXECUTORS = ['singleproc']
-
-
 def _make_executor(name, rmk):
-    from .executors import SingleprocExecutor
+    """Resolve an executor: a builtin name, or a user class given as a
+    dotted path ('mymodule:MyExecutor' or 'mymodule.MyExecutor')."""
+    import importlib
 
-    return {'singleproc': SingleprocExecutor}[name](rmk)
+    from .executors import Executor, SingleprocExecutor
+
+    builtin = {'singleproc': SingleprocExecutor}
+    if name in builtin:
+        return builtin[name](rmk)
+
+    if ':' in name:
+        module_name, _, cls_name = name.partition(':')
+    elif '.' in name:
+        module_name, _, cls_name = name.rpartition('.')
+    else:
+        raise RemakeError(
+            f'Unknown executor {name!r}: use one of {sorted(builtin)} or a '
+            f'dotted path like mymodule:MyExecutor'
+        )
+    cls = getattr(importlib.import_module(module_name), cls_name)
+    if not (isinstance(cls, type) and issubclass(cls, Executor)):
+        raise RemakeError(f'{name!r} is not an Executor subclass')
+    return cls(rmk)
 
 
 def exception_info(ex_type, value, tb):
@@ -57,7 +75,9 @@ class RemakeParser:
             'help': 'Run all pending tasks',
             'args': [
                 Arg('remakefile'),
-                Arg('--executor', '-E', choices=EXECUTORS, default='singleproc'),
+                Arg('--executor', '-E', default='singleproc',
+                    help='Builtin executor name or dotted path to an '
+                         'Executor subclass (mymodule:MyExecutor)'),
                 Arg('--query', '-Q', help='Filter tasks based on a kwargs query'),
                 Arg('--force', '-f', help='Force rerun of matched tasks', action='store_true'),
                 Arg('--dry-run', '-n', help='Show what would run, run nothing',

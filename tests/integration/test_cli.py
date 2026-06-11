@@ -85,6 +85,29 @@ def test_run_task_by_key_prefix(pipeline_dir, capsys):
     cli('run-task', 'pipeline.py', key_prefix)  # does not raise
 
 
+def test_custom_executor_via_dotted_path(pipeline_dir, capsys):
+    Path('myexec.py').write_text('''
+from pathlib import Path
+from remake import Executor
+
+class MarkerExecutor(Executor):
+    def run_tasks(self, tasks):
+        Path('marker.txt').write_text(f'{len(tasks)}')
+        for task in tasks:
+            self.rmk.run_task(task)
+''')
+    cli('run', 'pipeline.py', '-E', 'myexec:MarkerExecutor')
+    assert (pipeline_dir / 'marker.txt').read_text() == '4'
+    assert (pipeline_dir / 'data/out_1.txt').exists()
+
+
+def test_unknown_executor_errors(pipeline_dir):
+    from remake import RemakeError
+
+    with pytest.raises(RemakeError, match='Unknown executor'):
+        cli('run', 'pipeline.py', '-E', 'bogus')
+
+
 def test_run_query_force(pipeline_dir, capsys):
     cli('run', 'pipeline.py')
     (pipeline_dir / 'data/out_1.txt').unlink()

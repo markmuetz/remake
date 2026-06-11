@@ -166,6 +166,30 @@ rmk.rules_from_current_module()
     assert Path('out_1.txt').read_text() == '3'
 
 
+def test_custom_executor_injection(tmp_path, meta):
+    from remake import Executor
+
+    class RecordingExecutor(Executor):
+        def __init__(self, rmk):
+            super().__init__(rmk)
+            self.seen = []
+
+        def run_tasks(self, tasks):
+            self.seen.extend(tasks)
+            for task in tasks:
+                self.rmk.run_task(task)
+
+    @rule(outputs={'o': str(tmp_path / 'o_{n}.txt')}, matrix={'n': [1, 2]})
+    def r(outputs, n):
+        Path(outputs['o']).write_text(str(n))
+
+    rmk = Remake(rules=[r], metadata=meta)
+    executor = RecordingExecutor(rmk)
+    rmk.run(executor=executor)
+    assert len(executor.seen) == 2
+    assert (tmp_path / 'o_1.txt').exists()
+
+
 def test_rules_from_current_module_and_multi_remake(meta):
     @rule(outputs={'o': 'o_{n}.txt'}, matrix={'n': [1]})
     def r(outputs, n):
