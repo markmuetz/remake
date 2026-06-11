@@ -33,5 +33,10 @@ doc in `design_docs/` when work on it starts.
     examples/make_example_data.py); ex1/ex3/ex5 run in the test suite,
     heavier ones (xarray/zarr) verified manually and plan-tested.
 - [ ] Documentation + deployment (GitHub Pages)
+- [ ] Create PyPI package (verify build/install, settle PEP 440 version,
+  first alpha upload)
 - [ ] GitHub Actions: CI, docs, PyPI release
 - [ ] remake2 migration tool
+
+See also: [todos.md](todos.md) (known problems and debts) and
+[discussion.md](discussion.md) (ideas to return to).
