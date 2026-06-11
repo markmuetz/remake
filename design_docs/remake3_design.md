@@ -437,6 +437,26 @@ not a cartesian product (e.g. year 1980 has 3 clusters, year 1981 has 7).
 
 Because these are pure functions they are trivially unit-testable.
 
+### No task-level DAG — and a known limitation
+
+The rule-level DAG is the only graph remake3 builds. Task-level ordering is
+derived from it: rules run in topological order, and within a rule, tasks
+form an independent, embarrassingly-parallel wave. Rerun propagation is
+element-wise by kwargs when a rule shares its upstream's matrix, and
+conservative (any upstream rerun marks all downstream tasks) otherwise —
+over-rerunning is possible in odd matrix relationships, but never
+under-rerunning. On SLURM, `aftercorr`/`afterok` express exactly these two
+patterns natively.
+
+The deliberate consequence: **intra-rule task dependencies are
+inexpressible**. A rule whose task for `year` consumes the same rule's
+output for `year - 1` (sequential time-stepping) cannot be modelled — there
+is no task graph to hold that edge. The workarounds are to split the chain
+into separate rules or to loop inside a single task. If real support is
+ever needed it would be added as an explicit per-rule declaration (e.g.
+`task_depends_on=lambda kwargs: ...`), not by reintroducing global
+task-graph construction.
+
 ### The planner (pure)
 
 ```python
