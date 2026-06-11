@@ -11,7 +11,7 @@
 # Run on SLURM:  remake3 run ex4_zarr_slurm.py --executor slurm
 
 from pathlib import Path
-from remake3 import Remake, ZarrStore
+from remake3 import Remake, ZarrStore, rule
 
 rmk = Remake(
     config={
@@ -40,7 +40,7 @@ def extract_inputs(model, year):
 # --- rule 1: extract and rechunk to zarr ---
 # Heavy I/O — more memory, longer time.
 
-@rmk.rule(
+@rule(
     inputs  = extract_inputs,
     outputs = {v: ZarrStore(f'data/zarr/extracted/{{model}}/{{year}}/{v}.zarr') for v in VARS},
     matrix  = {'model': MODELS, 'year': YEARS},
@@ -50,9 +50,9 @@ def extract(inputs, outputs, model, year):
     import xarray as xr
     for var in VARS:
         ds = xr.open_dataset(inputs[var])
-        store_path = outputs[var].path
-        ds.chunk({'time': 365}).to_zarr(store_path, mode='w')
-        import zarr; zarr.consolidate_metadata(store_path)
+        # ZarrStore tokens are path-like — pass them straight to zarr/xarray
+        ds.chunk({'time': 365}).to_zarr(outputs[var], mode='w')
+        import zarr; zarr.consolidate_metadata(outputs[var])
 
 
 # --- rule 2: compute anomalies relative to a reference period ---
@@ -60,7 +60,7 @@ def extract(inputs, outputs, model, year):
 
 REFERENCE_PERIOD = (1981, 2010)    # tracked via uses — change triggers reruns
 
-@rmk.rule(
+@rule(
     inputs     = {v: f'data/zarr/extracted/{{model}}/{{year}}/{v}.zarr' for v in VARS},
     outputs    = {v: ZarrStore(f'data/zarr/anomalies/{{model}}/{{year}}/{v}.zarr') for v in VARS},
     matrix     = extract.matrix,
@@ -76,9 +76,8 @@ def anomalies(inputs, outputs, model, year):
         ds   = xr.open_zarr(inputs[var])
         ref  = ds.sel(time=slice(str(ref_start), str(ref_end))).mean('time')
         anom = ds - ref
-        store_path = outputs[var].path
-        anom.chunk({'time': 365}).to_zarr(store_path, mode='w')
-        import zarr; zarr.consolidate_metadata(store_path)
+        anom.chunk({'time': 365}).to_zarr(outputs[var], mode='w')
+        import zarr; zarr.consolidate_metadata(outputs[var])
 
 
 # --- rule 3: aggregate across years for each model ---
@@ -93,7 +92,7 @@ def agg_inputs(model):
     }
 
 
-@rmk.rule(
+@rule(
     inputs     = agg_inputs,
     outputs    = {v: ZarrStore(f'data/zarr/aggregated/{{model}}/{v}.zarr') for v in VARS},
     matrix     = {'model': MODELS},
@@ -106,20 +105,18 @@ def aggregate(inputs, outputs, model):
     for var in VARS:
         paths = [inputs[f'{var}_{year}'] for year in YEARS]
         ds = xr.open_mfdataset(paths, engine='zarr', combine='by_coords')
-        store_path = outputs[var].path
-        ds.chunk({'time': -1, 'lat': 90, 'lon': 90}).to_zarr(store_path, mode='w')
-        zarr.consolidate_metadata(store_path)
+        ds.chunk({'time': -1, 'lat': 90, 'lon': 90}).to_zarr(outputs[var], mode='w')
+        zarr.consolidate_metadata(outputs[var])
 
 
 # --- rule 4: single final report across all models ---
 
-@rmk.rule(
+@rule(
     inputs     = {
         f'{model}_{var}': f'data/zarr/aggregated/{model}/{var}.zarr'
         for model in MODELS for var in VARS
     },
     outputs    = {'report': 'data/results/model_comparison.json'},
-    matrix     = {},
     depends_on = [aggregate],
 )
 def final_report(inputs, outputs):
@@ -133,5 +130,7 @@ def final_report(inputs, outputs):
                 'mean': float(ds[var].mean()),
                 'std':  float(ds[var].std()),
             }
-    Path(outputs['report']).parent.mkdir(parents=True, exist_ok=True)
     Path(outputs['report']).write_text(json.dumps(summary, indent=2))
+
+
+rmk.rules_from_current_module()

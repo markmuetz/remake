@@ -30,13 +30,27 @@ expansion, and SLURM support.
 ## Core design principles
 
 - **Decorator-based rule definition** — rules are plain functions decorated with
-  `@rmk.rule(...)`, not classes used as namespaces.
+  the module-level `@rule(...)`, not classes used as namespaces. Decoration is
+  decoupled from registration, so rules can be defined across many modules and
+  combined in a top-level file.
+- **Explicit registration, no global registry** — a pipeline is assembled by
+  handing `Rule` objects to a `Remake` instance (`Remake(rules=[...])`,
+  `Remake.from_modules(...)`, `Remake.from_current_module()`). Two independent
+  `Remake` objects can coexist in one process; nothing leaks between tests.
 - **Explicit dependencies** — the rule-level DAG is declared via `depends_on`,
   not inferred from path strings.
+- **Only declare what exists** — `inputs`, `outputs`, and `matrix` are all
+  optional. A source rule takes no `inputs`; a side-effect rule (zarr region
+  writes, database upserts) takes no `outputs`. The rule function's signature
+  must match its declarations, checked at decoration time.
 - **Lazy task expansion** — the rule-level DAG is built eagerly (it is small);
   individual `Task` objects are expanded on demand.
-- **Pluggable output tokens** — outputs are token objects (`FileToken`,
-  `ZarrStore`, `S3Object`, ...) with a common `is_complete()` interface.
+- **Completion is DB-tracked; output tokens are opt-in verification** — task
+  completion is recorded in the metadata backend. Outputs, where declared, are
+  token objects (`FileToken`, `ZarrStore`, `S3Object`, ...) with a common
+  `is_complete()` interface used to reconcile or audit the DB against the
+  world, not as the primary completion mechanism. Path-backed tokens are
+  transparent (`os.PathLike`), so rule code uses them like plain paths.
 - **Dependency injection throughout** — metadata backend, executor, and
   filesystem access are all injected, never hardwired.
 - **Controlled scope** — external dependencies of `rule_run` must be declared
@@ -54,7 +68,7 @@ expansion, and SLURM support.
 ```python
 # climate_pipeline.py
 from pathlib import Path
-from remake3 import Remake, ZarrStore
+from remake3 import Remake, ZarrStore, rule
 
 rmk = Remake()
 
@@ -68,7 +82,7 @@ def extract_inputs(model, year):
     base = 'data/raw/era5' if model == 'era5' else f'data/raw/{model}'
     return {'raw': f'{base}/{year}.nc'}
 
-@rmk.rule(
+@rule(
     inputs  = extract_inputs,
     outputs = {'clean': 'data/clean/{model}/{year}.nc'},
     matrix  = {'model': MODELS, 'year': YEARS},
@@ -81,7 +95,7 @@ def extract(inputs, outputs, model, year):
 
 # --- rule 2: compute anomalies (depends on extract) ---
 
-@rmk.rule(
+@rule(
     inputs  = extract.outputs,          # rule object carries its output spec
     outputs = {'zarr': ZarrStore('data/anomalies/{model}/{year}.zarr')},
     matrix  = extract.matrix,           # inherit matrix
@@ -91,7 +105,7 @@ def anomalies(inputs, outputs, model, year):
     import xarray as xr
     ds = xr.open_dataset(inputs['clean'])
     clim = ds.mean('time')
-    (ds - clim).to_zarr(outputs['zarr'].path)
+    (ds - clim).to_zarr(outputs['zarr'])    # tokens are path-like
 
 
 # --- rule 3: aggregate all years per model (fan-in) ---
@@ -99,7 +113,7 @@ def anomalies(inputs, outputs, model, year):
 def agg_inputs(model):
     return {str(year): f'data/anomalies/{model}/{year}.zarr' for year in YEARS}
 
-@rmk.rule(
+@rule(
     inputs     = agg_inputs,
     outputs    = {'agg': ZarrStore('data/aggregated/{model}.zarr')},
     matrix     = {'model': MODELS},
@@ -108,15 +122,148 @@ def agg_inputs(model):
 def aggregate(inputs, outputs, model):
     import xarray as xr
     ds = xr.open_mfdataset(list(inputs.values()), engine='zarr')
-    ds.to_zarr(outputs['agg'].path)
+    ds.to_zarr(outputs['agg'])
+
+
+rmk.rules_from_current_module()
 ```
+
+### Registering rules with a Remake instance
+
+`@rule(...)` is a module-level decorator producing a free-standing `Rule`
+object; it does not register anything. The `Remake` instance is created at
+the top of the file (so config options stay visible up front) and rules are
+registered with it in one of three ways:
+
+```python
+# 1. Collect every Rule visible in the calling module — the common case.
+#    Goes at the END of the file, after all rule definitions.
+rmk.rules_from_current_module()
+
+# 2. Collect every Rule defined in given modules
+import rules_extract, rules_analysis
+rmk.rules_from_modules(rules_extract, rules_analysis)
+
+# 3. Explicit list — clearest for tests and small pipelines
+rmk = Remake(rules=[extract, anomalies, aggregate])
+# equivalently: rmk.add_rules([extract, anomalies, aggregate])
+```
+
+Because rules are plain importable objects, a pipeline can be split across
+files and combined at the top level — `inputs=extract.outputs`,
+`matrix=extract.matrix` and `depends_on=[extract]` are ordinary attribute
+accesses on the imported `Rule`:
+
+```python
+# pipeline.py
+from remake3 import Remake
+from rules_extract import *      # extract
+from rules_analysis import *     # anomalies, aggregate
+
+rmk = Remake()
+rmk.rules_from_current_module()  # sees imported rules too
+```
+
+`rules_from_current_module()` is implemented by scanning the caller's
+globals:
+
+```python
+def rules_from_current_module(self) -> None:
+    caller_globals = inspect.currentframe().f_back.f_globals
+    self.add_rules(
+        v for v in caller_globals.values() if isinstance(v, Rule)
+    )
+```
+
+Notes on its behaviour:
+
+- It must be called **after** all rule definitions — i.e. it goes at the
+  end of the file, while `rmk = Remake(...)` stays at the top.
+- It picks up `Rule` objects *imported into* the module as well as those
+  defined in it. This is the multi-file composition mechanism, not a bug.
+- Definition order is preserved (module `__dict__` is insertion-ordered),
+  and `add_rules` deduplicates by identity.
+- There is no global registry: a module defining rules can be imported by
+  two different pipelines, and two `Remake` instances can coexist in one
+  process (the in-memory-SQLite test pattern relies on this).
+
+Remake-level defaults (`strict_scope`, `config`) are resolved at
+registration time: rule-level settings are tri-state (`None` = inherit),
+and `Remake` fills in its defaults when the rule is registered.
+
+### Optional `inputs`, `outputs` and `matrix` — the signature contract
+
+All three declarations default to `None` and may be omitted:
+
+- **No `inputs`** — source rules: downloads, data generators, directory
+  scanners. Nothing upstream feeds them.
+- **No `outputs`** — side-effect rules: writes to a region of a zarr store,
+  upserts to a database table, POSTs to an API. There is no independently
+  addressable artefact, and inventing dummy sentinel files to satisfy the
+  framework is exactly the kind of noise remake3 avoids. Completion is
+  DB-tracked (see *Output tokens* below), so an output-less rule has
+  well-defined rerun semantics, can be listed in `depends_on`, and works
+  with SLURM continuation jobs — none of that machinery reads outputs.
+- **No `matrix`** — the rule expands to exactly one task.
+
+The rule function's signature must mirror what is declared. The expected
+signature is:
+
+```
+def my_rule([inputs,] [outputs,] <one parameter per matrix key>):
+```
+
+`@rule` validates this with `inspect.signature` at decoration time:
+declaring `inputs` but omitting the parameter (or vice versa) is an
+immediate error, as is a missing or typo'd matrix parameter (`yaer` for
+`year` fails at import, not as a `TypeError` inside a SLURM job three hours
+later). `inputs={}` / `outputs={}` are rejected as ambiguous — omit the
+argument instead. A callable spec counts as declared even if it returns an
+empty dict for some kwargs.
+
+A pipeline writing regions of a shared zarr store:
+
+```python
+@rule(outputs={'store': ZarrStore('data/big.zarr')}, ...)
+def create_store(outputs):
+    # source rule: no inputs. Initialises an empty store with the full
+    # coordinate grid, then consolidates metadata.
+    ...
+
+@rule(
+    inputs     = create_store.outputs,
+    matrix     = {'year': YEARS},
+    depends_on = [create_store],
+)
+def write_region(inputs, year):
+    # side-effect rule: no outputs. Writes one year's slab into the store.
+    ds = compute_year(year)
+    ds.to_zarr(inputs['store'], region={'time': year_slice(year)})
+
+@rule(matrix={'table': TABLES})
+def refresh_views(table):
+    # neither inputs nor outputs: pure side effect, one task per table
+    ...
+```
+
+Two consequences of output-less rules, stated so they are not surprises:
+
+1. **The DB is the only record of completion.** If the metadata DB is lost,
+   file-backed rules can be reconciled via output tokens; output-less rules
+   will rerun. For idempotent region writes and upserts this is wasteful
+   but harmless.
+2. **There is nothing to audit.** `check_outputs` modes (below) treat
+   output-less tasks as DB-authoritative. Where the side effect *is*
+   cheaply checkable, a custom `OutputToken` (e.g. one that checks a
+   sentinel zarr attribute or queries for a DB row) restores verification —
+   opt-in, never required.
 
 ### Using `uses` for tracked external dependencies
 
 ```python
 THRESHOLD = 0.5                          # module-level constant
 
-@rmk.rule(
+@rule(
     inputs  = {'raw': 'data/raw/{year}.csv'},
     outputs = {'filt': 'data/filtered/{year}.csv'},
     matrix  = {'year': YEARS},
@@ -138,13 +285,21 @@ a user-supplied hash function.
 ```python
 rmk = Remake(strict_scope=True)
 # or per-rule:
-@rmk.rule(..., strict_scope=True)
+@rule(..., strict_scope=True)
 def my_rule(inputs, outputs, year): ...
 ```
 
 In strict mode, if `rule_run` accesses any name from outer scope that is not
-covered by `uses`, decoration raises `ScopeError`. In the default mode
+covered by `uses`, a `ScopeError` is raised. In the default mode
 (`strict_scope=False`) this is a warning.
+
+The rule-level setting is tri-state: `strict_scope=None` (the default)
+inherits the Remake-level setting. Timing follows from that: scope
+*analysis* and warnings happen at decoration time (the free-variable
+inspection needs no `Remake`); a rule-level `strict_scope=True` also errors
+at decoration time, while the Remake-level default is enforced at
+registration time — which is where the pipeline is assembled, and still
+import time for the pipeline file.
 
 Detection uses `fn.__code__.co_names` (globals accessed) and
 `fn.__code__.co_freevars` (closure variables), filtered against a known-safe
@@ -158,7 +313,7 @@ list (stdlib modules, builtins).
 remake3/
 ├── core/
 │   ├── remake.py          # Remake class — wires everything together
-│   ├── rule.py            # Rule descriptor (produced by @rmk.rule)
+│   ├── rule.py            # Rule descriptor (produced by @rule)
 │   ├── task.py            # Task dataclass — lightweight, lazy
 │   ├── dag.py             # Rule-level DAG construction (pure functions)
 │   ├── planner.py         # Decides which tasks need running (pure)
@@ -185,23 +340,28 @@ remake3/
 
 ### The `Rule` descriptor
 
-`@rmk.rule(...)` returns a `Rule` object, not the original function. This
-object carries:
+`@rule(...)` returns a `Rule` object, not the original function. It is
+free-standing — importable from any module, registered with a `Remake`
+later. This object carries:
 
 ```python
 @dataclass
 class Rule:
     fn:         Callable                     # the rule_run function
-    inputs:     dict | Callable              # spec or callable → spec
-    outputs:    dict | Callable              # spec or callable → spec
-    matrix:     dict                         # {param: [values], ...}
+    inputs:     dict | Callable | None       # spec, callable → spec, or absent
+    outputs:    dict | Callable | None       # spec, callable → spec, or absent
+    matrix:     dict | list | Callable | None  # None → single task
     depends_on: list[Rule]                   # explicit upstream rules
     uses:       dict                         # tracked external names/values
-    strict_scope: bool
+    strict_scope: bool | None                # None → inherit Remake default
     config:     dict                         # executor overrides (e.g. slurm mem)
     # set by Remake after registration:
     remake:     Remake | None = None
 ```
+
+Decoration validates the signature contract (see above) and runs scope
+analysis; registration resolves tri-state settings against Remake defaults
+and wires the rule into the DAG.
 
 `Rule.inputs` and `Rule.outputs` are always stored as-is (dict or callable) and
 resolved per-task only when expansion is needed. This means **no path strings
@@ -506,7 +666,7 @@ element IDs.
 ### Per-rule SLURM config
 
 ```python
-@rmk.rule(
+@rule(
     inputs  = extract_inputs,
     outputs = {'clean': 'data/clean/{model}/{year}.nc'},
     matrix  = {'model': MODELS, 'year': YEARS},
@@ -541,7 +701,7 @@ during planning; if the required upstream outputs do not yet exist it raises
 an error.
 
 ```python
-from remake3 import Remake, MatrixNotReady
+from remake3 import Remake, MatrixNotReady, rule
 import json
 from pathlib import Path
 
@@ -549,7 +709,7 @@ rmk = Remake()
 YEARS = list(range(1980, 2021))
 
 
-@rmk.rule(
+@rule(
     inputs  = {'raw': 'data/raw/{year}.nc'},
     outputs = {'clusters': 'data/clusters/{year}.json'},
     matrix  = {'year': YEARS},
@@ -572,7 +732,7 @@ def process_matrix():
     return rows   # list[dict] — not a cartesian product
 
 
-@rmk.rule(
+@rule(
     inputs     = lambda year, cluster_id: {
         'data': f'data/clusters/{year}/{cluster_id}.nc'
     },
@@ -582,6 +742,9 @@ def process_matrix():
 )
 def process_cluster(inputs, outputs, year, cluster_id):
     ...
+
+
+rmk.rules_from_current_module()
 ```
 
 `MatrixNotReady` accepts one or more path strings as context, which remake3
@@ -665,44 +828,59 @@ continuation job submits an array if eligible.
 
 ## Output tokens
 
-All outputs are `OutputToken` instances. String paths are automatically wrapped
-in `FileToken` for backwards convenience.
+Task completion is tracked in the metadata DB — that is the primary
+mechanism, and it works for rules with no outputs at all. Output tokens are
+the **opt-in verification layer**: a way to ask the world, rather than the
+DB, whether an output exists in finished form. Each token type encodes its
+own definition of *finished* — that knowledge lives in the token, once, not
+scattered across rules.
+
+Declared outputs are `OutputToken` instances. String paths are automatically
+wrapped in `FileToken`, so the common case needs no token syntax at all.
 
 ```python
 class OutputToken(ABC):
     @abstractmethod
     def identity(self) -> str:
-        """Stable string used for DAG wiring and task key hashing."""
+        """Stable string identifying this output (display, hashing)."""
 
     @abstractmethod
     def is_complete(self) -> bool:
         """Has this output been successfully produced?"""
 
+    def __str__(self) -> str:
+        return self.identity()
 
-class FileToken(OutputToken):
+
+class PathToken(OutputToken):
+    """Base for path-backed tokens. Transparent: implements __fspath__,
+    so rule code passes tokens straight to open(), Path(), xarray, zarr —
+    no .path unwrapping."""
+
     def __init__(self, path: str):
         self.path = path
+
+    def __fspath__(self) -> str:
+        return self.path
 
     def identity(self) -> str:
         return self.path
 
+
+class FileToken(PathToken):
     def is_complete(self) -> bool:
         return Path(self.path).exists()
 
 
-class ZarrStore(OutputToken):
-    def __init__(self, path: str):
-        self.path = path
-
-    def identity(self) -> str:
-        return self.path
-
+class ZarrStore(PathToken):
     def is_complete(self) -> bool:
-        # Consolidated metadata written by zarr.consolidate_metadata()
+        # A half-written store also has a directory; only the consolidated
+        # metadata written by zarr.consolidate_metadata() marks completion.
         return Path(self.path, '.zmetadata').exists()
 
 
 class S3Object(OutputToken):
+    # Not path-like: str(token) gives the URI.
     def __init__(self, bucket: str, key: str):
         self.bucket = bucket
         self.key = key
@@ -720,8 +898,32 @@ class S3Object(OutputToken):
             return False
 ```
 
-Token `is_complete()` is only called when filesystem checks are explicitly
-enabled in config — the default is DB-first, filesystem as a fallback.
+### Parent directory creation
+
+Before a task runs, remake3 resolves its outputs and creates the parent
+directory of every path-backed token (`mkdir -p` semantics). Rule code
+never needs `Path(outputs[...]).parent.mkdir(parents=True, exist_ok=True)`
+boilerplate. For a `ZarrStore` the parent of the store directory is
+created — the store itself is written by zarr. Non-path tokens
+(`S3Object`, ...) are unaffected.
+
+### When `is_complete()` is consulted
+
+`Remake(check_outputs=...)` selects one of three modes:
+
+- **`'never'`** — DB is the sole source of truth. Fastest; no I/O beyond
+  the DB at plan time.
+- **`'fallback'`** (default) — tokens are consulted only for tasks the DB
+  has no record of. This makes a lost or absent DB recoverable: completed
+  file-backed work is recognised from its outputs instead of rerun.
+  Per-run cost is zero once the DB is populated.
+- **`'always'`** — every planned task's outputs are checked. Detects
+  outputs deleted behind the DB's back — e.g. scratch-filesystem purges —
+  at the cost of touching the filesystem (or S3) for every output. Also
+  available per-invocation as `remake3 run --check-outputs`.
+
+In every mode, tasks with no declared outputs are DB-authoritative: there
+is nothing to check, and that is fine.
 
 ---
 
@@ -742,16 +944,14 @@ enabled in config — the default is DB-first, filesystem as a fallback.
 
 ```python
 def test_build_rule_dag():
-    rmk = Remake(metadata=InMemoryBackend())
+    @rule(outputs={'a': 'a.txt'})
+    def rule_a(outputs): pass
 
-    @rmk.rule(inputs={}, outputs={'a': 'a.txt'}, matrix={})
-    def rule_a(inputs, outputs): pass
-
-    @rmk.rule(inputs=rule_a.outputs, outputs={'b': 'b.txt'},
-              matrix={}, depends_on=[rule_a])
+    @rule(inputs=rule_a.outputs, outputs={'b': 'b.txt'},
+          depends_on=[rule_a])
     def rule_b(inputs, outputs): pass
 
-    dag = build_rule_dag(rmk.rules)
+    dag = build_rule_dag([rule_a, rule_b])
     assert list(nx.topological_sort(dag)) == [rule_a, rule_b]
 
 
@@ -764,12 +964,12 @@ def test_matrix_expansion():
 
 def test_planner_reruns_on_code_change(tmp_path):
     meta = Sqlite3Backend(':memory:')
-    rmk  = Remake(metadata=meta)
 
-    @rmk.rule(inputs={}, outputs={'out': str(tmp_path / '{x}.txt')}, matrix={'x': [1]})
-    def my_rule(inputs, outputs, x):
+    @rule(outputs={'out': str(tmp_path / '{x}.txt')}, matrix={'x': [1]})
+    def my_rule(outputs, x):
         pass
 
+    rmk = Remake(rules=[my_rule], metadata=meta)
     rmk.finalize()
     tasks = plan(rmk.rules, rmk.dag, meta)
     assert tasks[0].requires_rerun  # never run
@@ -778,7 +978,7 @@ def test_planner_reruns_on_code_change(tmp_path):
     meta.update_task(tasks[0])
 
     # Mutate the source
-    my_rule.fn = lambda inputs, outputs, x: print('changed')
+    my_rule.fn = lambda outputs, x: print('changed')
     tasks = plan(rmk.rules, rmk.dag, meta)
     assert tasks[0].requires_rerun  # code changed
 ```
@@ -797,15 +997,15 @@ def test_two_rule_pipeline(rmk, tmp_path):
     (tmp_path / 'raw').mkdir()
     (tmp_path / 'raw' / 'data.txt').write_text('hello')
 
-    @rmk.rule(
+    @rule(
         inputs  = {'src': str(tmp_path / 'raw/data.txt')},
         outputs = {'dst': str(tmp_path / 'out/data.txt')},
-        matrix  = {},
     )
     def process(inputs, outputs):
-        Path(outputs['dst']).parent.mkdir(exist_ok=True)
+        # parent dir of outputs['dst'] is created by remake before the run
         Path(outputs['dst']).write_text(Path(inputs['src']).read_text().upper())
 
+    rmk.add_rules([process])
     rmk.run()
     assert Path(tmp_path / 'out/data.txt').read_text() == 'HELLO'
 ```
@@ -814,20 +1014,35 @@ def test_two_rule_pipeline(rmk, tmp_path):
 
 ```python
 def test_scope_warning_on_free_variable():
-    rmk = Remake()
+    # Scope analysis happens at decoration — no Remake needed.
     CONSTANT = 42
     with pytest.warns(ScopeWarning, match='CONSTANT'):
-        @rmk.rule(inputs={}, outputs={'out': 'out.txt'}, matrix={})
-        def my_rule(inputs, outputs):
+        @rule(outputs={'out': 'out.txt'})
+        def my_rule(outputs):
             return CONSTANT   # closes over CONSTANT, not declared in uses
 
-def test_scope_error_in_strict_mode():
-    rmk = Remake(strict_scope=True)
+def test_scope_error_rule_level_strict():
     CONSTANT = 42
     with pytest.raises(ScopeError):
-        @rmk.rule(inputs={}, outputs={'out': 'out.txt'}, matrix={})
-        def my_rule(inputs, outputs):
+        @rule(outputs={'out': 'out.txt'}, strict_scope=True)
+        def my_rule(outputs):
             return CONSTANT
+
+def test_scope_error_remake_level_strict():
+    CONSTANT = 42
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', ScopeWarning)
+        @rule(outputs={'out': 'out.txt'})    # strict_scope=None → inherit
+        def my_rule(outputs):
+            return CONSTANT
+    with pytest.raises(ScopeError):
+        Remake(strict_scope=True, rules=[my_rule])   # enforced at registration
+
+def test_signature_contract():
+    with pytest.raises(SignatureError):
+        @rule(outputs={'out': '{x}.txt'}, matrix={'x': [1]})
+        def bad_rule(inputs, outputs, x):    # declares no inputs — must not take it
+            pass
 ```
 
 **Property-based tests** (Hypothesis):
@@ -847,10 +1062,12 @@ def test_task_keys_unique(matrix_values):
 
 remake2 remakefiles can be adapted to remake3 with a script that:
 
-1. Converts `class MyRule(Rule):` to `@rmk.rule(...)` form
-2. Replaces `rule_matrix` with `matrix=`
+1. Converts `class MyRule(Rule):` to module-level `@rule(...)` form
+2. Replaces `rule_matrix` with `matrix=` (dropping it where empty)
 3. Replaces `Rule2.rule_inputs = Rule1.rule_outputs` with `inputs=rule1.outputs`
 4. Adds explicit `depends_on=[rule1]` where inferred
+5. Inserts `rmk = Remake()` at the top and `rmk.rules_from_current_module()`
+   at the end of the file
 
 A `remake3 migrate myfile.py` CLI command will run this conversion.
 

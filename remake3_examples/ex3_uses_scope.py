@@ -10,7 +10,7 @@
 # into errors rather than warnings.
 
 from pathlib import Path
-from remake3 import Remake
+from remake3 import Remake, rule
 
 rmk = Remake()          # use Remake(strict_scope=True) to enforce hard boundary
 
@@ -28,7 +28,7 @@ def normalise(values: list[float]) -> list[float]:
 
 # --- rules ---
 
-@rmk.rule(
+@rule(
     inputs  = {'src': 'data/raw/{year}.csv'},
     outputs = {'out': 'data/filtered/{year}.csv'},
     matrix  = {'year': YEARS},
@@ -40,7 +40,6 @@ def filter_data(inputs, outputs, year):
     kept = [r for r in rows if float(r['value']) > threshold]
     values = [float(r['value']) for r in kept]
     normed = normalise(values)
-    Path(outputs['out']).parent.mkdir(parents=True, exist_ok=True)
     with Path(outputs['out']).open('w', newline='') as f:
         w = csv.writer(f)
         w.writerow(['year', 'value', 'normed'])
@@ -48,15 +47,13 @@ def filter_data(inputs, outputs, year):
             w.writerow([year, r['value'], f'{n:.4f}'])
 
 
-@rmk.rule(
+@rule(
     inputs     = filter_data.outputs,
     outputs    = {'combined': 'data/results/all_years.csv'},
-    matrix     = {},
     depends_on = [filter_data],
 )
 def combine(inputs, outputs):
     import csv
-    Path(outputs['combined']).parent.mkdir(parents=True, exist_ok=True)
     all_rows = []
     for path in inputs.values():
         all_rows.extend(list(csv.DictReader(Path(path).open())))
@@ -64,3 +61,6 @@ def combine(inputs, outputs):
         w = csv.DictWriter(f, fieldnames=['year', 'value', 'normed'])
         w.writeheader()
         w.writerows(all_rows)
+
+
+rmk.rules_from_current_module()

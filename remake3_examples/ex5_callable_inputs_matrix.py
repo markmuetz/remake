@@ -9,7 +9,7 @@
 # Also demonstrates matrix inheritance and subsetting.
 
 from pathlib import Path
-from remake3 import Remake
+from remake3 import Remake, rule
 
 rmk = Remake()
 
@@ -25,24 +25,22 @@ YEARS   = [2020, 2021, 2022]
 SEASONS = ['DJF', 'MAM', 'JJA', 'SON']
 
 
-# --- style 1: plain dict, no matrix ---
+# --- style 1: plain dict, no matrix (omitted → single task) ---
 
-@rmk.rule(
+@rule(
     inputs  = {'config': 'config/pipeline.yaml'},
     outputs = {'validated': 'config/validated.yaml'},
-    matrix  = {},
 )
 def validate_config(inputs, outputs):
     import yaml
     cfg = yaml.safe_load(Path(inputs['config']).read_text())
     assert 'version' in cfg
-    Path(outputs['validated']).parent.mkdir(parents=True, exist_ok=True)
     Path(outputs['validated']).write_text(yaml.dump(cfg))
 
 
 # --- style 2: format-string dict, simple matrix ---
 
-@rmk.rule(
+@rule(
     inputs  = {'raw': 'data/raw/{site}/{year}.csv'},
     outputs = {'cal': 'data/calibrated/{site}/{year}.csv'},
     matrix  = {'site': SITES, 'year': YEARS},
@@ -52,7 +50,6 @@ def calibrate(inputs, outputs, site, year):
     import csv
     factor = calibration[site]
     rows = list(csv.DictReader(Path(inputs['raw']).open()))
-    Path(outputs['cal']).parent.mkdir(parents=True, exist_ok=True)
     with Path(outputs['cal']).open('w', newline='') as f:
         w = csv.DictWriter(f, fieldnames=['site', 'year', 'value'])
         w.writeheader()
@@ -81,7 +78,7 @@ def seasonal_inputs(site, year, season):
     return result
 
 
-@rmk.rule(
+@rule(
     inputs     = seasonal_inputs,
     outputs    = {'seasonal': 'data/seasonal/{site}/{year}/{season}.csv'},
     matrix     = {'site': SITES, 'year': YEARS, 'season': SEASONS},
@@ -98,7 +95,6 @@ def seasonal_means(inputs, outputs, site, year, season):
             continue
         rows = list(csv.DictReader(Path(inputs[key]).open()))
         all_values.extend(float(r['value']) for r in rows)
-    Path(outputs['seasonal']).parent.mkdir(parents=True, exist_ok=True)
     with Path(outputs['seasonal']).open('w', newline='') as f:
         w = csv.writer(f)
         w.writerow(['site', 'year', 'season', 'mean', 'n'])
@@ -113,7 +109,7 @@ def annual_inputs(site, year):
     return {s: f'data/seasonal/{site}/{year}/{s}.csv' for s in SEASONS}
 
 
-@rmk.rule(
+@rule(
     inputs     = annual_inputs,
     outputs    = {'annual': 'data/annual/{site}/{year}.csv'},
     matrix     = {'site': SITES, 'year': YEARS},   # subset of seasonal matrix
@@ -125,8 +121,10 @@ def annual_summary(inputs, outputs, site, year):
     for path in inputs.values():
         rows = list(csv.DictReader(Path(path).open()))
         all_means.extend(float(r['mean']) for r in rows)
-    Path(outputs['annual']).parent.mkdir(parents=True, exist_ok=True)
     with Path(outputs['annual']).open('w', newline='') as f:
         w = csv.writer(f)
         w.writerow(['site', 'year', 'annual_mean'])
         w.writerow([site, year, f'{statistics.mean(all_means):.4f}'])
+
+
+rmk.rules_from_current_module()
