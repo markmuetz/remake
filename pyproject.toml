@@ -37,6 +37,7 @@ Documentation = "https://markmuetz.github.io/remake"
 
 [project.optional-dependencies]
 debug = ["ipdb"]
+test = ["pytest", "hypothesis"]
 
 [project.scripts]
 remake = "remake.remake_cmd:remake_cmd"
@@ -46,3 +47,6 @@ where = ["src"]
 
 [tool.setuptools.dynamic]
 version = { attr = "remake.version.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
