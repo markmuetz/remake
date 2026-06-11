@@ -47,14 +47,19 @@ def expand_rule(rule, predicate=None):
     predicate: optional callable(kwargs) -> bool, applied before Task
     construction so filtered-out tasks are never created.
     """
+    return list(iter_expand_rule(rule, predicate))
+
+
+def iter_expand_rule(rule, predicate=None):
+    """Generator form of expand_rule — yields Tasks one at a time."""
     kwargs_list = resolve_matrix(rule.matrix)
     if callable(rule.matrix) and kwargs_list:
         # Deferred half of the signature contract: parameter names were
         # unknowable at decoration time for callable matrices.
         _check_expanded_kwargs(rule, kwargs_list[0])
-    if predicate is not None:
-        kwargs_list = [kw for kw in kwargs_list if predicate(kw)]
-    return [Task(rule=rule, kwargs=kw) for kw in kwargs_list]
+    for kw in kwargs_list:
+        if predicate is None or predicate(kw):
+            yield Task(rule=rule, kwargs=kw)
 
 
 def _check_expanded_kwargs(rule, kwargs):

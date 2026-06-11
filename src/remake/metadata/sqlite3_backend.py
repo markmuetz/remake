@@ -133,27 +133,31 @@ class Sqlite3Backend(MetadataManager):
         for rule in rules:
             self._ensure_rule(rule)
 
+    # Below SQLite's historical SQLITE_MAX_VARIABLE_NUMBER default of 999.
+    SELECT_CHUNK = 900
+
     def get_tasks_status(self, tasks):
         records = {}
-        for task in tasks:
-            row = self.conn.execute(
-                'SELECT task.last_run_status, task.last_run_timestamp, task.uses_hash, '
-                '       task.exception, code.code '
+        keys = [task.key for task in tasks]
+        for i in range(0, len(keys), self.SELECT_CHUNK):
+            chunk = keys[i:i + self.SELECT_CHUNK]
+            placeholders = ','.join('?' * len(chunk))
+            rows = self.conn.execute(
+                'SELECT task.key, task.last_run_status, task.last_run_timestamp, '
+                '       task.uses_hash, task.exception, code.code '
                 'FROM task LEFT JOIN code ON task.run_code_id = code.id '
-                'WHERE task.key = ?',
-                (task.key,),
-            ).fetchone()
-            if row is None:
-                continue
-            status, timestamp, stored_uses_hash, exception, run_code = row
-            records[task.key] = TaskRecord(
-                key=task.key,
-                status=status,
-                timestamp=timestamp,
-                run_code=run_code or '',
-                uses_hash=stored_uses_hash or '',
-                exception=exception or '',
-            )
+                f'WHERE task.key IN ({placeholders})',
+                chunk,
+            ).fetchall()
+            for key, status, timestamp, stored_uses_hash, exception, run_code in rows:
+                records[key] = TaskRecord(
+                    key=key,
+                    status=status,
+                    timestamp=timestamp,
+                    run_code=run_code or '',
+                    uses_hash=stored_uses_hash or '',
+                    exception=exception or '',
+                )
         return records
 
     @retry_lock_commit

@@ -5,11 +5,12 @@ from pathlib import Path
 from loguru import logger
 
 from ..metadata.metadata_manager import TASK_STATUS_FAILED, TASK_STATUS_SUCCESS
-from .dag import build_rule_dag, expand_rule
+from .dag import build_rule_dag, iter_expand_rule
 from .exceptions import RemakeError
 from .planner import make_predicate, plan
 from .rule import Rule
 from .scope import check_scope, exec_function
+from .task import Task
 
 
 class Remake:
@@ -82,22 +83,45 @@ class Remake:
             check_outputs=self.check_outputs,
         )
 
-    def tasks(self, query=None):
-        """All tasks of all currently-expandable rules. This materialises
-        every task — intended for info/reporting, not planning."""
+    def iter_tasks(self, query=None):
+        """Lazily yield tasks of all currently-expandable rules, one at a
+        time — constant memory regardless of matrix size."""
         if not self._finalized:
             self.finalize()
         predicate = make_predicate(query) if query else None
-        tasks = []
         for rule in self.rules:
-            tasks.extend(expand_rule(rule, predicate))
-        return tasks
+            yield from iter_expand_rule(rule, predicate)
+
+    def tasks(self, query=None):
+        """All tasks of all currently-expandable rules. This materialises
+        every task — intended for info/reporting, not planning."""
+        return list(self.iter_tasks(query))
+
+    def task_from_spec(self, rule_name, kwargs):
+        """Construct a task directly from (rule name, kwargs) — no search.
+        This is the executor-facing lookup (e.g. SLURM job specs carry
+        rule + kwargs)."""
+        for rule in self.rules:
+            if rule.name == rule_name:
+                return Task(rule=rule, kwargs=dict(kwargs))
+        raise RemakeError(f'No rule named {rule_name}')
 
     def task_from_key(self, key):
-        """Find a task by key or unambiguous key prefix."""
-        matches = [task for task in self.tasks() if task.key.startswith(key)]
-        if len(matches) > 1:
-            raise RemakeError(f'Task key prefix {key} is ambiguous ({len(matches)} matches)')
+        """Find a task by key or unambiguous key prefix.
+
+        Streams lazily; a full-length key returns on first match. A prefix
+        must scan all tasks to detect ambiguity (hashes are not invertible),
+        but never materialises more than the matches.
+        """
+        full_length = len(key) == 40
+        matches = []
+        for task in self.iter_tasks():
+            if task.key.startswith(key):
+                if full_length:
+                    return task
+                matches.append(task)
+                if len(matches) > 1:
+                    raise RemakeError(f'Task key prefix {key} is ambiguous')
         if not matches:
             raise RemakeError(f'No task with key {key}')
         return matches[0]

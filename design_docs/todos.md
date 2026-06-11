@@ -5,13 +5,14 @@ assessment (2026-06-11). Ordered roughly by severity.
 
 ## Performance / scaling
 
-- [ ] `Remake.task_from_key` materialises every task of every rule to find
-  one key — and `remake run-task` (the SLURM array hot path) calls it.
-  Replace with direct construction: the per-rule SLURM JSON already carries
-  `rule` + `kwargs`, so lookup should not be a search.
-- [ ] `Sqlite3Backend.get_tasks_status` is an N+1 query loop (one SELECT per
-  task, every plan). Bulk-query (`WHERE key IN (...)` batches, or remake2's
-  backup-to-`:memory:` trick for reads).
+- [x] `Remake.task_from_key` materialised every task of every rule to find
+  one key. Now: `task_from_spec(rule_name, kwargs)` constructs directly
+  (0.04 ms at 1e6 tasks — the SLURM job-spec path), and `task_from_key`
+  streams via `iter_tasks()` with early exit for full-length keys
+  (worst case 3 s / constant memory at 1e6 tasks, vs ~8.5 s / 2.1 GB).
+- [x] `Sqlite3Backend.get_tasks_status` was an N+1 query loop. Now batched
+  `WHERE key IN (...)` in chunks of 900. plan() against a fully-populated
+  1e6-row DB: 13.9 s (dominated by per-task rerun logic, not queries).
 - [ ] Make the 1e6-task benchmark a load-bearing part of CI (script:
   `tests/benchmarks/bench_million_tasks.py`). Baseline measured 2026-06-11
   (in-memory DB, local ext4): load+finalize 0.001s (lazy goal achieved);

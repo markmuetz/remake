@@ -46,3 +46,6 @@ print(f'peak RSS:             {rss:8.2f} GB')
 #   Peak RSS: 0.5 GB expand+keys, 2.1 GB fully materialised.
 # Run manually: PYTHONPATH=src python tests/benchmarks/bench_million_tasks.py
 # (not collected by pytest — no test_ prefix).
+# After batching + lazy lookup (2026-06-12): plan(never, empty DB) 6.2s;
+#   plan(never, fully populated DB) 13.9s; task_from_key worst case 3.0s
+#   (constant memory); task_from_spec 0.04ms.

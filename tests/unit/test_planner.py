@@ -108,6 +108,50 @@ def test_make_predicate():
     assert not pred({'other': 1})  # missing names: no match
 
 
+def test_get_tasks_status_batches_across_chunk_boundary(tmp_path):
+    """Bulk status lookup with more tasks than one SELECT chunk."""
+    from remake.metadata import TASK_STATUS_SUCCESS
+    from remake.metadata.sqlite3_backend import Sqlite3Backend
+
+    n = Sqlite3Backend.SELECT_CHUNK * 2 + 7
+
+    @rule(outputs={'o': str(tmp_path / '{i}.txt')}, matrix={'i': list(range(n))})
+    def big(outputs, i):
+        pass
+
+    rmk = Remake(rules=[big], metadata=Sqlite3Backend(':memory:'))
+    rmk.finalize()
+    tasks = rmk.tasks()
+    # Record success for every third task only.
+    recorded = tasks[::3]
+    for task in recorded:
+        rmk.metadata.update_task(task, TASK_STATUS_SUCCESS)
+
+    records = rmk.metadata.get_tasks_status(tasks)
+    assert len(records) == len(recorded)
+    assert all(t.key in records for t in recorded)
+    assert all(r.status == TASK_STATUS_SUCCESS for r in records.values())
+
+
+def test_task_from_spec_and_key_lookup(tmp_path):
+    @rule(outputs={'o': str(tmp_path / '{n}.txt')}, matrix={'n': list(range(50))})
+    def r(outputs, n):
+        pass
+
+    rmk = Remake(rules=[r], metadata=Sqlite3Backend(':memory:'))
+
+    direct = rmk.task_from_spec('r', {'n': 17})
+    assert direct.kwargs == {'n': 17}
+    # Direct construction agrees with search by full key and by prefix.
+    assert rmk.task_from_key(direct.key) == direct
+    assert rmk.task_from_key(direct.key[:12]) == direct
+
+    import pytest as _pytest
+
+    with _pytest.raises(Exception, match='No rule named'):
+        rmk.task_from_spec('nope', {})
+
+
 # --- check_outputs modes ---
 
 
