@@ -280,6 +280,12 @@ If `THRESHOLD` is changed to `0.7`, remake3 detects the change and marks all
 identical. Functions in `uses` are compared by AST; plain values by `repr()` or
 a user-supplied hash function.
 
+Tracking is one level deep: a function in `uses` is compared by its own
+body only. If it calls a further helper and *that* changes, nothing fires —
+declare the helper in `uses` too. (`uses` values are injected into the rule
+function's globals at execution time, so rule code refers to them directly
+by name.)
+
 ### Strict scope mode
 
 ```python

@@ -9,19 +9,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional, Union
 
 from .exceptions import SignatureError
-from .scope import check_scope
-
-
-def _function_source(fn):
-    """Source of fn, for change detection. Functions defined where source is
-    unavailable (REPL, exec) fall back to a bytecode digest — kept as a
-    parseable string literal so AST comparison still works."""
-    try:
-        return inspect.getsource(fn)
-    except (OSError, TypeError):
-        from hashlib import sha1
-
-        return f"'<bytecode:{sha1(fn.__code__.co_code).hexdigest()}>'"
+from .scope import check_scope, function_source
 
 
 @dataclass(eq=False)
@@ -50,13 +38,13 @@ class Rule:
             if part is None:
                 return ''
             if callable(part):
-                return _function_source(part)
+                return function_source(part)
             return repr(part)
 
         return {
             'inputs': part_source(self.inputs),
             'outputs': part_source(self.outputs),
-            'run': _function_source(self.fn),
+            'run': function_source(self.fn),
         }
 
     def __repr__(self):

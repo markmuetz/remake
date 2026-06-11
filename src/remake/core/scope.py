@@ -9,6 +9,7 @@ This is detection only — there is no runtime scope isolation. Names in
 `uses` are injected into the function's globals at execution time (see
 `exec_function`), so rule code refers to them directly.
 """
+import ast
 import builtins
 import dis
 import inspect
@@ -16,6 +17,7 @@ import sys
 import types
 import warnings
 
+from ..util.code_compare import dedent
 from .exceptions import ScopeError
 
 _BUILTIN_NAMES = frozenset(dir(builtins))
@@ -82,17 +84,42 @@ def check_scope(fn, uses, strict):
     warnings.warn(msg, ScopeWarning, stacklevel=3)
 
 
+def function_source(fn):
+    """Source of fn, for change detection. Functions defined where source is
+    unavailable (REPL, exec) fall back to a bytecode digest — kept as a
+    parseable string literal so AST comparison still works."""
+    try:
+        return inspect.getsource(fn)
+    except (OSError, TypeError):
+        from hashlib import sha1
+
+        return f"'<bytecode:{sha1(fn.__code__.co_code).hexdigest()}>'"
+
+
+def _normalised_source(fn):
+    """AST-normalised source: cosmetic changes (whitespace, comments) do not
+    change it, so string equality of the result is AST comparison."""
+    src = function_source(fn)
+    try:
+        return ast.dump(ast.parse(dedent(src)))
+    except SyntaxError:
+        # e.g. a lambda whose getsource line isn't parseable standalone.
+        return src
+
+
 def uses_hash(uses):
     """Stable string representing the current state of a `uses` dict.
 
-    Functions are represented by their source (so a body change is a
-    change); plain values by repr.
+    Functions are represented by their AST-normalised source (a body change
+    is a change, a comment is not — tracking is one level deep: helpers a
+    uses-function calls must themselves be declared in uses); plain values
+    by repr.
     """
     parts = []
     for name in sorted(uses):
         value = uses[name]
         if callable(value):
-            parts.append(f'{name}={inspect.getsource(value)}')
+            parts.append(f'{name}={_normalised_source(value)}')
         else:
             parts.append(f'{name}={value!r}')
     return '\n'.join(parts)
