@@ -1,6 +1,0 @@
-codecov:
-    disable_default_path_fixes: false
-
-ignore:
-    - "remake_legacy"
-    - "tests_legacy"
