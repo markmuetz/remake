@@ -48,6 +48,14 @@ def undeclared_names(fn, uses):
     resolve to modules (changing libraries is environment, not code), and
     names not resolvable at all (left to fail naturally at run time).
     """
+    closure_values = {}
+    if fn.__closure__:
+        for name, cell in zip(fn.__code__.co_freevars, fn.__closure__):
+            try:
+                closure_values[name] = cell.cell_contents
+            except ValueError:  # cell not yet filled (recursive def)
+                pass
+
     names = _loaded_globals(fn.__code__) | set(fn.__code__.co_freevars)
     undeclared = []
     for name in sorted(names):
@@ -55,19 +63,26 @@ def undeclared_names(fn, uses):
             continue
         if name in uses:
             continue
-        if name in fn.__globals__:
-            value = fn.__globals__[name]
-            if isinstance(value, types.ModuleType):
+        if name in closure_values:
+            if _is_environment(closure_values[name]):
                 continue
-            # Objects imported from the stdlib (e.g. Path, datetime) are
-            # environment, not trackable code.
-            defining_module = getattr(value, '__module__', '') or ''
-            if defining_module.split('.')[0] in _STDLIB_MODULE_NAMES:
+            undeclared.append(name)
+        elif name in fn.__globals__:
+            if _is_environment(fn.__globals__[name]):
                 continue
             undeclared.append(name)
         elif name in fn.__code__.co_freevars:
             undeclared.append(name)
     return undeclared
+
+
+def _is_environment(value):
+    """Modules, and objects imported from the stdlib (e.g. Path, datetime),
+    are environment, not trackable code."""
+    if isinstance(value, types.ModuleType):
+        return True
+    defining_module = getattr(value, '__module__', '') or ''
+    return defining_module.split('.')[0] in _STDLIB_MODULE_NAMES
 
 
 def check_scope(fn, uses, strict):

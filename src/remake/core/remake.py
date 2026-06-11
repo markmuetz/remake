@@ -48,8 +48,11 @@ class Remake:
         self._finalized = False
 
     def rules_from_current_module(self):
-        caller_globals = inspect.currentframe().f_back.f_globals
-        self.add_rules(v for v in caller_globals.values() if isinstance(v, Rule))
+        # f_locals so rules defined inside functions (tests, notebooks) are
+        # found too; at module level locals and globals are the same dict.
+        frame = inspect.currentframe().f_back
+        namespace = {**frame.f_globals, **frame.f_locals}
+        self.add_rules(v for v in namespace.values() if isinstance(v, Rule))
 
     def rules_from_modules(self, *modules):
         for module in modules:

@@ -1,0 +1,139 @@
+from pathlib import Path
+
+from remake import Remake, Sqlite3Backend, rule
+from remake.core.planner import make_predicate
+from remake.metadata import TASK_STATUS_FAILED
+
+
+def make_pipeline(tmp_path, **remake_kwargs):
+    @rule(outputs={'o': str(tmp_path / 'a_{n}.txt')}, matrix={'n': [1, 2]})
+    def rule_a(outputs, n):
+        Path(outputs['o']).write_text(str(n))
+
+    @rule(
+        inputs=rule_a.outputs,
+        outputs={'o': str(tmp_path / 'b_{n}.txt')},
+        matrix=rule_a.matrix,
+        depends_on=[rule_a],
+    )
+    def rule_b(inputs, outputs, n):
+        Path(outputs['o']).write_text(Path(inputs['o']).read_text())
+
+    def fan_in_inputs():
+        return {str(n): str(tmp_path / f'b_{n}.txt') for n in [1, 2]}
+
+    @rule(inputs=fan_in_inputs, outputs={'o': str(tmp_path / 'c.txt')}, depends_on=[rule_b])
+    def rule_c(inputs, outputs):
+        Path(outputs['o']).write_text('done')
+
+    remake_kwargs.setdefault('metadata', Sqlite3Backend(':memory:'))
+    rmk = Remake(rules=[rule_a, rule_b, rule_c], **remake_kwargs)
+    return rmk, rule_a, rule_b, rule_c
+
+
+def test_never_run_all_runnable(tmp_path):
+    rmk, *_ = make_pipeline(tmp_path)
+    runnable, deferred = rmk.plan()
+    assert len(runnable) == 5 and not deferred
+
+
+def test_topological_ordering(tmp_path):
+    rmk, rule_a, rule_b, rule_c = make_pipeline(tmp_path)
+    runnable, _ = rmk.plan()
+    rule_order = [t.rule.name for t in runnable]
+    assert rule_order == ['rule_a', 'rule_a', 'rule_b', 'rule_b', 'rule_c']
+
+
+def test_complete_run_replans_empty(tmp_path):
+    rmk, *_ = make_pipeline(tmp_path)
+    rmk.run()
+    runnable, deferred = rmk.plan()
+    assert not runnable and not deferred
+
+
+def test_failed_task_replans(tmp_path):
+    rmk, rule_a, *_ = make_pipeline(tmp_path)
+    rmk.run()
+    task = next(t for t in rmk.tasks() if t.rule is rule_a and t.kwargs == {'n': 1})
+    rmk.metadata.update_task(task, TASK_STATUS_FAILED, exception='boom')
+    runnable, _ = rmk.plan()
+    assert task in runnable
+
+
+def test_elementwise_propagation_same_matrix(tmp_path):
+    rmk, rule_a, rule_b, rule_c = make_pipeline(tmp_path)
+    rmk.run()
+    task = next(t for t in rmk.tasks() if t.rule is rule_a and t.kwargs == {'n': 1})
+    rmk.metadata.update_task(task, TASK_STATUS_FAILED)
+    runnable, _ = rmk.plan()
+    by_rule = {}
+    for t in runnable:
+        by_rule.setdefault(t.rule.name, []).append(t.kwargs)
+    # rule_b shares rule_a's matrix: only n=1 propagates.
+    assert by_rule['rule_a'] == [{'n': 1}]
+    assert by_rule['rule_b'] == [{'n': 1}]
+    # rule_c has a different matrix (fan-in): conservative, reruns.
+    assert by_rule['rule_c'] == [{}]
+
+
+def test_uses_change_triggers_rerun(tmp_path):
+    rmk, rule_a, rule_b, rule_c = make_pipeline(tmp_path)
+    rmk.run()
+    rule_b.uses = {'mode': 'changed'}
+    runnable, _ = rmk.plan()
+    names = sorted({t.rule.name for t in runnable})
+    assert names == ['rule_b', 'rule_c']  # rule_b and downstream, not rule_a
+    assert len([t for t in runnable if t.rule is rule_b]) == 2
+
+
+def test_force_reruns_everything(tmp_path):
+    rmk, *_ = make_pipeline(tmp_path)
+    rmk.run()
+    runnable, _ = rmk.plan(force=True)
+    assert len(runnable) == 5
+
+
+def test_query_filters_and_missing_name_means_no_match(tmp_path):
+    rmk, *_ = make_pipeline(tmp_path)
+    runnable, _ = rmk.plan(query='n == 2')
+    # rule_c has no 'n' kwarg: excluded, not an error.
+    assert sorted(t.rule.name for t in runnable) == ['rule_a', 'rule_b']
+    assert all(t.kwargs['n'] == 2 for t in runnable)
+
+
+def test_make_predicate():
+    pred = make_predicate("n > 1 and model == 'era5'")
+    assert pred({'n': 2, 'model': 'era5'})
+    assert not pred({'n': 1, 'model': 'era5'})
+    assert not pred({'other': 1})  # missing names: no match
+
+
+# --- check_outputs modes ---
+
+
+def test_fallback_recognises_outputs_with_fresh_db(tmp_path):
+    rmk, *_ = make_pipeline(tmp_path)
+    rmk.run()
+    # Same rules, fresh DB: fallback recognises completed outputs.
+    rmk2, *_ = make_pipeline(tmp_path)
+    runnable, _ = rmk2.plan()
+    assert not runnable
+
+
+def test_never_mode_reruns_with_fresh_db(tmp_path):
+    rmk, *_ = make_pipeline(tmp_path)
+    rmk.run()
+    rmk2, *_ = make_pipeline(tmp_path, check_outputs='never')
+    runnable, _ = rmk2.plan()
+    assert len(runnable) == 5
+
+
+def test_always_mode_detects_deleted_output(tmp_path):
+    rmk, *_ = make_pipeline(tmp_path)
+    rmk.run()
+    (tmp_path / 'a_1.txt').unlink()  # simulate scratch purge
+    runnable, _ = rmk.plan()
+    assert not runnable  # fallback: DB record exists, trusted
+    rmk.check_outputs = 'always'
+    runnable, _ = rmk.plan()
+    assert {t.kwargs.get('n') for t in runnable if t.rule.name == 'rule_a'} == {1}

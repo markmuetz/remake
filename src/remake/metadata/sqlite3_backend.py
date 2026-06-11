@@ -82,7 +82,9 @@ class Sqlite3Backend(MetadataManager):
         if create_db and not in_memory:
             logger.info(f'Creating sqlite3 database: {self.dbloc}')
             Path(self.dbloc).parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.dbloc, detect_types=sqlite3.PARSE_DECLTYPES)
+        # No detect_types: timestamps are read as plain strings (TaskRecord
+        # .timestamp), and the implicit converter is deprecated in 3.12.
+        self.conn = sqlite3.connect(self.dbloc)
         if create_db:
             self.conn.executescript(SQL_SCHEMA)
         self.conn.isolation_level = 'EXCLUSIVE'

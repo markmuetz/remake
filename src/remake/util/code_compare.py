@@ -1,4 +1,5 @@
 import ast
+import textwrap
 from itertools import zip_longest
 from typing import Union
 
@@ -6,9 +7,7 @@ from loguru import logger
 
 
 def dedent(s):
-    lines = s.split('\n')
-    min_leading_space = min([len(l) - len(l.lstrip()) for l in lines])
-    return '\n'.join(l[4:] for l in lines)
+    return textwrap.dedent(s)
 
 
 # https://stackoverflow.com/a/66733795/54557
@@ -47,7 +46,11 @@ class CodeComparer:
             logger.trace('already compared')
             return self.compare_cache[key]
         try:
-            res = _compare_ast(ast.parse(code1), ast.parse(code2))
+            res = _compare_ast(ast.parse(dedent(code1)), ast.parse(dedent(code2)))
+        except SyntaxError:
+            # Unparseable source (e.g. bytecode-digest fallbacks mixed with
+            # real source): strings differ, so treat as changed.
+            res = False
         except RecursionError as re:
             # TODO: investigate how this happens.
             # Seems to be when I invoke the remake cmd from within Ipython.
