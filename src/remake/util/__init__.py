@@ -1,12 +1,4 @@
-from .code_compare import dedent, CodeComparer
+from .code_compare import CodeComparer, dedent
 from .command_line_args import Arg, MutuallyExclusiveGroup, add_argset
 from .config import Config
-from .decorators import rule_dec
-from .util import (
-    sysrun,
-    tmp_to_actual_path,
-    Capturing,
-    format_path,
-    get_git_info,
-    git_archive,
-)
+from .util import Capturing, format_path, sysrun

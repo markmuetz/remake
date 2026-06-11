@@ -1,20 +1,34 @@
 import abc
+from dataclasses import dataclass
+from typing import Optional
 
-from ..util.code_compare import CodeComparer
+TASK_STATUS_PENDING = 0
+TASK_STATUS_SUCCESS = 1
+TASK_STATUS_FAILED = 2
+
+
+@dataclass(frozen=True)
+class TaskRecord:
+    """A task's stored execution state. The planner consumes these; Task
+    objects themselves stay pure value objects."""
+
+    key: str
+    status: int
+    timestamp: Optional[str]
+    run_code: str
+    uses_hash: str
+    exception: str
 
 
 class MetadataManager(abc.ABC):
-    def __init__(self):
-        self.code_comparer = CodeComparer()
+    @abc.abstractmethod
+    def ensure_rules(self, rules):
+        """Create/update stored rule metadata (source code) for these rules."""
 
     @abc.abstractmethod
-    def get_or_create_rule_metadata(self, rule):
-        pass
+    def get_tasks_status(self, tasks) -> dict:
+        """{task.key: TaskRecord} for tasks that have a stored record."""
 
     @abc.abstractmethod
-    def get_or_create_tasks_metadata(self, tasks):
-        pass
-
-    @abc.abstractmethod
-    def update_task_metadata(self, task, exception=''):
-        pass
+    def update_task(self, task, status, exception=''):
+        """Record a task execution result."""

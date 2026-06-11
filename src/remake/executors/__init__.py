@@ -1,5 +1,6 @@
 from .executor import Executor
-from .dask_executor import DaskExecutor
 from .singleproc_executor import SingleprocExecutor
-from .slurm_executor import SlurmExecutor
-from .multiproc_executor import MultiprocExecutor
+
+# multiproc and slurm executors are pending adaptation to the remake3 API
+# (see design_docs/detailed_code_implementation.md) and are not importable
+# until then.

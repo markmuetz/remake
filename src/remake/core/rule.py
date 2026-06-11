@@ -1,61 +1,153 @@
-from pathlib import Path
-import traceback
+"""The module-level @rule decorator and the Rule descriptor it produces.
 
-from loguru import logger
+Decoration does exactly two things: validate the signature contract and run
+scope analysis. Registration with a Remake instance happens separately
+(rules are free-standing, importable objects).
+"""
+import inspect
+from dataclasses import dataclass, field
+from typing import Callable, Optional, Union
 
-from .exceptions import RemakeOutputNotCreated
+from .exceptions import SignatureError
+from .scope import check_scope
 
 
-def tmp_atomic_path(p):
-    p = Path(p)
-    return p.parent / ('.remake.tmp.' + p.name)
+def _function_source(fn):
+    """Source of fn, for change detection. Functions defined where source is
+    unavailable (REPL, exec) fall back to a bytecode digest — kept as a
+    parseable string literal so AST comparison still works."""
+    try:
+        return inspect.getsource(fn)
+    except (OSError, TypeError):
+        from hashlib import sha1
+
+        return f"'<bytecode:{sha1(fn.__code__.co_code).hexdigest()}>'"
 
 
+@dataclass(eq=False)
 class Rule:
-    @classmethod
-    def run_task(cls, task, save_status=True):
-        atomic_output = getattr(cls, 'atomic_output', True)
-        assert task.rule == cls, f'Task has wrong rule: {task.rule} != {cls}'
+    fn: Callable
+    inputs: Union[dict, Callable, None] = None
+    outputs: Union[dict, Callable, None] = None
+    matrix: Union[dict, list, Callable, None] = None
+    depends_on: list = field(default_factory=list)
+    uses: dict = field(default_factory=dict)
+    strict_scope: Optional[bool] = None  # None -> inherit Remake default
+    config: dict = field(default_factory=dict)
+    # Set by Remake at registration:
+    remake: object = None
 
-        if atomic_output:
-            tmp_outputs = {k: tmp_atomic_path(v) for k, v in task.outputs.items()}
-        else:
-            tmp_outputs = {k: v for k, v in task.outputs.items()}
+    @property
+    def name(self):
+        return self.fn.__name__
 
-        for output_dir in set(Path(o).parent for o in task.outputs.values()):
-            if not output_dir.exists():
-                output_dir.mkdir(exist_ok=True, parents=True)
+    @property
+    def source(self):
+        """Source representation of each part, for metadata storage and
+        change detection. Callables by source, dicts by repr."""
 
-        logger.debug(f'Run task: {task}')
-        try:
-            cls.rule_run(task.inputs, tmp_outputs, **task.kwargs)
-            if atomic_output:
-                for output in tmp_outputs.values():
-                    if not output.exists():
-                        # TODO:
-                        # This should really have a different fail status.
-                        # Reason being: if this happens, then no amount of rerunning will fix it.
-                        raise RemakeOutputNotCreated(f'{task}: {output} not created')
-                for tmp_path, output_path in zip(tmp_outputs.values(), task.outputs.values()):
-                    tmp_path.rename(output_path)
-        except:
-            e = traceback.format_exc()
-            # Set task state to failed.
-            logger.error(f'failed: {task}')
-            logger.error(f'failed: {e}')
-            task.last_run_status = 2
-            if save_status:
-                logger.debug(f'update task: {task}')
-                cls.remake.update_task(task, exception=str(e))
-                logger.debug(f'updated task: {task}')
-            raise
+        def part_source(part):
+            if part is None:
+                return ''
+            if callable(part):
+                return _function_source(part)
+            return repr(part)
 
-        logger.debug(f'Completed: {task}')
-        task.last_run_status = 1
-        task.is_run = True
-        task.requires_rerun = False
+        return {
+            'inputs': part_source(self.inputs),
+            'outputs': part_source(self.outputs),
+            'run': _function_source(self.fn),
+        }
 
-        if save_status:
-            logger.debug(f'update task: {task}')
-            cls.remake.update_task(task)
-            logger.debug(f'updated task: {task}')
+    def __repr__(self):
+        return f'Rule({self.name})'
+
+
+def _matrix_keys(matrix):
+    """Matrix parameter names, or None if not knowable at decoration time."""
+    if matrix is None:
+        return set()
+    if callable(matrix):
+        return None
+    if isinstance(matrix, dict):
+        return set(matrix.keys())
+    if isinstance(matrix, list):
+        return set(matrix[0].keys()) if matrix else set()
+    raise SignatureError(f'matrix must be dict, list[dict] or callable, not {type(matrix)}')
+
+
+def _validate_signature(fn, inputs, outputs, matrix):
+    """The signature contract: def fn([inputs,] [outputs,] <matrix keys>)."""
+    if isinstance(inputs, dict) and not inputs:
+        raise SignatureError(f'{fn.__name__}: inputs={{}} is ambiguous — omit the argument')
+    if isinstance(outputs, dict) and not outputs:
+        raise SignatureError(f'{fn.__name__}: outputs={{}} is ambiguous — omit the argument')
+
+    params = list(inspect.signature(fn).parameters.values())
+    for p in params:
+        if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
+            raise SignatureError(f'{fn.__name__}: *args/**kwargs not allowed in rule functions')
+    names = [p.name for p in params]
+
+    expected_head = []
+    if inputs is not None:
+        expected_head.append('inputs')
+    if outputs is not None:
+        expected_head.append('outputs')
+    if names[: len(expected_head)] != expected_head:
+        raise SignatureError(
+            f'{fn.__name__}: signature must start with ({", ".join(expected_head)}, ...); '
+            f'got ({", ".join(names)})'
+        )
+    for special in ('inputs', 'outputs'):
+        if special in names and special not in expected_head:
+            raise SignatureError(
+                f'{fn.__name__} takes "{special}" but does not declare {special}='
+            )
+
+    rest = set(names[len(expected_head):])
+    matrix_keys = _matrix_keys(matrix)
+    if matrix_keys is None:
+        # Callable matrix: parameter names unknown until planning; checked
+        # at expansion time instead.
+        return
+    if rest != matrix_keys:
+        raise SignatureError(
+            f'{fn.__name__}: parameters {sorted(rest)} do not match matrix keys '
+            f'{sorted(matrix_keys)}'
+        )
+
+
+def rule(
+    *,
+    inputs=None,
+    outputs=None,
+    matrix=None,
+    depends_on=None,
+    uses=None,
+    strict_scope=None,
+    config=None,
+):
+    """Define a rule. Returns a free-standing Rule object (not the function).
+
+    See remake3_design.md for the full parameter semantics.
+    """
+
+    def decorator(fn):
+        uses_ = dict(uses) if uses else {}
+        _validate_signature(fn, inputs, outputs, matrix)
+        # Rule-level strict_scope=True errors now; None defers strictness to
+        # registration (warnings are still emitted now).
+        check_scope(fn, uses_, strict=bool(strict_scope))
+        return Rule(
+            fn=fn,
+            inputs=inputs,
+            outputs=outputs,
+            matrix=matrix,
+            depends_on=list(depends_on) if depends_on else [],
+            uses=uses_,
+            strict_scope=strict_scope,
+            config=dict(config) if config else {},
+        )
+
+    return decorator

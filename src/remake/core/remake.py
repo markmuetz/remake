@@ -1,475 +1,143 @@
-import sys
+"""The Remake class — wires rules, planner, metadata and executors together."""
 import inspect
-import itertools
-import math
-import traceback
-from collections import Counter
 from pathlib import Path
 
 from loguru import logger
-import networkx as nx
-from tabulate import tabulate, SEPARATING_LINE
 
-from pyquerylist import QueryList
-
-from ..executors import Executor, SingleprocExecutor, SlurmExecutor, DaskExecutor, MultiprocExecutor
-from ..metadata import Sqlite3MetadataManager
+from ..metadata.metadata_manager import TASK_STATUS_FAILED, TASK_STATUS_SUCCESS
+from .dag import build_rule_dag, expand_rule
+from .exceptions import RemakeError
+from .planner import make_predicate, plan
 from .rule import Rule
-from .task import Task
-from .task_control import TaskControl
-from ..util import dedent, Config
-
-logger.remove()
-logger.add(sys.stdout, format='<bold><lvl>{message}</lvl></bold>', level='INFO')
-
-
-def all_descendants(task_dag, tasks):
-    task_descendants = set()
-    for task in tasks:
-        if task in task_descendants:
-            continue
-        task_descendants |= descendants(task_dag, task)
-    return task_descendants
-
-
-def descendants(task_dag, task):
-    return set(nx.bfs_tree(task_dag, task))
-
-
-def _get_inputs_outputs(inputs_outputs_fn_or_dict, fmt_dict):
-    if callable(inputs_outputs_fn_or_dict):
-        return inputs_outputs_fn_or_dict(**fmt_dict)
-    else:
-        return {
-            k.format(**fmt_dict): v.format(**fmt_dict) for k, v in inputs_outputs_fn_or_dict.items()
-        }
-
-
-def _check_modify_fmt_dict(fmt_dict):
-    errors = []
-    new_fmt_dict = {**fmt_dict}
-    for key, value in fmt_dict.items():
-        if isinstance(key, str):
-            continue
-        elif isinstance(key, tuple):
-            if not len(key) == len(value):
-                errors.append(('length mismatch', key, value))
-            for kk, vv in zip(key, value):
-                if not isinstance(kk, str):
-                    errors.append(('not tuple of strings', key, value))
-                    break
-                else:
-                    new_fmt_dict[kk] = vv
-            new_fmt_dict.pop(key)
-        else:
-            errors.append(('not string', key, value))
-    if errors:
-        error_str = '\n'.join([f'  {msg}: {k}, {v}' for msg, k, v in errors])
-        raise Exception(
-            f'input_rule/output_rule keys must be strings or tuples of strings:\n' f'{error_str}'
-        )
-    return new_fmt_dict
+from .scope import check_scope, exec_function
 
 
 class Remake:
-    def __init__(self, config=None, *args, **kwargs):
-        if config == None:
-            config = {}
-        self.config = Config(
-            {
-                'slurm': {},
-                'old_style_class': False,
-                'content_checks': False,
-                'check_inputs_exist': False,
-                'check_outputs_exist': False,
-                'check_outputs_older_than_inputs': False,
-            }
-        )
-        self.config.update('remake_config', config)
-        self.args = args
-        self.kwargs = kwargs
+    def __init__(
+        self,
+        *,
+        rules=None,
+        config=None,
+        metadata=None,
+        check_outputs='fallback',
+        strict_scope=False,
+    ):
+        self.config = config or {}
+        self.metadata = metadata
+        self.check_outputs = check_outputs
+        self.strict_scope = strict_scope
         self.rules = []
-        self.tasks = QueryList()
-        self._inputs = {}
-        self._outputs = {}
-        self.task_dag = nx.DiGraph()
-        self.rule_dg = nx.DiGraph()  # Not nec. a DAG!
-        self.task_key_map = {}
+        self.dag = None
+        self._finalized = False
+        if rules:
+            self.add_rules(rules)
 
-        self.task_control = TaskControl()
-        self.metadata_manager = Sqlite3MetadataManager()
-        # Different between Python 3.10 and 3.12.
-        if sys.version_info[0] == 3 and sys.version_info[1] >= 12:
-            stack = next(traceback.walk_stack(None))
-            frame = stack[0]
-            self.full_path = frame.f_locals['module'].__file__
-            self.name = Path(self.full_path).name
-        elif sys.version_info[0] == 3 and sys.version_info[1] == 10:
-            stack = next(traceback.walk_stack(None))
-            frame = stack[0]
-            self.full_path = frame.f_globals['__file__']
-            self.name = Path(self.full_path).name
+    # --- registration ---
 
-    def autoload_rules(self, finalize=True):
-        stack = next(traceback.walk_stack(None))
-        frame = stack[0]
-        rules = []
-        for varname, var in frame.f_locals.items():
-            if isinstance(var, type) and issubclass(var, Rule) and not var is Rule:
-                rules.append(var)
-        return self.load_rules(rules)
-
-    def load_rules(self, rules, finalize=True):
-        logger.debug('Loading rules')
+    def add_rules(self, rules):
         for rule in rules:
-            if hasattr(rule, 'enabled') and not rule.enabled:
-                logger.trace(f'skipping disabled rule: {rule}')
+            if not isinstance(rule, Rule):
+                raise RemakeError(f'Not a Rule (use the @rule decorator): {rule!r}')
+            if rule in self.rules:
                 continue
-            self.load_rule(rule)
-            setattr(self, rule.__name__, rule)
-            self.rule_dg.add_node(rule)
+            # Resolve tri-state strict_scope against the Remake default.
+            if rule.strict_scope is None and self.strict_scope:
+                check_scope(rule.fn, rule.uses, strict=True)
+            rule.remake = self
+            self.rules.append(rule)
+        self._finalized = False
 
-        for task in self.tasks:
-            self.task_dag.add_node(task)
-            input_tasks = []
-            for input_ in task.inputs.values():
-                if input_ in self._outputs:
-                    prev_task = self._outputs[input_]
-                    if prev_task not in task.prev_tasks:
-                        task.prev_tasks.append(prev_task)
-                    if task not in prev_task.next_tasks:
-                        prev_task.next_tasks.append(task)
+    def rules_from_current_module(self):
+        caller_globals = inspect.currentframe().f_back.f_globals
+        self.add_rules(v for v in caller_globals.values() if isinstance(v, Rule))
 
-                    self.task_dag.add_edge(prev_task, task)
-                    self.rule_dg.add_edge(prev_task.rule, task.rule)
+    def rules_from_modules(self, *modules):
+        for module in modules:
+            self.add_rules(v for v in vars(module).values() if isinstance(v, Rule))
 
-                self._inputs[input_] = task
-
-        assert nx.is_directed_acyclic_graph(self.task_dag), 'Not a dag!'
-        # rule_dg is not necessarily a DAG!
-        # assert nx.is_directed_acyclic_graph(self.rule_dg), 'Not a dag!'
-        self.input_tasks = [v for v, d in self.task_dag.in_degree() if d == 0]
-        self.topo_tasks = QueryList(nx.topological_sort(self.task_dag))
-
-        logger.debug('inserting rules')
-        for rule in self.rules:
-            rule.source = {}
-            for req_method in ['rule_inputs', 'rule_outputs', 'rule_run']:
-                method = getattr(rule, req_method)
-                if callable(method):
-                    rule.source[req_method] = dedent(inspect.getsource(method))
-                else:
-                    # TODO: Would this work for non-callables?
-                    # rule.source[req_method] = repr(method)
-                    rule.source[req_method] = ''
-            self.metadata_manager.get_or_create_rule_metadata(rule)
-
-        if finalize:
-            self.finalize()
-
-        logger.debug('Loaded rules')
-        return self
-
-    def load_rule(self, rule):
-        logger.debug(f'loading rule: {rule}')
-        rule.remake = self
-        self.rules.append(rule)
-        for req_method in ['rule_inputs', 'rule_outputs', 'rule_run']:
-            assert hasattr(rule, req_method), f'{rule} does not have method {req_method}'
-            # if not self.config['old_style_class']:
-            #     assert callable(getattr(rule, req_method))
-            # assert getattr(rule, req_method).is_rule_dec
-
-        rule.tasks = QueryList()
-        if hasattr(rule, 'var_matrix'):
-            assert self.config['old_style_class']
-            rule_vars = list(itertools.product(*rule.var_matrix.values()))
-            rule_matrix_keys = rule.var_matrix.keys()
-        elif hasattr(rule, 'rule_matrix'):
-            assert not self.config['old_style_class']
-            if callable(rule.rule_matrix):
-                rule_matrix = rule.rule_matrix()
-            else:
-                rule_matrix = rule.rule_matrix
-            rule_matrix_keys = rule_matrix.keys()
-            rule_vars = list(itertools.product(*rule_matrix.values()))
-        else:
-            rule_matrix_keys = []
-            rule_vars = [None]
-
-        if hasattr(rule, 'depends_on'):
-            setattr(rule, 'deps', {})
-            for obj in rule.depends_on:
-                setattr(rule, obj.__name__, obj)
-                rule.deps[obj.__name__] = obj
-
-        for rule_var in rule_vars:
-            if rule_var is not None:
-                task_kwargs = {k: v for k, v in zip(rule_matrix_keys, rule_var)}
-                task_kwargs = _check_modify_fmt_dict(task_kwargs)
-            else:
-                task_kwargs = {}
-
-            inputs = _get_inputs_outputs(rule.rule_inputs, task_kwargs)
-            outputs = _get_inputs_outputs(rule.rule_outputs, task_kwargs)
-            task = Task(rule, inputs, outputs, task_kwargs)
-
-            self.task_key_map[task.key()] = task
-            rule.tasks.append(task)
-            self.tasks.append(task)
-
-            for output in outputs.values():
-                if output in self._outputs:
-                    logger.error(f'Output already added by {self._outputs[output]}: {output}')
-                    raise Exception(f'Duplicate output: {output}')
-                self._outputs[output] = task
+    # --- planning ---
 
     def finalize(self):
-        logger.debug('finalize')
-        self.metadata_manager.get_or_create_tasks_metadata(self.topo_tasks)
-        logger.debug('getting task status')
-        self.task_control.set_task_statuses(self.topo_tasks, self._outputs, self.config)
+        if self.metadata is None:
+            from ..metadata.sqlite3_backend import Sqlite3Backend
 
-    def update_task(self, task, exception=''):
-        self.metadata_manager.update_task_metadata(task, exception)
+            self.metadata = Sqlite3Backend()
+        self.dag = build_rule_dag(self.rules)
+        self.metadata.ensure_rules(self.rules)
+        self._finalized = True
+        return self
 
-    def _get_executor(self, executor):
-        if isinstance(executor, str):
-            if executor == 'SingleprocExecutor':
-                executor = SingleprocExecutor(self)
-            elif executor == 'SlurmExecutor':
-                executor = SlurmExecutor(self, self.config.get('slurm', {}))
-            elif executor == 'DaskExecutor':
-                executor = DaskExecutor(self, self.config.get('dask', {}))
-            elif executor == 'MultiprocExecutor':
-                executor = MultiprocExecutor(self, self.config.get('multiproc', {}))
-            else:
-                raise ValueError(f'{executor} not a valid executor')
-        elif not isinstance(executor, Executor):
-            raise ValueError(f'{executor} must be a string or a subtype of Executor')
-        return executor
-
-    def show_task_reasons(self, task):
-        for reason in task.rerun_reasons:
-            logger.info(f'  -- {reason}')
-
-    def show_task_failure(self, task):
-        logger.error('==>  FAILURE TRACEBACK  <==')
-        logger.error(task.last_run_exception)
-        logger.error('==>END FAILURE TRACEBACK<==')
-
-    def show_task_code_diff(self, task, diffs=None):
-        if not diffs:
-            diffs = {}
-        diff_lines = task.diff()
-        diff = '\n'.join(diff_lines)
-        if diff in diffs:
-            prev_task_with_same_diff = diffs[diff]
-            logger.info('==>  DIFF  <==')
-            logger.info(f'Diff of {task} the same as {prev_task_with_same_diff}')
-            logger.info('==>END DIFF<==')
-            return diffs
-        diffs[diff] = task
-        try:
-            logger.level('DIFF_ADDED')
-        except ValueError:
-            logger.level('DIFF_ADDED', no=42, color='<green>')
-            logger.level('DIFF_REMOVED', no=43, color='<red>')
-            logger.level('DIFF_Q', no=44, color='<yellow>')
-        logger.info('==>  DIFF  <==')
-        for line in task.diff():
-            if line and line[0] == '-':
-                logger.log('DIFF_REMOVED', line)
-            elif line and line[0] == '+':
-                logger.log('DIFF_ADDED', line)
-            elif line and line[0] == '?':
-                logger.log('DIFF_Q', line)
-            else:
-                logger.info(line)
-        logger.info('==>END DIFF<==')
-        return diffs
-
-    def info(
-        self, query, show_failures, show_reasons, show_task_code_diff, short, rule, filter_status
-    ):
-        # print(rmk.name)
-        status_map = {
-            0: 'R',
-            1: 'C',
-            2: 'RF',
-        }
-        status_loggers = {
-            'R': 'RERUN',
-            'C': 'COMPLETE',
-            'RF': 'FAILED',
-            'XR': 'FAILED',
-            'XC': 'FAILED',
-            'XRF': 'FAILED',
-        }
-        try:
-            logger.level('RERUN')
-        except ValueError:
-            logger.level('RERUN', no=45, color='<blue>')
-            logger.level('COMPLETE', no=46, color='<green>')
-            logger.level('FAILED', no=47, color='<red>')
-
-        counter = Counter()
-        logger.info(f'==> {self.name} <==')
-        if query:
-            logger.info(f'Filter on: {query}')
-            filtered_tasks = self.topo_tasks.where(query)
-        else:
-            filtered_tasks = self.topo_tasks
-
-        for task in filtered_tasks:
-            status = status_map[task.last_run_status]
-            if task.requires_rerun and 'R' not in status:
-                status = 'R'
-            if task.inputs_missing:
-                status = 'X' + status
-            task.status = status
-            counter[status] += 1
-
-        status_keys = ['C', 'R', 'RF', 'XC', 'XR', 'XRF']
-        if short:
-            for k in status_keys:
-                level = status_loggers[k]
-                logger.log(level, f'{k:<3}: {counter.get(k, 0)}')
-
-            if show_failures:
-                counter = Counter()
-                for task in filtered_tasks:
-                    counter[task.last_run_exception] += 1
-
-                for k, v in counter.items():
-                    logger.info(f'{v:<3}:')
-                    logger.info(f'{k}')
-            return
-
-        if filter_status:
-            filtered_tasks = [t for t in filtered_tasks if t.status == filter_status]
-
-        if rule:
-            rows = []
-            row = ['name', 'ntasks', *status_keys]
-            rows.append(row)
-            rows.append(SEPARATING_LINE)
-
-            statuses = []
-            for rule in self.rules:
-                tasks = [t for t in filtered_tasks if t.rule == rule]
-                if not tasks:
-                    continue
-                max_status = 0
-                rule_counter = Counter()
-                for task in tasks:
-                    rule_counter[task.status] += 1
-                    max_status = max(status_keys.index(task.status), max_status)
-                statuses.append(max_status)
-                row = [
-                    rule.__name__,
-                    len(rule.tasks),
-                    *[rule_counter.get(k, 0) for k in status_keys],
-                ]
-                rows.append(row)
-            rows.append(SEPARATING_LINE)
-            row = ['Total', len(filtered_tasks), *[counter.get(k, 0) for k in status_keys]]
-            rows.append(row)
-            lines = tabulate(rows).split('\n')
-            for line in lines[:3]:
-                logger.info(line)
-            for status, line in zip(statuses, lines[3:-3]):
-                level = status_loggers[status_keys[status]]
-                logger.log(level, line)
-            logger.info(lines[-3])
-            level = status_loggers[status_keys[max(statuses)]]
-            logger.log(level, lines[-2])
-            logger.info(lines[-1])
-            return
-
-        diffs = {}
-        for task in filtered_tasks:
-            level = status_loggers[task.status]
-            logger.log(level, f'{task.status:<2s} {task}')
-            if 'F' in task.status and show_failures:
-                self.show_task_failure(task)
-            if ('R' in task.status or 'X' in task.status) and show_reasons:
-                self.show_task_reasons(task)
-            if show_task_code_diff and 'task_run_source_changed' in task.rerun_reasons:
-                diffs = self.show_task_code_diff(task, diffs)
-
-    def touch(self, input_files=True, all_files=False):
-        if all_files:
-            tasks = self.topo_tasks
-        elif input_files:
-            tasks = self.input_tasks
-
-        io_dirs = set()
-        topo_paths = []
-        for task in tasks:
-            for input_file in task.inputs.values():
-                ipath = Path(input_file)
-                io_dirs.add(ipath.parent)
-                topo_paths.append(ipath)
-            if all_files:
-                for output_file in task.outputs.values():
-                    opath = Path(output_file)
-                    io_dirs.add(opath.parent)
-                    topo_paths.append(opath)
-        for d in io_dirs:
-            d.mkdir(exist_ok=True, parents=True)
-
-        for path in topo_paths:
-            path.touch()
-
-    def run(
-        self,
-        executor='SingleprocExecutor',
-        query='',
-        force=False,
-        show_reasons=False,
-        show_task_code_diff=False,
-        stdout_to_log=False,
-        number='all',
-    ):
-        if query:
-            tasks = self.topo_tasks.where(query)
-        else:
-            tasks = self.topo_tasks
-
-        if not force:
-            rerun_tasks = [t for t in tasks if t.requires_rerun and not t.inputs_missing]
-        else:
-            rerun_tasks = tasks
-            for task in rerun_tasks:
-                task.rerun_reasons.insert(0, 'force_rerun')
-        if number != 'all':
-            rerun_tasks = rerun_tasks[: int(number)]
-
-        logger.info(f'==> {self.name} <==')
-        if not rerun_tasks:
-            logger.info('No tasks require rerun')
-            return
-        logger.info(f'Running {len(rerun_tasks)} tasks using {executor}')
-        executor = self._get_executor(executor)
-        logger.debug(f'using {executor}')
-
-        # TODO?
-        # for task in rerun_tasks:
-        #     if task.last_run_status != 0:
-        #         task.last_run_status = 0
-        #         self.metadata_manager.update_task_metadata(task, None)
-
-        executor.run_tasks(
-            rerun_tasks,
-            show_reasons=show_reasons,
-            show_task_code_diff=show_task_code_diff,
-            stdout_to_log=stdout_to_log,
+    def plan(self, query=None, force=False):
+        if not self._finalized:
+            self.finalize()
+        return plan(
+            self.rules,
+            self.dag,
+            self.metadata,
+            query=query,
+            force=force,
+            check_outputs=self.check_outputs,
         )
 
-    def run_tasks_from_keys(self, task_keys, executor='SingleprocExecutor'):
-        tasks = [self.task_key_map[task_key] for task_key in task_keys]
-        logger.info(f'Running {len(tasks)} tasks')
-        executor = self._get_executor(executor)
-        logger.debug(f'using {executor}')
-        executor.run_tasks(tasks)
+    def tasks(self, query=None):
+        """All tasks of all currently-expandable rules. This materialises
+        every task — intended for info/reporting, not planning."""
+        if not self._finalized:
+            self.finalize()
+        predicate = make_predicate(query) if query else None
+        tasks = []
+        for rule in self.rules:
+            tasks.extend(expand_rule(rule, predicate))
+        return tasks
+
+    def task_from_key(self, key):
+        for task in self.tasks():
+            if task.key == key:
+                return task
+        raise RemakeError(f'No task with key {key}')
+
+    # --- execution ---
+
+    def run(self, executor=None, query=None, force=False):
+        """Run all tasks that need running, replanning after each wave so
+        dynamic (deferred) matrices resolve as their upstreams complete."""
+        if not self._finalized:
+            self.finalize()
+        if executor is None:
+            from ..executors import SingleprocExecutor
+
+            executor = SingleprocExecutor(self)
+
+        attempted = set()
+        while True:
+            runnable, deferred = self.plan(query=query, force=force)
+            force = False  # only force the first wave
+            runnable = [t for t in runnable if t.key not in attempted]
+            if not runnable:
+                if deferred:
+                    names = ', '.join(rule.name for rule in deferred)
+                    logger.warning(f'Blocked rules (matrix not ready): {names}')
+                break
+            attempted |= {t.key for t in runnable}
+            executor.run_tasks(runnable)
+
+    def run_task(self, task):
+        """Execute one task and record the result. The single execution
+        entry point — used by all executors and `remake run-task`."""
+        for token in task.outputs.values():
+            if hasattr(token, '__fspath__'):
+                Path(token).parent.mkdir(parents=True, exist_ok=True)
+
+        fn = exec_function(task.rule.fn, task.rule.uses)
+        args = []
+        if task.rule.inputs is not None:
+            args.append(task.inputs)
+        if task.rule.outputs is not None:
+            args.append(task.outputs)
+        try:
+            fn(*args, **task.kwargs)
+        except Exception as e:
+            logger.error(f'failed: {task}')
+            self.metadata.update_task(task, TASK_STATUS_FAILED, exception=repr(e))
+            raise
+        self.metadata.update_task(task, TASK_STATUS_SUCCESS)

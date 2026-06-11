@@ -1,78 +1,61 @@
-import difflib
-import datetime as dt
-from dataclasses import dataclass
+"""Lazy Task — a pure value object identified by (rule, kwargs).
+
+Inputs/outputs are resolved on first access, never at construction: for 1e6
+tasks you only pay for the ones you touch. DB state (status, timestamps)
+lives in TaskRecord, returned by the metadata backend — not here.
+"""
+import inspect
+from dataclasses import dataclass, field
+from functools import cached_property
 from hashlib import sha1
 
+from ..tokens import OutputToken, as_token
 from .rule import Rule
 
 
-@dataclass
+def _resolve(spec, kwargs, wrap_tokens):
+    """Resolve an inputs/outputs spec to a concrete dict for one task."""
+    if spec is None:
+        return {}
+    if callable(spec) and not isinstance(spec, dict):
+        params = inspect.signature(spec).parameters
+        resolved = spec(**{k: v for k, v in kwargs.items() if k in params})
+    else:
+        resolved = {}
+        for k, v in spec.items():
+            if isinstance(v, OutputToken):
+                resolved[k] = v.format(**kwargs)
+            else:
+                resolved[k] = str(v).format(**kwargs)
+    if wrap_tokens:
+        resolved = {k: as_token(v) for k, v in resolved.items()}
+    return resolved
+
+
+@dataclass(eq=False)
 class Task:
     rule: Rule
-    inputs: dict
-    outputs: dict
-    kwargs: dict
-    prev_tasks: list
-    next_tasks: list
-    is_run: bool = False
-    last_run_status: int = 0
-    last_run_timestamp: dt.datetime = None  # TODO: should be timestamp.
-    last_run_code: str = ''
-    inputs_missing: bool = False
+    kwargs: dict = field(default_factory=dict)
 
-    def __init__(self, rule, inputs, outputs, kwargs):
-        self.rule = rule
-        self.inputs = inputs
-        if not outputs:
-            raise ValueError('Task.outputs must be set')
-        self.outputs = outputs
+    @cached_property
+    def key(self):
+        kwargs_repr = repr(dict(sorted(self.kwargs.items())))
+        return sha1(f'{self.rule.name}:{kwargs_repr}'.encode()).hexdigest()
 
-        # Makes task queryable using QueryList
-        for k, v in kwargs.items():
-            if not isinstance(k, str):
-                raise ValueError('Task.kwargs keys must be strings')
-            setattr(self, k, v)
-        self.kwargs = kwargs
+    @cached_property
+    def inputs(self):
+        return _resolve(self.rule.inputs, self.kwargs, wrap_tokens=False)
 
-        self.prev_tasks = []
-        self.next_tasks = []
-
-    def __post_init__(self):
-        if not self.outputs:
-            raise ValueError('Task.outputs must be set')
-
-    def run(self):
-        self.rule.run_task(self)
-
-    def rule_name(self):
-        return self.rule.__name__
+    @cached_property
+    def outputs(self):
+        return _resolve(self.rule.outputs, self.kwargs, wrap_tokens=True)
 
     def __hash__(self):
-        if not hasattr(self, '_hash'):
-            self._hash = hash(
-                ','.join(str(v) for v in self.inputs.values())
-                + ','.join(str(v) for v in self.outputs.values())
-            )
-        return self._hash
+        return hash(self.key)
 
-    def key(self):
-        if not hasattr(self, '_key'):
-            self._key = sha1(
-                (
-                    ','.join(str(v) for v in self.inputs.values())
-                    + ','.join(str(v) for v in self.outputs.values())
-                ).encode()
-            ).hexdigest()
-        return self._key
-
-    def diff(self):
-        return list(
-            difflib.ndiff(self.last_run_code.split('\n'), self.rule.source['rule_run'].split('\n'))
-        )
+    def __eq__(self, other):
+        return isinstance(other, Task) and self.key == other.key
 
     def __repr__(self):
-        # return (f'{self.key()[:8]} Task(rule={self.rule.__name__}, inputs={len(self.inputs)}, outputs={len(self.outputs)}, '
-        #         f'kwargs={self.kwargs}, prev_tasks={len(self.prev_tasks)}, next_tasks={len(self.next_tasks)})')
-        # return (f'{self.key()[:8]} Task({self.rule.__name__}, {self.kwargs})')
         kstr = ', '.join(f'{k}={v}' for k, v in self.kwargs.items())
-        return f'{self.key()[:8]} {self.rule.__name__}[{kstr}]'
+        return f'{self.key[:8]} {self.rule.name}[{kstr}]'

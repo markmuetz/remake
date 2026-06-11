@@ -1,8 +1,20 @@
 from .version import __version__
 
-from .remake_cmd import remake_cmd
-from .loader import load_remake, load_archive
-from .core import Remake, Rule, Task, ArchiveV1, ArchiveV1Rule
+from .core import (
+    MatrixNotReady,
+    Remake,
+    RemakeError,
+    Rule,
+    ScopeError,
+    ScopeWarning,
+    SignatureError,
+    Task,
+    rule,
+)
+from .loader import load_remake
+from .metadata import MetadataManager, Sqlite3Backend, TaskRecord
+from .tokens import FileToken, OutputToken, PathToken, S3Object, ZarrStore
 
-# For legacy remakefiles.
-from .core import Rule as TaskRule
+# NOTE: the CLI (remake_cmd) is not imported here — it is pending rewrite
+# against the new API (implementation plan: CLI item). The `remake` console
+# script will not work until then.

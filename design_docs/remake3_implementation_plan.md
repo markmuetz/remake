@@ -9,12 +9,15 @@ doc in `design_docs/` when work on it starts.
   - remake3 is the project's working name only; the package, imports and CLI
     are all `remake`. remake3 code replaces `src/remake/` in place (remake2
     is preserved in git history / the remake2 branch). Version: 0.8.0.0-alpha.
-- [ ] Core: `@rule` decorator, `Rule`, `Task`, DAG, planner, scope analysis,
+- [x] Core: `@rule` decorator, `Rule`, `Task`, DAG, planner, scope analysis,
   `Remake` class
-- [ ] Output tokens
-- [ ] Metadata backend (SQLite)
+- [x] Output tokens
+- [x] Metadata backend (SQLite)
 - [ ] Executors: singleproc, multiproc, SLURM, dask
+  - singleproc done; multiproc/slurm pending adaptation (not importable);
+    dask deleted, re-add later
 - [ ] Dynamic matrices (replanning loop, SLURM continuation jobs)
+  - local replanning loop done; SLURM continuation jobs pending
 - [ ] CLI
 - [ ] Unit tests
 - [ ] Integration tests
