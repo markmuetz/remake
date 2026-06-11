@@ -59,6 +59,12 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='fallba
     for rule in nx.topological_sort(dag):
         if rule not in rules:
             continue
+        if any(dep in deferred for dep in rule.depends_on):
+            # Downstream of a deferred rule: cannot run this wave even if
+            # its own matrix is static — its upstream tasks don't exist yet.
+            deferred.append(rule)
+            rerun_kwargs[rule] = 'all'
+            continue
         try:
             tasks = expand_rule(rule, predicate)
         except MatrixNotReady:

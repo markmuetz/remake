@@ -12,6 +12,8 @@ API, in roughly increasing order of complexity:
 | `ex5_callable_inputs_matrix.py` | All input-spec styles, matrix subsetting |
 | `ex6_zarr_region.py` | Optional inputs/outputs: source, region-write and pure side-effect rules |
 | `ex7_multifile/` | Rules split across modules, combined in a top-level pipeline file |
+| `ex8_dynamic_matrix.py` | Dynamic matrices (`MatrixNotReady`), non-cartesian `list[dict]` matrices, dynamic fan-in |
+| `ex9_custom_token.py` | A custom `OutputToken` (a sqlite table row) and `--check-outputs` verification |
 
 ## Running
 
@@ -24,6 +26,26 @@ remake run /path/to/examples/ex1_simple.py
 remake info /path/to/examples/ex1_simple.py
 ```
 
-ex1, ex3 and ex5 need only the stdlib (+ pyyaml for ex5). ex2, ex4, ex6 and
-ex7 additionally need `xarray netCDF4 h5netcdf zarr dask` (zarr v2 for older
-xarray versions).
+ex1, ex3, ex5, ex8 and ex9 need only the stdlib (+ pyyaml for ex5). ex2,
+ex4, ex6 and ex7 additionally need `xarray netCDF4 h5netcdf zarr dask`
+(zarr v2 for older xarray versions).
+
+## Seeing reruns
+
+Smart rerunning is the point of remake. After running ex3 once:
+
+```bash
+remake run /path/to/examples/ex3_uses_scope.py     # runs everything once
+remake run /path/to/examples/ex3_uses_scope.py     # nothing to do
+```
+
+now edit `THRESHOLD` (or the body of `normalise()`) in `ex3_uses_scope.py`
+and run again: only `filter_data` and its downstream `combine` rerun —
+both are tracked via `uses`. A cosmetic edit (comment, whitespace) reruns
+nothing: code is compared by AST. `remake run --dry-run` shows what would
+rerun without running it.
+
+Similarly for outputs that vanish behind remake's back (scratch purges):
+delete a row that ex9 wrote (`sqlite3 data/results.db "DELETE FROM stats
+WHERE key='n2'"`) and rerun with `--check-outputs` — only that task
+recomputes.

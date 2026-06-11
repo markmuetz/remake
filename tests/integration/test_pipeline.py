@@ -87,14 +87,28 @@ def test_dynamic_matrix_defer_resolve_complete(tmp_path, meta):
     def process_cluster(outputs, cid):
         Path(outputs['out']).write_text(cid.upper())
 
-    rmk = Remake(rules=[find_clusters, process_cluster], metadata=meta)
-    runnable, deferred = rmk.plan()
-    assert len(runnable) == 1 and deferred == [process_cluster]
+    def summarise_inputs():
+        return {c: str(tmp_path / f'cluster_{c}.txt')
+                for c in json.loads((tmp_path / 'clusters.json').read_text())}
 
-    rmk.run()  # internal replanning loop resolves the deferred rule
+    @rule(inputs=summarise_inputs, outputs={'o': str(tmp_path / 'summary.txt')},
+          depends_on=[process_cluster])
+    def summarise(inputs, outputs):
+        names = ','.join(Path(p).read_text() for p in inputs.values())
+        Path(outputs['o']).write_text(names)
+
+    rmk = Remake(rules=[find_clusters, process_cluster, summarise], metadata=meta)
+    runnable, deferred = rmk.plan()
+    # summarise has a static matrix but is downstream of a deferred rule:
+    # it must be deferred too, not run in the first wave.
+    assert len(runnable) == 1
+    assert deferred == [process_cluster, summarise]
+
+    rmk.run()  # internal replanning loop resolves the deferred rules
     assert sorted(p.name for p in tmp_path.glob('cluster_*.txt')) == [
         'cluster_c1.txt', 'cluster_c2.txt', 'cluster_c3.txt',
     ]
+    assert (tmp_path / 'summary.txt').read_text() == 'C1,C2,C3'
     runnable, deferred = rmk.plan()
     assert not runnable and not deferred
 

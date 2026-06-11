@@ -6,8 +6,9 @@
 # be detected by the AST comparison of the rule_run function body alone,
 # and tasks would not be rerun. Declaring them in `uses` fixes this.
 #
-# Run with `Remake(strict_scope=True)` to turn undeclared free variables
-# into errors rather than warnings.
+# Undeclared free variables are warnings by default. `combine` below opts
+# into strict_scope=True per-rule (errors at decoration time); pass
+# Remake(strict_scope=True) to enforce that for every rule.
 
 from pathlib import Path
 from remake import Remake, rule
@@ -53,9 +54,10 @@ def combine_inputs():
 
 
 @rule(
-    inputs     = combine_inputs,
-    outputs    = {'combined': 'data/results/all_years.csv'},
-    depends_on = [filter_data],
+    inputs       = combine_inputs,
+    outputs      = {'combined': 'data/results/all_years.csv'},
+    depends_on   = [filter_data],
+    strict_scope = True,   # undeclared outer-scope names are an error here
 )
 def combine(inputs, outputs):
     import csv

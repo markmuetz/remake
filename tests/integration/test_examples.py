@@ -17,6 +17,7 @@ CASES = [
     ('ex4_zarr_slurm.py', 4, 357),
     ('ex5_callable_inputs_matrix.py', 4, 55),
     ('ex7_multifile/pipeline.py', 3, 69),
+    ('ex9_custom_token.py', 1, 3),
 ]
 
 
@@ -37,14 +38,17 @@ def test_example_loads_and_plans(filename, n_rules, n_tasks, tmp_path, monkeypat
     ('ex1', 'data/results/summary.txt'),
     ('ex3', 'data/results/all_years.csv'),
     ('ex5', 'data/annual/site_a/2020.csv'),
+    ('ex8', 'data/results/event_summary.json'),   # self-generating
+    ('ex9', 'data/results.db'),                   # self-generating
 ])
 def test_light_examples_run_end_to_end(example, result_file, tmp_path, monkeypatch):
-    """ex1/ex3/ex5 need no heavy deps: generate synthetic data and run."""
+    """These need no heavy deps: generate synthetic data (if any) and run."""
     if example == 'ex5':
         pytest.importorskip('yaml')
     monkeypatch.chdir(tmp_path)
     make_data = load_module(EXAMPLES_DIR / 'make_example_data.py')
-    getattr(make_data, example)()
+    if hasattr(make_data, example):
+        getattr(make_data, example)()
 
     filename = next(EXAMPLES_DIR.glob(f'{example}_*.py'))
     rmk = load_remake(filename, finalize=False)

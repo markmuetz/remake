@@ -277,8 +277,9 @@ def filter_data(inputs, outputs, year):
 
 If `THRESHOLD` is changed to `0.7`, remake3 detects the change and marks all
 `filter_data` tasks as requiring rerun — even though `rule_run`'s AST is
-identical. Functions in `uses` are compared by AST; plain values by `repr()` or
-a user-supplied hash function.
+identical. Functions in `uses` are compared by AST; plain values by `repr()`.
+(A user-supplied hash hook may be added later; until then, avoid values with
+large or unstable reprs in `uses`.)
 
 Tracking is one level deep: a function in `uses` is compared by its own
 body only. If it calls a further helper and *that* changes, nothing fires —
