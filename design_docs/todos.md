@@ -12,9 +12,17 @@ assessment (2026-06-11). Ordered roughly by severity.
 - [ ] `Sqlite3Backend.get_tasks_status` is an N+1 query loop (one SELECT per
   task, every plan). Bulk-query (`WHERE key IN (...)` batches, or remake2's
   backup-to-`:memory:` trick for reads).
-- [ ] The 1e6-task design claim is unbenchmarked — nothing beyond ~530 tasks
-  has been exercised. Add a synthetic 1e5+ task benchmark test so the
-  scaling claim is load-bearing.
+- [ ] Make the 1e6-task benchmark a load-bearing part of CI (script:
+  `tests/benchmarks/bench_million_tasks.py`). Baseline measured 2026-06-11
+  (in-memory DB, local ext4): load+finalize 0.001s (lazy goal achieved);
+  expand+keys 4s / 0.5 GB; full materialisation 8.5s / 2.1 GB;
+  plan(never) 7.5s — mostly the N+1 SELECT loop; plan(fallback, empty DB)
+  22s — 1e6 stat calls, which on a parallel cluster filesystem could be
+  minutes. fallback only pays this for tasks with no DB record, but the
+  first plan of a restored pipeline does exactly that.
+- [ ] Recording completions is one EXCLUSIVE transaction per task (1e6
+  transactions over a big run) — batch or relax when addressing the bulk
+  query.
 
 ## Failure UX
 
