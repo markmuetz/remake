@@ -28,7 +28,10 @@ doc in `design_docs/` when work on it starts.
   - 77 tests under tests/unit and tests/integration; examples are loaded
     and planned as part of the suite. Grow alongside remaining items
     (multiproc/SLURM, CLI additions).
-- [ ] Runnable examples
+- [x] Runnable examples
+  - All seven run end-to-end (synthetic inputs via
+    examples/make_example_data.py); ex1/ex3/ex5 run in the test suite,
+    heavier ones (xarray/zarr) verified manually and plan-tested.
 - [ ] Documentation + deployment (GitHub Pages)
 - [ ] GitHub Actions: CI, docs, PyPI release
 - [ ] remake2 migration tool

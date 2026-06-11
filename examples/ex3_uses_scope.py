@@ -47,8 +47,13 @@ def filter_data(inputs, outputs, year):
             w.writerow([year, r['value'], f'{n:.4f}'])
 
 
+def combine_inputs():
+    """Fan-in: all filtered years."""
+    return {str(year): f'data/filtered/{year}.csv' for year in YEARS}
+
+
 @rule(
-    inputs     = filter_data.outputs,
+    inputs     = combine_inputs,
     outputs    = {'combined': 'data/results/all_years.csv'},
     depends_on = [filter_data],
 )

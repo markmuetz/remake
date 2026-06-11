@@ -44,6 +44,7 @@ def extract_inputs(model, year):
     inputs  = extract_inputs,
     outputs = {v: ZarrStore(f'data/zarr/extracted/{{model}}/{{year}}/{v}.zarr') for v in VARS},
     matrix  = {'model': MODELS, 'year': YEARS},
+    uses    = {'VARS': VARS},
     config  = {'slurm': {'mem': '32G', 'time': '02:00:00'}},
 )
 def extract(inputs, outputs, model, year):
@@ -65,7 +66,7 @@ REFERENCE_PERIOD = (1981, 2010)    # tracked via uses — change triggers reruns
     outputs    = {v: ZarrStore(f'data/zarr/anomalies/{{model}}/{{year}}/{v}.zarr') for v in VARS},
     matrix     = extract.matrix,
     depends_on = [extract],
-    uses       = {'reference_period': REFERENCE_PERIOD},
+    uses       = {'reference_period': REFERENCE_PERIOD, 'VARS': VARS},
     config     = {'slurm': {'mem': '16G', 'time': '01:00:00'}},
 )
 def anomalies(inputs, outputs, model, year):
@@ -97,6 +98,7 @@ def agg_inputs(model):
     outputs    = {v: ZarrStore(f'data/zarr/aggregated/{{model}}/{v}.zarr') for v in VARS},
     matrix     = {'model': MODELS},
     depends_on = [anomalies],
+    uses       = {'VARS': VARS, 'YEARS': YEARS},
     config     = {'slurm': {'mem': '64G', 'time': '04:00:00', 'partition': 'long-serial'}},
 )
 def aggregate(inputs, outputs, model):
@@ -118,6 +120,7 @@ def aggregate(inputs, outputs, model):
     },
     outputs    = {'report': 'data/results/model_comparison.json'},
     depends_on = [aggregate],
+    uses       = {'MODELS': MODELS, 'VARS': VARS},
 )
 def final_report(inputs, outputs):
     import xarray as xr, json

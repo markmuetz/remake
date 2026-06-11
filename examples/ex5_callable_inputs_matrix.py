@@ -69,12 +69,17 @@ SEASON_MONTHS = {
 }
 
 def seasonal_inputs(site, year, season):
-    """DJF wraps across year boundary: Dec is from prior year."""
+    """DJF wraps across year boundary: Dec is from prior year.
+
+    Years outside the calibrated range are omitted — seasonal_means
+    skips missing months (DJF of the first year has no December).
+    """
     months = SEASON_MONTHS[season]
     result = {}
     for m in months:
         y = year - 1 if (season == 'DJF' and m == 12) else year
-        result[f'm{m:02d}'] = f'data/calibrated/{site}/{y}.csv'
+        if y in YEARS:
+            result[f'm{m:02d}'] = f'data/calibrated/{site}/{y}.csv'
     return result
 
 

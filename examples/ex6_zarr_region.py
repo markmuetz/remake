@@ -29,7 +29,16 @@ YEARS = list(range(1980, 2024))
 STORE = ZarrStore('data/temperature.zarr')
 
 
-@rule(outputs={'store': STORE})
+def compute_year(year, lat, lon, time):
+    rng = np.random.default_rng(year)
+    return xr.Dataset(
+        {'temp': (('time', 'lat', 'lon'),
+                  rng.normal(15, 10, (len(time), len(lat), len(lon))).astype('f4'))},
+        coords={'time': time, 'lat': lat, 'lon': lon},
+    )
+
+
+@rule(outputs={'store': STORE}, uses={'YEARS': YEARS})
 def create_store(outputs):
     """Source rule: no inputs. Lays down the full coordinate grid with
     empty (lazily-allocated) data, then consolidates metadata."""
@@ -50,6 +59,7 @@ def create_store(outputs):
     inputs     = create_store.outputs,
     matrix     = {'year': YEARS},
     depends_on = [create_store],
+    uses       = {'compute_year': compute_year},
 )
 def write_year(inputs, year):
     """Side-effect rule: no outputs. Writes one year's data into its
@@ -61,10 +71,13 @@ def write_year(inputs, year):
     stop = time_index.get_loc(dt.datetime(year, 12, 31)) + 1
 
     year_ds = compute_year(year, ds.lat, ds.lon, time_index[start:stop])
-    year_ds.to_zarr(inputs['store'], region={'time': slice(start, stop)})
+    # Region writes must not rewrite the non-region coordinates.
+    year_ds.drop_vars(['lat', 'lon']).to_zarr(
+        inputs['store'], region={'time': slice(start, stop)}
+    )
 
 
-@rule(depends_on=[write_year])
+@rule(depends_on=[write_year], uses={'YEARS': YEARS})
 def log_summary():
     """Neither inputs nor outputs: pure side effect. Records run metadata
     in an external database — nothing on disk to declare or check."""
@@ -74,15 +87,6 @@ def log_summary():
     con.execute('INSERT INTO runs VALUES (?, ?)',
                 (dt.datetime.now().isoformat(), len(YEARS)))
     con.commit()
-
-
-def compute_year(year, lat, lon, time):
-    rng = np.random.default_rng(year)
-    return xr.Dataset(
-        {'temp': (('time', 'lat', 'lon'),
-                  rng.normal(15, 10, (len(time), len(lat), len(lon))).astype('f4'))},
-        coords={'time': time, 'lat': lat, 'lon': lon},
-    )
 
 
 rmk.rules_from_current_module()

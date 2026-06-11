@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from remake import Sqlite3Backend, load_remake
+from remake.loader import load_module
 
 EXAMPLES_DIR = Path(__file__).parent.parent.parent / 'examples'
 
@@ -29,6 +30,29 @@ def test_example_loads_and_plans(filename, n_rules, n_tasks, tmp_path, monkeypat
     assert len(rmk.rules) == n_rules
     assert len(runnable) == n_tasks
     assert not deferred
+
+
+@pytest.mark.filterwarnings('ignore::remake.ScopeWarning')
+@pytest.mark.parametrize('example,result_file', [
+    ('ex1', 'data/results/summary.txt'),
+    ('ex3', 'data/results/all_years.csv'),
+    ('ex5', 'data/annual/site_a/2020.csv'),
+])
+def test_light_examples_run_end_to_end(example, result_file, tmp_path, monkeypatch):
+    """ex1/ex3/ex5 need no heavy deps: generate synthetic data and run."""
+    if example == 'ex5':
+        pytest.importorskip('yaml')
+    monkeypatch.chdir(tmp_path)
+    make_data = load_module(EXAMPLES_DIR / 'make_example_data.py')
+    getattr(make_data, example)()
+
+    filename = next(EXAMPLES_DIR.glob(f'{example}_*.py'))
+    rmk = load_remake(filename, finalize=False)
+    rmk.metadata = Sqlite3Backend(':memory:')
+    rmk.run()
+    assert (tmp_path / result_file).exists()
+    runnable, deferred = rmk.plan()
+    assert not runnable and not deferred
 
 
 @pytest.mark.filterwarnings('ignore::remake.ScopeWarning')
