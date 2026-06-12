@@ -146,6 +146,10 @@ The audit question: what information is *only* available by examining
 Commands added to close the gaps (all task-addressing commands accept a
 key prefix *or* `-Q query` resolving to exactly one task):
 
+- `remake ls-tasks <file> [-Q q] [-R rule] [--json]` — enumerate tasks
+  (key + name), streaming in text mode; deferred rules are reported, not
+  an error. Pure expansion, no DB reads — the cheap "what exists" view
+  next to `info -t`'s "what state" view.
 - `remake task-info <file> [key-prefix|-Q q] [--json]` — single-task
   detail: rule, kwargs, key, status + timestamp, inputs/outputs with
   on-disk existence, per-task log path, SLURM job id + array index from

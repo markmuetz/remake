@@ -166,6 +166,25 @@ def test_info_json(pipeline_dir, capsys):
     assert all(t['status'] == 'success' and len(t['key']) == 40 for t in data['tasks'])
 
 
+def test_ls_tasks(pipeline_dir, capsys):
+    import json
+
+    cli('ls-tasks', 'pipeline.py')
+    out = capsys.readouterr().out
+    assert len(out.splitlines()) == 4
+    assert 'generate[n=1]' in out and 'process[n=2]' in out
+
+    cli('ls-tasks', 'pipeline.py', '-Q', 'n == 2', '-R', 'generate')
+    assert capsys.readouterr().out.splitlines() == [
+        line for line in out.splitlines() if 'generate[n=2]' in line
+    ]
+
+    cli('ls-tasks', 'pipeline.py', '--json', '-R', 'process')
+    rows = json.loads(capsys.readouterr().out)
+    assert [r['kwargs'] for r in rows] == [{'n': 1}, {'n': 2}]
+    assert all(len(r['key']) == 40 and r['rule'] == 'process' for r in rows)
+
+
 def test_task_info_text_and_json(pipeline_dir, capsys):
     import json
 

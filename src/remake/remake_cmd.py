@@ -179,6 +179,15 @@ class RemakeParser:
                 Arg('--json', help='Machine-readable output', action='store_true'),
             ],
         },
+        'ls-tasks': {
+            'help': 'List tasks (key prefix + name), materialising the matrices',
+            'args': [
+                Arg('remakefile'),
+                Arg('--query', '-Q', help='Filter tasks based on a kwargs query'),
+                Arg('--rule', '-R', help='Only tasks of this rule'),
+                Arg('--json', help='Machine-readable output (full keys)', action='store_true'),
+            ],
+        },
         'task-info': {
             'help': 'Detail view of one task: status, paths, log, SLURM job',
             'args': [
@@ -390,6 +399,34 @@ class RemakeParser:
             print(f'\n=== {failure["task"]} (failed at {failure["timestamp"]}) ===')
             print(f'log: {failure["log"]}')
             print(failure['exception'].rstrip() or '(no stored exception)')
+
+    def remake_ls_tasks(self, args):
+        import json
+
+        from .core.dag import iter_expand_rule
+        from .core.exceptions import MatrixNotReady
+        from .core.planner import make_predicate
+
+        rmk = self._load(args)
+        rmk.finalize()
+        predicate = make_predicate(args.query) if args.query else None
+        rows = []
+        for rule in rmk.rules:
+            if args.rule is not None and rule.name != args.rule:
+                continue
+            try:
+                # Stream in text mode: constant memory however big the matrix.
+                for task in iter_expand_rule(rule, predicate):
+                    if args.json:
+                        rows.append(
+                            {'key': task.key, 'rule': rule.name, 'kwargs': task.kwargs}
+                        )
+                    else:
+                        print(task)
+            except MatrixNotReady:
+                logger.warning(f'{rule.name}: deferred (matrix not ready), tasks unknown')
+        if args.json:
+            print(json.dumps(rows, indent=1))
 
     def remake_task_info(self, args):
         import json
