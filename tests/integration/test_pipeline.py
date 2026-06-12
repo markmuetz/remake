@@ -138,6 +138,48 @@ def test_failure_recorded_and_run_continues(tmp_path, meta):
     assert [t.kwargs for t in runnable] == [{'n': 2}]
 
 
+def test_upstream_failure_skips_downstream(tmp_path, meta):
+    @rule(outputs={'o': str(tmp_path / 'a_{n}.txt')}, matrix={'n': [1, 2]})
+    def rule_a(outputs, n):
+        if n == 1:
+            raise ValueError('boom')
+        Path(outputs['o']).write_text(str(n))
+
+    @rule(inputs=rule_a.outputs, outputs={'o': str(tmp_path / 'b_{n}.txt')},
+          matrix=rule_a.matrix, depends_on=[rule_a])
+    def rule_b(inputs, outputs, n):
+        Path(outputs['o']).write_text(Path(inputs['o']).read_text())
+
+    def fan_in():
+        return {str(n): str(tmp_path / f'b_{n}.txt') for n in [1, 2]}
+
+    @rule(inputs=fan_in, outputs={'o': str(tmp_path / 'c.txt')}, depends_on=[rule_b])
+    def rule_c(inputs, outputs):
+        Path(outputs['o']).write_text('done')
+
+    rmk = Remake(rules=[rule_a, rule_b, rule_c], metadata=meta)
+    assert rmk.run() == 1  # one real failure; skips are not failures
+
+    # Element-wise: b[n=2] ran; b[n=1] (tainted) and the fan-in c
+    # (conservative, transitively tainted via b) were skipped, not run
+    # into missing inputs.
+    assert (tmp_path / 'b_2.txt').exists()
+    assert not (tmp_path / 'b_1.txt').exists()
+    assert not (tmp_path / 'c.txt').exists()
+
+    # Skipped tasks stay unrecorded (pending), not failed.
+    tasks = {(t.rule.name, t.kwargs.get('n')): t for t in rmk.tasks()}
+    records = rmk.metadata.get_tasks_status(tasks.values())
+    assert tasks[('rule_b', 1)].key not in records
+    assert tasks[('rule_c', None)].key not in records
+
+    # The next plan picks up exactly the failed task and its descendants.
+    runnable, _ = rmk.plan()
+    assert sorted([(t.rule.name, t.kwargs.get('n')) for t in runnable], key=str) == [
+        ('rule_a', 1), ('rule_b', 1), ('rule_c', None)
+    ]
+
+
 def test_code_change_triggers_rerun_across_loads(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     pipeline_v1 = '''

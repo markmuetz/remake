@@ -22,6 +22,7 @@ from multiprocessing import get_context
 from loguru import logger
 
 from ..core.exceptions import RemakeError
+from ..core.planner import upstream_failed
 from .executor import Executor
 
 _worker_rmk = None
@@ -78,7 +79,9 @@ class MultiprocExecutor(Executor):
 
         ntasks = len(tasks)
         nfailed = 0
+        nskipped = 0
         done = 0
+        failures = {}  # rule -> set of frozenset(kwargs.items())
         with ProcessPoolExecutor(
             max_workers=self.nproc,
             mp_context=get_context('spawn'),
@@ -86,9 +89,23 @@ class MultiprocExecutor(Executor):
             initargs=(self.remakefile,),
         ) as pool:
             for rule, rule_tasks in groups:
-                logger.info(f'{rule.name}: {len(rule_tasks)} task(s) on {self.nproc} proc(s)')
+                # The per-rule barrier means upstream failures are fully
+                # known here: skip tasks they taint rather than running
+                # them into missing inputs (left pending for a later run).
+                to_run = []
+                for task in rule_tasks:
+                    if upstream_failed(task, failures):
+                        failures.setdefault(rule, set()).add(frozenset(task.kwargs.items()))
+                        nskipped += 1
+                        done += 1
+                        logger.warning(f'{done}/{ntasks} skipped (upstream failed): {task}')
+                    else:
+                        to_run.append(task)
+                if not to_run:
+                    continue
+                logger.info(f'{rule.name}: {len(to_run)} task(s) on {self.nproc} proc(s)')
                 futures = {
-                    pool.submit(_worker_run, (rule.name, t.kwargs)): t for t in rule_tasks
+                    pool.submit(_worker_run, (rule.name, t.kwargs)): t for t in to_run
                 }
                 # Barrier: drain this rule before starting the next.
                 for future in as_completed(futures):
@@ -97,10 +114,12 @@ class MultiprocExecutor(Executor):
                     if future.result():
                         logger.info(f'{done}/{ntasks}: {task}')
                     else:
+                        failures.setdefault(rule, set()).add(frozenset(task.kwargs.items()))
                         nfailed += 1
                         logger.error(f'{done}/{ntasks} failed: {task}')
         if nfailed:
-            logger.error(f'{nfailed}/{ntasks} tasks failed')
+            skipped = f' ({nskipped} downstream task(s) skipped)' if nskipped else ''
+            logger.error(f'{nfailed}/{ntasks} tasks failed{skipped}')
         # Workers wrote sidecars; fold them in so statuses are current
         # immediately (plan() would also pick them up on the next wave).
         self.rmk.metadata.ingest_sidecars(self.rmk.rules)

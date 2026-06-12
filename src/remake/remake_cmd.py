@@ -112,7 +112,9 @@ def exception_info(ex_type, value, tb):
         import ipdb as debug
     except ImportError:
         import pdb as debug
-    debug.pm()
+    # Not pm(): sys.last_traceback is only set by the interactive
+    # interpreter, not inside an excepthook.
+    debug.post_mortem(tb)
 
 
 class RemakeParser:
@@ -272,6 +274,9 @@ class RemakeParser:
     def remake_run(self, args):
         rmk = self._load(args)
         executor = _make_executor(args.executor, rmk, nproc=args.nproc)
+        # -X: first task failure propagates (into the pdb/ipdb excepthook)
+        # instead of being recorded-and-continued.
+        executor.raise_on_failure = args.debug_exception
         if args.dry_run:
             if executor.supports_dry_run:
                 executor.dry_run = True

@@ -54,3 +54,5 @@ design discussion before any work starts.
 - **logging** - Perhaps the rule decorator could have a logger=True line, that
   passes in a loguru logger to the function? Or just say that the user can 
   set up a loguru logger then use that as using `uses`.
+- **intra-rule task dependency** - Should this be possible? A sequentially
+  defined rule where each task depends on the one before?

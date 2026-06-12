@@ -132,6 +132,29 @@ rmk.rules_from_current_module()
     assert 'ValueError: boom from n=2' in out
 
 
+def test_debug_exception_propagates_task_failure(pipeline_dir, capsys, monkeypatch):
+    Path('boom.py').write_text('''
+from remake import Remake, rule
+
+@rule(outputs={'o': 'data/{n}.txt'}, matrix={'n': [1]})
+def boom(outputs, n):
+    raise ValueError('boom')
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    # Without -X the failure is recorded and the run returns 1.
+    assert cli('run', 'boom.py') == 1
+    # With -X it propagates (at the interpreter top level the excepthook
+    # then drops into pdb/ipdb). Guard the hook remake_cmd installs so it
+    # can't fire on unrelated later failures.
+    import sys
+
+    monkeypatch.setattr(sys, 'excepthook', sys.excepthook)
+    with pytest.raises(ValueError, match='boom'):
+        cli('-X', 'run', 'boom.py', '--force')
+
+
 def test_log_file_written(pipeline_dir):
     cli('run', 'pipeline.py')
     log = (pipeline_dir / '.remake/remake.log').read_text()

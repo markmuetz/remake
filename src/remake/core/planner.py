@@ -44,6 +44,26 @@ def _outputs_complete(task):
     return bool(outputs) and all(token.is_complete() for token in outputs.values())
 
 
+def upstream_failed(task, failures):
+    """Should task be skipped because upstream tasks failed this run?
+
+    failures: {rule: set of frozenset(kwargs.items())} accumulated by an
+    executor. Mirrors the planner's rerun propagation: element-wise when
+    the matrices are shared, conservative (any failure taints all
+    downstream tasks) otherwise.
+    """
+    for dep in task.rule.depends_on:
+        failed = failures.get(dep)
+        if not failed:
+            continue
+        if _same_matrix(task.rule, dep):
+            if frozenset(task.kwargs.items()) in failed:
+                return True
+        else:
+            return True
+    return False
+
+
 def explain_task(rules, dag, metadata, task, *, check_outputs='fallback'):
     """Why would (or wouldn't) this task run? Returns (will_run, reasons) —
     reasons in the order the planner checks them. The `remake why` command."""

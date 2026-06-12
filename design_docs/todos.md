@@ -31,9 +31,13 @@ assessment (2026-06-11). Ordered roughly by severity.
   `traceback.format_exc()`). Now stores `traceback.format_exc()`.
 - [x] No way to see failures from the CLI: now `info --show-failures` prints
   each failed task with its stored traceback and failure timestamp.
-- [ ] Downstream tasks of a failed task run anyway and fail "naturally" on
-  missing inputs — correct in the DB but noisy and wasteful. Skip (and
-  report) descendants of same-run failures.
+- [x] Downstream tasks of a failed task run anyway and fail "naturally" on
+  missing inputs — correct in the DB but noisy and wasteful. Fixed
+  2026-06-12: singleproc/multiproc skip (and report) tasks tainted by
+  same-run failures — element-wise when matrices are shared, conservative
+  otherwise (`planner.upstream_failed`, mirroring rerun propagation).
+  Skipped tasks stay unrecorded (pending), so fixing the upstream makes
+  the next run pick them up. SLURM gets this from aftercorr/afterok.
 
 ## Packaging
 
@@ -104,3 +108,10 @@ assessment (2026-06-11). Ordered roughly by severity.
   inherited methods live in the base class, which must be declared in
   `uses` itself to be tracked (same one-level-deep rule as functions);
   REPL/exec-defined classes fall back to repr (body changes undetected).
+- [x] `remake -X run` not launching pdb/ipdb on Exception. Two causes,
+  fixed 2026-06-12: `exception_info` used `debug.pm()`, which needs
+  `sys.last_traceback` (only set by the interactive interpreter) — now
+  `post_mortem(tb)`; and executors swallow task failures by design, so
+  nothing ever reached the excepthook — `-X` now sets
+  `executor.raise_on_failure` so the first failure propagates with the
+  original traceback (in-process executors only).

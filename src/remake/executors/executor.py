@@ -10,6 +10,10 @@ class Executor(abc.ABC):
     # True: `remake run --dry-run` sets executor.dry_run and still calls
     # run_tasks (generate everything, submit nothing).
     supports_dry_run = False
+    # True: a task failure propagates instead of being recorded-and-
+    # continued — set by `remake run -X` so the debugger gets the original
+    # traceback. Only meaningful for in-process executors (singleproc).
+    raise_on_failure = False
 
     def __init__(self, rmk):
         self.rmk = rmk

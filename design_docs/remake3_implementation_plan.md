@@ -39,6 +39,7 @@ doc in `design_docs/` when work on it starts.
   - 115 tests under tests/unit and tests/integration; examples are loaded
     and planned as part of the suite, SLURM tested against fake
     sbatch/squeue shims. Grow alongside remaining items.
+- [ ] Code coverage
 - [x] Runnable examples
   - All seven run end-to-end (synthetic inputs via
     examples/make_example_data.py); ex1/ex3/ex5 run in the test suite,
