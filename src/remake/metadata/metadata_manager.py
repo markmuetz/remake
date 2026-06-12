@@ -33,6 +33,15 @@ class MetadataManager(abc.ABC):
     def update_task(self, task, status, exception=''):
         """Record a task execution result."""
 
+    def update_tasks(self, tasks, status, exception=''):
+        """Record the same state for many tasks (backends may batch)."""
+        for task in tasks:
+            self.update_task(task, status, exception)
+
+    def delete_tasks(self, tasks):
+        """Remove stored records (tasks become never-run/pending)."""
+        raise NotImplementedError(f'{type(self).__name__} cannot delete records')
+
     def ingest_sidecars(self, rules):
         """Absorb pending sidecar result files (written by per-task array
         processes) for these rules. Backends without a persistent store

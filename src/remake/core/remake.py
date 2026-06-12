@@ -73,7 +73,7 @@ class Remake:
         self._finalized = True
         return self
 
-    def plan(self, query=None, force=False):
+    def plan(self, query=None, force=False, ignore_code_changes=False):
         if not self._finalized:
             self.finalize()
         # Results recorded by SLURM array elements live in sidecar files
@@ -87,6 +87,7 @@ class Remake:
             query=query,
             force=force,
             check_outputs=self.check_outputs,
+            ignore_code_changes=ignore_code_changes,
         )
 
     def explain_task(self, task):
@@ -143,7 +144,7 @@ class Remake:
 
     # --- execution ---
 
-    def run(self, executor=None, query=None, force=False):
+    def run(self, executor=None, query=None, force=False, ignore_code_changes=False):
         """Run all tasks that need running, replanning after each wave so
         dynamic (deferred) matrices resolve as their upstreams complete.
         Returns the number of failed tasks (0 for asynchronous executors,
@@ -155,10 +156,15 @@ class Remake:
 
             executor = SingleprocExecutor(self)
 
+        def _plan():
+            return self.plan(
+                query=query, force=force, ignore_code_changes=ignore_code_changes
+            )
+
         if executor.handles_deferred:
             # Asynchronous executors (SLURM) get the whole plan in one call;
             # deferred rules are theirs to handle (continuation jobs).
-            runnable, deferred = self.plan(query=query, force=force)
+            runnable, deferred = _plan()
             if not runnable and not deferred:
                 logger.info('Nothing to do')
                 return 0
@@ -167,7 +173,7 @@ class Remake:
         nfailed = 0
         attempted = set()
         while True:
-            runnable, deferred = self.plan(query=query, force=force)
+            runnable, deferred = _plan()
             force = False  # only force the first wave
             runnable = [t for t in runnable if t.key not in attempted]
             if not runnable:

@@ -116,11 +116,17 @@ def explain_task(rules, dag, metadata, task, *, check_outputs='fallback'):
     return will_run, reasons
 
 
-def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='fallback'):
+def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='fallback',
+         ignore_code_changes=False):
     """Return (runnable_tasks, deferred_rules).
 
     runnable_tasks: ordered (rule-topologically) list of tasks needing a run.
     deferred_rules: rules whose matrix callable raised MatrixNotReady.
+
+    ignore_code_changes: freshness checks off, dataflow on — code/uses
+    comparisons are skipped, so a task reruns only if it has never
+    *succeeded* (failed counts as not run) or an upstream task reruns
+    this wave (a fan-in must still pick up newly-run elements).
     """
     predicate = make_predicate(query) if query else None
     code_comparer = CodeComparer()
@@ -172,11 +178,12 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='fallba
                 else:
                     rerun = True
             else:
-                rerun = (
-                    rec.status != TASK_STATUS_SUCCESS
-                    or not code_comparer(rec.run_code, run_src)
-                    or rec.uses_hash != current_uses_hash
-                )
+                rerun = rec.status != TASK_STATUS_SUCCESS
+                if not rerun and not ignore_code_changes:
+                    rerun = (
+                        not code_comparer(rec.run_code, run_src)
+                        or rec.uses_hash != current_uses_hash
+                    )
                 if not rerun and check_outputs == 'always' and task.outputs:
                     rerun = not _outputs_complete(task)
             if force:

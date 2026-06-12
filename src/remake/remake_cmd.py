@@ -136,6 +136,10 @@ class RemakeParser:
                          '(default: all cores)'),
                 Arg('--query', '-Q', help='Filter tasks based on a kwargs query'),
                 Arg('--force', '-f', help='Force rerun of matched tasks', action='store_true'),
+                Arg('--ignore-code-changes', '-I',
+                    help='Run only tasks that have never succeeded (skip code/uses '
+                         'change detection; upstream reruns still propagate)',
+                    action='store_true'),
                 Arg('--dry-run', '-n', help='Show what would run, run nothing',
                     action='store_true'),
                 Arg('--check-outputs', help='Verify outputs of completed tasks (always mode)',
@@ -161,6 +165,25 @@ class RemakeParser:
             'help': 'Re-execute .remake/submit.sh without replanning',
             'args': [
                 Arg('remakefile'),
+            ],
+        },
+        'set-state': {
+            'help': "Set tasks' recorded state by query, without running them",
+            'args': [
+                Arg('remakefile'),
+                Arg('--query', '-Q', required=True,
+                    help='Tasks to affect (required; use -Q True for all)'),
+                Arg('--success', action='store_true',
+                    help='Record success (with current code/uses hashes)'),
+                Arg('--pending', action='store_true',
+                    help='Delete records: tasks become never-run (NB with the '
+                         'default check_outputs mode, complete outputs are '
+                         're-adopted at the next plan — to force a rerun use '
+                         'run --force, or delete the outputs too)'),
+                Arg('--check-outputs', action='store_true',
+                    help='With --success: only tasks whose outputs are complete on disk'),
+                Arg('--dry-run', '-n', help='Show affected tasks, change nothing',
+                    action='store_true'),
             ],
         },
         'info': {
@@ -272,14 +295,23 @@ class RemakeParser:
             if executor.supports_dry_run:
                 executor.dry_run = True
             else:
-                runnable, deferred = rmk.plan(query=args.query, force=args.force)
+                runnable, deferred = rmk.plan(
+                    query=args.query,
+                    force=args.force,
+                    ignore_code_changes=args.ignore_code_changes,
+                )
                 for task in runnable:
                     print(task)
                 print(f'{len(runnable)} task(s) would run')
                 for rule in deferred:
                     print(f'{rule.name}: deferred (matrix not ready)')
                 return
-        nfailed = rmk.run(executor=executor, query=args.query, force=args.force)
+        nfailed = rmk.run(
+            executor=executor,
+            query=args.query,
+            force=args.force,
+            ignore_code_changes=args.ignore_code_changes,
+        )
         return 1 if nfailed else 0
 
     def remake_run_task(self, args):
@@ -321,6 +353,39 @@ class RemakeParser:
         if result.returncode != 0:
             print(result.stderr.strip(), file=sys.stderr)
             raise RemakeError(f'{submit} failed (exit {result.returncode})')
+
+    def remake_set_state(self, args):
+        from .metadata import TASK_STATUS_SUCCESS
+
+        if args.success == args.pending:
+            raise RemakeError('Give exactly one of --success / --pending')
+        if args.check_outputs and not args.success:
+            raise RemakeError('--check-outputs only applies to --success')
+
+        rmk = self._load(args)
+        rmk.finalize()
+        tasks = rmk.tasks(query=args.query)
+        skipped = 0
+        if args.check_outputs:
+            verified = [
+                t for t in tasks
+                if t.outputs and all(token.is_complete() for token in t.outputs.values())
+            ]
+            skipped = len(tasks) - len(verified)
+            tasks = verified
+
+        state = 'success' if args.success else 'pending'
+        for task in tasks:
+            print(f'{task} -> {state}')
+        suffix = f' ({skipped} skipped: outputs missing/incomplete)' if skipped else ''
+        if args.dry_run:
+            print(f'{len(tasks)} task(s) would be set to {state}{suffix}')
+            return
+        if args.success:
+            rmk.metadata.update_tasks(tasks, TASK_STATUS_SUCCESS)
+        else:
+            rmk.metadata.delete_tasks(tasks)
+        print(f'{len(tasks)} task(s) set to {state}{suffix}')
 
     def remake_info(self, args):
         import json

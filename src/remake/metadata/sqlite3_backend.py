@@ -220,6 +220,24 @@ class Sqlite3Backend(MetadataManager):
 
     @retry_lock_commit
     def update_task(self, task, status, exception=''):
+        self._upsert_task(task, status, exception)
+
+    @retry_lock_commit
+    def update_tasks(self, tasks, status, exception=''):
+        # One EXCLUSIVE transaction for the lot (bulk state changes:
+        # set-state, migration adoption).
+        for task in tasks:
+            self._upsert_task(task, status, exception)
+
+    @retry_lock_commit
+    def delete_tasks(self, tasks):
+        keys = [task.key for task in tasks]
+        for i in range(0, len(keys), self.SELECT_CHUNK):
+            chunk = keys[i:i + self.SELECT_CHUNK]
+            placeholders = ','.join('?' * len(chunk))
+            self.conn.execute(f'DELETE FROM task WHERE key IN ({placeholders})', chunk)
+
+    def _upsert_task(self, task, status, exception=''):
         rule_id, run_code_id = self.rule_ids[task.rule.name]
         self.conn.execute(
             'INSERT INTO task(key, rule_id, run_code_id, uses_hash, '

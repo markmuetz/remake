@@ -177,6 +177,66 @@ def test_run_task_writes_per_task_log(pipeline_dir, capsys):
     assert logs[0].parent.name == key_prefix[:2]
 
 
+def test_ignore_code_changes_flag(pipeline_dir, capsys):
+    cli('run', 'pipeline.py')
+    Path('pipeline.py').write_text(PIPELINE.replace('str(n)', 'str(n * 2)'))
+    capsys.readouterr()
+    cli('run', 'pipeline.py', '--dry-run')
+    assert '4 task(s) would run' in capsys.readouterr().out  # code changed
+    cli('run', 'pipeline.py', '--dry-run', '-I')
+    assert '0 task(s) would run' in capsys.readouterr().out  # changes ignored
+
+
+def test_set_state_pending_forces_forget(pipeline_dir, capsys):
+    cli('run', 'pipeline.py')
+    capsys.readouterr()
+    cli('set-state', 'pipeline.py', '-Q', 'rule == "generate" and n == 1', '--pending')
+    out = capsys.readouterr().out
+    assert 'generate[n=1] -> pending' in out and '1 task(s) set to pending' in out
+    # Record gone, but the output still exists: default fallback mode
+    # re-adopts it, so nothing reruns.
+    cli('run', 'pipeline.py', '--dry-run')
+    assert '0 task(s) would run' in capsys.readouterr().out
+    # With the output gone too, the forgotten task reruns; element-wise
+    # propagation brings process[n=1].
+    (pipeline_dir / 'data/raw_1.txt').unlink()
+    cli('run', 'pipeline.py', '--dry-run')
+    out = capsys.readouterr().out
+    assert 'generate[n=1]' in out and '2 task(s) would run' in out
+
+
+def test_set_state_success_adopts_outputs(pipeline_dir, capsys):
+    import json
+    import shutil
+
+    cli('run', 'pipeline.py')
+    shutil.rmtree('.remake')  # migration scenario: outputs exist, fresh DB
+    (pipeline_dir / 'data/out_2.txt').unlink()
+    capsys.readouterr()
+
+    cli('set-state', 'pipeline.py', '-Q', 'True', '--success', '--check-outputs', '-n')
+    assert 'would be set' in capsys.readouterr().out  # dry run changes nothing
+
+    cli('set-state', 'pipeline.py', '-Q', 'True', '--success', '--check-outputs')
+    out = capsys.readouterr().out
+    assert '3 task(s) set to success (1 skipped: outputs missing/incomplete)' in out
+
+    cli('info', 'pipeline.py', '--json')
+    by_rule = {r['rule']: r for r in json.loads(capsys.readouterr().out)['rules']}
+    assert by_rule['generate']['success'] == 2
+    assert by_rule['process'] == {
+        'rule': 'process', 'deferred': False, 'tasks': 2,
+        'success': 1, 'failed': 0, 'pending': 1, 'to_run': 1,
+    }
+
+
+def test_set_state_requires_exactly_one_state(pipeline_dir):
+    from remake import RemakeError
+
+    with pytest.raises(RemakeError, match='exactly one'):
+        cli('set-state', 'pipeline.py', '-Q', 'True')
+
+
 def test_info_json(pipeline_dir, capsys):
     import json
 

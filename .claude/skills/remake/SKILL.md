@@ -23,7 +23,8 @@ tell the user: that's a CLI gap worth reporting upstream.
 ## CLI surface
 
 ```
-remake run <remakefile> [-E singleproc|multiproc|slurm|mod:Class] [-j nproc] [-Q query] [-f|--force] [-n|--dry-run] [--check-outputs]
+remake run <remakefile> [-E singleproc|multiproc|slurm|mod:Class] [-j nproc] [-Q query] [-f|--force] [-I|--ignore-code-changes] [-n|--dry-run] [--check-outputs]
+remake set-state <remakefile> -Q query (--success [--check-outputs] | --pending) [-n]
 remake info <remakefile> [-Q query] [-t|--tasks] [-F|--show-failures] [--json]
 remake ls-tasks <remakefile> [-Q query] [--json]   # enumerate tasks/keys (no DB reads)
 remake lint <remakefile> [--json]                  # check input/output wiring between rules
@@ -160,6 +161,17 @@ referenced kwarg silently doesn't match — filtering `year == 2000` never
 touches a fan-in rule with no `year`. Habits: preview with `remake info
 -Q ...` or `run -n -Q ...` before running; `--force -Q` is the surgical
 rerun tool — keep the query tight.
+
+## State control
+
+`run -I` runs only tasks that have never *succeeded* (code/uses changes
+ignored; failed tasks rerun; upstream reruns still propagate, so
+fan-ins stay correct) — the gap-filler after editing a pipeline.
+`set-state -Q ... --success [--check-outputs]` records success without
+running anything (migration adoption: `set-state file -Q True --success
+--check-outputs`); `--pending` deletes records — but note complete
+outputs are re-adopted by the default check_outputs mode, so to force a
+rerun use `run --force` instead.
 
 ## Authoring rules
 

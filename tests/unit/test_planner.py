@@ -86,6 +86,24 @@ def test_uses_change_triggers_rerun(tmp_path):
     assert len([t for t in runnable if t.rule is rule_b]) == 2
 
 
+def test_ignore_code_changes(tmp_path):
+    rmk, rule_a, rule_b, rule_c = make_pipeline(tmp_path)
+    rmk.run()
+    rule_b.uses = {'mode': 'changed'}  # would normally rerun b + downstream
+    runnable, _ = rmk.plan(ignore_code_changes=True)
+    assert not runnable  # freshness checks off
+
+    # Failed = not succeeded: reruns; and dataflow stays on — the rerun
+    # propagates element-wise to b[n=1] and conservatively to the fan-in,
+    # even though both succeeded.
+    task = next(t for t in rmk.tasks() if t.rule is rule_a and t.kwargs == {'n': 1})
+    rmk.metadata.update_task(task, TASK_STATUS_FAILED)
+    runnable, _ = rmk.plan(ignore_code_changes=True)
+    assert sorted([(t.rule.name, t.kwargs.get('n')) for t in runnable], key=str) == [
+        ('rule_a', 1), ('rule_b', 1), ('rule_c', None)
+    ]
+
+
 def test_force_reruns_everything(tmp_path):
     rmk, *_ = make_pipeline(tmp_path)
     rmk.run()
