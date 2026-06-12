@@ -17,8 +17,6 @@ requires-python = ">=3.9"
 dependencies = [
     "loguru",
     "networkx",
-    "pyquerylist",
-    "tabulate",
 ]
 dynamic = ["version"]
 classifiers = [
@@ -37,7 +35,18 @@ Documentation = "https://markmuetz.github.io/remake"
 
 [project.optional-dependencies]
 debug = ["ipdb"]
-test = ["pytest", "hypothesis"]
+s3 = ["boto3"]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "hypothesis",
+    "xarray>=2024.7.0",
+    "netcdf4>=1.7.2",
+    "h5netcdf>=1.8.1",
+    "zarr<3",
+    "pyyaml>=6.0.3",
+]
 
 [project.scripts]
 remake = "remake.remake_cmd:remake_cmd"

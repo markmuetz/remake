@@ -37,13 +37,14 @@ assessment (2026-06-11). Ordered roughly by severity.
 
 ## Packaging
 
-- [ ] `pip install -e .` has never been run against the new pyproject; the
+- [x] `pip install -e .` has never been run against the new pyproject; the
   dynamic `version = {attr=...}` may import the package (and deps) at build
-  time. Verify, and make `version.py` statically readable if needed.
-- [ ] The installed `remake` console script has only been tested as
-  `python -m remake.remake_cmd`.
-- [ ] Version string: `__version__` is `0.8.0`; the decided version
-  "0.8.0.0-alpha" is not valid PEP 440 anyway. Settle on `0.8.0a0`-style.
+  time. Now: `version.py` is a static literal; `uv build` and an editable
+  install in a uv-managed venv both verified (2026-06-12).
+- [x] The installed `remake` console script has only been tested as
+  `python -m remake.remake_cmd`. Now verified via `uv run remake version`.
+- [x] Version string: `__version__` is `0.8.0`; the decided version
+  "0.8.0.0-alpha" is not valid PEP 440 anyway. Now `0.8.0a0`.
 
 ## Dead code
 

@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 
 remake.egg-info
+.venv/
 
 # C extensions
 *.so
