@@ -83,11 +83,13 @@ assessment (2026-06-11). Ordered roughly by severity.
       aggregate throughput than 400-way. Past the cliff, more contenders
       means less total progress, not more.
   Not a graceful slowdown: past the cliff most processes never acquire the
-  lock within a job's wall-time. Needs a real fix (candidates below)
-  before relying on concurrent SLURM-array writers for 1e5+/1e6-task runs.
-  `array_throttle` is a stopgap — keep concurrent array width well under
-  ~200; real rules with actual compute naturally stagger writes anyway, so
-  this mainly protects against rules whose tasks are themselves near-instant.
+  lock within a job's wall-time.
+  **Fixed 2026-06-12 via sidecar/ingest** (design in
+  slurm_implementation.md): `run-array-task` no longer opens the DB at
+  all — results go to `.remake/tasks/results/...` sidecars, batch-ingested
+  by the next plan/run/info. Remaining: validate at 400/800-way through
+  the real pipeline path on JASMIN; `retry_lock_commit` still guards the
+  (now low-concurrency) ensure_rules/update_task/ingest paths.
 - [ ] `ZarrStore.is_complete()` checks `.zmetadata` (zarr v2); zarr v3
   consolidated metadata lives in `zarr.json`. Handle both when xarray/zarr
   versions move.

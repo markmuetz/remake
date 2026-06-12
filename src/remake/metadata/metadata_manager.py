@@ -32,3 +32,9 @@ class MetadataManager(abc.ABC):
     @abc.abstractmethod
     def update_task(self, task, status, exception=''):
         """Record a task execution result."""
+
+    def ingest_sidecars(self, rules):
+        """Absorb pending sidecar result files (written by per-task array
+        processes) for these rules. Backends without a persistent store
+        have nothing to ingest into; default is a no-op."""
+        return 0

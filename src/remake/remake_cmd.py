@@ -192,7 +192,14 @@ class RemakeParser:
     def remake_run_array_task(self, args):
         import json
 
-        rmk = self._load(args)
+        from .metadata.sidecar import SidecarWriter
+
+        # Hundreds of concurrent array elements must not touch the shared
+        # SQLite DB (livelock on shared filesystems): load without
+        # finalizing (no ensure_rules, no DB connection) and record the
+        # result as a sidecar file, ingested by the next plan/info.
+        rmk = load_remake(args.remakefile, finalize=False)
+        rmk.metadata = SidecarWriter()
         specs = json.loads(Path(f'.remake/jobs/{args.rule}.json').read_text())
         spec = specs[args.index]
         task = rmk.task_from_spec(spec['rule'], spec['kwargs'])

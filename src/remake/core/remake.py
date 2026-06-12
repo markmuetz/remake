@@ -76,6 +76,10 @@ class Remake:
     def plan(self, query=None, force=False):
         if not self._finalized:
             self.finalize()
+        # Results recorded by SLURM array elements live in sidecar files
+        # (they can't write the DB concurrently); fold them in before the
+        # DB is read for planning.
+        self.metadata.ingest_sidecars(self.rules)
         return plan(
             self.rules,
             self.dag,
