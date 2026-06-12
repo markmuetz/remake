@@ -95,4 +95,12 @@ assessment (2026-06-11). Ordered roughly by severity.
 - [ ] `ZarrStore.is_complete()` checks `.zmetadata` (zarr v2); zarr v3
   consolidated metadata lives in `zarr.json`. Handle both when xarray/zarr
   versions move.
-- [ ] Can `uses` take a class? (instead of a function)
+- [x] Can `uses` take a class? (instead of a function) Yes: classes are
+  callable, so they take the function path — whole class body hashed
+  AST-normalised, injected like any value. Two fixes made it true in
+  practice (2026-06-12): `load_module` registers in `sys.modules` (class
+  getsource needs it; functions didn't) and the sourceless fallback no
+  longer assumes `__code__` (classes lack one — was a crash). Caveats:
+  inherited methods live in the base class, which must be declared in
+  `uses` itself to be tracked (same one-level-deep rule as functions);
+  REPL/exec-defined classes fall back to repr (body changes undetected).

@@ -90,8 +90,11 @@ def analyse(inputs, outputs, year):
 ```
 `uses` participates in rerun decisions: changing a value's repr or a
 function's code (AST-level — formatting doesn't count) reruns the rule's
-tasks. Tracking is one level deep: a `uses` function calling *another*
-module-level helper won't see changes to that helper — declare it too.
+tasks. Classes work too (the whole class body is hashed). Tracking is
+one level deep: a `uses` function calling *another* module-level helper
+won't see changes to that helper — declare it too. Same for classes:
+inherited methods live in the base class, so declare the base in `uses`
+as well if its changes should trigger reruns.
 
 ## SLURM config
 
