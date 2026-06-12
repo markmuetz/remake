@@ -39,7 +39,13 @@ doc in `design_docs/` when work on it starts.
 - [ ] Create PyPI package (verify build/install, settle PEP 440 version,
   first alpha upload)
 - [ ] GitHub Actions: CI, docs, PyPI release
-- [ ] remake2 migration tool
+- [ ] Claude Code remake skill (`.claude/skills/remake/`) — see
+  [claude_remake_skill.md](claude_remake_skill.md)
+  - skeleton + authoring + migration + triage/monitoring/status sections
+    done 2026-06-12; remaining: validate in anger on JASMIN, CLI gap
+    items that earn their keep, health-check section, plugin packaging
+- [ ] ~~remake2 migration tool~~ replaced by the migration section of the
+  Claude skill (decision: LLM translation, not an automated tool)
 
 See also: [todos.md](todos.md) (known problems and debts) and
 [discussion.md](discussion.md) (ideas to return to).

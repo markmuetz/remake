@@ -60,14 +60,13 @@ assessment (2026-06-11). Ordered roughly by severity.
   warn at decoration time.
 - [x] File logging was dropped in the CLI rewrite; restored: always-on DEBUG
   log at `.remake/remake.log` (rotated) for any remakefile subcommand.
-- [ ] `.remake/remake.log` is a single shared file; under a wide SLURM array
+- [x] `.remake/remake.log` is a single shared file; under a wide SLURM array
   job each task process appends to it concurrently and lines interleave/
-  corrupt (observed on JASMIN 2026-06-12, 176-element array — garbled rule
-  names, mid-line timestamps). SQLite itself was unaffected by the same
-  load (see `retry_lock_commit` below) — only the loguru file sink is
-  unsafe for concurrent writers. Fix options: per-array-task log files
-  (parallel to the existing `.remake/slurm/output/<rule>/%a.out`/`.err`),
-  or drop/guard the shared DEBUG file sink for `run-array-task`.
+  corrupt (observed on JASMIN 2026-06-12, 176-element array). Fixed:
+  `run-task`/`run-array-task` write a per-task log at
+  `.remake/tasks/log/<rule>/<key[:2]>/<key[2:]>.log` instead of the shared
+  sink — see design_docs/per_task_logging.md (incl. the open total-file-
+  count budget question).
 - [ ] No Hypothesis property tests despite the design doc promising them
   (task key uniqueness/stability, matrix normalisation).
 - [ ] `retry_lock_commit` concurrency machinery has a sharp livelock cliff

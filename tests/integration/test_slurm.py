@@ -198,6 +198,23 @@ def test_resubmit_without_submit_sh_errors(slurm_dir):
 # --- run-array-task: the payload SLURM jobs execute ---
 
 
+def test_run_array_task_writes_per_task_log(slurm_dir):
+    cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')
+    shared_log = Path('.remake/remake.log').read_text()
+
+    cli('run-array-task', 'pipeline.py', 'gen', '3')
+    key = json.loads(Path('.remake/jobs/gen.json').read_text())[3]['task_key']
+    task_log = Path(f'.remake/tasks/log/gen/{key[:2]}/{key[2:]}.log')
+    assert 'gen[n=3]' in task_log.read_text()
+    # The shared log is untouched: per-task processes must not append to it
+    # (concurrent corruption, see design_docs/per_task_logging.md).
+    assert Path('.remake/remake.log').read_text() == shared_log
+
+    # Overwrite, not append: rerunning leaves one attempt in the file.
+    cli('run-array-task', 'pipeline.py', 'gen', '3')
+    assert task_log.read_text().count('Running') == 1
+
+
 def test_run_array_task_executes_spec(slurm_dir):
     cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')
     cli('run-array-task', 'pipeline.py', 'gen', '3')
