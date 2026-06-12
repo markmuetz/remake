@@ -1,5 +1,15 @@
 # remake3 — Detailed Code Implementation Plan
 
+> **Status (2026-06-12): executed.** Kept as the record of the
+> remake2→remake3 transformation plan. The implementation diverged from
+> this plan in a few places — trust the code and the later docs:
+> multiproc was rewritten on the spec+sidecar model (workers reload the
+> remakefile and write sidecar results), not the fetch-task-by-key queue
+> described in §4; the SLURM payload is `run-array-task` with sidecar
+> results (see slurm_implementation.md, "Sidecar result files"); dask was
+> re-added 2026-06-12 on the same model (basic executor only — see
+> discussion.md, parked); tokens are one module (`tokens.py`).
+
 How to transform the existing remake2 code in `src/remake/` into the design in
 [remake3_design.md](remake3_design.md). Covers the next five items of the
 [implementation plan](remake3_implementation_plan.md): core, output tokens,
