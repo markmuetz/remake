@@ -16,7 +16,7 @@ from remake import Remake, ZarrStore, rule
 rmk = Remake(
     config={
         'slurm': {
-            'partition': 'short-serial',
+            'partition': 'standard',
             'time':      '01:00:00',
             'mem':       '4G',
         },
@@ -99,7 +99,7 @@ def agg_inputs(model):
     matrix     = {'model': MODELS},
     depends_on = [anomalies],
     uses       = {'VARS': VARS, 'YEARS': YEARS},
-    config     = {'slurm': {'mem': '64G', 'time': '04:00:00', 'partition': 'long-serial'}},
+    config     = {'slurm': {'mem': '64G', 'time': '04:00:00'}},
 )
 def aggregate(inputs, outputs, model):
     import xarray as xr

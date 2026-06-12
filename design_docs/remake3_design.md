@@ -820,7 +820,7 @@ sbatch --dependency=afterok:$JOB_cluster \
 `.remake/slurm/continuation.sbatch`:
 ```bash
 #!/bin/bash
-#SBATCH --mem=1G --time=00:10:00 --partition=short-serial
+#SBATCH --mem=1G --time=00:10:00 --partition=standard --qos=standard
 remake run mypipeline.py --executor slurm
 ```
 

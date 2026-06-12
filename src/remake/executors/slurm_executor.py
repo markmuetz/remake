@@ -30,7 +30,8 @@ from ..core.exceptions import RemakeError
 from .executor import Executor
 
 DEFAULT_SLURM_CONFIG = {
-    'partition': 'short-serial',
+    'partition': 'standard',
+    'qos': 'standard',
     'time': '4:00:00',
     'mem': '4G',
 }
@@ -38,7 +39,7 @@ ARRAY_THRESHOLD = 10
 
 ARRAY_SBATCH_TPL = """#!/bin/bash
 #SBATCH --job-name={rule_name}
-#SBATCH --array=0-{max_index}
+#SBATCH --array=0-{max_index}{array_throttle}
 #SBATCH -o {output_dir}/%a.out
 #SBATCH -e {output_dir}/%a.err
 {opts}
@@ -61,9 +62,7 @@ CONTINUATION_SBATCH_TPL = """#!/bin/bash
 #SBATCH --job-name=remake_continue
 #SBATCH -o {output_dir}/continuation.out
 #SBATCH -e {output_dir}/continuation.err
-#SBATCH --partition={partition}
-#SBATCH --time=00:10:00
-#SBATCH --mem=1G
+{opts}
 remake run {remakefile} --executor slurm
 """
 
@@ -169,12 +168,14 @@ class SlurmExecutor(Executor):
     def _write_sbatch(self, rule, tasks, is_array):
         config = {**self.slurm_config, **rule.config.get('slurm', {})}
         config.pop('array_threshold', None)
+        throttle = config.pop('array_throttle', None)
         output_dir = self.output_dir / rule.name
         output_dir.mkdir(parents=True, exist_ok=True)
         tpl = ARRAY_SBATCH_TPL if is_array else INDIVIDUAL_SBATCH_TPL
         script = tpl.format(
             rule_name=rule.name,
             max_index=len(tasks) - 1,
+            array_throttle=f'%{throttle}' if throttle else '',
             output_dir=output_dir,
             opts=_sbatch_opts(config),
             remakefile=self.remakefile,
@@ -226,9 +227,14 @@ class SlurmExecutor(Executor):
 
     def _write_continuation(self):
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        # Replanning only, regardless of what per-rule mem/time would say.
+        config = dict(self.slurm_config)
+        config.pop('array_throttle', None)
+        config['time'] = '00:10:00'
+        config['mem'] = '1G'
         script = CONTINUATION_SBATCH_TPL.format(
             output_dir=self.output_dir,
-            partition=self.slurm_config['partition'],
+            opts=_sbatch_opts(config),
             remakefile=self.remakefile,
         )
         (self.slurm_dir / 'continuation.sbatch').write_text(script)

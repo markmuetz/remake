@@ -60,10 +60,23 @@ assessment (2026-06-11). Ordered roughly by severity.
   warn at decoration time.
 - [x] File logging was dropped in the CLI rewrite; restored: always-on DEBUG
   log at `.remake/remake.log` (rotated) for any remakefile subcommand.
+- [ ] `.remake/remake.log` is a single shared file; under a wide SLURM array
+  job each task process appends to it concurrently and lines interleave/
+  corrupt (observed on JASMIN 2026-06-12, 176-element array — garbled rule
+  names, mid-line timestamps). SQLite itself was unaffected by the same
+  load (see `retry_lock_commit` below) — only the loguru file sink is
+  unsafe for concurrent writers. Fix options: per-array-task log files
+  (parallel to the existing `.remake/slurm/output/<rule>/%a.out`/`.err`),
+  or drop/guard the shared DEBUG file sink for `run-array-task`.
 - [ ] No Hypothesis property tests despite the design doc promising them
   (task key uniqueness/stability, matrix normalisation).
 - [ ] `retry_lock_commit` concurrency machinery is carried over but
-  untested in anger — test under real contention when multiproc lands.
+  untested in anger. A 176-element array job on JASMIN (2026-06-12, ex4)
+  hit `.remake/remake.db` on shared NFS with zero lock/busy errors, but
+  that's one data point at moderate width. Write a dedicated stress script
+  (large array, short tasks, all hammering `update_task` concurrently) to
+  push well past 176 and find the actual contention ceiling before relying
+  on this for 1e5+/1e6-task runs.
 - [ ] `ZarrStore.is_complete()` checks `.zmetadata` (zarr v2); zarr v3
   consolidated metadata lives in `zarr.json`. Handle both when xarray/zarr
   versions move.

@@ -88,8 +88,12 @@ be spent only on cluster-shaped problems.
      plan/continuation run (no concurrent DB writers at all).
 - **Scheduler quirks**: `aftercorr` semantics with partially-failed
   upstream arrays; JASMIN array-size and queued-job limits; partition
-  names and accounting. The examples already use real JASMIN partition
-  names (`short-serial`).
+  names and accounting. Defaults updated 2026-06-12 after checking this
+  JASMIN node: `short-serial`/`long-serial` no longer exist (SLURM 25.11);
+  `DEFAULT_SLURM_CONFIG` now uses `partition=standard, qos=standard`.
+  `--account` is project-specific and not defaulted — set via
+  `Remake(config={'slurm': {'account': ...}})`. Array throttling
+  (`--array=0-N%T`) is supported via `config['slurm']['array_throttle']`.
 
 ## Suggested order
 

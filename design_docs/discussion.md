@@ -37,3 +37,10 @@ design discussion before any work starts.
 - **Plugins** — entry-point-based discovery of third-party executors,
   tokens and metadata backends (the dotted-path executor injection is a
   first step).
+- **.remake** — currently there is one single .remake folder for all
+  files within a directory, with one single remake.db. Is this correct?
+- **Per-task logging under SLURM arrays** — the shared `.remake/remake.log`
+  corrupts under concurrent array-job writers (see todos.md, Smaller
+  debts, found on JASMIN 2026-06-12). Likely fix is per-task log files,
+  alongside the existing `.remake/slurm/output/<rule>/%a.out`/`.err` —
+  ties into the `.remake` layout question above.
