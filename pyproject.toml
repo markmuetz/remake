@@ -15,7 +15,6 @@ maintainers = [
 ]
 requires-python = ">=3.9"
 dependencies = [
-    "ipdb>=0.13.13",
     "loguru",
     "networkx",
 ]
@@ -35,7 +34,9 @@ Documentation = "https://markmuetz.github.io/remake"
 "Bug Tracker" = "https://github.com/markmuetz/remake/issues"
 
 [project.optional-dependencies]
-debug = ["ipdb"]
+debug = [
+    "ipdb",
+]
 s3 = ["boto3"]
 
 [dependency-groups]
