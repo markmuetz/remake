@@ -144,9 +144,12 @@ The audit question: what information is *only* available by examining
 | generated sbatch/submit.sh | `slurm/` | — (fine as plain files) |
 
 Commands added to close the gaps (all task-addressing commands accept a
-key prefix *or* `-Q query` resolving to exactly one task):
+key prefix *or* `-Q query` resolving to exactly one task). The query
+namespace is the task kwargs plus `rule` (the rule name), so queries
+select rules too: `-Q "rule in ['r1', 'r2'] and year == 2010"` — this
+replaced an earlier `-R <rule>` flag (one mechanism, composable):
 
-- `remake ls-tasks <file> [-Q q] [-R rule] [--json]` — enumerate tasks
+- `remake ls-tasks <file> [-Q q] [--json]` — enumerate tasks
   (key + name), streaming in text mode; deferred rules are reported, not
   an error. Pure expansion, no DB reads — the cheap "what exists" view
   next to `info -t`'s "what state" view.

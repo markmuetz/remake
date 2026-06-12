@@ -17,8 +17,9 @@ from .scope import uses_hash
 
 
 def make_predicate(query):
-    """Compile a task-filter expression evaluated against task kwargs,
-    e.g. "year > 1985 and model == 'era5'"."""
+    """Compile a task-filter expression evaluated against task kwargs plus
+    'rule' (the rule name), e.g. "year > 1985 and model == 'era5'",
+    "rule in ['extract', 'clean']"."""
     # MM: this looks like a risk - using compile to compile the code?
     # See how pyquerylist does this - it only allows certain Python ops.
     code = compile(query, '<query>', 'eval')

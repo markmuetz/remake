@@ -108,6 +108,22 @@ def test_make_predicate():
     assert not pred({'other': 1})  # missing names: no match
 
 
+def test_query_selects_by_rule_name(tmp_path):
+    rmk, *_ = make_pipeline(tmp_path)
+    runnable, _ = rmk.plan(query='rule == "rule_a"')
+    assert sorted(t.kwargs['n'] for t in runnable) == [1, 2]
+    assert all(t.rule.name == 'rule_a' for t in runnable)
+
+    # Multi-rule selection, composable with kwargs.
+    runnable, _ = rmk.plan(query="rule in ['rule_a', 'rule_b'] and n == 2")
+    assert sorted(t.rule.name for t in runnable) == ['rule_a', 'rule_b']
+    assert all(t.kwargs == {'n': 2} for t in runnable)
+
+    # rule_c has no matrix kwargs at all: rule name still selects it.
+    runnable, _ = rmk.plan(query='rule == "rule_c"')
+    assert [t.rule.name for t in runnable] == ['rule_c']
+
+
 def test_get_tasks_status_batches_across_chunk_boundary(tmp_path):
     """Bulk status lookup with more tasks than one SELECT chunk."""
     from remake.metadata import TASK_STATUS_SUCCESS

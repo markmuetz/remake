@@ -25,7 +25,7 @@ tell the user: that's a CLI gap worth reporting upstream.
 ```
 remake run <remakefile> [-E singleproc|multiproc|slurm|mod:Class] [-j nproc] [-Q query] [-f|--force] [-n|--dry-run] [--check-outputs]
 remake info <remakefile> [-Q query] [-t|--tasks] [-F|--show-failures] [--json]
-remake ls-tasks <remakefile> [-Q query] [-R rule] [--json]  # enumerate tasks/keys (no DB reads)
+remake ls-tasks <remakefile> [-Q query] [--json]   # enumerate tasks/keys (no DB reads)
 remake lint <remakefile> [--json]                  # check input/output wiring between rules
 remake task-info <remakefile> <selector> [--json]  # one task: status, paths, log, SLURM job
 remake task-log <remakefile> <selector> [--path]   # print a task's log (or its path)
@@ -37,9 +37,8 @@ remake resubmit <remakefile>                       # re-run .remake/submit.sh, n
 remake version
 ```
 
-`<selector>` = a task key prefix, or `-Q '<kwargs query>'` (+ `-R <rule>`
-when rules share a matrix) resolving to exactly one task — so you never
-need `info -t` just to find a key.
+`<selector>` = a task key prefix, or `-Q '<query>'` resolving to exactly
+one task — so you never need `info -t` just to find a key.
 
 **Prefer `--json`** (`info`, `task-info`, `slurm-status`) over parsing
 the aligned-text output. Logs go to stderr; stdout is data only.
@@ -151,15 +150,16 @@ at once: `remake info <file> -t --json` with `-Q` to narrow.
 
 ## Query crafting (-Q)
 
-Queries are Python expressions evaluated against each task's kwargs:
-`-Q 'year > 1985 and model == "era5"'` (shell: single-quote the whole
-expression). A task whose rule lacks a referenced kwarg silently doesn't
-match — filtering `year == 2000` never touches a fan-in rule with no
-`year`; conversely, rules *sharing* a matrix all match, so single-task
-selectors (`task-info`/`task-log`/`why`) take `-R <rule>` alongside
-`-Q`. Habits: preview with `remake info -Q ...` or `run -n -Q ...`
-before running; `--force -Q` is the surgical rerun tool — keep the query
-tight.
+Queries are Python expressions evaluated against each task's kwargs
+**plus `rule`, the rule name**: `-Q 'year > 1985 and model == "era5"'`,
+`-Q 'rule == "extract"'`, `-Q 'rule in ["extract", "clean"] and year ==
+2010'` (shell: single-quote the whole expression). `rule` is how you
+target whole rules — including tasks with no matrix kwargs at all — and
+how you disambiguate rules sharing a matrix. A task whose rule lacks a
+referenced kwarg silently doesn't match — filtering `year == 2000` never
+touches a fan-in rule with no `year`. Habits: preview with `remake info
+-Q ...` or `run -n -Q ...` before running; `--force -Q` is the surgical
+rerun tool — keep the query tight.
 
 ## Authoring rules
 

@@ -295,7 +295,7 @@ def test_slurm_status_reports_queue_state(slurm_dir, capsys):
 def test_task_info_shows_slurm_submission(slurm_dir, capsys):
     cli('run', 'pipeline.py', '-E', 'slurm')
     capsys.readouterr()
-    cli('task-info', 'pipeline.py', '-R', 'gen', '-Q', 'n == 3')
+    cli('task-info', 'pipeline.py', '-Q', 'rule == "gen" and n == 3')
     out = capsys.readouterr().out
     assert 'slurm:    job 1001' in out and 'array index 3' in out
 

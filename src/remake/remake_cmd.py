@@ -31,28 +31,23 @@ def _add_task_log_sink(task):
 
 
 def _select_task(rmk, args):
-    """Resolve the task a command addresses: a key prefix, or -Q query
-    and/or -R rule matching exactly one task."""
-    if args.task_key and (args.query or args.rule):
-        raise RemakeError('Give a task key or -Q/-R selection, not both')
+    """Resolve the task a command addresses: a key prefix, or a -Q query
+    matching exactly one task."""
+    if args.task_key and args.query:
+        raise RemakeError('Give a task key or a -Q query, not both')
     if args.task_key:
         return rmk.task_from_key(args.task_key)
-    if args.query or args.rule:
-        tasks = [
-            t
-            for t in rmk.iter_tasks(query=args.query)
-            if args.rule is None or t.rule.name == args.rule
-        ]
-        what = ' '.join(s for s in (args.rule, args.query) if s)
+    if args.query:
+        tasks = rmk.tasks(query=args.query)
         if not tasks:
-            raise RemakeError(f'No task matches {what!r}')
+            raise RemakeError(f'No task matches {args.query!r}')
         if len(tasks) > 1:
             raise RemakeError(
-                f'{len(tasks)} tasks match {what!r}; narrow the query '
-                f'(add -R <rule> if the matrix is shared between rules)'
+                f'{len(tasks)} tasks match {args.query!r}; narrow the query '
+                f"(add `rule == '<name>'` if the matrix is shared between rules)"
             )
         return tasks[0]
-    raise RemakeError('Give a task key prefix, or select with -Q query / -R rule')
+    raise RemakeError('Give a task key prefix or a -Q query')
 
 
 def _slurm_submission(rule_name, task_key=None):
@@ -185,7 +180,6 @@ class RemakeParser:
             'args': [
                 Arg('remakefile'),
                 Arg('--query', '-Q', help='Filter tasks based on a kwargs query'),
-                Arg('--rule', '-R', help='Only tasks of this rule'),
                 Arg('--json', help='Machine-readable output (full keys)', action='store_true'),
             ],
         },
@@ -203,7 +197,6 @@ class RemakeParser:
                 Arg('remakefile'),
                 Arg('task_key', nargs='?'),
                 Arg('--query', '-Q', help='Select the task by kwargs query instead of key'),
-                Arg('--rule', '-R', help='Restrict -Q selection to one rule'),
                 Arg('--json', help='Machine-readable output', action='store_true'),
             ],
         },
@@ -213,7 +206,6 @@ class RemakeParser:
                 Arg('remakefile'),
                 Arg('task_key', nargs='?'),
                 Arg('--query', '-Q', help='Select the task by kwargs query instead of key'),
-                Arg('--rule', '-R', help='Restrict -Q selection to one rule'),
                 Arg('--path', help='Print the log path only', action='store_true'),
             ],
         },
@@ -223,7 +215,6 @@ class RemakeParser:
                 Arg('remakefile'),
                 Arg('task_key', nargs='?'),
                 Arg('--query', '-Q', help='Select the task by kwargs query instead of key'),
-                Arg('--rule', '-R', help='Restrict -Q selection to one rule'),
             ],
         },
         'slurm-status': {
@@ -425,8 +416,6 @@ class RemakeParser:
         predicate = make_predicate(args.query) if args.query else None
         rows = []
         for rule in rmk.rules:
-            if args.rule is not None and rule.name != args.rule:
-                continue
             try:
                 # Stream in text mode: constant memory however big the matrix.
                 for task in iter_expand_rule(rule, predicate):

@@ -240,12 +240,12 @@ def test_ls_tasks(pipeline_dir, capsys):
     assert len(out.splitlines()) == 4
     assert 'generate[n=1]' in out and 'process[n=2]' in out
 
-    cli('ls-tasks', 'pipeline.py', '-Q', 'n == 2', '-R', 'generate')
+    cli('ls-tasks', 'pipeline.py', '-Q', 'rule == "generate" and n == 2')
     assert capsys.readouterr().out.splitlines() == [
         line for line in out.splitlines() if 'generate[n=2]' in line
     ]
 
-    cli('ls-tasks', 'pipeline.py', '--json', '-R', 'process')
+    cli('ls-tasks', 'pipeline.py', '--json', '-Q', 'rule == "process"')
     rows = json.loads(capsys.readouterr().out)
     assert [r['kwargs'] for r in rows] == [{'n': 1}, {'n': 2}]
     assert all(len(r['key']) == 40 and r['rule'] == 'process' for r in rows)
@@ -256,14 +256,14 @@ def test_task_info_text_and_json(pipeline_dir, capsys):
 
     cli('run', 'pipeline.py')
     capsys.readouterr()
-    cli('task-info', 'pipeline.py', '-R', 'generate', '-Q', 'n == 1')
+    cli('task-info', 'pipeline.py', '-Q', 'rule == "generate" and n == 1')
     out = capsys.readouterr().out
     assert 'generate[n=1]' in out
     assert 'status:   success at ' in out
     assert '[complete]' in out
     assert '.remake/tasks/log/generate/' in out
 
-    cli('task-info', 'pipeline.py', '--json', '-R', 'generate', '-Q', 'n == 1')
+    cli('task-info', 'pipeline.py', '--json', '-Q', 'rule == "generate" and n == 1')
     data = json.loads(capsys.readouterr().out)
     assert data['status'] == 'success' and data['kwargs'] == {'n': 1}
     assert all(o['complete'] for o in data['outputs'].values())
@@ -284,26 +284,26 @@ def test_task_log_path_and_content(pipeline_dir, capsys):
 
     cli('run', 'pipeline.py')  # singleproc run: no per-task logs yet
     capsys.readouterr()
-    cli('task-log', 'pipeline.py', '--path', '-R', 'generate', '-Q', 'n == 1')
+    cli('task-log', 'pipeline.py', '--path', '-Q', 'rule == "generate" and n == 1')
     path = Path(capsys.readouterr().out.strip())
     with pytest.raises(RemakeError, match='No log'):
-        cli('task-log', 'pipeline.py', '-R', 'generate', '-Q', 'n == 1')
+        cli('task-log', 'pipeline.py', '-Q', 'rule == "generate" and n == 1')
 
     key = path.parent.name + path.stem  # <k:2>/<k2:>.log
     cli('run-task', 'pipeline.py', key)
     capsys.readouterr()
-    cli('task-log', 'pipeline.py', '-R', 'generate', '-Q', 'n == 1')
+    cli('task-log', 'pipeline.py', '-Q', 'rule == "generate" and n == 1')
     assert 'generate[n=1]' in capsys.readouterr().out
 
 
 def test_why_never_run_then_up_to_date(pipeline_dir, capsys):
-    cli('why', 'pipeline.py', '-R', 'generate', '-Q', 'n == 1')
+    cli('why', 'pipeline.py', '-Q', 'rule == "generate" and n == 1')
     out = capsys.readouterr().out
     assert 'will run: yes' in out and 'never run' in out
 
     cli('run', 'pipeline.py')
     capsys.readouterr()
-    cli('why', 'pipeline.py', '-R', 'generate', '-Q', 'n == 1')
+    cli('why', 'pipeline.py', '-Q', 'rule == "generate" and n == 1')
     out = capsys.readouterr().out
     assert 'will run: no' in out and 'up to date' in out
 
@@ -312,12 +312,12 @@ def test_why_code_change_and_upstream_propagation(pipeline_dir, capsys):
     cli('run', 'pipeline.py')
     Path('pipeline.py').write_text(PIPELINE.replace('str(n)', 'str(n * 2)'))
     capsys.readouterr()
-    cli('why', 'pipeline.py', '-R', 'generate', '-Q', 'n == 1')
+    cli('why', 'pipeline.py', '-Q', 'rule == "generate" and n == 1')
     out = capsys.readouterr().out
     assert 'will run: yes' in out and 'run code changed' in out
     assert '-' in out and '+' in out  # unified diff
 
-    cli('why', 'pipeline.py', '-R', 'process', '-Q', 'n == 1')
+    cli('why', 'pipeline.py', '-Q', 'rule == "process" and n == 1')
     out = capsys.readouterr().out
     assert 'will run: yes' in out
     assert 'upstream' in out and 'element-wise' in out
