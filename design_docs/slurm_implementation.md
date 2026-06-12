@@ -103,6 +103,12 @@ be spent only on cluster-shaped problems.
 
 ## Sidecar result files — design sketch (2026-06-12)
 
+> **Implemented 2026-06-12** (`metadata/sidecar.py`,
+> `Sqlite3Backend.ingest_sidecars`, ingest called from `Remake.plan()`).
+> Decision on the open question below: only `run-array-task` writes
+> sidecars (it loads without finalizing — no `ensure_rules`, no DB
+> connection at all); `run-task` keeps direct `update_task`.
+
 Replaces direct `update_task` calls from per-task SLURM processes with a
 write-sidecar / ingest-serially split, mirroring the per-task-logging
 layout (`design_docs/per_task_logging.md`).
@@ -175,13 +181,14 @@ X regardless of what the DB now shows for X's tasks.
 - `Remake.__init__`/`plan()` currently calls `ensure_rules` unconditionally;
   `ingest_sidecars` needs the same `rule_ids` map, so it likely runs
   immediately after `ensure_rules`, same place.
-- Not yet decided: does `run-task` (non-array, used by singleproc/multiproc
-  executors) also switch to sidecars, or only `run-array-task`? Sidecars
-  cost an extra ingest pass even for single-writer cases where direct
-  `update_task` is fine. Lean towards: only `run-array-task` writes
-  sidecars; `run-task` keeps calling `update_task` directly.
-- Implementation not started — this is a design sketch, not yet on the
-  todo list as an active item pending a decision to proceed.
+- ~~Not yet decided: does `run-task` (non-array, used by singleproc/multiproc
+  executors) also switch to sidecars, or only `run-array-task`?~~ Decided
+  and implemented: only `run-array-task` writes sidecars; `run-task` keeps
+  calling `update_task` directly (single writer).
+- Remaining validation: rerun the contention stress at 400/800-way on
+  JASMIN through the real pipeline path to confirm the livelock is gone
+  (bench_sqlite_contention.py exercises the old direct-write path by
+  design — it remains useful for measuring the ingest-side transaction).
 
 ## Suggested order
 

@@ -226,7 +226,10 @@ remake3 starts a fresh `.remake/` (new schema, new task keys). Existing
 on-disk outputs are NOT lost work: the default `check_outputs='fallback'`
 recognises complete outputs for tasks with no DB record, so the first
 plan after migration should show ~0 tasks to run for an up-to-date
-pipeline. That is also the migration acceptance test.
+pipeline. That is also the migration acceptance test. Once it passes,
+lock it in with `remake set-state <file> -Q True --success
+--check-outputs` — this records the adopted outputs in the DB, so later
+plans stop re-statting every output file.
 
 ## Workflow
 

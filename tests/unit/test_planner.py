@@ -86,6 +86,24 @@ def test_uses_change_triggers_rerun(tmp_path):
     assert len([t for t in runnable if t.rule is rule_b]) == 2
 
 
+def test_ignore_code_changes(tmp_path):
+    rmk, rule_a, rule_b, rule_c = make_pipeline(tmp_path)
+    rmk.run()
+    rule_b.uses = {'mode': 'changed'}  # would normally rerun b + downstream
+    runnable, _ = rmk.plan(ignore_code_changes=True)
+    assert not runnable  # freshness checks off
+
+    # Failed = not succeeded: reruns; and dataflow stays on — the rerun
+    # propagates element-wise to b[n=1] and conservatively to the fan-in,
+    # even though both succeeded.
+    task = next(t for t in rmk.tasks() if t.rule is rule_a and t.kwargs == {'n': 1})
+    rmk.metadata.update_task(task, TASK_STATUS_FAILED)
+    runnable, _ = rmk.plan(ignore_code_changes=True)
+    assert sorted([(t.rule.name, t.kwargs.get('n')) for t in runnable], key=str) == [
+        ('rule_a', 1), ('rule_b', 1), ('rule_c', None)
+    ]
+
+
 def test_force_reruns_everything(tmp_path):
     rmk, *_ = make_pipeline(tmp_path)
     rmk.run()
@@ -106,6 +124,22 @@ def test_make_predicate():
     assert pred({'n': 2, 'model': 'era5'})
     assert not pred({'n': 1, 'model': 'era5'})
     assert not pred({'other': 1})  # missing names: no match
+
+
+def test_query_selects_by_rule_name(tmp_path):
+    rmk, *_ = make_pipeline(tmp_path)
+    runnable, _ = rmk.plan(query='rule == "rule_a"')
+    assert sorted(t.kwargs['n'] for t in runnable) == [1, 2]
+    assert all(t.rule.name == 'rule_a' for t in runnable)
+
+    # Multi-rule selection, composable with kwargs.
+    runnable, _ = rmk.plan(query="rule in ['rule_a', 'rule_b'] and n == 2")
+    assert sorted(t.rule.name for t in runnable) == ['rule_a', 'rule_b']
+    assert all(t.kwargs == {'n': 2} for t in runnable)
+
+    # rule_c has no matrix kwargs at all: rule name still selects it.
+    runnable, _ = rmk.plan(query='rule == "rule_c"')
+    assert [t.rule.name for t in runnable] == ['rule_c']
 
 
 def test_get_tasks_status_batches_across_chunk_boundary(tmp_path):

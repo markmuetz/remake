@@ -52,7 +52,7 @@ def test_dry_run_runs_nothing(pipeline_dir, capsys):
 
 
 def test_run_and_info(pipeline_dir, capsys):
-    cli('run', 'pipeline.py')
+    assert cli('run', 'pipeline.py') == 0
     assert (pipeline_dir / 'data/out_2.txt').read_text() == '22'
 
     cli('info', 'pipeline.py')
@@ -122,13 +122,37 @@ def sometimes_fails(outputs, n):
 rmk = Remake()
 rmk.rules_from_current_module()
 ''')
-    cli('run', 'failing.py')
+    # Failures are recorded and the run continues, but the exit code says so.
+    assert cli('run', 'failing.py') == 1
     capsys.readouterr()
     cli('info', 'failing.py', '--show-failures')
     out = capsys.readouterr().out
     assert 'sometimes_fails[n=2]' in out and '(failed at' in out
     assert 'Traceback (most recent call last)' in out
     assert 'ValueError: boom from n=2' in out
+
+
+def test_debug_exception_propagates_task_failure(pipeline_dir, capsys, monkeypatch):
+    Path('boom.py').write_text('''
+from remake import Remake, rule
+
+@rule(outputs={'o': 'data/{n}.txt'}, matrix={'n': [1]})
+def boom(outputs, n):
+    raise ValueError('boom')
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    # Without -X the failure is recorded and the run returns 1.
+    assert cli('run', 'boom.py') == 1
+    # With -X it propagates (at the interpreter top level the excepthook
+    # then drops into pdb/ipdb). Guard the hook remake_cmd installs so it
+    # can't fire on unrelated later failures.
+    import sys
+
+    monkeypatch.setattr(sys, 'excepthook', sys.excepthook)
+    with pytest.raises(ValueError, match='boom'):
+        cli('-X', 'run', 'boom.py', '--force')
 
 
 def test_log_file_written(pipeline_dir):
@@ -151,6 +175,213 @@ def test_run_task_writes_per_task_log(pipeline_dir, capsys):
     assert 'generate[n=1]' in logs[0].read_text()
     # Sharded layout: <rule>/<key[:2]>/<key[2:]>.log
     assert logs[0].parent.name == key_prefix[:2]
+
+
+def test_ignore_code_changes_flag(pipeline_dir, capsys):
+    cli('run', 'pipeline.py')
+    Path('pipeline.py').write_text(PIPELINE.replace('str(n)', 'str(n * 2)'))
+    capsys.readouterr()
+    cli('run', 'pipeline.py', '--dry-run')
+    assert '4 task(s) would run' in capsys.readouterr().out  # code changed
+    cli('run', 'pipeline.py', '--dry-run', '-I')
+    assert '0 task(s) would run' in capsys.readouterr().out  # changes ignored
+
+
+def test_set_state_pending_forces_forget(pipeline_dir, capsys):
+    cli('run', 'pipeline.py')
+    capsys.readouterr()
+    cli('set-state', 'pipeline.py', '-Q', 'rule == "generate" and n == 1', '--pending')
+    out = capsys.readouterr().out
+    assert 'generate[n=1] -> pending' in out and '1 task(s) set to pending' in out
+    # Record gone, but the output still exists: default fallback mode
+    # re-adopts it, so nothing reruns.
+    cli('run', 'pipeline.py', '--dry-run')
+    assert '0 task(s) would run' in capsys.readouterr().out
+    # With the output gone too, the forgotten task reruns; element-wise
+    # propagation brings process[n=1].
+    (pipeline_dir / 'data/raw_1.txt').unlink()
+    cli('run', 'pipeline.py', '--dry-run')
+    out = capsys.readouterr().out
+    assert 'generate[n=1]' in out and '2 task(s) would run' in out
+
+
+def test_set_state_success_adopts_outputs(pipeline_dir, capsys):
+    import json
+    import shutil
+
+    cli('run', 'pipeline.py')
+    shutil.rmtree('.remake')  # migration scenario: outputs exist, fresh DB
+    (pipeline_dir / 'data/out_2.txt').unlink()
+    capsys.readouterr()
+
+    cli('set-state', 'pipeline.py', '-Q', 'True', '--success', '--check-outputs', '-n')
+    assert 'would be set' in capsys.readouterr().out  # dry run changes nothing
+
+    cli('set-state', 'pipeline.py', '-Q', 'True', '--success', '--check-outputs')
+    out = capsys.readouterr().out
+    assert '3 task(s) set to success (1 skipped: outputs missing/incomplete)' in out
+
+    cli('info', 'pipeline.py', '--json')
+    by_rule = {r['rule']: r for r in json.loads(capsys.readouterr().out)['rules']}
+    assert by_rule['generate']['success'] == 2
+    assert by_rule['process'] == {
+        'rule': 'process', 'deferred': False, 'tasks': 2,
+        'success': 1, 'failed': 0, 'pending': 1, 'to_run': 1,
+    }
+
+
+def test_set_state_requires_exactly_one_state(pipeline_dir):
+    from remake import RemakeError
+
+    with pytest.raises(RemakeError, match='exactly one'):
+        cli('set-state', 'pipeline.py', '-Q', 'True')
+
+
+def test_info_json(pipeline_dir, capsys):
+    import json
+
+    cli('run', 'pipeline.py')
+    capsys.readouterr()
+    cli('info', 'pipeline.py', '--json', '--tasks')
+    data = json.loads(capsys.readouterr().out)
+    by_rule = {r['rule']: r for r in data['rules']}
+    assert by_rule['generate']['success'] == 2 and by_rule['generate']['to_run'] == 0
+    assert len(data['tasks']) == 4
+    assert all(t['status'] == 'success' and len(t['key']) == 40 for t in data['tasks'])
+
+
+def test_lint_clean_pipeline(pipeline_dir, capsys):
+    assert cli('lint', 'pipeline.py') == 0
+    assert 'all inputs wired' in capsys.readouterr().out
+
+
+def test_lint_flags_near_miss_and_missing_dependency(pipeline_dir, capsys):
+    Path('miswired.py').write_text('''
+from pathlib import Path
+from remake import Remake, rule
+
+@rule(inputs={'src': 'data/src_{n}.txt'},
+      outputs={'o': 'data/gen_{n}.txt'}, matrix={'n': [1, 2]})
+def gen(inputs, outputs, n):
+    pass
+
+@rule(inputs={'i': 'data/genn_{n}.txt'},  # typo: gen makes gen_{n}.txt
+      outputs={'o': 'data/proc_{n}.txt'}, matrix=gen.matrix, depends_on=[gen])
+def proc(inputs, outputs, n):
+    pass
+
+@rule(inputs={'i': 'data/proc_{n}.txt'},  # consumes proc, no depends_on
+      outputs={'o': 'data/agg_{n}.txt'}, matrix=gen.matrix)
+def agg(inputs, outputs, n):
+    pass
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    assert cli('lint', 'miswired.py') == 1
+    out = capsys.readouterr().out
+    assert "NEAR MISS           proc: input 'data/genn_1.txt'" in out
+    assert "gen produces 'data/gen_1.txt'" in out and '(2 task(s))' in out
+    assert 'MISSING DEPENDENCY  agg' in out and 'produced by proc' in out
+    assert 'external            gen: 2 input(s)' in out  # not a problem, exit 1 is from above
+
+    import json
+
+    cli('lint', 'miswired.py', '--json')
+    rows = json.loads(capsys.readouterr().out)
+    assert {r['kind'] for r in rows} == {'near_miss', 'missing_dependency', 'external'}
+
+
+def test_ls_tasks(pipeline_dir, capsys):
+    import json
+
+    cli('ls-tasks', 'pipeline.py')
+    out = capsys.readouterr().out
+    assert len(out.splitlines()) == 4
+    assert 'generate[n=1]' in out and 'process[n=2]' in out
+
+    cli('ls-tasks', 'pipeline.py', '-Q', 'rule == "generate" and n == 2')
+    assert capsys.readouterr().out.splitlines() == [
+        line for line in out.splitlines() if 'generate[n=2]' in line
+    ]
+
+    cli('ls-tasks', 'pipeline.py', '--json', '-Q', 'rule == "process"')
+    rows = json.loads(capsys.readouterr().out)
+    assert [r['kwargs'] for r in rows] == [{'n': 1}, {'n': 2}]
+    assert all(len(r['key']) == 40 and r['rule'] == 'process' for r in rows)
+
+
+def test_task_info_text_and_json(pipeline_dir, capsys):
+    import json
+
+    cli('run', 'pipeline.py')
+    capsys.readouterr()
+    cli('task-info', 'pipeline.py', '-Q', 'rule == "generate" and n == 1')
+    out = capsys.readouterr().out
+    assert 'generate[n=1]' in out
+    assert 'status:   success at ' in out
+    assert '[complete]' in out
+    assert '.remake/tasks/log/generate/' in out
+
+    cli('task-info', 'pipeline.py', '--json', '-Q', 'rule == "generate" and n == 1')
+    data = json.loads(capsys.readouterr().out)
+    assert data['status'] == 'success' and data['kwargs'] == {'n': 1}
+    assert all(o['complete'] for o in data['outputs'].values())
+    assert data['slurm'] == {'jobids': None, 'array_index': None}  # never submitted
+
+
+def test_task_select_ambiguous_query_errors(pipeline_dir):
+    from remake import RemakeError
+
+    cli('run', 'pipeline.py')
+    # n == 1 matches one task in each of the two rules sharing the matrix.
+    with pytest.raises(RemakeError, match='2 tasks match'):
+        cli('task-info', 'pipeline.py', '-Q', 'n == 1')
+
+
+def test_task_log_path_and_content(pipeline_dir, capsys):
+    from remake import RemakeError
+
+    cli('run', 'pipeline.py')  # singleproc run: no per-task logs yet
+    capsys.readouterr()
+    cli('task-log', 'pipeline.py', '--path', '-Q', 'rule == "generate" and n == 1')
+    path = Path(capsys.readouterr().out.strip())
+    with pytest.raises(RemakeError, match='No log'):
+        cli('task-log', 'pipeline.py', '-Q', 'rule == "generate" and n == 1')
+
+    key = path.parent.name + path.stem  # <k:2>/<k2:>.log
+    cli('run-task', 'pipeline.py', key)
+    capsys.readouterr()
+    cli('task-log', 'pipeline.py', '-Q', 'rule == "generate" and n == 1')
+    assert 'generate[n=1]' in capsys.readouterr().out
+
+
+def test_why_never_run_then_up_to_date(pipeline_dir, capsys):
+    cli('why', 'pipeline.py', '-Q', 'rule == "generate" and n == 1')
+    out = capsys.readouterr().out
+    assert 'will run: yes' in out and 'never run' in out
+
+    cli('run', 'pipeline.py')
+    capsys.readouterr()
+    cli('why', 'pipeline.py', '-Q', 'rule == "generate" and n == 1')
+    out = capsys.readouterr().out
+    assert 'will run: no' in out and 'up to date' in out
+
+
+def test_why_code_change_and_upstream_propagation(pipeline_dir, capsys):
+    cli('run', 'pipeline.py')
+    Path('pipeline.py').write_text(PIPELINE.replace('str(n)', 'str(n * 2)'))
+    capsys.readouterr()
+    cli('why', 'pipeline.py', '-Q', 'rule == "generate" and n == 1')
+    out = capsys.readouterr().out
+    assert 'will run: yes' in out and 'run code changed' in out
+    assert '-' in out and '+' in out  # unified diff
+
+    cli('why', 'pipeline.py', '-Q', 'rule == "process" and n == 1')
+    out = capsys.readouterr().out
+    assert 'will run: yes' in out
+    assert 'upstream' in out and 'element-wise' in out
+    assert 'generate[n=1]' in out and 'generate[n=2]' not in out
 
 
 def test_run_query_force(pipeline_dir, capsys):

@@ -12,16 +12,24 @@ design discussion before any work starts.
 - **Web interface** — out of scope per the design doc, but the SQLite DB
   is queryable by external tools; revisit whether a thin read-only
   viewer is worth it.
-- **Dask integration** — re-add a dask executor against the new Executor
-  ABC (old one deleted as incomplete).
-- **SLURM job ids written to file** — already in the SLURM design
-  (`.remake/jobs/<rule>.jobids.json` sidecars); confirm the format
-  serves the monitor and resubmission use cases when implementing.
+- **Dask integration — long grass.** A basic dask executor exists
+  (2026-06-12: spec-based like multiproc/SLURM, LocalCluster or a
+  configured scheduler address) and that is where it stops: dask is a
+  nightmare on JASMIN (MM), which is remake's primary target, so
+  dask-*native* integration (inter-rule futures instead of per-rule
+  barriers, dask-jobqueue, long-lived-worker staleness) is deliberately
+  parked. Do not pick this up without a concrete user need on a platform
+  where dask actually behaves.
 - **CLI interface** — assorted behaviours to decide:
   - `remake` on missing file: sensible default when no remakefile is
     given (search cwd? `.remake/config` default, as remake2 had?).
-  - "remake only if not run": a mode/flag that runs only never-run
-    tasks, ignoring code/uses changes.
+  - ~~"only if not run"~~ done: `run --ignore-code-changes/-I` — rerun
+    only what has never *succeeded* (failed reruns; upstream propagation
+    stays on so fan-ins pick up newly-run elements).
+  - ~~record-existing-outputs command~~ done, generalised to
+    `set-state -Q <query> (--success [--check-outputs] | --pending)`;
+    migration adoption = `set-state file -Q True --success
+    --check-outputs`.
 - **Grab code version** — record the pipeline repo's git hash/status in
   task metadata at run time (remake2's `get_git_info` did this; dropped
   in the trim).
@@ -39,11 +47,29 @@ design discussion before any work starts.
   first step).
 - **.remake** — currently there is one single .remake folder for all
   files within a directory, with one single remake.db. Is this correct?
-- **Per-task logging under SLURM arrays** — the shared `.remake/remake.log`
-  corrupts under concurrent array-job writers (see todos.md, Smaller
-  debts, found on JASMIN 2026-06-12). Likely fix is per-task log files,
-  alongside the existing `.remake/slurm/output/<rule>/%a.out`/`.err` —
-  ties into the `.remake` layout question above.
-- **configuration** - there should be three levels of config: 
+  Interacts with the "`.remake` next to artefacts" item above.
+- **configuration** - there should be three levels of config:
   `~/.remake/config.yaml`, `<project>/.remake/config.yaml`, and potentially
   within a remakefile, with cascade from general to specific.
+- **query by status** — `-Q 'status == "failed"'` is not possible: queries
+  are evaluated at matrix expansion, before the DB is consulted. `run -I`
+  covers the main case (failed ∪ never-run), but selecting tasks by
+  recorded status (failures-only for `set-state`/`ls-tasks`, say) would
+  need plan-time filtering — decide whether it earns the complexity.
+- **logging** - Perhaps the rule decorator could have a logger=True line, that
+  passes in a loguru logger to the function? Or just say that the user can
+  set up a loguru logger then use that as using `uses`.
+- **intra-rule task dependency** - Should this be possible? A sequentially
+  defined rule where each task depends on the one before? Challenges the
+  no-task-DAG principle that planning memory, SLURM array eligibility and
+  failure-skip propagation all lean on — needs a real design discussion.
+
+## Graduated (designed and implemented; kept for the record)
+
+- **SLURM job ids written to file** — `.remake/jobs/<rule>.jobids.json`
+  sidecars; consumed by `slurm-status`, `task-info`, resubmission and
+  already-queued detection.
+- **Per-task logging under SLURM arrays** — per-task key-named log files;
+  see design_docs/per_task_logging.md.
+- **Task inspection/validation** — `remake lint` (near-miss input wiring,
+  missing depends_on).

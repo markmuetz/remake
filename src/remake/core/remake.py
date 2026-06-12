@@ -8,7 +8,7 @@ from loguru import logger
 from ..metadata.metadata_manager import TASK_STATUS_FAILED, TASK_STATUS_SUCCESS
 from .dag import build_rule_dag, iter_expand_rule
 from .exceptions import RemakeError
-from .planner import make_predicate, plan
+from .planner import explain_task, make_predicate, plan
 from .rule import Rule
 from .scope import check_scope, exec_function
 from .task import Task
@@ -73,9 +73,13 @@ class Remake:
         self._finalized = True
         return self
 
-    def plan(self, query=None, force=False):
+    def plan(self, query=None, force=False, ignore_code_changes=False):
         if not self._finalized:
             self.finalize()
+        # Results recorded by SLURM array elements live in sidecar files
+        # (they can't write the DB concurrently); fold them in before the
+        # DB is read for planning.
+        self.metadata.ingest_sidecars(self.rules)
         return plan(
             self.rules,
             self.dag,
@@ -83,6 +87,16 @@ class Remake:
             query=query,
             force=force,
             check_outputs=self.check_outputs,
+            ignore_code_changes=ignore_code_changes,
+        )
+
+    def explain_task(self, task):
+        """(will_run, reasons) for one task — `remake why`."""
+        if not self._finalized:
+            self.finalize()
+        self.metadata.ingest_sidecars(self.rules)
+        return explain_task(
+            self.rules, self.dag, self.metadata, task, check_outputs=self.check_outputs
         )
 
     def iter_tasks(self, query=None):
@@ -130,9 +144,11 @@ class Remake:
 
     # --- execution ---
 
-    def run(self, executor=None, query=None, force=False):
+    def run(self, executor=None, query=None, force=False, ignore_code_changes=False):
         """Run all tasks that need running, replanning after each wave so
-        dynamic (deferred) matrices resolve as their upstreams complete."""
+        dynamic (deferred) matrices resolve as their upstreams complete.
+        Returns the number of failed tasks (0 for asynchronous executors,
+        which don't know at submission time)."""
         if not self._finalized:
             self.finalize()
         if executor is None:
@@ -140,19 +156,24 @@ class Remake:
 
             executor = SingleprocExecutor(self)
 
+        def _plan():
+            return self.plan(
+                query=query, force=force, ignore_code_changes=ignore_code_changes
+            )
+
         if executor.handles_deferred:
             # Asynchronous executors (SLURM) get the whole plan in one call;
             # deferred rules are theirs to handle (continuation jobs).
-            runnable, deferred = self.plan(query=query, force=force)
+            runnable, deferred = _plan()
             if not runnable and not deferred:
                 logger.info('Nothing to do')
-                return
-            executor.run_tasks(runnable, deferred)
-            return
+                return 0
+            return executor.run_tasks(runnable, deferred) or 0
 
+        nfailed = 0
         attempted = set()
         while True:
-            runnable, deferred = self.plan(query=query, force=force)
+            runnable, deferred = _plan()
             force = False  # only force the first wave
             runnable = [t for t in runnable if t.key not in attempted]
             if not runnable:
@@ -161,7 +182,8 @@ class Remake:
                     logger.warning(f'Blocked rules (matrix not ready): {names}')
                 break
             attempted |= {t.key for t in runnable}
-            executor.run_tasks(runnable)
+            nfailed += executor.run_tasks(runnable) or 0
+        return nfailed
 
     def run_task(self, task):
         """Execute one task and record the result. The single execution

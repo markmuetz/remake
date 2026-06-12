@@ -225,6 +225,81 @@ def test_run_array_task_executes_spec(slurm_dir):
     assert {'n': 3} not in [spec['kwargs'] for spec in specs]
 
 
+def test_run_array_task_writes_sidecar_not_db(slurm_dir):
+    cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')
+    db_before = Path('.remake/remake.db').read_bytes()
+
+    cli('run-array-task', 'pipeline.py', 'gen', '3')
+    # The array process must not touch the shared DB (livelock on shared
+    # filesystems); the result goes to a sidecar instead.
+    assert Path('.remake/remake.db').read_bytes() == db_before
+    key = json.loads(Path('.remake/jobs/gen.json').read_text())[3]['task_key']
+    sidecar = Path(f'.remake/tasks/results/gen/{key[:2]}/{key[2:]}.json')
+    payload = json.loads(sidecar.read_text())
+    assert payload['status'] == 1  # TASK_STATUS_SUCCESS
+    assert 'uses_hash' in payload and 'timestamp' in payload
+
+    # The next planning invocation ingests: sidecar gone, task complete.
+    cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')
+    assert not sidecar.exists()
+    specs = json.loads(Path('.remake/jobs/gen.json').read_text())
+    assert {'n': 3} not in [spec['kwargs'] for spec in specs]
+
+
+def test_failed_sidecar_traceback_reaches_info(slurm_dir, capsys):
+    Path('failing.py').write_text('''
+from pathlib import Path
+from remake import Remake, rule
+
+@rule(outputs={'o': 'data/f_{n}.txt'}, matrix={'n': [1, 2]})
+def f(outputs, n):
+    if n == 2:
+        raise ValueError('boom from n=2')
+    Path(outputs['o']).write_text('ok')
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    cli('run', 'failing.py', '-E', 'slurm', '--dry-run')
+    with pytest.raises(ValueError):
+        cli('run-array-task', 'failing.py', 'f', '1')  # the n=2 spec
+
+    capsys.readouterr()
+    cli('info', 'failing.py', '-F')  # ingests, then reports
+    out = capsys.readouterr().out
+    assert 'ValueError: boom from n=2' in out
+    assert not list(Path('.remake/tasks/results').rglob('*.json'))
+
+
+def test_slurm_status_reports_queue_state(slurm_dir, capsys):
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    (slurm_dir / 'shim/squeue.out').write_text(
+        '1001_3 PD Dependency\n'
+        '1001_4 R None\n'
+        '1003 PD DependencyNeverSatisfied\n'
+    )
+    capsys.readouterr()
+    cli('slurm-status', 'pipeline.py')
+    out = capsys.readouterr().out
+    assert 'PD:1 R:1' in out and '[Dependency]' in out  # gen, job 1001
+    assert 'not in queue' in out  # proc, job 1002, no squeue rows
+    assert 'DependencyNeverSatisfied' in out  # agg, job 1003
+
+    cli('slurm-status', 'pipeline.py', '--json')
+    rows = json.loads(capsys.readouterr().out)
+    by_rule = {row['rule']: row for row in rows}
+    assert by_rule['gen']['jobid'] == '1001' and by_rule['gen']['states'] == {'PD': 1, 'R': 1}
+    assert by_rule['agg']['reasons'] == ['DependencyNeverSatisfied']
+
+
+def test_task_info_shows_slurm_submission(slurm_dir, capsys):
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    capsys.readouterr()
+    cli('task-info', 'pipeline.py', '-Q', 'rule == "gen" and n == 3')
+    out = capsys.readouterr().out
+    assert 'slurm:    job 1001' in out and 'array index 3' in out
+
+
 # --- dynamic matrices: continuation job ---
 
 

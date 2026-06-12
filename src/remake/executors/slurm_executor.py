@@ -71,6 +71,28 @@ def _sbatch_opts(config):
     return '\n'.join(f'#SBATCH --{k}={v}' for k, v in config.items() if v)
 
 
+def squeue_snapshot():
+    """{base_jobid: [(element_id, state, reason)]} for this user's queued/
+    running jobs, one squeue call. Empty when squeue is unavailable."""
+    try:
+        result = sp.run(
+            ['squeue', '-h', '-r', '-u', getpass.getuser(), '-o', '%i %t %r'],
+            capture_output=True, text=True, check=True,
+        )
+    except (FileNotFoundError, sp.CalledProcessError) as e:
+        logger.debug(f'squeue unavailable ({e!r})')
+        return {}
+    snapshot = {}
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split(maxsplit=2)
+        elem_id, state = parts[0], parts[1]
+        reason = parts[2] if len(parts) > 2 else ''
+        snapshot.setdefault(elem_id.split('_')[0], []).append((elem_id, state, reason))
+    return snapshot
+
+
 class _SubmittedRule:
     """How submit.sh refers to one rule's job(s)."""
 
@@ -251,24 +273,13 @@ class SlurmExecutor(Executor):
             raise RemakeError(f'{self.submit_path} failed (exit {result.returncode})')
 
     def _active_jobids(self):
-        """Base job ids of this user's pending/running jobs (one squeue call;
-        '1234_5' array elements map to base id '1234')."""
-        try:
-            result = sp.run(
-                ['squeue', '-h', '-r', '-u', getpass.getuser(), '-o', '%i %t'],
-                capture_output=True, text=True, check=True,
-            )
-        except (FileNotFoundError, sp.CalledProcessError) as e:
-            logger.debug(f'squeue unavailable ({e!r}): assuming nothing queued')
-            return set()
-        jobids = set()
-        for line in result.stdout.splitlines():
-            if not line.strip():
-                continue
-            jobid, status = line.split()
-            if status in ('PD', 'R', 'CF'):
-                jobids.add(jobid.split('_')[0])
-        return jobids
+        """Base job ids of this user's pending/running jobs ('1234_5' array
+        elements map to base id '1234')."""
+        return {
+            base
+            for base, elems in squeue_snapshot().items()
+            if any(state in ('PD', 'R', 'CF') for _, state, _ in elems)
+        }
 
     def _queued_jobids(self, rule, active_jobids):
         """This rule's previously-submitted job ids that are still active."""

@@ -24,9 +24,12 @@ def load_module(local_filename: Union[str, Path], module_attrs=None):
     if module_attrs:
         for k, v in module_attrs.items():
             setattr(module, k, v)
-    # Register in sys.modules so inspect.getsource/getfile work for classes
-    # defined in the module (e.g. dataclasses referenced in a rule's uses=).
-    sys.modules[module_name] = module
+    # Register so inspect.getsource works on classes defined in the module
+    # (it resolves a class's file via sys.modules[cls.__module__]; functions
+    # don't need this). Never shadow an already-imported module of the same
+    # name — a remakefile called json.py must not break stdlib imports.
+    if module_name not in sys.modules:
+        sys.modules[module_name] = module
     spec.loader.exec_module(module)
 
     return module

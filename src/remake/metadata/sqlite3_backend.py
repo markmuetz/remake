@@ -4,6 +4,7 @@ Schema carried over from remake2 with one addition: a uses_hash column on
 task. No migration support pre-release: if the schema changes, delete
 .remake/remake.db and rerun.
 """
+import json
 import random
 import sqlite3
 from pathlib import Path
@@ -160,8 +161,83 @@ class Sqlite3Backend(MetadataManager):
                 )
         return records
 
+    def ingest_sidecars(self, rules):
+        """Absorb pending sidecar results (written by run-array-task) into
+        the DB — one batched transaction for the lot, sidecars deleted
+        after commit. Cheap when there is nothing to ingest."""
+        from .sidecar import RESULTS_ROOT
+
+        pending = []
+        for rule in rules:
+            rule_dir = RESULTS_ROOT / rule.name
+            if not rule_dir.is_dir():
+                continue
+            for path in sorted(rule_dir.glob('*/*.json')):
+                key = path.parent.name + path.stem
+                try:
+                    payload = json.loads(path.read_text())
+                except FileNotFoundError:
+                    continue  # another process ingested it first
+                except json.JSONDecodeError:
+                    logger.warning(f'Skipping unreadable sidecar: {path}')
+                    continue
+                pending.append((rule, key, payload, path))
+        if not pending:
+            return 0
+
+        self._ingest_records(pending)
+        # Delete only after a successful commit; double ingestion of a
+        # sidecar that survives a crash here is harmless (upsert).
+        for *_, path in pending:
+            path.unlink(missing_ok=True)
+        logger.debug(f'Ingested {len(pending)} sidecar result(s)')
+        return len(pending)
+
+    @retry_lock_commit
+    def _ingest_records(self, pending):
+        for rule, key, payload, _ in pending:
+            rule_id, run_code_id = self.rule_ids[rule.name]
+            self.conn.execute(
+                'INSERT INTO task(key, rule_id, run_code_id, uses_hash, '
+                '                 last_run_timestamp, last_run_status, exception) '
+                'VALUES (?, ?, ?, ?, ?, ?, ?) '
+                'ON CONFLICT(key) DO UPDATE SET '
+                '    run_code_id = excluded.run_code_id, '
+                '    uses_hash = excluded.uses_hash, '
+                '    last_run_timestamp = excluded.last_run_timestamp, '
+                '    last_run_status = excluded.last_run_status, '
+                '    exception = excluded.exception',
+                (
+                    key,
+                    rule_id,
+                    run_code_id,
+                    payload.get('uses_hash', ''),
+                    payload.get('timestamp'),
+                    payload['status'],
+                    payload.get('exception', ''),
+                ),
+            )
+
     @retry_lock_commit
     def update_task(self, task, status, exception=''):
+        self._upsert_task(task, status, exception)
+
+    @retry_lock_commit
+    def update_tasks(self, tasks, status, exception=''):
+        # One EXCLUSIVE transaction for the lot (bulk state changes:
+        # set-state, migration adoption).
+        for task in tasks:
+            self._upsert_task(task, status, exception)
+
+    @retry_lock_commit
+    def delete_tasks(self, tasks):
+        keys = [task.key for task in tasks]
+        for i in range(0, len(keys), self.SELECT_CHUNK):
+            chunk = keys[i:i + self.SELECT_CHUNK]
+            placeholders = ','.join('?' * len(chunk))
+            self.conn.execute(f'DELETE FROM task WHERE key IN ({placeholders})', chunk)
+
+    def _upsert_task(self, task, status, exception=''):
         rule_id, run_code_id = self.rule_ids[task.rule.name]
         self.conn.execute(
             'INSERT INTO task(key, rule_id, run_code_id, uses_hash, '

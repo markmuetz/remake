@@ -44,8 +44,10 @@ def resolve_matrix(matrix):
 def expand_rule(rule, predicate=None):
     """Expand the matrix for one rule into Task objects (no I/O).
 
-    predicate: optional callable(kwargs) -> bool, applied before Task
-    construction so filtered-out tasks are never created.
+    predicate: optional callable(namespace) -> bool, applied before Task
+    construction so filtered-out tasks are never created. The namespace is
+    the task kwargs plus 'rule' (the rule name — it wins over a matrix key
+    of the same name), so queries can select by rule: "rule == 'extract'".
     """
     return list(iter_expand_rule(rule, predicate))
 
@@ -58,7 +60,7 @@ def iter_expand_rule(rule, predicate=None):
         # unknowable at decoration time for callable matrices.
         _check_expanded_kwargs(rule, kwargs_list[0])
     for kw in kwargs_list:
-        if predicate is None or predicate(kw):
+        if predicate is None or predicate({**kw, 'rule': rule.name}):
             yield Task(rule=rule, kwargs=kw)
 
 

@@ -31,9 +31,13 @@ assessment (2026-06-11). Ordered roughly by severity.
   `traceback.format_exc()`). Now stores `traceback.format_exc()`.
 - [x] No way to see failures from the CLI: now `info --show-failures` prints
   each failed task with its stored traceback and failure timestamp.
-- [ ] Downstream tasks of a failed task run anyway and fail "naturally" on
-  missing inputs — correct in the DB but noisy and wasteful. Skip (and
-  report) descendants of same-run failures.
+- [x] Downstream tasks of a failed task run anyway and fail "naturally" on
+  missing inputs — correct in the DB but noisy and wasteful. Fixed
+  2026-06-12: singleproc/multiproc skip (and report) tasks tainted by
+  same-run failures — element-wise when matrices are shared, conservative
+  otherwise (`planner.upstream_failed`, mirroring rerun propagation).
+  Skipped tasks stay unrecorded (pending), so fixing the upstream makes
+  the next run pick them up. SLURM gets this from aftercorr/afterok.
 
 ## Packaging
 
@@ -48,9 +52,11 @@ assessment (2026-06-11). Ordered roughly by severity.
 
 ## Dead code
 
-- [ ] `executors/multiproc_executor.py` is stale remake2 code, unimportable
+- [x] `executors/multiproc_executor.py` is stale remake2 code, unimportable
   by design. Port or delete; do not leave it to mislead readers.
-  (`slurm_executor.py` rewritten 2026-06-12.)
+  (`slurm_executor.py` rewritten 2026-06-12; `multiproc_executor.py`
+  rewritten 2026-06-12: spawned workers reload the remakefile, record via
+  sidecars, per-rule barriers.)
 
 ## Smaller debts
 
@@ -83,11 +89,29 @@ assessment (2026-06-11). Ordered roughly by severity.
       aggregate throughput than 400-way. Past the cliff, more contenders
       means less total progress, not more.
   Not a graceful slowdown: past the cliff most processes never acquire the
-  lock within a job's wall-time. Needs a real fix (candidates below)
-  before relying on concurrent SLURM-array writers for 1e5+/1e6-task runs.
-  `array_throttle` is a stopgap — keep concurrent array width well under
-  ~200; real rules with actual compute naturally stagger writes anyway, so
-  this mainly protects against rules whose tasks are themselves near-instant.
+  lock within a job's wall-time.
+  **Fixed 2026-06-12 via sidecar/ingest** (design in
+  slurm_implementation.md): `run-array-task` no longer opens the DB at
+  all — results go to `.remake/tasks/results/...` sidecars, batch-ingested
+  by the next plan/run/info. Remaining: validate at 400/800-way through
+  the real pipeline path on JASMIN; `retry_lock_commit` still guards the
+  (now low-concurrency) ensure_rules/update_task/ingest paths.
 - [ ] `ZarrStore.is_complete()` checks `.zmetadata` (zarr v2); zarr v3
   consolidated metadata lives in `zarr.json`. Handle both when xarray/zarr
   versions move.
+- [x] Can `uses` take a class? (instead of a function) Yes: classes are
+  callable, so they take the function path — whole class body hashed
+  AST-normalised, injected like any value. Two fixes made it true in
+  practice (2026-06-12): `load_module` registers in `sys.modules` (class
+  getsource needs it; functions didn't) and the sourceless fallback no
+  longer assumes `__code__` (classes lack one — was a crash). Caveats:
+  inherited methods live in the base class, which must be declared in
+  `uses` itself to be tracked (same one-level-deep rule as functions);
+  REPL/exec-defined classes fall back to repr (body changes undetected).
+- [x] `remake -X run` not launching pdb/ipdb on Exception. Two causes,
+  fixed 2026-06-12: `exception_info` used `debug.pm()`, which needs
+  `sys.last_traceback` (only set by the interactive interpreter) — now
+  `post_mortem(tb)`; and executors swallow task failures by design, so
+  nothing ever reached the excepthook — `-X` now sets
+  `executor.raise_on_failure` so the first failure propagates with the
+  original traceback (in-process executors only).

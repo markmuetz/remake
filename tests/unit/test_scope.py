@@ -112,6 +112,35 @@ def test_uses_hash_function_body_change(tmp_path):
     assert uses_hash({'normalise': v1}) != uses_hash({'normalise': v3})
 
 
+def test_uses_hash_class_body_change(tmp_path):
+    """uses can take a class: hashed like a function (whole class body,
+    AST-normalised), injected like any value."""
+    from remake.loader import load_module
+
+    body = 'class Calib:\n    OFFSET = {o}\n    def apply(self, x):\n        return x + self.OFFSET\n'
+    (tmp_path / 'c1.py').write_text(body.format(o=1.5))
+    (tmp_path / 'c2.py').write_text(body.format(o=1.5).replace('    def', '\n    # comment\n    def'))
+    (tmp_path / 'c3.py').write_text(body.format(o=2.5))
+    c1, c2, c3 = (load_module(tmp_path / f'c{i}.py').Calib for i in (1, 2, 3))
+
+    assert uses_hash({'Calib': c1}) == uses_hash({'Calib': c2})  # cosmetic
+    assert uses_hash({'Calib': c1}) != uses_hash({'Calib': c3})  # body change
+
+    def fn(x):
+        return Calib().apply(x)  # noqa: F821 — injected via uses
+
+    assert exec_function(fn, {'Calib': c1})(1.0) == 2.5
+
+
+def test_uses_hash_handles_sourceless_class():
+    # A class defined via exec has no source AND no __code__: must not
+    # crash; falls back to repr (body changes undetected, documented).
+    ns = {}
+    exec('class C:\n    pass\n', ns)
+    h = uses_hash({'C': ns['C']})
+    assert 'unsourced:' in h
+
+
 def test_uses_hash_handles_sourceless_functions():
     # Functions defined via exec/REPL have no retrievable source.
     ns = {}

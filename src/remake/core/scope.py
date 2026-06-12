@@ -100,16 +100,20 @@ def check_scope(fn, uses, strict):
 
 
 def function_source(fn):
-    """Source of fn, for change detection. Functions defined where source is
+    """Source of fn, for change detection. Callables defined where source is
     unavailable (REPL, exec) fall back to a bytecode digest — kept as a
-    parseable string literal so AST comparison still works. Callables with
-    no `__code__` (e.g. scipy distribution objects) fall back to their repr."""
+    parseable string literal so AST comparison still works. Sourceless
+    callables without __code__ (e.g. scipy distribution objects, classes
+    defined in a REPL) fall back to a label naming their type: stable
+    across processes (unlike repr, which embeds a memory address), but
+    body changes go undetected."""
     try:
         return inspect.getsource(fn)
     except (OSError, TypeError):
         code = getattr(fn, '__code__', None)
         if code is None:
-            return repr(fn)
+            cls = type(fn)
+            return f"'<unsourced:{cls.__module__}.{cls.__qualname__}>'"
 
         from hashlib import sha1
 

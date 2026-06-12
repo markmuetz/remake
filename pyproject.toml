@@ -34,8 +34,13 @@ Documentation = "https://markmuetz.github.io/remake"
 "Bug Tracker" = "https://github.com/markmuetz/remake/issues"
 
 [project.optional-dependencies]
-debug = ["ipdb"]
+debug = [
+    "ipdb",
+]
 s3 = ["boto3"]
+dask = [
+    "distributed>=2024.8.0",
+]
 
 [dependency-groups]
 dev = [
@@ -48,6 +53,7 @@ dev = [
     "zarr<3",
     "dask",
     "pyyaml>=6.0.3",
+    "distributed>=2024.8.0",
 ]
 
 [project.scripts]

@@ -5,4 +5,5 @@ from .metadata_manager import (
     MetadataManager,
     TaskRecord,
 )
+from .sidecar import SidecarWriter
 from .sqlite3_backend import Sqlite3Backend

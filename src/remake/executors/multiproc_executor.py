@@ -1,155 +1,126 @@
-import sys
-import math
-from pathlib import Path
-from multiprocessing import Process, Queue, current_process, cpu_count
+"""Multiproc executor — parallel local execution on a process pool.
+
+Same execution model as SLURM array elements, shrunk to one machine:
+workers are fresh (spawned) processes that each load the remakefile once;
+task specs travel as (rule_name, kwargs) and are rebuilt with
+task_from_spec (rule functions can't be pickled); results are recorded as
+sidecar files by the workers — no concurrent SQLite writers — and
+ingested by the parent after each rule and by every plan().
+
+Ordering: per-rule barriers. All tasks of a rule finish before the next
+rule's start. Dependencies are rule-level (remake has no task DAG), so
+this is exactly the ordering remake promises; the cost vs SLURM's
+aftercorr is that same-matrix chains don't pipeline element-wise.
+
+Per-task logs are written by the workers to the usual
+.remake/tasks/log/<rule>/... locations.
+"""
+import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from multiprocessing import get_context
 
 from loguru import logger
 
-from ..loader import load_remake
-from ..util import Capturing
+from ..core.exceptions import RemakeError
+from ..core.planner import upstream_failed
 from .executor import Executor
 
+_worker_rmk = None
 
-def worker(proc_id, remakefile_name, task_queue, task_complete_queue):
-    logger.remove()
-    logfile = Path(f'.remake/log/{remakefile_name}/worker.{proc_id}.log')
-    logger.add(logfile, rotation='00:00', level='DEBUG')
 
-    rmk = load_remake(remakefile_name, finalize=False, run=True)
-    logger.debug('starting')
-    task = None
-    while True:
-        try:
-            item = task_queue.get()
-            if item is None:
-                break
-            task_key, force = item
-            logger.debug(f'worker {current_process().name} running {task}')
-            task = rmk.task_key_map[task_key]
-            with Capturing() as output:
-                task.rule.run_task(task, save_status=False)
-            logger.debug(f'worker {current_process().name} stdout')
-            for line in output:
-                logger.debug(line)
-            logger.debug(f'worker {current_process().name} complete {task}')
-            task_complete_queue.put((task_key, True, None))
-        except Exception as e:
-            logger.error(e)
-            task_complete_queue.put((task_key, False, e))
+def _worker_init(remakefile):
+    global _worker_rmk
+    from ..loader import load_remake
+    from ..metadata.sidecar import SidecarWriter
 
-            item = task_queue.get()
-            if item is None:
-                break
-    logger.debug('stopping')
+    logger.remove()  # workers log to per-task files only
+    _worker_rmk = load_remake(remakefile, finalize=False)
+    _worker_rmk.metadata = SidecarWriter()
+
+
+def _worker_run(spec):
+    from ..util import task_log_path
+
+    rule_name, kwargs = spec
+    task = _worker_rmk.task_from_spec(rule_name, kwargs)
+    logfile = task_log_path(task)
+    logfile.parent.mkdir(parents=True, exist_ok=True)
+    sink_id = logger.add(logfile, level='DEBUG', mode='w')
+    try:
+        _worker_rmk.run_task(task)
+        return True
+    except Exception:
+        return False  # recorded (sidecar + log) by run_task
+    finally:
+        logger.remove(sink_id)
 
 
 class MultiprocExecutor(Executor):
-    def __init__(self, rmk, multiproc_config=None):
-        if not multiproc_config:
-            multiproc_config = {'nproc': cpu_count()}
+    def __init__(self, rmk, nproc=None):
         super().__init__(rmk)
-
-        self.nproc = multiproc_config['nproc']
-        logger.info(f'Using {self.nproc} processes')
-        self.procs = []
-
-        self.running_tasks = {}
-        self.task_queue = None
-        self.task_complete_queue = None
-        self.already_run_tasks = set()
-        self.all_tasks = set()
-
-    def _init_queues_procs(self):
-        logger.trace('initializing queues')
-        self.task_queue = Queue()
-        self.task_complete_queue = Queue()
-
-        logger.trace(f'creating {self.nproc} workers')
-        for i in range(self.nproc):
-            proc = Process(
-                target=worker, args=(i, self.rmk.name, self.task_queue, self.task_complete_queue)
+        self.remakefile = rmk.remakefile
+        if self.remakefile is None:
+            raise RemakeError(
+                'MultiprocExecutor needs the remakefile path (workers reload it): '
+                'run via the remake CLI, or set rmk.remakefile'
             )
-            proc.daemon = True
-            logger.trace(f'created proc {proc}')
-            proc.start()
-            self.procs.append(proc)
+        self.nproc = (
+            nproc or rmk.config.get('multiproc', {}).get('nproc') or os.cpu_count()
+        )
 
-    def _finalize_queues_procs(self):
-        logger.trace('finalizing all workers')
-        for proc in self.procs:
-            self.task_queue.put_nowait(None)
+    def run_tasks(self, tasks):
+        # Group consecutive same-rule tasks; plan order is rule-topological.
+        groups = []
+        for task in tasks:
+            if groups and groups[-1][0] is task.rule:
+                groups[-1][1].append(task)
+            else:
+                groups.append((task.rule, [task]))
 
-        for proc in self.procs:
-            proc.join()
-
-    def _can_run_task(self, task):
-        can_run = True
-        for prev_task in task.prev_tasks:
-            if prev_task not in self.all_tasks:
-                continue
-            if prev_task not in self.already_run_tasks:
-                can_run = False
-                break
-        return can_run
-
-    def _enqueue_task(self, task):
-        key = task.key()
-        logger.trace(f'enqueuing task {key}: {task}')
-        self.running_tasks[key] = (task, key)
-        self.task_queue.put((key, True))
-
-    def _wait_for_complete(self):
-        logger.trace('ctrl no tasks available - wait for completed')
-        remote_task_key, success, error = self.task_complete_queue.get()
-        if not success:
-            logger.error(f'Error running {remote_task_key}')
-            logger.error(error)
-            failed_task, key = self.running_tasks.pop(remote_task_key)
-            failed_task.last_run_status = 2
-            self.rmk.update_task(failed_task, exception=error)
-            raise Exception(error)
-        logger.trace(f'ctrl receieved: {remote_task_key}')
-        completed_task, key = self.running_tasks.pop(remote_task_key)
-
-        completed_task.requires_rerun = False
-        completed_task.last_run_status = 1
-        self.rmk.update_task(completed_task)
-
-        self.already_run_tasks.add(completed_task)
-        logger.trace(f'completed: {completed_task}')
-        return completed_task
-
-    def run_tasks(
-        self, rerun_tasks, show_reasons=False, show_task_code_diff=False, stdout_to_log=False
-    ):
-        ntasks = len(rerun_tasks)
-        ndigits = math.floor(math.log10(ntasks)) + 1
-        ntasks_run = 0
-
-        tasks_to_run = [*rerun_tasks]
-        self.all_tasks.update(tasks_to_run)
-        diffs = {}
-        try:
-            self._init_queues_procs()
-            while len(self.already_run_tasks) < len(rerun_tasks):
-                if tasks_to_run:
-                    task = tasks_to_run[0]
-                    can_run = self._can_run_task(task)
-                    logger.debug(f'Can run: {can_run} {task}')
-                else:
-                    can_run = False
-
-                if can_run:
-                    tasks_to_run.pop(0)
-                    logger.info(f'{ntasks_run + 1:>{ndigits}}/{ntasks}: {task} enqueued')
-                    if show_reasons:
-                        self.rmk.show_task_reasons(task)
-                    if show_task_code_diff:
-                        diffs = self.rmk.show_task_code_diff(task, diffs)
-                    self._enqueue_task(task)
-                    ntasks_run += 1
-                else:
-                    completed_task = self._wait_for_complete()
-                    logger.info(f'{" ":>{2 * ndigits + 1}}: {completed_task} completed')
-        finally:
-            self._finalize_queues_procs()
+        ntasks = len(tasks)
+        nfailed = 0
+        nskipped = 0
+        done = 0
+        failures = {}  # rule -> set of frozenset(kwargs.items())
+        with ProcessPoolExecutor(
+            max_workers=self.nproc,
+            mp_context=get_context('spawn'),
+            initializer=_worker_init,
+            initargs=(self.remakefile,),
+        ) as pool:
+            for rule, rule_tasks in groups:
+                # The per-rule barrier means upstream failures are fully
+                # known here: skip tasks they taint rather than running
+                # them into missing inputs (left pending for a later run).
+                to_run = []
+                for task in rule_tasks:
+                    if upstream_failed(task, failures):
+                        failures.setdefault(rule, set()).add(frozenset(task.kwargs.items()))
+                        nskipped += 1
+                        done += 1
+                        logger.warning(f'{done}/{ntasks} skipped (upstream failed): {task}')
+                    else:
+                        to_run.append(task)
+                if not to_run:
+                    continue
+                logger.info(f'{rule.name}: {len(to_run)} task(s) on {self.nproc} proc(s)')
+                futures = {
+                    pool.submit(_worker_run, (rule.name, t.kwargs)): t for t in to_run
+                }
+                # Barrier: drain this rule before starting the next.
+                for future in as_completed(futures):
+                    done += 1
+                    task = futures[future]
+                    if future.result():
+                        logger.info(f'{done}/{ntasks}: {task}')
+                    else:
+                        failures.setdefault(rule, set()).add(frozenset(task.kwargs.items()))
+                        nfailed += 1
+                        logger.error(f'{done}/{ntasks} failed: {task}')
+        if nfailed:
+            skipped = f' ({nskipped} downstream task(s) skipped)' if nskipped else ''
+            logger.error(f'{nfailed}/{ntasks} tasks failed{skipped}')
+        # Workers wrote sidecars; fold them in so statuses are current
+        # immediately (plan() would also pick them up on the next wave).
+        self.rmk.metadata.ingest_sidecars(self.rmk.rules)
+        return nfailed
