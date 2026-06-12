@@ -163,6 +163,13 @@ key prefix *or* `-Q query` resolving to exactly one task):
 - `remake slurm-status <file> [--json]` — per rule: last submitted job
   id(s) and live squeue element states/reasons (surfaces
   `DependencyNeverSatisfied` etc.).
+- `remake lint <file> [--json]` — wiring validation (the discussion.md
+  task-inspection idea): NEAR MISS (an input nothing produces, but an
+  upstream produces something ≥0.9 similar — typo territory), MISSING
+  DEPENDENCY (input produced by an undeclared rule), external (counted,
+  informational). Near-miss search is restricted to declared upstreams'
+  outputs, so cost stays sane and source-data inputs aren't fuzzily
+  matched against the whole pipeline. Exit 1 on findings.
 - `info --json` (also on `task-info`/`slurm-status`) — machine-readable
   output; the skill's workflows parse this instead of aligned text.
 - Logger output moved to stderr so `--json` stdout is clean.

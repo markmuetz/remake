@@ -188,6 +188,14 @@ class RemakeParser:
                 Arg('--json', help='Machine-readable output (full keys)', action='store_true'),
             ],
         },
+        'lint': {
+            'help': 'Check input/output wiring between rules (near-misses, '
+                    'missing depends_on)',
+            'args': [
+                Arg('remakefile'),
+                Arg('--json', help='Machine-readable output', action='store_true'),
+            ],
+        },
         'task-info': {
             'help': 'Detail view of one task: status, paths, log, SLURM job',
             'args': [
@@ -254,7 +262,7 @@ class RemakeParser:
     def dispatch(self):
         args = self.args
         method_name = 'remake_' + args.subcmd_name.replace('-', '_')
-        getattr(self, method_name)(args)
+        return getattr(self, method_name)(args)
 
     def _load(self, args):
         rmk = load_remake(args.remakefile)
@@ -428,6 +436,105 @@ class RemakeParser:
         if args.json:
             print(json.dumps(rows, indent=1))
 
+    def remake_lint(self, args):
+        """Wiring check: every input of a dependent rule should be produced
+        by one of its depends_on rules. Flags near-miss paths (typos in
+        format strings, off-by-one kwargs) and produced-but-undeclared
+        dependencies. Materialises all tasks."""
+        import difflib
+        import json
+
+        from .core.dag import iter_expand_rule
+        from .core.exceptions import MatrixNotReady
+
+        rmk = self._load(args)
+        rmk.finalize()
+
+        producers = {}  # output path -> set of rule names
+        rule_outputs = {}  # rule name -> [output paths]
+        deferred = set()
+        for rule in rmk.rules:
+            paths = []
+            try:
+                for task in iter_expand_rule(rule):
+                    paths.extend(str(token) for token in task.outputs.values())
+            except MatrixNotReady:
+                deferred.add(rule.name)
+                logger.warning(f'{rule.name}: matrix not ready, outputs unknown — skipped')
+                continue
+            rule_outputs[rule.name] = paths
+            for path in paths:
+                producers.setdefault(path, set()).add(rule.name)
+
+        findings = {}  # (kind, rule, other) -> {'count': n, 'example': ...}
+
+        def record(kind, rule_name, other, example):
+            entry = findings.setdefault(
+                (kind, rule_name, other), {'count': 0, 'example': example}
+            )
+            entry['count'] += 1
+
+        for rule in rmk.rules:
+            if rule.inputs is None or rule.name in deferred:
+                continue
+            dep_names = {dep.name for dep in rule.depends_on}
+            if dep_names & deferred:
+                logger.warning(f'{rule.name}: upstream matrix not ready — skipped')
+                continue
+            candidates = [p for name in dep_names for p in rule_outputs.get(name, [])]
+            for task in iter_expand_rule(rule):
+                for path in map(str, task.inputs.values()):
+                    made_by = producers.get(path)
+                    if made_by:
+                        if not made_by & (dep_names | {rule.name}):
+                            record('missing_dependency', rule.name, min(made_by), path)
+                        continue
+                    if not dep_names:
+                        record('external', rule.name, None, path)
+                        continue
+                    close = difflib.get_close_matches(path, candidates, n=1, cutoff=0.9)
+                    if close:
+                        producer = min(producers[close[0]])
+                        record(
+                            'near_miss', rule.name, producer, {'input': path, 'closest': close[0]}
+                        )
+                    else:
+                        record('external', rule.name, None, path)
+
+        rows = [
+            {'kind': kind, 'rule': rule_name, 'other_rule': other, **entry}
+            for (kind, rule_name, other), entry in sorted(
+                findings.items(), key=lambda kv: (kv[0][0] != 'near_miss', kv[0])
+            )
+        ]
+        problems = [r for r in rows if r['kind'] in ('near_miss', 'missing_dependency')]
+        if args.json:
+            print(json.dumps(rows, indent=1))
+            return 1 if problems else 0
+
+        for row in rows:
+            if row['kind'] == 'near_miss':
+                ex = row['example']
+                print(
+                    f"NEAR MISS           {row['rule']}: input {ex['input']!r} is produced "
+                    f"by nothing, but {row['other_rule']} produces {ex['closest']!r} "
+                    f"({row['count']} task(s))"
+                )
+            elif row['kind'] == 'missing_dependency':
+                print(
+                    f"MISSING DEPENDENCY  {row['rule']}: input {row['example']!r} is "
+                    f"produced by {row['other_rule']}, which {row['rule']} does not "
+                    f"depend_on ({row['count']} task(s))"
+                )
+            else:
+                print(
+                    f"external            {row['rule']}: {row['count']} input(s) not "
+                    f"produced by any rule (e.g. {row['example']!r})"
+                )
+        if not rows:
+            print('all inputs wired to declared dependencies')
+        return 1 if problems else 0
+
     def remake_task_info(self, args):
         import json
 
@@ -588,7 +695,7 @@ def remake_cmd(argv=None):
         # Handle top level exceptions with a debugger.
         sys.excepthook = exception_info
 
-    parser.dispatch()
+    return parser.dispatch()
 
 
 if __name__ == '__main__':

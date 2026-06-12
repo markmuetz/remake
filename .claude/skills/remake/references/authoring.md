@@ -107,12 +107,18 @@ array job, default 10), `array_throttle` (`--array=0-N%T`).
 ## Checking your work
 
 ```
+remake lint myfile.py          # input/output wiring between rules
 remake run myfile.py -n        # plan only: task counts, deferrals
 remake info myfile.py [-t]     # status table
 remake run myfile.py -Q '...'  # run a small slice first
 ```
 Common authoring errors surface at import (signature, scope, empty
-dicts) — `remake info` failing to load IS the error report.
+dicts) — `remake info` failing to load IS the error report. `remake
+lint` (exit 1 on findings) catches the next layer: NEAR MISS = an input
+no rule produces but an upstream produces something almost identical
+(format-string typo, off-by-one kwarg); MISSING DEPENDENCY = an input
+another rule produces without a `depends_on` declaring it (ordering
+bug). `external` rows are informational — source data is expected.
 
 ## Known limitation
 

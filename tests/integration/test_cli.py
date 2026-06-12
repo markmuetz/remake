@@ -166,6 +166,48 @@ def test_info_json(pipeline_dir, capsys):
     assert all(t['status'] == 'success' and len(t['key']) == 40 for t in data['tasks'])
 
 
+def test_lint_clean_pipeline(pipeline_dir, capsys):
+    assert cli('lint', 'pipeline.py') == 0
+    assert 'all inputs wired' in capsys.readouterr().out
+
+
+def test_lint_flags_near_miss_and_missing_dependency(pipeline_dir, capsys):
+    Path('miswired.py').write_text('''
+from pathlib import Path
+from remake import Remake, rule
+
+@rule(inputs={'src': 'data/src_{n}.txt'},
+      outputs={'o': 'data/gen_{n}.txt'}, matrix={'n': [1, 2]})
+def gen(inputs, outputs, n):
+    pass
+
+@rule(inputs={'i': 'data/genn_{n}.txt'},  # typo: gen makes gen_{n}.txt
+      outputs={'o': 'data/proc_{n}.txt'}, matrix=gen.matrix, depends_on=[gen])
+def proc(inputs, outputs, n):
+    pass
+
+@rule(inputs={'i': 'data/proc_{n}.txt'},  # consumes proc, no depends_on
+      outputs={'o': 'data/agg_{n}.txt'}, matrix=gen.matrix)
+def agg(inputs, outputs, n):
+    pass
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    assert cli('lint', 'miswired.py') == 1
+    out = capsys.readouterr().out
+    assert "NEAR MISS           proc: input 'data/genn_1.txt'" in out
+    assert "gen produces 'data/gen_1.txt'" in out and '(2 task(s))' in out
+    assert 'MISSING DEPENDENCY  agg' in out and 'produced by proc' in out
+    assert 'external            gen: 2 input(s)' in out  # not a problem, exit 1 is from above
+
+    import json
+
+    cli('lint', 'miswired.py', '--json')
+    rows = json.loads(capsys.readouterr().out)
+    assert {r['kind'] for r in rows} == {'near_miss', 'missing_dependency', 'external'}
+
+
 def test_ls_tasks(pipeline_dir, capsys):
     import json
 

@@ -26,6 +26,7 @@ tell the user: that's a CLI gap worth reporting upstream.
 remake run <remakefile> [-E slurm|singleproc|mod:Class] [-Q query] [-f|--force] [-n|--dry-run] [--check-outputs]
 remake info <remakefile> [-Q query] [-t|--tasks] [-F|--show-failures] [--json]
 remake ls-tasks <remakefile> [-Q query] [-R rule] [--json]  # enumerate tasks/keys (no DB reads)
+remake lint <remakefile> [--json]                  # check input/output wiring between rules
 remake task-info <remakefile> <selector> [--json]  # one task: status, paths, log, SLURM job
 remake task-log <remakefile> <selector> [--path]   # print a task's log (or its path)
 remake why <remakefile> <selector>                 # explain rerun decision for one task
