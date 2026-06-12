@@ -68,6 +68,158 @@ For each free name in a rule body decide:
 `uses` tracking is one level deep — a helper calling another helper
 needs both declared.
 
+### What "one level deep" actually means
+
+This bit when translating `wescon_radar_dev.py` (1885 lines, ~45 helper
+functions across several rules), so it's worth being precise:
+
+- **`check_scope` (the `ScopeWarning` at import time) only inspects the
+  decorated function's own body *and any `def`s nested inside it*.** It
+  does NOT recurse into the body of a separate module-level function that
+  the rule merely calls (even if that function is itself listed in
+  `uses=`). So if `uses={'helper': helper}` and `helper` internally
+  references `CONST` and `other_helper`, the *rule* does not need
+  `CONST`/`other_helper` in its own `uses=` — only `helper` does.
+- **`uses_hash` (rerun tracking) is the one that's "one level deep".** If
+  `helper` changes its own source, the rule reruns (because `helper`'s
+  AST is hashed). But if `helper` calls `other_helper` and only
+  `other_helper`'s body changes, the rule's `uses_hash` does NOT change —
+  nothing reruns. In practice this is rarely a real problem (editing a
+  shared helper almost always means editing its signature/callers too,
+  which *does* touch the declared function's source), but it's worth
+  knowing about for helpers that are pure dispatch/delegation.
+
+Net effect: when a module-level helper is shared across multiple rules
+(can't be nested into just one), give each consuming rule a `uses=` entry
+for *that helper only* — don't try to enumerate its transitive
+dependencies too.
+
+## A class with ~20 interdependent `@staticmethod` helpers
+
+remake2 sometimes packed a single rule's logic into a `Rule` subclass
+with a `rule_run` plus a couple of dozen `@staticmethod` helpers that only
+call each other (e.g. `CompareDeltaZCandidates` in `wescon_radar_dev.py`:
+~380 lines, 21 helpers, all interdependent, none used anywhere else).
+
+If nothing outside the class uses these helpers, don't recreate them as
+module-level functions with a wall of `uses=` entries and per-helper
+dependency bookkeeping. Instead **nest every helper as a closure inside
+the decorated rule function**:
+
+```python
+@rule(inputs=..., outputs=..., uses={...only the genuinely external names...})
+def compare_delta_z_candidates(inputs, outputs, case, bracket_idx1, bracket_idx2):
+    def load_data(...): ...
+    def find_all_beam_alignment(...): ...
+    def calc_cross_correlation(...): ...
+    # ... 18 more ...
+
+    # main body, calling the closures above
+    ds1, ds2 = load_data(...)
+    ...
+```
+
+Why this works well:
+- `check_scope` walks into nested `def`s, so the closures' references to
+  each other and to the rule's own params need no declaration.
+- The whole rule (helpers + body) is one AST blob for `uses_hash`
+  purposes — editing any helper changes the rule's own source, which
+  *always* triggers a rerun. The "one level deep" caveat above doesn't
+  apply because there's no separate `uses=` entry to go stale.
+- `CompareDeltaZCandidates.plot_radarnet` collided in name with an
+  unrelated module-level `plot_radarnet` used by a different rule — when
+  nesting, rename to disambiguate (`plot_radarnet_comparison`).
+
+Only promote a helper to module level (with its own `uses=` entries in
+each consumer) if it's genuinely shared across rules — see
+`sliding_offset_to_slices`, `load_data` (renamed from
+`MatchRHIsToStorms.load_data`), and `plot_full_corr_matrix` in
+`wescon_radar_dev.py` for examples of helpers that *had* to stay
+module-level because 2+ rules call them.
+
+## Dataclasses and other non-function objects in `uses=`
+
+Older remake3 builds crashed (`AttributeError` / `TypeError: ... is a
+built-in class`) if `uses=` contained a class (e.g. a `@dataclass` used
+as a typed "context" object passed between nested closures) or a callable
+object with no `__code__` (e.g. `scipy.stats.chi2`). Both are fixed as of
+this migration:
+- the file loader registers the loaded module in `sys.modules`, so
+  `inspect.getsource` works for classes defined in a remakefile;
+- `function_source`'s bytecode fallback now falls back to `repr(fn)` for
+  callables that have no `__code__` at all.
+
+So it's fine to do `uses={'CrossCorrelationResult': CrossCorrelationResult,
+'chi2': chi2, ...}`. If you hit one of the old tracebacks, your remake3
+checkout predates this fix (`src/remake/loader/__init__.py`,
+`src/remake/core/scope.py`).
+
+## "Translate but don't register" for disabled remake2 rules
+
+remake2 rules with `enabled = False` (kept for reference, never run) have
+no remake3 equivalent for "defined but disabled" — `@rule` always makes a
+runnable rule object. Translate them fully (so the logic isn't lost and
+still gets `ScopeWarning` checking), but **don't pass them to
+`rmk.add_rules([...])`**. Use the explicit list form instead of
+`rmk.rules_from_current_module()` so the disabled rules are simply
+omitted:
+
+```python
+def find_camra_kepler_match(...):   # translated, ScopeWarning-clean
+    ...
+
+def plot_camra_kepler_match(...):   # translated, ScopeWarning-clean
+    ...
+
+def regrid_camra_kepler_l1(...):
+    ...
+
+rmk.add_rules([
+    regrid_camra_kepler_l1,
+    # find_camra_kepler_match and plot_camra_kepler_match intentionally
+    # excluded: disabled in the remake2 original.
+    ...
+])
+```
+
+## Dynamic/callable matrices that read upstream outputs
+
+remake2 patterns where a rule's matrix is computed by reading a small
+upstream output file (e.g. "which bracket-pairs are deltaZ candidates,
+read from a previously-written `.hdf`") and silently produces zero rows
+if that file doesn't exist yet — translate the callable-matrix function
+straight across, guarding with `.exists()`:
+
+```python
+def compare_delta_z_matrix():
+    rows = []
+    for case in conf.CASES:
+        brackets_path = find_candidate_delta_z_outputs(case)['brackets']
+        if brackets_path.exists():
+            brackets = pd.read_hdf(brackets_path, key='brackets')
+            for i in range(1, len(brackets)):
+                if brackets.iloc[i]['deltaZ_candidate']:
+                    rows.append({'case': case, 'bracket_idx1': i - 1, 'bracket_idx2': i})
+    return rows
+```
+
+This preserves the original "deferred until upstream has run" behaviour
+without needing `MatrixNotReady` — `remake info` just reports 0 tasks for
+this rule until `find_candidate_delta_z` has actually written the
+`brackets` files.
+
+## `Path(outputs[...])` wrapping — when it's needed
+
+remake3 output values are path-like tokens with `__fspath__` (so
+`open(outputs['x'])`, `xr.Dataset.to_netcdf(outputs['x'])`, etc. all work
+directly), but they are **not** `Path` instances — `.parent`, `.stem`,
+`.exists()`, `.touch()`, `/` (joining) etc. raise `AttributeError`. Any
+remake2 code that did `outputs['x'].parent / 'foo.png'` or
+`outputs['dummy'].touch()` needs `Path(outputs['x']).parent / 'foo.png'`
+/ `Path(outputs['dummy']).touch()`. This shows up constantly in plotting
+rules (figure directories derived from a "dummy" output path) and in
+multi-file-output rules (`Path(outputs[f'gridded_data{i}'])`).
+
 ## Metadata: no DB migration
 
 remake3 starts a fresh `.remake/` (new schema, new task keys). Existing

@@ -103,16 +103,21 @@ def function_source(fn):
     """Source of fn, for change detection. Callables defined where source is
     unavailable (REPL, exec) fall back to a bytecode digest — kept as a
     parseable string literal so AST comparison still works. Sourceless
-    callables without __code__ (e.g. classes defined in a REPL) fall back
-    to repr: identity-stable, but body changes go undetected."""
+    callables without __code__ (e.g. scipy distribution objects, classes
+    defined in a REPL) fall back to a label naming their type: stable
+    across processes (unlike repr, which embeds a memory address), but
+    body changes go undetected."""
     try:
         return inspect.getsource(fn)
     except (OSError, TypeError):
-        if not hasattr(fn, '__code__'):
-            return f"'<unsourced:{fn!r}>'"
+        code = getattr(fn, '__code__', None)
+        if code is None:
+            cls = type(fn)
+            return f"'<unsourced:{cls.__module__}.{cls.__qualname__}>'"
+
         from hashlib import sha1
 
-        return f"'<bytecode:{sha1(fn.__code__.co_code).hexdigest()}>'"
+        return f"'<bytecode:{sha1(code.co_code).hexdigest()}>'"
 
 
 def _normalised_source(fn):
