@@ -42,7 +42,9 @@ when rules share a matrix) resolving to exactly one task — so you never
 need `info -t` just to find a key.
 
 **Prefer `--json`** (`info`, `task-info`, `slurm-status`) over parsing
-the aligned-text output. Logs go to stderr; stdout is data only. Global
+the aligned-text output. Logs go to stderr; stdout is data only.
+Exit codes: `run` exits 1 if any task failed (it still runs the rest —
+check `info -F` for what and why); `lint` exits 1 on wiring problems. Global
 flags before the subcommand: `-D` debug / `-W` warnings-only, `-X`
 debugger on exception.
 
