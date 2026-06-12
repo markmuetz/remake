@@ -102,13 +102,18 @@ def check_scope(fn, uses, strict):
 def function_source(fn):
     """Source of fn, for change detection. Functions defined where source is
     unavailable (REPL, exec) fall back to a bytecode digest — kept as a
-    parseable string literal so AST comparison still works."""
+    parseable string literal so AST comparison still works. Callables with
+    no `__code__` (e.g. scipy distribution objects) fall back to their repr."""
     try:
         return inspect.getsource(fn)
     except (OSError, TypeError):
+        code = getattr(fn, '__code__', None)
+        if code is None:
+            return repr(fn)
+
         from hashlib import sha1
 
-        return f"'<bytecode:{sha1(fn.__code__.co_code).hexdigest()}>'"
+        return f"'<bytecode:{sha1(code.co_code).hexdigest()}>'"
 
 
 def _normalised_source(fn):
