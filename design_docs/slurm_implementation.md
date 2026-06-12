@@ -79,13 +79,19 @@ be spent only on cluster-shaped problems.
   does an EXCLUSIVE-locked write to `.remake/remake.db`. SQLite locking
   over Lustre/NFS-class filesystems is notoriously unreliable (locks not
   honoured, or pathological serialisation under hundreds of concurrent
-  writers). The retry/backoff machinery exists but has never faced real
-  contention. Probe this actively and early on JASMIN rather than
-  discovering it. Possible responses, escalating:
-  1. it works — ship it;
-  2. tune (longer backoff, busy_timeout, journal mode);
+  writers). Probed on JASMIN 2026-06-12
+  (`tests/benchmarks/bench_sqlite_contention.py`, see todos.md): 176-way
+  concurrency is clean, but 400-way and 800-way livelock — most processes
+  never acquire the lock within a job's wall-time, and throughput at
+  800-way is *lower* than at 400-way. Option 3 below ("per-job sidecar
+  result files") is needed; see the design sketch in the next section.
+  1. it works — ship it; (ruled out: 176 ok, 400+ livelocks)
+  2. tune (longer backoff, busy_timeout, journal mode) — worth doing
+     regardless (the current backoff is unbounded), but doesn't fix the
+     400+ cliff on its own;
   3. per-job sidecar result files merged into the DB by the next
-     plan/continuation run (no concurrent DB writers at all).
+     plan/continuation run (no concurrent DB writers at all) — **chosen**,
+     see below.
 - **Scheduler quirks**: `aftercorr` semantics with partially-failed
   upstream arrays; JASMIN array-size and queued-job limits; partition
   names and accounting. Defaults updated 2026-06-12 after checking this
@@ -94,6 +100,88 @@ be spent only on cluster-shaped problems.
   `--account` is project-specific and not defaulted — set via
   `Remake(config={'slurm': {'account': ...}})`. Array throttling
   (`--array=0-N%T`) is supported via `config['slurm']['array_throttle']`.
+
+## Sidecar result files — design sketch (2026-06-12)
+
+Replaces direct `update_task` calls from per-task SLURM processes with a
+write-sidecar / ingest-serially split, mirroring the per-task-logging
+layout (`design_docs/per_task_logging.md`).
+
+### Write side: `run-task` / `run-array-task`
+
+These per-task-process entry points currently end by calling
+`self.metadata.update_task(task, status, exception)` (in
+`Remake.run_task`, `core/remake.py`). Instead, give `Remake` a metadata
+backend that writes a **sidecar file** rather than touching
+`.remake/remake.db` at all:
+
+```
+.remake/tasks/results/<rule>/<key[:2]>/<key[2:]>.json
+{"status": 0, "exception": "", "uses_hash": "...", "timestamp": "..."}
+```
+
+- Same sharding scheme as the per-task logs — reuses the directory-count
+  reasoning already written up.
+- `run-task`/`run-array-task` never call `ensure_rules`/open
+  `remake.db` — they don't need `rule_ids`, so no DB connection at all
+  from the hundreds of concurrent array processes. This removes the
+  contention source entirely, not just the write.
+- `run` (singleproc executor, in-process serial loop) keeps calling
+  `update_task` directly — single writer, no problem, and it's the
+  fastest path for small/local pipelines.
+
+### Read side: ingest at the start of `plan`/`run`/`info`
+
+Add `Sqlite3Backend.ingest_sidecars(rules)`:
+
+- Walk `.remake/tasks/results/<rule>/**/*.json` for each rule.
+- One `BEGIN EXCLUSIVE` transaction for the *whole batch* (this is the
+  single-writer case — batching is safe and turns O(N) locked
+  transactions into O(1), which also helps the existing "one EXCLUSIVE
+  transaction per task" scaling todo for this path).
+- For each sidecar: `update_task(...)` as today, then delete the sidecar
+  file. If the file is gone by the time it's read (another process
+  ingested it first), skip — `update_task`'s `ON CONFLICT DO UPDATE` makes
+  double-ingestion harmless anyway, so this is belt-and-braces.
+- Call this once, early, from `Remake.plan()` (and therefore `run()`) and
+  from `info`/`--show-failures`. Cheap when there's nothing to ingest
+  (one directory walk); proportional to *new* completions since the last
+  invocation otherwise.
+
+### Why this answers "is the DB still the source of truth?"
+
+Yes, with one caveat: a sidecar represents "completed but not yet
+ingested." Any invocation that *reads* the DB for planning or reporting
+ingests first, so by the time `plan()`/`info` actually looks at the DB
+it's current. The only window where the DB is stale is between a task
+finishing and the *next* `remake` invocation — and nothing currently reads
+the DB during that window anyway (the running array job doesn't need to;
+`event_matrix()`-style dynamic matrices read output files directly, not
+the DB).
+
+### Interaction with already-queued detection
+
+Independent and complementary. The squeue + `.remake/jobs/<rule>.jobids.json`
+check (already implemented) decides whether to *resubmit* a rule's array;
+sidecar ingestion decides what the DB *says* about completed tasks. A
+rerun while rule X's array is still in flight: ingestion picks up whatever
+sidecars exist so far (possibly none), the squeue check skips resubmitting
+X regardless of what the DB now shows for X's tasks.
+
+### Open questions / follow-ups
+
+- Sidecars are deleted on ingest, so they don't accumulate like the
+  per-task logs do — no separate retention story needed.
+- `Remake.__init__`/`plan()` currently calls `ensure_rules` unconditionally;
+  `ingest_sidecars` needs the same `rule_ids` map, so it likely runs
+  immediately after `ensure_rules`, same place.
+- Not yet decided: does `run-task` (non-array, used by singleproc/multiproc
+  executors) also switch to sidecars, or only `run-array-task`? Sidecars
+  cost an extra ingest pass even for single-writer cases where direct
+  `update_task` is fine. Lean towards: only `run-array-task` writes
+  sidecars; `run-task` keeps calling `update_task` directly.
+- Implementation not started — this is a design sketch, not yet on the
+  todo list as an active item pending a decision to proceed.
 
 ## Suggested order
 
