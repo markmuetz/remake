@@ -271,6 +271,35 @@ rmk.rules_from_current_module()
     assert not list(Path('.remake/tasks/results').rglob('*.json'))
 
 
+def test_slurm_status_reports_queue_state(slurm_dir, capsys):
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    (slurm_dir / 'shim/squeue.out').write_text(
+        '1001_3 PD Dependency\n'
+        '1001_4 R None\n'
+        '1003 PD DependencyNeverSatisfied\n'
+    )
+    capsys.readouterr()
+    cli('slurm-status', 'pipeline.py')
+    out = capsys.readouterr().out
+    assert 'PD:1 R:1' in out and '[Dependency]' in out  # gen, job 1001
+    assert 'not in queue' in out  # proc, job 1002, no squeue rows
+    assert 'DependencyNeverSatisfied' in out  # agg, job 1003
+
+    cli('slurm-status', 'pipeline.py', '--json')
+    rows = json.loads(capsys.readouterr().out)
+    by_rule = {row['rule']: row for row in rows}
+    assert by_rule['gen']['jobid'] == '1001' and by_rule['gen']['states'] == {'PD': 1, 'R': 1}
+    assert by_rule['agg']['reasons'] == ['DependencyNeverSatisfied']
+
+
+def test_task_info_shows_slurm_submission(slurm_dir, capsys):
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    capsys.readouterr()
+    cli('task-info', 'pipeline.py', '-R', 'gen', '-Q', 'n == 3')
+    out = capsys.readouterr().out
+    assert 'slurm:    job 1001' in out and 'array index 3' in out
+
+
 # --- dynamic matrices: continuation job ---
 
 

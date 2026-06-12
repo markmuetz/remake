@@ -8,7 +8,7 @@ from loguru import logger
 from ..metadata.metadata_manager import TASK_STATUS_FAILED, TASK_STATUS_SUCCESS
 from .dag import build_rule_dag, iter_expand_rule
 from .exceptions import RemakeError
-from .planner import make_predicate, plan
+from .planner import explain_task, make_predicate, plan
 from .rule import Rule
 from .scope import check_scope, exec_function
 from .task import Task
@@ -87,6 +87,15 @@ class Remake:
             query=query,
             force=force,
             check_outputs=self.check_outputs,
+        )
+
+    def explain_task(self, task):
+        """(will_run, reasons) for one task — `remake why`."""
+        if not self._finalized:
+            self.finalize()
+        self.metadata.ingest_sidecars(self.rules)
+        return explain_task(
+            self.rules, self.dag, self.metadata, task, check_outputs=self.check_outputs
         )
 
     def iter_tasks(self, query=None):

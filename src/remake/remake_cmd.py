@@ -22,13 +22,63 @@ STATUS_NAMES = {
     TASK_STATUS_FAILED: 'failed',
 }
 
-def _add_task_log_sink(task):
+def _task_log_path(task):
     """Per-task log file, named by stable task key (sharded: 256 buckets per
-    rule, see design_docs/per_task_logging.md). One process, one file —
-    safe under concurrent SLURM array elements, unlike the shared log."""
-    logfile = Path('.remake/tasks/log') / task.rule.name / task.key[:2] / f'{task.key[2:]}.log'
+    rule, see design_docs/per_task_logging.md)."""
+    return Path('.remake/tasks/log') / task.rule.name / task.key[:2] / f'{task.key[2:]}.log'
+
+
+def _add_task_log_sink(task):
+    """One process, one file — safe under concurrent SLURM array elements,
+    unlike the shared log."""
+    logfile = _task_log_path(task)
     logfile.parent.mkdir(parents=True, exist_ok=True)
     logger.add(logfile, level='DEBUG', mode='w')
+
+
+def _select_task(rmk, args):
+    """Resolve the task a command addresses: a key prefix, or -Q query
+    and/or -R rule matching exactly one task."""
+    if args.task_key and (args.query or args.rule):
+        raise RemakeError('Give a task key or -Q/-R selection, not both')
+    if args.task_key:
+        return rmk.task_from_key(args.task_key)
+    if args.query or args.rule:
+        tasks = [
+            t
+            for t in rmk.iter_tasks(query=args.query)
+            if args.rule is None or t.rule.name == args.rule
+        ]
+        what = ' '.join(s for s in (args.rule, args.query) if s)
+        if not tasks:
+            raise RemakeError(f'No task matches {what!r}')
+        if len(tasks) > 1:
+            raise RemakeError(
+                f'{len(tasks)} tasks match {what!r}; narrow the query '
+                f'(add -R <rule> if the matrix is shared between rules)'
+            )
+        return tasks[0]
+    raise RemakeError('Give a task key prefix, or select with -Q query / -R rule')
+
+
+def _slurm_submission(rule_name, task_key=None):
+    """(jobids, array_index) from the last submission's sidecar/job spec,
+    (None, None) if never submitted."""
+    import json
+
+    sidecar = Path(f'.remake/jobs/{rule_name}.jobids.json')
+    if not sidecar.exists():
+        return None, None
+    recorded = json.loads(sidecar.read_text())
+    jobids = recorded.get('slurm_job_ids', [])
+    if 'slurm_array_job_id' in recorded:
+        jobids = [recorded['slurm_array_job_id']]
+    index = None
+    specs_path = Path(f'.remake/jobs/{rule_name}.json')
+    if task_key is not None and specs_path.exists():
+        specs = json.loads(specs_path.read_text())
+        index = next((i for i, s in enumerate(specs) if s['task_key'] == task_key), None)
+    return jobids, index
 
 
 def _make_executor(name, rmk):
@@ -126,6 +176,43 @@ class RemakeParser:
                     action='store_true'),
                 Arg('--show-failures', '-F', help='Show stored tracebacks of failed tasks',
                     action='store_true'),
+                Arg('--json', help='Machine-readable output', action='store_true'),
+            ],
+        },
+        'task-info': {
+            'help': 'Detail view of one task: status, paths, log, SLURM job',
+            'args': [
+                Arg('remakefile'),
+                Arg('task_key', nargs='?'),
+                Arg('--query', '-Q', help='Select the task by kwargs query instead of key'),
+                Arg('--rule', '-R', help='Restrict -Q selection to one rule'),
+                Arg('--json', help='Machine-readable output', action='store_true'),
+            ],
+        },
+        'task-log': {
+            'help': "Print a task's per-task log",
+            'args': [
+                Arg('remakefile'),
+                Arg('task_key', nargs='?'),
+                Arg('--query', '-Q', help='Select the task by kwargs query instead of key'),
+                Arg('--rule', '-R', help='Restrict -Q selection to one rule'),
+                Arg('--path', help='Print the log path only', action='store_true'),
+            ],
+        },
+        'why': {
+            'help': 'Explain why a task would (or would not) rerun',
+            'args': [
+                Arg('remakefile'),
+                Arg('task_key', nargs='?'),
+                Arg('--query', '-Q', help='Select the task by kwargs query instead of key'),
+                Arg('--rule', '-R', help='Restrict -Q selection to one rule'),
+            ],
+        },
+        'slurm-status': {
+            'help': 'Live SLURM queue state of the last submission, per rule',
+            'args': [
+                Arg('remakefile'),
+                Arg('--json', help='Machine-readable output', action='store_true'),
             ],
         },
         'version': {
@@ -223,6 +310,8 @@ class RemakeParser:
             raise RemakeError(f'{submit} failed (exit {result.returncode})')
 
     def remake_info(self, args):
+        import json
+
         from .core import expand_rule
         from .core.planner import make_predicate
 
@@ -232,53 +321,192 @@ class RemakeParser:
         deferred_names = {rule.name for rule in deferred}
         predicate = make_predicate(args.query) if args.query else None
 
-        header = ('rule', 'tasks', 'success', 'failed', 'pending', 'to run')
-        rows = []
-        task_lines = []
+        rule_rows = []
+        task_rows = []
         failures = []
         for rule in rmk.rules:
             if rule.name in deferred_names:
-                rows.append((rule.name, '?', '?', '?', '?', 'deferred'))
+                rule_rows.append({'rule': rule.name, 'deferred': True})
                 continue
             tasks = expand_rule(rule, predicate)
             records = rmk.metadata.get_tasks_status(tasks)
-            counts = Counter(
-                STATUS_NAMES.get(records[t.key].status, 'pending')
+            statuses = {
+                t.key: STATUS_NAMES.get(records[t.key].status, 'pending')
                 if t.key in records
                 else 'pending'
                 for t in tasks
-            )
-            rows.append(
-                (
-                    rule.name,
-                    len(tasks),
-                    counts['success'],
-                    counts['failed'],
-                    counts['pending'],
-                    remaining.get(rule.name, 0),
-                )
+            }
+            counts = Counter(statuses.values())
+            rule_rows.append(
+                {
+                    'rule': rule.name,
+                    'deferred': False,
+                    'tasks': len(tasks),
+                    'success': counts['success'],
+                    'failed': counts['failed'],
+                    'pending': counts['pending'],
+                    'to_run': remaining.get(rule.name, 0),
+                }
             )
             if args.tasks:
-                for task in tasks:
-                    record = records.get(task.key)
-                    status = STATUS_NAMES.get(record.status, 'pending') if record else 'pending'
-                    task_lines.append(f'{status:<8} {task}')
+                task_rows.extend(
+                    {'task': str(t), 'key': t.key, 'status': statuses[t.key]} for t in tasks
+                )
             if args.show_failures:
                 failures.extend(
-                    (task, records[task.key])
-                    for task in tasks
-                    if task.key in records
-                    and records[task.key].status == TASK_STATUS_FAILED
+                    {
+                        'task': str(t),
+                        'key': t.key,
+                        'timestamp': records[t.key].timestamp,
+                        'exception': records[t.key].exception,
+                        'log': str(_task_log_path(t)),
+                    }
+                    for t in tasks
+                    if t.key in records and records[t.key].status == TASK_STATUS_FAILED
                 )
 
+        if args.json:
+            data = {'rules': rule_rows}
+            if args.tasks:
+                data['tasks'] = task_rows
+            if args.show_failures:
+                data['failures'] = failures
+            print(json.dumps(data, indent=1))
+            return
+
+        header = ('rule', 'tasks', 'success', 'failed', 'pending', 'to run')
+        rows = [
+            (r['rule'], '?', '?', '?', '?', 'deferred')
+            if r['deferred']
+            else (r['rule'], r['tasks'], r['success'], r['failed'], r['pending'], r['to_run'])
+            for r in rule_rows
+        ]
         widths = [max(len(str(r[i])) for r in rows + [header]) for i in range(len(header))]
         for row in [header] + rows:
             print('  '.join(f'{str(v):<{w}}' for v, w in zip(row, widths)))
-        for line in task_lines:
-            print(line)
-        for task, record in failures:
-            print(f'\n=== {task} (failed at {record.timestamp}) ===')
-            print(record.exception.rstrip() or '(no stored exception)')
+        for task_row in task_rows:
+            print(f'{task_row["status"]:<8} {task_row["task"]}')
+        for failure in failures:
+            print(f'\n=== {failure["task"]} (failed at {failure["timestamp"]}) ===')
+            print(f'log: {failure["log"]}')
+            print(failure['exception'].rstrip() or '(no stored exception)')
+
+    def remake_task_info(self, args):
+        import json
+
+        rmk = self._load(args)
+        task = _select_task(rmk, args)
+        record = rmk.metadata.get_tasks_status([task]).get(task.key)
+        log_path = _task_log_path(task)
+        jobids, array_index = _slurm_submission(task.rule.name, task.key)
+        inputs = (
+            {k: {'path': str(v), 'exists': Path(v).exists()} for k, v in task.inputs.items()}
+            if task.rule.inputs is not None
+            else {}
+        )
+        outputs = (
+            {k: {'path': str(v), 'complete': v.is_complete()} for k, v in task.outputs.items()}
+            if task.rule.outputs is not None
+            else {}
+        )
+        data = {
+            'task': str(task),
+            'rule': task.rule.name,
+            'kwargs': task.kwargs,
+            'key': task.key,
+            'status': STATUS_NAMES.get(record.status, 'pending') if record else 'pending',
+            'timestamp': record.timestamp if record else None,
+            'exception': record.exception if record else '',
+            'inputs': inputs,
+            'outputs': outputs,
+            'log': {'path': str(log_path), 'exists': log_path.exists()},
+            'slurm': {'jobids': jobids, 'array_index': array_index},
+        }
+        if args.json:
+            print(json.dumps(data, indent=1))
+            return
+
+        print(f'{task}  {task.key}')
+        when = f' at {data["timestamp"]}' if data['timestamp'] else ''
+        print(f'status:   {data["status"]}{when}')
+        for name, path_info in inputs.items():
+            mark = 'exists' if path_info['exists'] else 'MISSING'
+            print(f'input:    {path_info["path"]}  [{mark}]  ({name})')
+        for name, path_info in outputs.items():
+            mark = 'complete' if path_info['complete'] else 'missing'
+            print(f'output:   {path_info["path"]}  [{mark}]  ({name})')
+        mark = '' if log_path.exists() else '  [no log yet]'
+        print(f'log:      {log_path}{mark}')
+        if jobids is not None:
+            index = f', array index {array_index}' if array_index is not None else ''
+            print(f'slurm:    job {",".join(jobids)} (last submission{index})')
+        if data['exception']:
+            print(f'\n{data["exception"].rstrip()}')
+
+    def remake_task_log(self, args):
+        rmk = self._load(args)
+        task = _select_task(rmk, args)
+        log_path = _task_log_path(task)
+        if args.path:
+            print(log_path)
+            return
+        if not log_path.exists():
+            raise RemakeError(
+                f'No log for {task} at {log_path} — '
+                f'it has not been run via run-task/run-array-task'
+            )
+        print(log_path.read_text(), end='')
+
+    def remake_why(self, args):
+        rmk = self._load(args)
+        task = _select_task(rmk, args)
+        will_run, reasons = rmk.explain_task(task)
+        print(f'{task}  {task.key}')
+        print(f'will run: {"yes" if will_run else "no"}')
+        if not reasons:
+            print('up to date: recorded success, code and uses unchanged, no upstream reruns')
+        for reason in reasons:
+            print(f'- {reason}')
+
+    def remake_slurm_status(self, args):
+        import json
+
+        from .executors.slurm_executor import squeue_snapshot
+
+        rmk = self._load(args)
+        snapshot = squeue_snapshot()
+        rows = []
+        for rule in rmk.rules:
+            jobids, _ = _slurm_submission(rule.name)
+            if jobids is None:
+                continue
+            for jobid in jobids:
+                elements = snapshot.get(jobid, [])
+                states = Counter(state for _, state, _ in elements)
+                reasons = sorted(
+                    {reason for *_, reason in elements if reason and reason != 'None'}
+                )
+                rows.append(
+                    {
+                        'rule': rule.name,
+                        'jobid': jobid,
+                        'states': dict(states),
+                        'reasons': reasons,
+                    }
+                )
+        if args.json:
+            print(json.dumps(rows, indent=1))
+            return
+        if not rows:
+            print('No SLURM submissions recorded (.remake/jobs/*.jobids.json)')
+            return
+        for row in rows:
+            states = (
+                ' '.join(f'{k}:{v}' for k, v in sorted(row['states'].items()))
+                or 'not in queue'
+            )
+            reasons = f'  [{", ".join(row["reasons"])}]' if row['reasons'] else ''
+            print(f'{row["rule"]:<20} job {row["jobid"]:<12} {states}{reasons}')
 
     def remake_version(self, args):
         print(__version__)
@@ -294,16 +522,18 @@ def remake_cmd(argv=None):
         parser.parser.print_help()
         return 1
 
+    # Logs go to stderr; stdout carries command output only (so --json and
+    # piping stay clean).
     logger.remove()
     if args.debug:
-        logger.add(sys.stdout, colorize=True, level='DEBUG')
+        logger.add(sys.stderr, colorize=True, level='DEBUG')
     elif args.warning:
         logger.add(
-            sys.stdout, colorize=True, format='<bold><lvl>{message}</lvl></bold>', level='WARNING'
+            sys.stderr, colorize=True, format='<bold><lvl>{message}</lvl></bold>', level='WARNING'
         )
     else:
         logger.add(
-            sys.stdout, colorize=True, format='<bold><lvl>{message}</lvl></bold>', level='INFO'
+            sys.stderr, colorize=True, format='<bold><lvl>{message}</lvl></bold>', level='INFO'
         )
 
     # Per-task-process subcommands (SLURM array elements) get a per-task log

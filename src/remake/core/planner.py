@@ -5,9 +5,11 @@ Rerun logic is DB-first: never run, failed, rule_run code changed (AST
 compare), uses changed, or any relevant upstream task reruns. Filesystem
 checks happen only via the opt-in check_outputs modes.
 """
+import difflib
+
 import networkx as nx
 
-from ..metadata.metadata_manager import TASK_STATUS_SUCCESS
+from ..metadata.metadata_manager import TASK_STATUS_FAILED, TASK_STATUS_SUCCESS
 from ..util.code_compare import CodeComparer
 from .dag import expand_rule
 from .exceptions import MatrixNotReady
@@ -40,6 +42,57 @@ def _same_matrix(rule, dep):
 def _outputs_complete(task):
     outputs = task.outputs
     return bool(outputs) and all(token.is_complete() for token in outputs.values())
+
+
+def explain_task(rules, dag, metadata, task, *, check_outputs='fallback'):
+    """Why would (or wouldn't) this task run? Returns (will_run, reasons) —
+    reasons in the order the planner checks them. The `remake why` command."""
+    runnable, _ = plan(rules, dag, metadata, check_outputs=check_outputs)
+    will_run = any(t.key == task.key for t in runnable)
+
+    reasons = []
+    rec = metadata.get_tasks_status([task]).get(task.key)
+    if rec is None:
+        if check_outputs in ('fallback', 'always') and _outputs_complete(task):
+            reasons.append(
+                f'never recorded in the DB, but all outputs are complete on disk '
+                f'(check_outputs={check_outputs!r} adopts them)'
+            )
+        else:
+            reasons.append('never run (no DB record)')
+    else:
+        if rec.status != TASK_STATUS_SUCCESS:
+            state = 'failed' if rec.status == TASK_STATUS_FAILED else 'pending'
+            reasons.append(f'last run {state} at {rec.timestamp}')
+        run_src = task.rule.source['run']
+        if not CodeComparer()(rec.run_code, run_src):
+            diff = '\n'.join(
+                difflib.unified_diff(
+                    rec.run_code.splitlines(), run_src.splitlines(),
+                    'last run', 'current', lineterm='',
+                )
+            )
+            reasons.append(f'run code changed since last run:\n{diff}')
+        if rec.uses_hash != uses_hash(task.rule.uses):
+            reasons.append('uses= changed since last run')
+        if check_outputs == 'always' and task.outputs and not _outputs_complete(task):
+            reasons.append('outputs missing/incomplete (check_outputs=always)')
+
+    for dep in task.rule.depends_on:
+        dep_running = [t for t in runnable if t.rule is dep]
+        if not dep_running:
+            continue
+        if _same_matrix(task.rule, dep):
+            match = [t for t in dep_running if t.kwargs == task.kwargs]
+            if match:
+                reasons.append(f'upstream {match[0]} reruns (shared matrix: element-wise)')
+        else:
+            reasons.append(
+                f'{len(dep_running)} upstream {dep.name} task(s) rerun '
+                f'(different matrix: conservative, all downstream tasks rerun)'
+            )
+
+    return will_run, reasons
 
 
 def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='fallback'):

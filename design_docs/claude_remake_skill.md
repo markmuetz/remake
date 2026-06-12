@@ -127,21 +127,44 @@ small `-Q` slice before the full pipeline.
 "What state is this pipeline in": consistency sweep of plan vs DB vs
 queued jobs. Mostly blocked on CLI gaps below; implement once those land.
 
-## Expected CLI gaps (the feedback loop)
+## CLI gap audit and new commands (2026-06-12)
 
-Anticipated from walking the workflows; confirm/extend while writing the
-skill, and grow the CLI only where a human/script would also benefit:
+The audit question: what information is *only* available by examining
+`.remake/` directly? Findings:
 
-- `info --json` (machine-readable output for everything `info` prints);
-- `--show-failures` should print each failed task's per-task log path;
-- no way to view a task's log via the CLI (`remake task-log <key-prefix>`
-  or similar);
-- no rerun explanation command (`remake why <key-prefix>`?);
-- no single-task detail view (`remake task-info <key-prefix>`: status,
-  timestamp, exception, output existence, log path, queued job);
-- no SLURM status command mapping sidecar jobids/array indices → tasks
-  (`remake slurm-status`? — ties into the discussion.md SLURM monitor);
-- no machine-readable plan output (`run --dry-run` prints prose).
+| Information | Lives in | CLI before audit |
+|---|---|---|
+| status counts, failures + tracebacks | `remake.db` | `info`, `-t`, `-F` |
+| last-run timestamp per task | `remake.db` | — |
+| stored run code / uses_hash (what changed) | `remake.db` | — |
+| task key ↔ array index ↔ kwargs | `jobs/<rule>.json` | — |
+| rule ↔ SLURM job id(s) | `jobs/<rule>.jobids.json` | — |
+| per-task log location/content | `tasks/log/...` | — |
+| pending un-ingested sidecars | `tasks/results/` | — (transient by design) |
+| generated sbatch/submit.sh | `slurm/` | — (fine as plain files) |
+
+Commands added to close the gaps (all task-addressing commands accept a
+key prefix *or* `-Q query` resolving to exactly one task):
+
+- `remake task-info <file> [key-prefix|-Q q] [--json]` — single-task
+  detail: rule, kwargs, key, status + timestamp, inputs/outputs with
+  on-disk existence, per-task log path, SLURM job id + array index from
+  the last submission, traceback if failed.
+- `remake task-log <file> [key-prefix|-Q q] [--path]` — print the
+  per-task log (or just its path, for piping).
+- `remake why <file> [key-prefix|-Q q]` — rerun explanation: walks the
+  planner's checks for one task and reports what applies (never run /
+  failed / run code changed, with diff / uses changed / outputs
+  incomplete / upstream propagation, element-wise vs conservative).
+- `remake slurm-status <file> [--json]` — per rule: last submitted job
+  id(s) and live squeue element states/reasons (surfaces
+  `DependencyNeverSatisfied` etc.).
+- `info --json` (also on `task-info`/`slurm-status`) — machine-readable
+  output; the skill's workflows parse this instead of aligned text.
+- Logger output moved to stderr so `--json` stdout is clean.
+
+Deliberately not commands: sidecar visibility (transient; ingest logs a
+line) and generated-script viewing (they are files meant for reading).
 
 ## Sequencing
 

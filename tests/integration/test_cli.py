@@ -153,6 +153,92 @@ def test_run_task_writes_per_task_log(pipeline_dir, capsys):
     assert logs[0].parent.name == key_prefix[:2]
 
 
+def test_info_json(pipeline_dir, capsys):
+    import json
+
+    cli('run', 'pipeline.py')
+    capsys.readouterr()
+    cli('info', 'pipeline.py', '--json', '--tasks')
+    data = json.loads(capsys.readouterr().out)
+    by_rule = {r['rule']: r for r in data['rules']}
+    assert by_rule['generate']['success'] == 2 and by_rule['generate']['to_run'] == 0
+    assert len(data['tasks']) == 4
+    assert all(t['status'] == 'success' and len(t['key']) == 40 for t in data['tasks'])
+
+
+def test_task_info_text_and_json(pipeline_dir, capsys):
+    import json
+
+    cli('run', 'pipeline.py')
+    capsys.readouterr()
+    cli('task-info', 'pipeline.py', '-R', 'generate', '-Q', 'n == 1')
+    out = capsys.readouterr().out
+    assert 'generate[n=1]' in out
+    assert 'status:   success at ' in out
+    assert '[complete]' in out
+    assert '.remake/tasks/log/generate/' in out
+
+    cli('task-info', 'pipeline.py', '--json', '-R', 'generate', '-Q', 'n == 1')
+    data = json.loads(capsys.readouterr().out)
+    assert data['status'] == 'success' and data['kwargs'] == {'n': 1}
+    assert all(o['complete'] for o in data['outputs'].values())
+    assert data['slurm'] == {'jobids': None, 'array_index': None}  # never submitted
+
+
+def test_task_select_ambiguous_query_errors(pipeline_dir):
+    from remake import RemakeError
+
+    cli('run', 'pipeline.py')
+    # n == 1 matches one task in each of the two rules sharing the matrix.
+    with pytest.raises(RemakeError, match='2 tasks match'):
+        cli('task-info', 'pipeline.py', '-Q', 'n == 1')
+
+
+def test_task_log_path_and_content(pipeline_dir, capsys):
+    from remake import RemakeError
+
+    cli('run', 'pipeline.py')  # singleproc run: no per-task logs yet
+    capsys.readouterr()
+    cli('task-log', 'pipeline.py', '--path', '-R', 'generate', '-Q', 'n == 1')
+    path = Path(capsys.readouterr().out.strip())
+    with pytest.raises(RemakeError, match='No log'):
+        cli('task-log', 'pipeline.py', '-R', 'generate', '-Q', 'n == 1')
+
+    key = path.parent.name + path.stem  # <k:2>/<k2:>.log
+    cli('run-task', 'pipeline.py', key)
+    capsys.readouterr()
+    cli('task-log', 'pipeline.py', '-R', 'generate', '-Q', 'n == 1')
+    assert 'generate[n=1]' in capsys.readouterr().out
+
+
+def test_why_never_run_then_up_to_date(pipeline_dir, capsys):
+    cli('why', 'pipeline.py', '-R', 'generate', '-Q', 'n == 1')
+    out = capsys.readouterr().out
+    assert 'will run: yes' in out and 'never run' in out
+
+    cli('run', 'pipeline.py')
+    capsys.readouterr()
+    cli('why', 'pipeline.py', '-R', 'generate', '-Q', 'n == 1')
+    out = capsys.readouterr().out
+    assert 'will run: no' in out and 'up to date' in out
+
+
+def test_why_code_change_and_upstream_propagation(pipeline_dir, capsys):
+    cli('run', 'pipeline.py')
+    Path('pipeline.py').write_text(PIPELINE.replace('str(n)', 'str(n * 2)'))
+    capsys.readouterr()
+    cli('why', 'pipeline.py', '-R', 'generate', '-Q', 'n == 1')
+    out = capsys.readouterr().out
+    assert 'will run: yes' in out and 'run code changed' in out
+    assert '-' in out and '+' in out  # unified diff
+
+    cli('why', 'pipeline.py', '-R', 'process', '-Q', 'n == 1')
+    out = capsys.readouterr().out
+    assert 'will run: yes' in out
+    assert 'upstream' in out and 'element-wise' in out
+    assert 'generate[n=1]' in out and 'generate[n=2]' not in out
+
+
 def test_run_query_force(pipeline_dir, capsys):
     cli('run', 'pipeline.py')
     (pipeline_dir / 'data/out_1.txt').unlink()

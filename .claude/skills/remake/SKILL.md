@@ -24,15 +24,25 @@ tell the user: that's a CLI gap worth reporting upstream.
 
 ```
 remake run <remakefile> [-E slurm|singleproc|mod:Class] [-Q query] [-f|--force] [-n|--dry-run] [--check-outputs]
-remake info <remakefile> [-Q query] [-t|--tasks] [-F|--show-failures]
-remake run-task <remakefile> <key-or-prefix>      # run one task by key
-remake run-array-task <remakefile> <rule> <idx>   # internal: SLURM payload
-remake resubmit <remakefile>                      # re-run .remake/submit.sh, no replanning
+remake info <remakefile> [-Q query] [-t|--tasks] [-F|--show-failures] [--json]
+remake task-info <remakefile> <selector> [--json]  # one task: status, paths, log, SLURM job
+remake task-log <remakefile> <selector> [--path]   # print a task's log (or its path)
+remake why <remakefile> <selector>                 # explain rerun decision for one task
+remake slurm-status <remakefile> [--json]          # live queue state per rule
+remake run-task <remakefile> <key-or-prefix>       # run one task by key
+remake run-array-task <remakefile> <rule> <idx>    # internal: SLURM payload
+remake resubmit <remakefile>                       # re-run .remake/submit.sh, no replanning
 remake version
 ```
 
-Global flags before the subcommand: `-D` debug / `-W` warnings-only
-logging, `-X` drop into debugger on exception.
+`<selector>` = a task key prefix, or `-Q '<kwargs query>'` (+ `-R <rule>`
+when rules share a matrix) resolving to exactly one task — so you never
+need `info -t` just to find a key.
+
+**Prefer `--json`** (`info`, `task-info`, `slurm-status`) over parsing
+the aligned-text output. Logs go to stderr; stdout is data only. Global
+flags before the subcommand: `-D` debug / `-W` warnings-only, `-X`
+debugger on exception.
 
 `info` columns: rule, tasks, success, failed, pending, to run. A row of
 `?` with "deferred" means a dynamic matrix that can't expand yet
@@ -55,18 +65,17 @@ work anywhere a key is accepted (like git).
 
 ## Failure triage
 
-1. `remake info <file>` — which rules have failures.
-2. `remake info <file> -F` — each failed task with its stored full
-   traceback and timestamp.
-3. More context: the per-task log at
-   `.remake/tasks/log/<rule>/<key[:2]>/<key[2:]>.log` (CLI gap), and for
-   SLURM runs the scheduler files — map key → array index via
-   `.remake/jobs/<rule>.json` (CLI gap), then read
-   `.remake/slurm/output/<rule>/<idx>.out|.err`.
-4. SLURM resource kills do NOT leave tracebacks. Check
-   `sacct -j <jobid> --format=JobID,State,ExitCode,Elapsed,MaxRSS`
-   (jobid from `.remake/jobs/<rule>.jobids.json`): `OUT_OF_MEMORY` →
-   raise `mem`, `TIMEOUT` → raise `time` (per-rule
+1. `remake info <file> --json` — which rules have failures.
+2. `remake info <file> -F` — every failed task: traceback, timestamp and
+   per-task log path. For one task: `remake task-info <file> <selector>`
+   (adds input/output existence and the SLURM job id + array index).
+3. More context: `remake task-log <file> <selector>`; for SLURM runs the
+   scheduler stdout/stderr is `.remake/slurm/output/<rule>/<idx>.out|.err`
+   with the index from `task-info`.
+4. SLURM resource kills do NOT leave tracebacks. Get the job id from
+   `remake task-info` (or `slurm-status`), then
+   `sacct -j <jobid> --format=JobID,State,ExitCode,Elapsed,MaxRSS`:
+   `OUT_OF_MEMORY` → raise `mem`, `TIMEOUT` → raise `time` (per-rule
    `config={'slurm': {...}}`).
 
 **Classify before fixing** — the fix path differs:
@@ -81,10 +90,13 @@ work anywhere a key is accepted (like git).
 
 ## SLURM monitoring
 
-- DB-side progress: `remake info <file>` (success/failed/pending per rule).
-- Queue-side: `squeue -u $USER -r` ; correlate job ids with rules via the
-  jobid sidecars (CLI gap). `-r` expands arrays to one row per element.
-- Pathologies to look for in squeue's REASON/NODELIST column:
+- DB-side progress: `remake info <file> --json` (success/failed/pending
+  per rule).
+- Queue-side: `remake slurm-status <file> [--json]` — per rule: last
+  submitted job id, element state counts (PD/R), and pending reasons.
+  "not in queue" + tasks still pending in `info` = the job finished or
+  died; check `info -F`, then sacct.
+- Pathologies surfaced in slurm-status's reasons column:
   - `DependencyNeverSatisfied` — upstream element failed; the dependent
     element will never start. Fix upstream, `remake run -E slurm` again
     (replans, resubmits what's needed; queued rules are skipped whole).
@@ -98,9 +110,11 @@ work anywhere a key is accepted (like git).
 
 ## Why did/didn't a task rerun?
 
-The planner's logic, in order — walk it top-down and stop at the first
-hit (this requires knowing the pipeline source and `remake info -t`
-status; there is no CLI explain command yet — known gap):
+**`remake why <file> <selector>`** answers this directly: will-run
+yes/no plus the applicable reasons (never run / failed / code changed
+with diff / uses changed / outputs incomplete / upstream propagation).
+
+Background for interpreting its output — the planner's checks, in order:
 
 1. `--force` → reruns.
 2. No DB record for the key → reruns, UNLESS check_outputs mode is
@@ -125,12 +139,11 @@ touching a file does NOT trigger reruns (no mtime checks, ever).
 
 ## Task status
 
-"What state is X in right now" (vs. the planner's "what would run"):
-- `remake info <file> -t -Q '<narrowing query>'` — per-task status lines.
-- Failed detail: `-F` (traceback + timestamp).
-- On disk: check the output paths from the rule definition.
-- Queued: squeue + jobid sidecar (as above).
-No single-task detail command yet (`task-info` — known gap).
+"What state is X in right now" (vs. `why`'s "what would the planner
+do"): `remake task-info <file> <selector> [--json]` — status +
+timestamp, input/output paths with on-disk existence, per-task log
+path, SLURM job id + array index, traceback if failed. For many tasks
+at once: `remake info <file> -t --json` with `-Q` to narrow.
 
 ## Query crafting (-Q)
 
@@ -138,7 +151,9 @@ Queries are Python expressions evaluated against each task's kwargs:
 `-Q 'year > 1985 and model == "era5"'` (shell: single-quote the whole
 expression). A task whose rule lacks a referenced kwarg silently doesn't
 match — filtering `year == 2000` never touches a fan-in rule with no
-`year`. Habits: preview with `remake info -Q ...` or `run -n -Q ...`
+`year`; conversely, rules *sharing* a matrix all match, so single-task
+selectors (`task-info`/`task-log`/`why`) take `-R <rule>` alongside
+`-Q`. Habits: preview with `remake info -Q ...` or `run -n -Q ...`
 before running; `--force -Q` is the surgical rerun tool — keep the query
 tight.
 
