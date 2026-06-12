@@ -137,6 +137,22 @@ def test_log_file_written(pipeline_dir):
     assert 'argv' in log and 'pipeline.py' in log
 
 
+def test_run_task_writes_per_task_log(pipeline_dir, capsys):
+    cli('run', 'pipeline.py')
+    capsys.readouterr()
+    cli('info', 'pipeline.py', '--tasks')
+    out = capsys.readouterr().out
+    key_prefix = next(
+        line.split()[1] for line in out.splitlines() if 'generate[n=1]' in line
+    )
+    cli('run-task', 'pipeline.py', key_prefix)
+    logs = list((pipeline_dir / '.remake/tasks/log/generate').rglob('*.log'))
+    assert len(logs) == 1
+    assert 'generate[n=1]' in logs[0].read_text()
+    # Sharded layout: <rule>/<key[:2]>/<key[2:]>.log
+    assert logs[0].parent.name == key_prefix[:2]
+
+
 def test_run_query_force(pipeline_dir, capsys):
     cli('run', 'pipeline.py')
     (pipeline_dir / 'data/out_1.txt').unlink()

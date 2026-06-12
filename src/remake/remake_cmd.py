@@ -22,6 +22,15 @@ STATUS_NAMES = {
     TASK_STATUS_FAILED: 'failed',
 }
 
+def _add_task_log_sink(task):
+    """Per-task log file, named by stable task key (sharded: 256 buckets per
+    rule, see design_docs/per_task_logging.md). One process, one file —
+    safe under concurrent SLURM array elements, unlike the shared log."""
+    logfile = Path('.remake/tasks/log') / task.rule.name / task.key[:2] / f'{task.key[2:]}.log'
+    logfile.parent.mkdir(parents=True, exist_ok=True)
+    logger.add(logfile, level='DEBUG', mode='w')
+
+
 def _make_executor(name, rmk):
     """Resolve an executor: a builtin name, or a user class given as a
     dotted path ('mymodule:MyExecutor' or 'mymodule.MyExecutor')."""
@@ -176,6 +185,7 @@ class RemakeParser:
     def remake_run_task(self, args):
         rmk = self._load(args)
         task = rmk.task_from_key(args.task_key)
+        _add_task_log_sink(task)
         logger.info(f'Running {task}')
         rmk.run_task(task)
 
@@ -186,6 +196,7 @@ class RemakeParser:
         specs = json.loads(Path(f'.remake/jobs/{args.rule}.json').read_text())
         spec = specs[args.index]
         task = rmk.task_from_spec(spec['rule'], spec['kwargs'])
+        _add_task_log_sink(task)
         logger.info(f'Running {task}')
         rmk.run_task(task)
 
@@ -288,9 +299,12 @@ def remake_cmd(argv=None):
             sys.stdout, colorize=True, format='<bold><lvl>{message}</lvl></bold>', level='INFO'
         )
 
-    if hasattr(args, 'remakefile'):
-        # Always-on DEBUG file log next to the metadata DB — per-job logs are
-        # how cluster failures get debugged.
+    # Per-task-process subcommands (SLURM array elements) get a per-task log
+    # sink instead — concurrent appends to the shared log corrupt it on
+    # NFS-class filesystems (see design_docs/per_task_logging.md).
+    per_task = args.subcmd_name in ('run-task', 'run-array-task')
+    if hasattr(args, 'remakefile') and not per_task:
+        # Always-on DEBUG file log next to the metadata DB.
         logfile = Path('.remake/remake.log')
         logfile.parent.mkdir(parents=True, exist_ok=True)
         logger.add(logfile, level='DEBUG', rotation='5 MB', retention=3)
