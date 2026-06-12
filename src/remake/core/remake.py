@@ -1,5 +1,6 @@
 """The Remake class — wires rules, planner, metadata and executors together."""
 import inspect
+import traceback
 from pathlib import Path
 
 from loguru import logger
@@ -166,8 +167,10 @@ class Remake:
             args.append(task.outputs)
         try:
             fn(*args, **task.kwargs)
-        except Exception as e:
+        except Exception:
             logger.error(f'failed: {task}')
-            self.metadata.update_task(task, TASK_STATUS_FAILED, exception=repr(e))
+            self.metadata.update_task(
+                task, TASK_STATUS_FAILED, exception=traceback.format_exc()
+            )
             raise
         self.metadata.update_task(task, TASK_STATUS_SUCCESS)

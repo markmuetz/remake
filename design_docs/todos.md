@@ -27,10 +27,10 @@ assessment (2026-06-11). Ordered roughly by severity.
 
 ## Failure UX
 
-- [ ] `run_task` stores `repr(e)` — the traceback is lost (remake2 stored
-  `traceback.format_exc()`). Store the full traceback.
-- [ ] No way to see failures from the CLI: add `info --show-failures` (or
-  similar). During example debugging the DB had to be queried by hand.
+- [x] `run_task` stores `repr(e)` — the traceback is lost (remake2 stored
+  `traceback.format_exc()`). Now stores `traceback.format_exc()`.
+- [x] No way to see failures from the CLI: now `info --show-failures` prints
+  each failed task with its stored traceback and failure timestamp.
 - [ ] Downstream tasks of a failed task run anyway and fail "naturally" on
   missing inputs — correct in the DB but noisy and wasteful. Skip (and
   report) descendants of same-run failures.
@@ -58,8 +58,8 @@ assessment (2026-06-11). Ordered roughly by severity.
   consider a restricted-ops parser for better errors; revisit at CLI work.
 - [ ] `uses` injection silently shadows module globals on name collision —
   warn at decoration time.
-- [ ] File logging was dropped in the CLI rewrite; restore it (matters on
-  clusters) when SLURM lands.
+- [x] File logging was dropped in the CLI rewrite; restored: always-on DEBUG
+  log at `.remake/remake.log` (rotated) for any remakefile subcommand.
 - [ ] No Hypothesis property tests despite the design doc promising them
   (task key uniqueness/stability, matrix normalisation).
 - [ ] `retry_lock_commit` concurrency machinery is carried over but

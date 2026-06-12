@@ -128,7 +128,11 @@ def test_failure_recorded_and_run_continues(tmp_path, meta):
     records = rmk.metadata.get_tasks_status(tasks.values())
     assert records[tasks[1].key].status == TASK_STATUS_SUCCESS
     assert records[tasks[2].key].status == TASK_STATUS_FAILED
-    assert 'boom' in records[tasks[2].key].exception
+    # The full traceback is stored, not just the exception repr.
+    stored = records[tasks[2].key].exception
+    assert 'Traceback (most recent call last)' in stored
+    assert "ValueError: boom" in stored
+    assert 'sometimes_fails' in stored
 
     runnable, _ = rmk.plan()
     assert [t.kwargs for t in runnable] == [{'n': 2}]

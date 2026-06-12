@@ -108,6 +108,35 @@ def test_unknown_executor_errors(pipeline_dir):
         cli('run', 'pipeline.py', '-E', 'bogus')
 
 
+def test_info_show_failures_prints_traceback(pipeline_dir, capsys):
+    Path('failing.py').write_text('''
+from pathlib import Path
+from remake import Remake, rule
+
+@rule(outputs={'o': 'data/f_{n}.txt'}, matrix={'n': [1, 2]})
+def sometimes_fails(outputs, n):
+    if n == 2:
+        raise ValueError('boom from n=2')
+    Path(outputs['o']).write_text('ok')
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    cli('run', 'failing.py')
+    capsys.readouterr()
+    cli('info', 'failing.py', '--show-failures')
+    out = capsys.readouterr().out
+    assert 'sometimes_fails[n=2]' in out and '(failed at' in out
+    assert 'Traceback (most recent call last)' in out
+    assert 'ValueError: boom from n=2' in out
+
+
+def test_log_file_written(pipeline_dir):
+    cli('run', 'pipeline.py')
+    log = (pipeline_dir / '.remake/remake.log').read_text()
+    assert 'argv' in log and 'pipeline.py' in log
+
+
 def test_run_query_force(pipeline_dir, capsys):
     cli('run', 'pipeline.py')
     (pipeline_dir / 'data/out_1.txt').unlink()

@@ -6,6 +6,7 @@ and method-name dispatch carried over from remake2.
 import argparse
 import sys
 from collections import Counter
+from pathlib import Path
 
 from loguru import logger
 
@@ -100,6 +101,8 @@ class RemakeParser:
                 Arg('--query', '-Q', help='Filter tasks based on a kwargs query'),
                 Arg('--tasks', '-t', help='List individual tasks with status',
                     action='store_true'),
+                Arg('--show-failures', '-F', help='Show stored tracebacks of failed tasks',
+                    action='store_true'),
             ],
         },
         'version': {
@@ -175,6 +178,7 @@ class RemakeParser:
         header = ('rule', 'tasks', 'success', 'failed', 'pending', 'to run')
         rows = []
         task_lines = []
+        failures = []
         for rule in rmk.rules:
             if rule.name in deferred_names:
                 rows.append((rule.name, '?', '?', '?', '?', 'deferred'))
@@ -202,12 +206,22 @@ class RemakeParser:
                     record = records.get(task.key)
                     status = STATUS_NAMES.get(record.status, 'pending') if record else 'pending'
                     task_lines.append(f'{status:<8} {task}')
+            if args.show_failures:
+                failures.extend(
+                    (task, records[task.key])
+                    for task in tasks
+                    if task.key in records
+                    and records[task.key].status == TASK_STATUS_FAILED
+                )
 
         widths = [max(len(str(r[i])) for r in rows + [header]) for i in range(len(header))]
         for row in [header] + rows:
             print('  '.join(f'{str(v):<{w}}' for v, w in zip(row, widths)))
         for line in task_lines:
             print(line)
+        for task, record in failures:
+            print(f'\n=== {task} (failed at {record.timestamp}) ===')
+            print(record.exception.rstrip() or '(no stored exception)')
 
     def remake_version(self, args):
         print(__version__)
@@ -234,6 +248,14 @@ def remake_cmd(argv=None):
         logger.add(
             sys.stdout, colorize=True, format='<bold><lvl>{message}</lvl></bold>', level='INFO'
         )
+
+    if hasattr(args, 'remakefile'):
+        # Always-on DEBUG file log next to the metadata DB — per-job logs are
+        # how cluster failures get debugged.
+        logfile = Path('.remake/remake.log')
+        logfile.parent.mkdir(parents=True, exist_ok=True)
+        logger.add(logfile, level='DEBUG', rotation='5 MB', retention=3)
+        logger.debug(f'argv: {argv}')
 
     if args.debug_exception:
         # Handle top level exceptions with a debugger.
