@@ -44,3 +44,6 @@ design discussion before any work starts.
   debts, found on JASMIN 2026-06-12). Likely fix is per-task log files,
   alongside the existing `.remake/slurm/output/<rule>/%a.out`/`.err` —
   ties into the `.remake` layout question above.
+- **configuration** - there should be three levels of config: 
+  `~/.remake/config.yaml`, `<project>/.remake/config.yaml`, and potentially
+  within a remakefile, with cascade from general to specific.

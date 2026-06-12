@@ -70,13 +70,25 @@ assessment (2026-06-11). Ordered roughly by severity.
   or drop/guard the shared DEBUG file sink for `run-array-task`.
 - [ ] No Hypothesis property tests despite the design doc promising them
   (task key uniqueness/stability, matrix normalisation).
-- [ ] `retry_lock_commit` concurrency machinery is carried over but
-  untested in anger. A 176-element array job on JASMIN (2026-06-12, ex4)
-  hit `.remake/remake.db` on shared NFS with zero lock/busy errors, but
-  that's one data point at moderate width. Write a dedicated stress script
-  (large array, short tasks, all hammering `update_task` concurrently) to
-  push well past 176 and find the actual contention ceiling before relying
-  on this for 1e5+/1e6-task runs.
+- [ ] `retry_lock_commit` concurrency machinery has a sharp livelock cliff
+  well below 400-way concurrency. Stress-tested on JASMIN 2026-06-12 with
+  `tests/benchmarks/bench_sqlite_contention.py` — raw SLURM array jobs
+  hammering `Sqlite3Backend.update_task` directly (no Remake pipeline),
+  against `.remake/remake.db` on NFSv3:
+    - 176-way (ex4, real compute between writes, naturally staggered):
+      zero lock errors.
+    - 400-way (tight loop, 50-150 `update_task` calls/task, no stagger):
+      598 "database is locked" errors in 5 min; only 3/400 tasks completed
+      at all (635 rows written total).
+    - 800-way: only 2/800 tasks completed (294 rows total) — *less*
+      aggregate throughput than 400-way. Past the cliff, more contenders
+      means less total progress, not more.
+  Not a graceful slowdown: past the cliff most processes never acquire the
+  lock within a job's wall-time. Needs a real fix (candidates below)
+  before relying on concurrent SLURM-array writers for 1e5+/1e6-task runs.
+  `array_throttle` is a stopgap — keep concurrent array width well under
+  ~200; real rules with actual compute naturally stagger writes anyway, so
+  this mainly protects against rules whose tasks are themselves near-instant.
 - [ ] `ZarrStore.is_complete()` checks `.zmetadata` (zarr v2); zarr v3
   consolidated metadata lives in `zarr.json`. Handle both when xarray/zarr
   versions move.
