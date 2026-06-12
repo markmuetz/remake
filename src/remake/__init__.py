@@ -11,7 +11,7 @@ from .core import (
     Task,
     rule,
 )
-from .executors import Executor, SingleprocExecutor, SlurmExecutor
+from .executors import Executor, MultiprocExecutor, SingleprocExecutor, SlurmExecutor
 from .loader import load_remake
 from .metadata import MetadataManager, Sqlite3Backend, TaskRecord
 from .tokens import FileToken, OutputToken, PathToken, S3Object, ZarrStore

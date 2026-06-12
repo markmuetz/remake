@@ -51,3 +51,6 @@ design discussion before any work starts.
   see how they interact with each other. E.g. does one task depend on another,
   yet take as inputs files that are not produced by the first task (but are 
   very similar)?
+- **logging** - Perhaps the rule decorator could have a logger=True line, that
+  passes in a loguru logger to the function? Or just say that the user can 
+  set up a loguru logger then use that as using `uses`.

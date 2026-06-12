@@ -13,7 +13,7 @@ from loguru import logger
 from .core import RemakeError
 from .loader import load_remake
 from .metadata import TASK_STATUS_FAILED, TASK_STATUS_SUCCESS
-from .util import Arg, MutuallyExclusiveGroup, add_argset
+from .util import Arg, MutuallyExclusiveGroup, add_argset, task_log_path as _task_log_path
 from .version import __version__
 
 STATUS_NAMES = {
@@ -21,12 +21,6 @@ STATUS_NAMES = {
     TASK_STATUS_SUCCESS: 'success',
     TASK_STATUS_FAILED: 'failed',
 }
-
-def _task_log_path(task):
-    """Per-task log file, named by stable task key (sharded: 256 buckets per
-    rule, see design_docs/per_task_logging.md)."""
-    return Path('.remake/tasks/log') / task.rule.name / task.key[:2] / f'{task.key[2:]}.log'
-
 
 def _add_task_log_sink(task):
     """One process, one file — safe under concurrent SLURM array elements,
@@ -81,13 +75,15 @@ def _slurm_submission(rule_name, task_key=None):
     return jobids, index
 
 
-def _make_executor(name, rmk):
+def _make_executor(name, rmk, nproc=None):
     """Resolve an executor: a builtin name, or a user class given as a
     dotted path ('mymodule:MyExecutor' or 'mymodule.MyExecutor')."""
     import importlib
 
-    from .executors import Executor, SingleprocExecutor, SlurmExecutor
+    from .executors import Executor, MultiprocExecutor, SingleprocExecutor, SlurmExecutor
 
+    if name == 'multiproc':
+        return MultiprocExecutor(rmk, nproc=nproc)
     builtin = {'singleproc': SingleprocExecutor, 'slurm': SlurmExecutor}
     if name in builtin:
         return builtin[name](rmk)
@@ -136,8 +132,11 @@ class RemakeParser:
             'args': [
                 Arg('remakefile'),
                 Arg('--executor', '-E', default='singleproc',
-                    help='Builtin executor name or dotted path to an '
+                    help='singleproc, multiproc, slurm, or dotted path to an '
                          'Executor subclass (mymodule:MyExecutor)'),
+                Arg('--nproc', '-j', type=int,
+                    help='Worker processes for the multiproc executor '
+                         '(default: all cores)'),
                 Arg('--query', '-Q', help='Filter tasks based on a kwargs query'),
                 Arg('--force', '-f', help='Force rerun of matched tasks', action='store_true'),
                 Arg('--dry-run', '-n', help='Show what would run, run nothing',
@@ -272,7 +271,7 @@ class RemakeParser:
 
     def remake_run(self, args):
         rmk = self._load(args)
-        executor = _make_executor(args.executor, rmk)
+        executor = _make_executor(args.executor, rmk, nproc=args.nproc)
         if args.dry_run:
             if executor.supports_dry_run:
                 executor.dry_run = True

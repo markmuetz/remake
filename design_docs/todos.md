@@ -48,9 +48,11 @@ assessment (2026-06-11). Ordered roughly by severity.
 
 ## Dead code
 
-- [ ] `executors/multiproc_executor.py` is stale remake2 code, unimportable
+- [x] `executors/multiproc_executor.py` is stale remake2 code, unimportable
   by design. Port or delete; do not leave it to mislead readers.
-  (`slurm_executor.py` rewritten 2026-06-12.)
+  (`slurm_executor.py` rewritten 2026-06-12; `multiproc_executor.py`
+  rewritten 2026-06-12: spawned workers reload the remakefile, record via
+  sidecars, per-rule barriers.)
 
 ## Smaller debts
 
@@ -93,3 +95,4 @@ assessment (2026-06-11). Ordered roughly by severity.
 - [ ] `ZarrStore.is_complete()` checks `.zmetadata` (zarr v2); zarr v3
   consolidated metadata lives in `zarr.json`. Handle both when xarray/zarr
   versions move.
+- [ ] Can `uses` take a class? (instead of a function)

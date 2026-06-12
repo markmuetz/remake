@@ -13,14 +13,16 @@ doc in `design_docs/` when work on it starts.
   `Remake` class
 - [x] Output tokens
 - [x] Metadata backend (SQLite)
-- [ ] Executors: singleproc, multiproc, SLURM, dask
+- [x] Executors: singleproc, multiproc, SLURM (dask: deliberately dropped)
   - singleproc done; SLURM done and validated on JASMIN (ex2/ex4/ex8 on
     real SLURM, 2026-06-12; see
     [slurm_implementation.md](slurm_implementation.md)), with sidecar/
     ingest result recording after the SQLite livelock finding — remaining
     SLURM item is revalidating contention at 400/800-way through the real
-    pipeline path; multiproc pending adaptation (not importable); dask
-    deleted, re-add later
+    pipeline path; multiproc rewritten 2026-06-12 (spawned workers reload
+    the remakefile, sidecar results, per-rule barriers; `-E multiproc -j N`);
+    dask is not part of this item — it needs its own design (see
+    discussion.md) and re-adds against the Executor ABC when its turn comes
 - [x] Dynamic matrices (replanning loop, SLURM continuation jobs)
   - local replanning loop and SLURM continuation jobs done; ex8-style
     continuation chains validated on real SLURM (JASMIN, 2026-06-12)
