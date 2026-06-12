@@ -75,10 +75,18 @@ def _make_executor(name, rmk, nproc=None):
     dotted path ('mymodule:MyExecutor' or 'mymodule.MyExecutor')."""
     import importlib
 
-    from .executors import Executor, MultiprocExecutor, SingleprocExecutor, SlurmExecutor
+    from .executors import (
+        DaskExecutor,
+        Executor,
+        MultiprocExecutor,
+        SingleprocExecutor,
+        SlurmExecutor,
+    )
 
     if name == 'multiproc':
         return MultiprocExecutor(rmk, nproc=nproc)
+    if name == 'dask':
+        return DaskExecutor(rmk, nproc=nproc)
     builtin = {'singleproc': SingleprocExecutor, 'slurm': SlurmExecutor}
     if name in builtin:
         return builtin[name](rmk)
@@ -89,7 +97,8 @@ def _make_executor(name, rmk, nproc=None):
         module_name, _, cls_name = name.rpartition('.')
     else:
         raise RemakeError(
-            f'Unknown executor {name!r}: use one of {sorted(builtin)} or a '
+            f'Unknown executor {name!r}: use one of '
+            f"{sorted([*builtin, 'multiproc', 'dask'])} or a "
             f'dotted path like mymodule:MyExecutor'
         )
     cls = getattr(importlib.import_module(module_name), cls_name)

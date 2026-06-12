@@ -23,7 +23,7 @@ tell the user: that's a CLI gap worth reporting upstream.
 ## CLI surface
 
 ```
-remake run <remakefile> [-E singleproc|multiproc|slurm|mod:Class] [-j nproc] [-Q query] [-f|--force] [-I|--ignore-code-changes] [-n|--dry-run] [--check-outputs]
+remake run <remakefile> [-E singleproc|multiproc|slurm|dask|mod:Class] [-j nproc] [-Q query] [-f|--force] [-I|--ignore-code-changes] [-n|--dry-run] [--check-outputs]
 remake set-state <remakefile> -Q query (--success [--check-outputs] | --pending) [-n]
 remake info <remakefile> [-Q query] [-t|--tasks] [-F|--show-failures] [--json]
 remake ls-tasks <remakefile> [-Q query] [--json]   # enumerate tasks/keys (no DB reads)

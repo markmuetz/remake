@@ -12,8 +12,12 @@ design discussion before any work starts.
 - **Web interface** — out of scope per the design doc, but the SQLite DB
   is queryable by external tools; revisit whether a thin read-only
   viewer is worth it.
-- **Dask integration** — re-add a dask executor against the new Executor
-  ABC (old one deleted as incomplete).
+- **Dask integration** — a basic dask executor exists (2026-06-12:
+  spec-based like multiproc/SLURM, LocalCluster or a configured
+  scheduler address). Still open: dask-*native* integration — inter-rule
+  futures instead of per-rule barriers, dask-jobqueue spinning up SLURM
+  workers (and how that relates to our own SLURM executor), worker
+  remakefile staleness on long-lived clusters.
 - **CLI interface** — assorted behaviours to decide:
   - `remake` on missing file: sensible default when no remakefile is
     given (search cwd? `.remake/config` default, as remake2 had?).

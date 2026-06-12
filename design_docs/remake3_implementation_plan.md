@@ -13,7 +13,7 @@ doc in `design_docs/` when work on it starts.
   `Remake` class
 - [x] Output tokens
 - [x] Metadata backend (SQLite)
-- [x] Executors: singleproc, multiproc, SLURM (dask: deliberately dropped)
+- [x] Executors: singleproc, multiproc, SLURM, dask
   - singleproc done; SLURM done and validated on JASMIN (ex2/ex4/ex8 on
     real SLURM, 2026-06-12; see
     [slurm_implementation.md](slurm_implementation.md)), with sidecar/
@@ -21,8 +21,10 @@ doc in `design_docs/` when work on it starts.
     SLURM item is revalidating contention at 400/800-way through the real
     pipeline path; multiproc rewritten 2026-06-12 (spawned workers reload
     the remakefile, sidecar results, per-rule barriers; `-E multiproc -j N`);
-    dask is not part of this item — it needs its own design (see
-    discussion.md) and re-adds against the Executor ABC when its turn comes
+    dask added 2026-06-12 on the same model (LocalCluster by default,
+    `config={'dask': {'scheduler': ...}}` for real clusters; `distributed`
+    is the `remake[dask]` extra) — deeper dask-native integration
+    (inter-rule futures, dask-jobqueue) stays a discussion.md item
 - [x] Dynamic matrices (replanning loop, SLURM continuation jobs)
   - local replanning loop and SLURM continuation jobs done; ex8-style
     continuation chains validated on real SLURM (JASMIN, 2026-06-12)
