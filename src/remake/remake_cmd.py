@@ -27,9 +27,9 @@ def _make_executor(name, rmk):
     dotted path ('mymodule:MyExecutor' or 'mymodule.MyExecutor')."""
     import importlib
 
-    from .executors import Executor, SingleprocExecutor
+    from .executors import Executor, SingleprocExecutor, SlurmExecutor
 
-    builtin = {'singleproc': SingleprocExecutor}
+    builtin = {'singleproc': SingleprocExecutor, 'slurm': SlurmExecutor}
     if name in builtin:
         return builtin[name](rmk)
 
@@ -94,6 +94,20 @@ class RemakeParser:
                 Arg('task_key'),
             ],
         },
+        'run-array-task': {
+            'help': 'Run one task from a generated job spec (used by SLURM jobs)',
+            'args': [
+                Arg('remakefile'),
+                Arg('rule'),
+                Arg('index', type=int),
+            ],
+        },
+        'resubmit': {
+            'help': 'Re-execute .remake/submit.sh without replanning',
+            'args': [
+                Arg('remakefile'),
+            ],
+        },
         'info': {
             'help': 'Per-rule summary of task statuses',
             'args': [
@@ -145,25 +159,50 @@ class RemakeParser:
 
     def remake_run(self, args):
         rmk = self._load(args)
+        executor = _make_executor(args.executor, rmk)
         if args.dry_run:
-            runnable, deferred = rmk.plan(query=args.query, force=args.force)
-            for task in runnable:
-                print(task)
-            print(f'{len(runnable)} task(s) would run')
-            for rule in deferred:
-                print(f'{rule.name}: deferred (matrix not ready)')
-            return
-        rmk.run(
-            executor=_make_executor(args.executor, rmk),
-            query=args.query,
-            force=args.force,
-        )
+            if executor.supports_dry_run:
+                executor.dry_run = True
+            else:
+                runnable, deferred = rmk.plan(query=args.query, force=args.force)
+                for task in runnable:
+                    print(task)
+                print(f'{len(runnable)} task(s) would run')
+                for rule in deferred:
+                    print(f'{rule.name}: deferred (matrix not ready)')
+                return
+        rmk.run(executor=executor, query=args.query, force=args.force)
 
     def remake_run_task(self, args):
         rmk = self._load(args)
         task = rmk.task_from_key(args.task_key)
         logger.info(f'Running {task}')
         rmk.run_task(task)
+
+    def remake_run_array_task(self, args):
+        import json
+
+        rmk = self._load(args)
+        specs = json.loads(Path(f'.remake/jobs/{args.rule}.json').read_text())
+        spec = specs[args.index]
+        task = rmk.task_from_spec(spec['rule'], spec['kwargs'])
+        logger.info(f'Running {task}')
+        rmk.run_task(task)
+
+    def remake_resubmit(self, args):
+        import subprocess as sp
+
+        submit = Path('.remake/submit.sh')
+        if not submit.exists():
+            raise RemakeError(
+                f'No {submit} — generate it with: remake run {args.remakefile} --executor slurm'
+            )
+        result = sp.run(['bash', str(submit)], capture_output=True, text=True)
+        if result.stdout.strip():
+            print(result.stdout.strip())
+        if result.returncode != 0:
+            print(result.stderr.strip(), file=sys.stderr)
+            raise RemakeError(f'{submit} failed (exit {result.returncode})')
 
     def remake_info(self, args):
         from .core import expand_rule

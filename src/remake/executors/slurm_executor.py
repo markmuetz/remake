@@ -1,222 +1,276 @@
-import os
-import re
+"""SLURM executor.
+
+Writes per-rule JSON job specs, per-rule sbatch scripts and a master
+.remake/submit.sh, then executes it (unless dry_run). See
+design_docs/remake3_design.md (SLURM executor) for the full behaviour.
+
+File layout (all relative to the working directory, like the metadata DB):
+    .remake/jobs/<rule>.json         array of {task_key, rule, kwargs};
+                                     SLURM array index = position
+    .remake/jobs/<rule>.jobids.json  sidecar written at submission
+    .remake/slurm/<rule>.sbatch      per-rule script
+    .remake/slurm/output/<rule>/     job stdout/stderr
+    .remake/submit.sh                master script; `remake resubmit`
+                                     re-executes it without replanning
+
+Task kwargs must be JSON-serialisable (they round-trip through the job
+specs). Already-queued detection is per rule: if any element of a rule's
+previous submission is still pending/running, the whole rule is skipped
+this run — rewriting its JSON spec would corrupt the array indices the
+queued jobs read. Skipped tasks are picked up by a later run.
+"""
+import getpass
+import json
 import subprocess as sp
-from hashlib import sha1
 from pathlib import Path
 
 from loguru import logger
 
-from ..util import sysrun
-
+from ..core.exceptions import RemakeError
 from .executor import Executor
 
+DEFAULT_SLURM_CONFIG = {
+    'partition': 'short-serial',
+    'time': '4:00:00',
+    'mem': '4G',
+}
+ARRAY_THRESHOLD = 10
 
-SLURM_SCRIPT_TPL = """#!/bin/bash
-#SBATCH --job-name={job_name}
-#SBATCH -o {task_slurm_output}/task_%j.out
-#SBATCH -e {task_slurm_output}/task_%j.err
-#SBATCH --comment "{comment}"
-{extra_opts}
-{dependencies}
-
-echo "SLURM RUNNING {task_key}"
-{remake_cmd}
-echo "SLURM COMPLETED {task_key}"
+ARRAY_SBATCH_TPL = """#!/bin/bash
+#SBATCH --job-name={rule_name}
+#SBATCH --array=0-{max_index}
+#SBATCH -o {output_dir}/%a.out
+#SBATCH -e {output_dir}/%a.err
+{opts}
+echo "SLURM RUNNING {rule_name} $SLURM_ARRAY_TASK_ID"
+remake run-array-task {remakefile} {rule_name} $SLURM_ARRAY_TASK_ID
+echo "SLURM COMPLETED {rule_name} $SLURM_ARRAY_TASK_ID"
 """
 
-REMAKE_RUN_CMD_TPL = """
-cd {script_dir}
-remake -D run-tasks {remakefile_path} --remakefile-sha1 {remakefile_path_hash} --tasks {task_key}
+# Individual jobs share one script per rule; the task index is passed as a
+# script argument by submit.sh, and -o/-e are set per job on the sbatch line.
+INDIVIDUAL_SBATCH_TPL = """#!/bin/bash
+#SBATCH --job-name={rule_name}
+{opts}
+echo "SLURM RUNNING {rule_name} $1"
+remake run-array-task {remakefile} {rule_name} $1
+echo "SLURM COMPLETED {rule_name} $1"
 """
 
-REMAKE_ARCHIVE_CMD_TPL = """
-cd {script_dir}
-remake -D archive {archive_file}
+CONTINUATION_SBATCH_TPL = """#!/bin/bash
+#SBATCH --job-name=remake_continue
+#SBATCH -o {output_dir}/continuation.out
+#SBATCH -e {output_dir}/continuation.err
+#SBATCH --partition={partition}
+#SBATCH --time=00:10:00
+#SBATCH --mem=1G
+remake run {remakefile} --executor slurm
 """
 
 
-def _parse_slurm_jobid(output):
-    match = re.match(r'Submitted batch job (?P<jobid>\d+)', output)
-    if match:
-        jobid = match['jobid']
-        return jobid
-    else:
-        raise Exception(f'Could not parse {output}')
+def _sbatch_opts(config):
+    return '\n'.join(f'#SBATCH --{k}={v}' for k, v in config.items() if v)
 
 
-def _submit_slurm_script(slurm_script_path):
-    try:
-        comp_proc = sysrun(f'sbatch {slurm_script_path}')
-        output = comp_proc.stdout
-        logger.trace(output.strip())
-    except sp.CalledProcessError as cpe:
-        logger.error(f'Error submitting {slurm_script_path}')
-        logger.error(cpe)
-        logger.error('===ERROR===')
-        logger.error(cpe.stderr)
-        logger.error('===ERROR===')
-        raise
-    return output
+class _SubmittedRule:
+    """How submit.sh refers to one rule's job(s)."""
+
+    def __init__(self, rule, tasks, is_array, jobid_refs):
+        self.rule = rule
+        self.tasks = tasks
+        self.is_array = is_array
+        # Shell vars ('$JOB_extract') for rules submitted this run, or
+        # literal job ids for already-queued rules.
+        self.jobid_refs = jobid_refs
 
 
 class SlurmExecutor(Executor):
-    def __init__(self, rmk, slurm_config=None):
-        if not slurm_config:
-            slurm_config = {}
+    handles_deferred = True
+    supports_dry_run = True
+
+    def __init__(self, rmk, dry_run=False):
         super().__init__(rmk)
-        self.rmk = rmk
-        default_slurm_kwargs = {'partition': 'short-serial', 'time': '4:00:00', 'mem': 50000}
-        slurm_kwargs = {**default_slurm_kwargs}
-        slurm_kwargs.update(slurm_config)
-        logger.trace(slurm_kwargs)
+        self.dry_run = dry_run
+        self.remakefile = rmk.remakefile
+        if self.remakefile is None:
+            raise RemakeError(
+                'SlurmExecutor needs the remakefile path to generate scripts: '
+                'run via the remake CLI, or set rmk.remakefile'
+            )
+        config = {**DEFAULT_SLURM_CONFIG, **rmk.config.get('slurm', {})}
+        self.array_threshold = int(config.pop('array_threshold', ARRAY_THRESHOLD))
+        self.slurm_config = config
+        self.jobs_dir = Path('.remake/jobs')
+        self.slurm_dir = Path('.remake/slurm')
+        self.output_dir = self.slurm_dir / 'output'
+        self.submit_path = Path('.remake/submit.sh')
 
-        self.slurm_dir = Path('.remake/slurm/scripts')
-        self.slurm_dir.mkdir(exist_ok=True, parents=True)
-        self.slurm_output = Path('.remake/slurm/output')
-        self.slurm_output.mkdir(exist_ok=True, parents=True)
+    # --- generation ---
 
-        self.remakefile_path = Path(rmk.name)
-        self.slurm_kwargs = slurm_kwargs
-        self.task_jobid_map = {}
-        self.remakefile_path_hash = sha1(self.remakefile_path.read_bytes()).hexdigest()
-        self.check_slurm_tasks()
+    def run_tasks(self, tasks, deferred_rules=()):
+        rule_tasks = {}  # rule -> [task], in plan (topological) order
+        for task in tasks:
+            rule_tasks.setdefault(task.rule, []).append(task)
 
-    def check_slurm_tasks(self):
-        # Check to see whether this task is already running.
-        username = os.getlogin()
-
-        try:
-            # get jobid, partition and job name.
-            # job name is 10 character task key.
-            output = sysrun(f'squeue -u {username} -o "%.18i %.20P %.10j %.3t"').stdout
-            logger.trace(output.strip())
-        except sp.CalledProcessError as cpe:
-            logger.error('Error on squeue command')
-            logger.error(cpe)
-            logger.error('===ERROR===')
-            logger.error(cpe.stderr)
-            logger.error('===ERROR===')
-            raise
-        # Parse output. Skip first and blank lines.
-        self.currently_running_task_keys = {}
-        for line in output.split('\n')[1:]:
-            if not line:
+        active_jobids = self._active_jobids()
+        submitted = {}  # rule -> _SubmittedRule
+        lines = ['#!/bin/bash', '# Generated by remake — re-run to resubmit without replanning.',
+                 'set -e', '']
+        nsubmit = 0
+        for rule, tasks_for_rule in rule_tasks.items():
+            queued_ids = self._queued_jobids(rule, active_jobids)
+            if queued_ids:
+                logger.info(f'{rule.name}: already queued (job {",".join(queued_ids)}), skipping')
+                # Downstream rules depend on the queued jobs by literal id.
+                submitted[rule] = _SubmittedRule(rule, None, False, queued_ids)
                 continue
-            jobid, partition, task_key, status = line.split()
-            if status in ['PD', 'R']:
-                self.currently_running_task_keys[task_key] = {
-                    'jobid': jobid,
-                    'partition': partition,
-                }
+            self._write_job_specs(rule, tasks_for_rule)
+            is_array = len(tasks_for_rule) >= self.array_threshold
+            self._write_sbatch(rule, tasks_for_rule, is_array)
+            dependency = self._dependency(rule, tasks_for_rule, is_array, submitted)
+            lines.extend(self._submit_lines(rule, tasks_for_rule, is_array, dependency))
+            lines.append('')
+            nsubmit += len(tasks_for_rule)
+            refs = (
+                [f'$JOB_{rule.name}'] if is_array
+                else [f'$JOB_{rule.name}_{i}' for i in range(len(tasks_for_rule))]
+            )
+            submitted[rule] = _SubmittedRule(rule, tasks_for_rule, is_array, refs)
 
-    def run_tasks(
-        self, rerun_tasks, show_reasons=False, show_task_code_diff=False, stdout_to_log=False
-    ):
-        for task in rerun_tasks:
-            self._submit_task(task, show_reasons, show_task_code_diff)
+        if deferred_rules:
+            names = ', '.join(rule.name for rule in deferred_rules)
+            self._write_continuation()
+            all_refs = [ref for sub in submitted.values() for ref in sub.jobid_refs]
+            lines.append(f'# Continuation: replans and submits deferred rules ({names}).')
+            dep = f'--dependency=afterok:{":".join(all_refs)} ' if all_refs else ''
+            lines.append(
+                f'sbatch --parsable {dep}{self.slurm_dir}/continuation.sbatch'
+            )
+            lines.append('')
 
-    def _write_submit_script(self, task):
-        remakefile_name = self.remakefile_path.stem
-        # script_path = Path(__file__)
-        rule_name = task.rule.__name__
-        rule_slurm_output = self.slurm_output / rule_name
-        task_key = task.key()
-        if hasattr(task.rule, 'var_matrix') or hasattr(task.rule, 'rule_matrix'):
-            task_dir = [task_key[:2], task_key[2:]]
-            # Doesn't work if val is e.g. a datetime.
-            # task_dir = [f'{k}-{getattr(task, k)}' for k in task.var_matrix.keys()]
-            task_slurm_output = rule_slurm_output.joinpath(*task_dir)
-        else:
-            task_slurm_output = rule_slurm_output
+        self.submit_path.parent.mkdir(parents=True, exist_ok=True)
+        self.submit_path.write_text('\n'.join(lines))
+        self.submit_path.chmod(0o755)
+        logger.info(f'Wrote {self.submit_path} ({nsubmit} task(s) in {len(submitted)} rule(s))')
 
-        slurm_kwargs = {**self.slurm_kwargs}
-        rule_config = getattr(task.rule, 'config', {})
-        if 'slurm' in rule_config:
-            logger.debug(f'  updating {task} config: {rule_config["slurm"]}')
-            slurm_kwargs.update(rule_config['slurm'])
+        if self.dry_run:
+            logger.info('Dry run: not submitting')
+            return
+        self.submit()
 
-        logger.trace(f'  creating {task_slurm_output}')
-        task_slurm_output.mkdir(exist_ok=True, parents=True)
-        slurm_script_filepath = self.slurm_dir.joinpath(
-            *[task_key[:2], task_key[2:], f'{remakefile_name}_{task.key()}.sbatch']
+    def _write_job_specs(self, rule, tasks):
+        self.jobs_dir.mkdir(parents=True, exist_ok=True)
+        specs = [
+            {'task_key': task.key, 'rule': rule.name, 'kwargs': task.kwargs}
+            for task in tasks
+        ]
+        (self.jobs_dir / f'{rule.name}.json').write_text(json.dumps(specs, indent=1))
+
+    def _write_sbatch(self, rule, tasks, is_array):
+        config = {**self.slurm_config, **rule.config.get('slurm', {})}
+        config.pop('array_threshold', None)
+        output_dir = self.output_dir / rule.name
+        output_dir.mkdir(parents=True, exist_ok=True)
+        tpl = ARRAY_SBATCH_TPL if is_array else INDIVIDUAL_SBATCH_TPL
+        script = tpl.format(
+            rule_name=rule.name,
+            max_index=len(tasks) - 1,
+            output_dir=output_dir,
+            opts=_sbatch_opts(config),
+            remakefile=self.remakefile,
         )
-        slurm_script_filepath.parent.mkdir(exist_ok=True, parents=True)
+        self.slurm_dir.mkdir(parents=True, exist_ok=True)
+        (self.slurm_dir / f'{rule.name}.sbatch').write_text(script)
 
-        prev_jobids = []
-        for prev_task in task.prev_tasks:
-            # N.B. not all dependencies have to have been run; they could not require rerunning.
-            if prev_task in self.task_jobid_map:
-                prev_jobids.append(self.task_jobid_map[prev_task])
-        if prev_jobids:
-            dependencies = '#SBATCH --dependency=afterok:' + ':'.join(prev_jobids)
-        else:
-            dependencies = ''
-
-        extra_opts = []
-        for k, v in slurm_kwargs.items():
-            if not v:
-                continue
-            if k == 'max_runtime':
-                extra_opts.append(f'#SBATCH --time={v}')
-            elif k == 'queue':
-                extra_opts.append(f'#SBATCH --partition={v}')
+    def _dependency(self, rule, tasks, is_array, submitted):
+        """--dependency=... for this rule, or '' if no upstream jobs."""
+        parts = []
+        for dep in rule.depends_on:
+            sub = submitted.get(dep)
+            if sub is None:
+                continue  # upstream rule has no jobs this run (complete)
+            # aftercorr (element N waits on element N) is only valid when
+            # both are arrays whose task lists correspond element-wise.
+            if (
+                is_array
+                and sub.is_array
+                and sub.tasks is not None
+                and [t.kwargs for t in sub.tasks] == [t.kwargs for t in tasks]
+            ):
+                parts.append(f'aftercorr:{":".join(sub.jobid_refs)}')
             else:
-                extra_opts.append(f'#SBATCH --{k}={v}')
-        comment = str(task)[:100]  # Can't be too long.
-        extra_opts = '\n'.join(extra_opts)
-        # Avoid circular imports.
-        from ..core import ArchiveTask
+                parts.append(f'afterok:{":".join(sub.jobid_refs)}')
+        return f'--dependency={",".join(parts)} ' if parts else ''
 
-        if isinstance(task, ArchiveTask):
-            remake_cmd = REMAKE_ARCHIVE_CMD_TPL.format(
-                script_dir=Path.cwd(), archive_file=task.archive_file
+    def _submit_lines(self, rule, tasks, is_array, dependency):
+        sbatch_path = self.slurm_dir / f'{rule.name}.sbatch'
+        sidecar = self.jobs_dir / f'{rule.name}.jobids.json'
+        if is_array:
+            var = f'JOB_{rule.name}'
+            return [
+                f'{var}=$(sbatch --parsable {dependency}{sbatch_path})',
+                f'echo "{{\\"slurm_array_job_id\\": \\"${var}\\"}}" > {sidecar}',
+            ]
+        lines = []
+        output_dir = self.output_dir / rule.name
+        for i in range(len(tasks)):
+            var = f'JOB_{rule.name}_{i}'
+            lines.append(
+                f'{var}=$(sbatch --parsable {dependency}'
+                f'-o {output_dir}/{i}.out -e {output_dir}/{i}.err '
+                f'{sbatch_path} {i})'
             )
-        else:
-            # cd {script_dir}
-            # remake -D run-tasks {remakefile_path} --remakefile-sha1 {remakefile_path_hash} --tasks {task_key}
-            remake_cmd = REMAKE_RUN_CMD_TPL.format(
-                script_dir=Path.cwd(),
-                remakefile_path=self.remakefile_path,
-                remakefile_path_hash=self.remakefile_path_hash,
-                task_key=task_key,
-            )
-        slurm_script = SLURM_SCRIPT_TPL.format(
-            # script_dir=Path.cwd(),
-            task_slurm_output=task_slurm_output,
-            comment=comment,
-            remakefile_name=remakefile_name,
-            # remakefile_path=self.remakefile_path,
-            # remakefile_path_hash=self.remakefile_path_hash,
-            task_key=task_key,
-            extra_opts=extra_opts,
-            dependencies=dependencies,
-            job_name=task_key[:10],  # Longer and a leading * is added.
-            remake_cmd=remake_cmd,
-            **slurm_kwargs,
+        ids = ', '.join(f'\\"$JOB_{rule.name}_{i}\\"' for i in range(len(tasks)))
+        lines.append(f'echo "{{\\"slurm_job_ids\\": [{ids}]}}" > {sidecar}')
+        return lines
+
+    def _write_continuation(self):
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        script = CONTINUATION_SBATCH_TPL.format(
+            output_dir=self.output_dir,
+            partition=self.slurm_config['partition'],
+            remakefile=self.remakefile,
         )
+        (self.slurm_dir / 'continuation.sbatch').write_text(script)
 
-        logger.trace(f'  writing {slurm_script_filepath}')
-        logger.trace('\n' + slurm_script)
-        with open(slurm_script_filepath, 'w') as fp:
-            fp.write(slurm_script)
-        return slurm_script_filepath, slurm_kwargs['partition']
+    # --- submission / already-queued detection ---
 
-    def _submit_task(self, task, show_reasons, show_task_code_diff):
-        diffs = {}
-        task_key = task.key()
-        # Make sure task isn't already queued or running.
-        if task_key[:10] in self.currently_running_task_keys:
-            partition = self.currently_running_task_keys[task_key[:10]]['partition']
-            logger.info(f'Already queued/running [{partition}]: {task}')
-            jobid = self.currently_running_task_keys[task_key[:10]]['jobid']
-        else:
-            # N.B. you HAVE to write then submit, because you need to job ids for deps.
-            slurm_script_path, partition = self._write_submit_script(task)
-            output = _submit_slurm_script(slurm_script_path)
-            logger.info(f'Submitted [{partition}]: {task}')
-            if show_reasons:
-                self.rmk.show_task_reasons(task)
-            if show_task_code_diff:
-                diffs = self.rmk.show_task_code_diff(task, diffs)
-            jobid = _parse_slurm_jobid(output)
-        self.task_jobid_map[task] = jobid
+    def submit(self):
+        logger.info(f'Executing {self.submit_path}')
+        result = sp.run(['bash', str(self.submit_path)], capture_output=True, text=True)
+        if result.stdout.strip():
+            logger.info(result.stdout.strip())
+        if result.returncode != 0:
+            logger.error(result.stderr.strip())
+            raise RemakeError(f'{self.submit_path} failed (exit {result.returncode})')
+
+    def _active_jobids(self):
+        """Base job ids of this user's pending/running jobs (one squeue call;
+        '1234_5' array elements map to base id '1234')."""
+        try:
+            result = sp.run(
+                ['squeue', '-h', '-r', '-u', getpass.getuser(), '-o', '%i %t'],
+                capture_output=True, text=True, check=True,
+            )
+        except (FileNotFoundError, sp.CalledProcessError) as e:
+            logger.debug(f'squeue unavailable ({e!r}): assuming nothing queued')
+            return set()
+        jobids = set()
+        for line in result.stdout.splitlines():
+            if not line.strip():
+                continue
+            jobid, status = line.split()
+            if status in ('PD', 'R', 'CF'):
+                jobids.add(jobid.split('_')[0])
+        return jobids
+
+    def _queued_jobids(self, rule, active_jobids):
+        """This rule's previously-submitted job ids that are still active."""
+        sidecar = self.jobs_dir / f'{rule.name}.jobids.json'
+        if not sidecar.exists():
+            return []
+        recorded = json.loads(sidecar.read_text())
+        ids = recorded.get('slurm_job_ids', [])
+        if 'slurm_array_job_id' in recorded:
+            ids = [recorded['slurm_array_job_id']]
+        return [jobid for jobid in ids if jobid in active_jobids]

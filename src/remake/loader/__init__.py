@@ -45,6 +45,9 @@ def load_remake(filename, finalize=True):
     if not remakes:
         raise RemakeLoadError(f'No Remake defined in {filename}')
     rmk = remakes[0]
+    # The path the user refers to this pipeline by — executors that generate
+    # scripts re-invoking remake (SLURM) need it.
+    rmk.remakefile = str(filename)
     if finalize:
         rmk.finalize()
     return rmk

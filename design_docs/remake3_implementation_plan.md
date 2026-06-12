@@ -14,15 +14,18 @@ doc in `design_docs/` when work on it starts.
 - [x] Output tokens
 - [x] Metadata backend (SQLite)
 - [ ] Executors: singleproc, multiproc, SLURM, dask
-  - singleproc done; multiproc/slurm pending adaptation (not importable);
-    dask deleted, re-add later
+  - singleproc done; SLURM rewritten to the design (see
+    [slurm_implementation.md](slurm_implementation.md)) and tested locally
+    against fake sbatch/squeue shims — cluster validation on JASMIN pending;
+    multiproc pending adaptation (not importable); dask deleted, re-add later
 - [ ] Dynamic matrices (replanning loop, SLURM continuation jobs)
-  - local replanning loop done; SLURM continuation jobs pending
+  - local replanning loop done; SLURM continuation jobs generated and
+    tested locally; cluster validation pending
 - [ ] CLI
   - Decision: argparse (stdlib, zero deps; CLI is small and the declarative
     wrapper in `util/command_line_args.py` already exists), not click.
-    Barebones CLI done: run, run-task, info, version. resubmit lands with
-    the SLURM executor; migrate is its own item.
+    Done: run (--executor slurm, --dry-run), run-task, run-array-task,
+    resubmit, info (--show-failures), version. migrate is its own item.
 - [x] Unit tests
 - [x] Integration tests
   - 77 tests under tests/unit and tests/integration; examples are loaded

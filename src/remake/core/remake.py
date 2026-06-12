@@ -30,6 +30,7 @@ class Remake:
         self.strict_scope = strict_scope
         self.rules = []
         self.dag = None
+        self.remakefile = None  # set by load_remake
         self._finalized = False
         if rules:
             self.add_rules(rules)
@@ -138,6 +139,16 @@ class Remake:
             from ..executors import SingleprocExecutor
 
             executor = SingleprocExecutor(self)
+
+        if executor.handles_deferred:
+            # Asynchronous executors (SLURM) get the whole plan in one call;
+            # deferred rules are theirs to handle (continuation jobs).
+            runnable, deferred = self.plan(query=query, force=force)
+            if not runnable and not deferred:
+                logger.info('Nothing to do')
+                return
+            executor.run_tasks(runnable, deferred)
+            return
 
         attempted = set()
         while True:

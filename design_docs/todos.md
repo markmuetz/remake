@@ -48,9 +48,9 @@ assessment (2026-06-11). Ordered roughly by severity.
 
 ## Dead code
 
-- [ ] `executors/multiproc_executor.py` and `executors/slurm_executor.py`
-  are stale remake2 code, unimportable by design. Port or delete; do not
-  leave them to mislead readers.
+- [ ] `executors/multiproc_executor.py` is stale remake2 code, unimportable
+  by design. Port or delete; do not leave it to mislead readers.
+  (`slurm_executor.py` rewritten 2026-06-12.)
 
 ## Smaller debts
 

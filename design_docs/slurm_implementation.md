@@ -93,10 +93,18 @@ be spent only on cluster-shaped problems.
 
 ## Suggested order
 
-1. Pre-flight: packaging verification, tracebacks, file logging.
-2. Executor generation (stage 1+2) + golden-file tests, locally.
-3. Submission flow + fake sbatch/squeue shim tests, locally.
+1. ~~Pre-flight: packaging verification, tracebacks, file logging.~~ Done
+   2026-06-12.
+2. ~~Executor generation (stage 1+2) + golden-file tests, locally.~~ Done:
+   `executors/slurm_executor.py` rewritten; tests in
+   `tests/integration/test_slurm.py`. The run-task payload decision:
+   a `run-array-task <remakefile> <rule> <index>` subcommand reading the
+   rule's JSON spec and using `task_from_spec`. Already-queued detection is
+   per rule, not per task — rewriting a rule's JSON spec while its previous
+   array is queued would corrupt the indices those jobs read, so a rule with
+   any queued elements is skipped wholesale and picked up by a later run.
+3. ~~Submission flow + fake sbatch/squeue shim tests, locally.~~ Done.
 4. JASMIN: install, run ex2/ex4 for real; probe SQLite contention with a
    wide array job; then ex8-style continuation chains.
-5. Delete the stale remake2 slurm executor; tick the implementation-plan
-   item.
+5. Delete the stale remake2 multiproc executor when ported (slurm done);
+   tick the implementation-plan item after JASMIN validation.
