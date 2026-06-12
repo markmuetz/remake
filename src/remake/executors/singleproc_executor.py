@@ -21,3 +21,4 @@ class SingleprocExecutor(Executor):
                 nfailed += 1
         if nfailed:
             logger.error(f'{nfailed}/{ntasks} tasks failed')
+        return nfailed

@@ -52,7 +52,7 @@ def test_dry_run_runs_nothing(pipeline_dir, capsys):
 
 
 def test_run_and_info(pipeline_dir, capsys):
-    cli('run', 'pipeline.py')
+    assert cli('run', 'pipeline.py') == 0
     assert (pipeline_dir / 'data/out_2.txt').read_text() == '22'
 
     cli('info', 'pipeline.py')
@@ -122,7 +122,8 @@ def sometimes_fails(outputs, n):
 rmk = Remake()
 rmk.rules_from_current_module()
 ''')
-    cli('run', 'failing.py')
+    # Failures are recorded and the run continues, but the exit code says so.
+    assert cli('run', 'failing.py') == 1
     capsys.readouterr()
     cli('info', 'failing.py', '--show-failures')
     out = capsys.readouterr().out

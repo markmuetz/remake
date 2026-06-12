@@ -16,4 +16,5 @@ class Executor(abc.ABC):
 
     @abc.abstractmethod
     def run_tasks(self, tasks):
-        pass
+        """Run tasks; return the number that failed (None counts as 0 —
+        asynchronous executors don't know yet at submission time)."""

@@ -145,7 +145,9 @@ class Remake:
 
     def run(self, executor=None, query=None, force=False):
         """Run all tasks that need running, replanning after each wave so
-        dynamic (deferred) matrices resolve as their upstreams complete."""
+        dynamic (deferred) matrices resolve as their upstreams complete.
+        Returns the number of failed tasks (0 for asynchronous executors,
+        which don't know at submission time)."""
         if not self._finalized:
             self.finalize()
         if executor is None:
@@ -159,10 +161,10 @@ class Remake:
             runnable, deferred = self.plan(query=query, force=force)
             if not runnable and not deferred:
                 logger.info('Nothing to do')
-                return
-            executor.run_tasks(runnable, deferred)
-            return
+                return 0
+            return executor.run_tasks(runnable, deferred) or 0
 
+        nfailed = 0
         attempted = set()
         while True:
             runnable, deferred = self.plan(query=query, force=force)
@@ -174,7 +176,8 @@ class Remake:
                     logger.warning(f'Blocked rules (matrix not ready): {names}')
                 break
             attempted |= {t.key for t in runnable}
-            executor.run_tasks(runnable)
+            nfailed += executor.run_tasks(runnable) or 0
+        return nfailed
 
     def run_task(self, task):
         """Execute one task and record the result. The single execution

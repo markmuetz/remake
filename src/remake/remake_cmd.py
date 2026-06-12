@@ -284,7 +284,8 @@ class RemakeParser:
                 for rule in deferred:
                     print(f'{rule.name}: deferred (matrix not ready)')
                 return
-        rmk.run(executor=executor, query=args.query, force=args.force)
+        nfailed = rmk.run(executor=executor, query=args.query, force=args.force)
+        return 1 if nfailed else 0
 
     def remake_run_task(self, args):
         rmk = self._load(args)
