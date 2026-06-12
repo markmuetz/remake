@@ -47,3 +47,7 @@ design discussion before any work starts.
 - **configuration** - there should be three levels of config: 
   `~/.remake/config.yaml`, `<project>/.remake/config.yaml`, and potentially
   within a remakefile, with cascade from general to specific.
+- **Task inspection/validation** - It should be possible to inspect tasks to 
+  see how they interact with each other. E.g. does one task depend on another,
+  yet take as inputs files that are not produced by the first task (but are 
+  very similar)?
