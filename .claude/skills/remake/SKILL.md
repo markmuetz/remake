@@ -173,6 +173,23 @@ running anything (migration adoption: `set-state file -Q True --success
 outputs are re-adopted by the default check_outputs mode, so to force a
 rerun use `run --force` instead.
 
+**The fix-one-failure idiom.** proc[n=42] of 100 failed; the user edits
+the rule code to handle it. A plain `run` now wants all 100 (code
+changed). Two repairs, with different downstream behaviour:
+- `run -Q 'n == 42'` — surgical: reruns just that task (it's failed, no
+  -f needed), but downstream tasks *not matching the query* (a fan-in
+  with no `n`) stay unrun until a later unfiltered run.
+- `run -I` — runs everything never-succeeded: the failure AND its
+  previously-skipped downstream, to completion, in one invocation.
+
+Either way the 99 successes still carry the old code hash, so the next
+plain `run` would rerun them all — the repair *defers* the code-change
+rerun, it doesn't cancel it. To assert the code change doesn't
+invalidate them, re-stamp: `set-state file -Q 'rule == "proc"'
+--success` (records success with the *current* hashes; add
+--check-outputs to verify against disk first). Skipping this is safe
+but causes a surprise mass-rerun later.
+
 ## Authoring rules
 
 Read [references/authoring.md](references/authoring.md) before writing

@@ -45,6 +45,11 @@ design discussion before any work starts.
 - **configuration** - there should be three levels of config:
   `~/.remake/config.yaml`, `<project>/.remake/config.yaml`, and potentially
   within a remakefile, with cascade from general to specific.
+- **query by status** — `-Q 'status == "failed"'` is not possible: queries
+  are evaluated at matrix expansion, before the DB is consulted. `run -I`
+  covers the main case (failed ∪ never-run), but selecting tasks by
+  recorded status (failures-only for `set-state`/`ls-tasks`, say) would
+  need plan-time filtering — decide whether it earns the complexity.
 - **logging** - Perhaps the rule decorator could have a logger=True line, that
   passes in a loguru logger to the function? Or just say that the user can
   set up a loguru logger then use that as using `uses`.
