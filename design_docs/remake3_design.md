@@ -332,24 +332,20 @@ remake/
 │   ├── dag.py             # Rule-level DAG construction (pure functions)
 │   ├── planner.py         # Decides which tasks need running (pure)
 │   └── scope.py           # Free-variable analysis, uses tracking
-├── tokens/
-│   ├── base.py            # OutputToken ABC
-│   ├── file_token.py      # FileToken — wraps a path string
-│   ├── zarr_token.py      # ZarrStore — checks consolidated metadata
-│   └── s3_token.py        # S3Object — checks object existence via boto3
+├── tokens.py              # OutputToken ABC + FileToken/ZarrStore/S3Object
 ├── metadata/
-│   ├── base.py            # MetadataManager ABC
-│   └── sqlite3_backend.py # Production backend
+│   ├── metadata_manager.py # MetadataManager ABC, TaskRecord, statuses
+│   ├── sqlite3_backend.py  # Production backend (+ sidecar ingestion)
+│   └── sidecar.py          # SidecarWriter — per-task result files
 ├── executors/
-│   ├── base.py            # Executor ABC
-│   ├── singleproc.py
-│   ├── multiproc.py
-│   ├── slurm.py           # Submits array jobs where possible
-│   └── dask.py
-├── util/
-│   ├── code_compare.py    # AST-based code comparison (carry over)
-│   └── matrix.py          # Cartesian expansion helpers
-└── cli.py                 # Entry point — thin wrapper over Remake
+│   ├── executor.py        # Executor ABC
+│   ├── singleproc_executor.py
+│   ├── multiproc_executor.py
+│   ├── slurm_executor.py  # Submits array jobs where possible
+│   └── dask_executor.py
+├── loader/                # load_module / load_remake
+├── util/                  # code_compare (AST comparison), CLI arg helpers
+└── remake_cmd.py          # CLI entry point — thin wrapper over Remake
 ```
 
 ### The `Rule` descriptor
@@ -478,8 +474,10 @@ def plan(
     rules:    list[Rule],
     dag:      nx.DiGraph,
     metadata: MetadataManager,
-    query:    str | None = None,
+    query:    str | None = None,   # eval'd vs task kwargs + rule name
     force:    bool = False,
+    check_outputs: str = 'fallback',
+    ignore_code_changes: bool = False,
 ) -> tuple[list[Task], list[Rule]]:
     """
     Return (runnable_tasks, deferred_rules).
@@ -550,11 +548,14 @@ The `MetadataManager` ABC defines:
 ```python
 class MetadataManager(ABC):
     @abstractmethod
-    def get_or_create_task(self, task: Task) -> TaskRecord: ...
-    @abstractmethod
-    def update_task(self, task: Task, exception: str = '') -> None: ...
+    def ensure_rules(self, rules) -> None: ...
     @abstractmethod
     def get_tasks_status(self, tasks: list[Task]) -> dict[str, TaskRecord]: ...
+    @abstractmethod
+    def update_task(self, task: Task, status: int, exception: str = '') -> None: ...
+    # Concrete defaults, overridable: update_tasks (bulk), delete_tasks,
+    # ingest_sidecars (fold per-task result files into the store — how
+    # concurrent array/pool workers record results without touching it).
 ```
 
 ---
@@ -617,8 +618,8 @@ submitted. They are overwritten when a rule is resubmitted.
 ### Stage 2 — SLURM scripts
 
 One `.sbatch` script is written per rule. For array-eligible rules the script is
-parameterised by `$SLURM_ARRAY_TASK_ID`; for individual-job rules by the task
-key passed at submission time.
+parameterised by `$SLURM_ARRAY_TASK_ID`; for individual-job rules by the
+spec index passed as a script argument at submission time.
 
 **Array script** (rule is array-eligible, see below):
 
@@ -630,19 +631,20 @@ key passed at submission time.
 #SBATCH -e .remake/slurm/output/extract/%a.err
 {extra_opts}
 
-TASK_KEY=$(python -c "
-import json
-print(json.load(open('.remake/jobs/extract.json'))[$SLURM_ARRAY_TASK_ID]['task_key'])
-")
-echo "SLURM RUNNING $TASK_KEY"
-remake run-task mypipeline.py $TASK_KEY
-echo "SLURM COMPLETED $TASK_KEY"
+echo "SLURM RUNNING extract $SLURM_ARRAY_TASK_ID"
+remake run-array-task mypipeline.py extract $SLURM_ARRAY_TASK_ID
+echo "SLURM COMPLETED extract $SLURM_ARRAY_TASK_ID"
 ```
 
-The script is intentionally dumb — it reads the JSON array to find its task key
-and delegates to `remake run-task`. No task-specific information needs to be
-embedded in the job name or comment, which sidesteps the array job identification
-problem entirely.
+The script is intentionally dumb — it passes its rule name and array index
+to `remake run-array-task`, which reads the spec at that index from
+`.remake/jobs/extract.json` and constructs the task directly
+(`task_from_spec`, no key search). No task-specific information needs to be
+embedded in the job name or comment, which sidesteps the array job
+identification problem entirely. The array process records its result as a
+sidecar file (`.remake/tasks/results/...`), never a DB write — hundreds of
+concurrent writers livelock SQLite on shared filesystems; the next
+plan()/info ingests pending sidecars in one transaction.
 
 **Master submit script** `.remake/submit.sh`:
 
@@ -1004,28 +1006,24 @@ def test_planner_reruns_on_code_change(tmp_path):
         pass
 
     rmk = Remake(rules=[my_rule], metadata=meta)
-    rmk.finalize()
-    tasks = plan(rmk.rules, rmk.dag, meta)
-    assert tasks[0].requires_rerun  # never run
+    runnable, deferred = rmk.plan()
+    assert len(runnable) == 1  # never run
 
     # Simulate a completed run
-    meta.update_task(tasks[0])
+    meta.update_task(runnable[0], TASK_STATUS_SUCCESS)
 
     # Mutate the source
     my_rule.fn = lambda outputs, x: print('changed')
-    tasks = plan(rmk.rules, rmk.dag, meta)
-    assert tasks[0].requires_rerun  # code changed
+    runnable, deferred = rmk.plan()
+    assert len(runnable) == 1  # code changed
 ```
 
 **Integration tests** — real filesystem via `tmp_path`, in-memory DB:
 
 ```python
 @pytest.fixture
-def rmk(tmp_path):
-    return Remake(
-        metadata=Sqlite3Backend(':memory:'),
-        root=tmp_path,
-    )
+def rmk():
+    return Remake(metadata=Sqlite3Backend(':memory:'))
 
 def test_two_rule_pipeline(rmk, tmp_path):
     (tmp_path / 'raw').mkdir()
@@ -1103,7 +1101,10 @@ remake2 remakefiles can be adapted to remake3 with a script that:
 5. Inserts `rmk = Remake()` at the top and `rmk.rules_from_current_module()`
    at the end of the file
 
-A `remake migrate myfile.py` CLI command will run this conversion.
+Decision (2026-06-12): the conversion is LLM translation via the Claude
+Code skill (`.claude/skills/remake/references/remake2_to_remake3.md`),
+not an automated `remake migrate` command — the long tail of class
+hierarchies and implicit globals needs judgement, not regex.
 
 ---
 

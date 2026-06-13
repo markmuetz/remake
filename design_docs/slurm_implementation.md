@@ -47,8 +47,8 @@ Settled questions, not to be reopened:
      `.remake/slurm/` and `submit.sh`, submit nothing.
    - `run-task` payload in sbatch scripts: pass rule + array index; the
      task spec is read from the rule's JSON and constructed via
-     `task_from_spec` (extend `run-task` or add a `run-array-task`
-     internal command — decide during implementation).
+     `task_from_spec` (decided: a separate `run-array-task` internal
+     command, which also writes sidecar results instead of DB writes).
 
 ## Local-first testing (no cluster)
 

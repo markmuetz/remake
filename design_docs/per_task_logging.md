@@ -73,9 +73,10 @@ options if it bites, in escalating order:
    logs — debugging value traded for inodes);
 3. fold into the wider `.remake` layout rethink (discussion.md).
 
-## Follow-ups (not in this change)
+## Follow-ups — both since done (2026-06-12)
 
-- `info --show-failures` could print each failed task's log path next to
-  its stored traceback.
-- The multiproc executor port should reuse the same per-task sink via
-  `run-task`/worker entry points.
+- ~~`info --show-failures` could print each failed task's log path next
+  to its stored traceback.~~ Done (also `task-info`/`task-log`).
+- ~~The multiproc executor port should reuse the same per-task sink via
+  worker entry points.~~ Done — multiproc and dask workers both write
+  the per-task sink (`util.task_log_path`).
