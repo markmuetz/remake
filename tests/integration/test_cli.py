@@ -152,7 +152,7 @@ rmk.rules_from_current_module()
 
     monkeypatch.setattr(sys, 'excepthook', sys.excepthook)
     with pytest.raises(ValueError, match='boom'):
-        cli('-X', 'run', 'boom.py', '--force')
+        cli('run', 'boom.py', '--force', '-X')
 
 
 def test_log_file_written(pipeline_dir):

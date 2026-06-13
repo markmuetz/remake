@@ -130,7 +130,6 @@ class RemakeParser:
             Arg('--info', '-I', help='Enable info logging', action='store_true', default=True),
             Arg('--warning', '-W', help='Warning logging only', action='store_true'),
         ),
-        Arg('--debug-exception', '-X', help='Launch pdb/ipdb on exception', action='store_true'),
     ]
     sub_cmds = {
         'run': {
@@ -152,6 +151,10 @@ class RemakeParser:
                 Arg('--dry-run', '-n', help='Show what would run, run nothing',
                     action='store_true'),
                 Arg('--check-outputs', help='Verify outputs of completed tasks (always mode)',
+                    action='store_true'),
+                Arg('--debug-exception', '-X',
+                    help='Run tasks in-process (forces singleproc) and launch '
+                         'pdb/ipdb on the first task failure',
                     action='store_true'),
             ],
         },
@@ -296,9 +299,18 @@ class RemakeParser:
 
     def remake_run(self, args):
         rmk = self._load(args)
-        executor = _make_executor(args.executor, rmk, nproc=args.nproc)
-        # -X: first task failure propagates (into the pdb/ipdb excepthook)
-        # instead of being recorded-and-continued.
+        # -X: run tasks in this process so the first failure propagates (into
+        # the pdb/ipdb excepthook) with its original traceback, instead of
+        # being recorded-and-continued. Out-of-process executors can't reach
+        # the debugger, so force singleproc.
+        if args.debug_exception and args.executor != 'singleproc':
+            logger.warning(
+                f'-X/--debug-exception runs tasks in-process; '
+                f'ignoring --executor {args.executor}'
+            )
+            executor = _make_executor('singleproc', rmk, nproc=args.nproc)
+        else:
+            executor = _make_executor(args.executor, rmk, nproc=args.nproc)
         executor.raise_on_failure = args.debug_exception
         if args.dry_run:
             if executor.supports_dry_run:
@@ -759,8 +771,8 @@ def remake_cmd(argv=None):
         logger.add(logfile, level='DEBUG', rotation='5 MB', retention=3)
         logger.debug(f'argv: {argv}')
 
-    if args.debug_exception:
-        # Handle top level exceptions with a debugger.
+    if getattr(args, 'debug_exception', False):
+        # Handle top level exceptions with a debugger (run -X only).
         sys.excepthook = exception_info
 
     return parser.dispatch()
