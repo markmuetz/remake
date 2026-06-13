@@ -115,3 +115,4 @@ assessment (2026-06-11). Ordered roughly by severity.
   nothing ever reached the excepthook — `-X` now sets
   `executor.raise_on_failure` so the first failure propagates with the
   original traceback (in-process executors only).
+- [ ] Check that failed SLURM jobs cause dependent jobs to not run.
