@@ -64,6 +64,68 @@ design discussion before any work starts.
   no-task-DAG principle that planning memory, SLURM array eligibility and
   failure-skip propagation all lean on — needs a real design discussion.
 
+- **Orchestrator daemon — considered and rejected as load-bearing
+  (2026-06-13).** Proposal: invoke a `remake-daemon` on most `remake run`
+  to orchestrate tasks — a listener/responder subprocess + a process-runner
+  subprocess, the single reader/writer of `remake.db` while active,
+  monitoring SLURM queues and restarting failed jobs. The remake CLI would
+  talk to the listener, which talks to the DB. Pitched benefits: single DB
+  writer (no sidecars), live failed-job restart, live monitoring.
+
+  Decision: **do not make a daemon default or load-bearing, especially for
+  SLURM.** Reasoning:
+  - *The "no sidecars for SLURM" benefit is largely illusory.* The
+    contention problem was concurrent SQLite *writers*; sidecars fix it by
+    construction (independent file writes, single-threaded ingest). A daemon
+    serializes ingest too, but array jobs still run on compute nodes and
+    their results must cross the compute→login boundary. The options are:
+    write sidecars and let the daemon ingest them (still sidecars); open
+    800 sockets back to one login-node listener (worse contention than 800
+    independent FS writes, over a flaky/firewalled compute→login path, with
+    backpressure we now own); or poll `sacct` (can't recover
+    `uses_hash`/exception without the task writing a sidecar). So SLURM
+    would almost certainly still consume sidecars — the daemon only
+    duplicates what they already do, cheaply (validated ~2.5 ms/sidecar,
+    linear, no cliff at 800-way).
+  - *It fights JASMIN reality.* The current SLURM design's superpower is
+    submit-and-log-out: the continuation job replans itself and SLURM (an
+    HA, long-lived, cluster-wide scheduler) owns the dependency graph for
+    the multi-day life of the pipeline. A daemon must instead stay alive on
+    a login/sci node for that whole duration — exactly what JASMIN
+    discourages (process-killers, memory caps, reboots). If it dies, cold
+    recovery from DB + `squeue` *is* `remake run` replanning today — so the
+    daemon adds a fragile layer on top of the stateless recovery it can't
+    remove.
+  - *Costs:* two execution models maintained forever (small/local and `-X`
+    runs want a no-daemon fast path); IPC surface (singleton lock with
+    NFS stale-detection — the same hard problem SQLite locking was — stale
+    sockets, protocol versioning, crash recovery); a testability regression
+    versus the current pure-function + golden-file SLURM tests; and forced
+    coordination between concurrent invocations/users (today idempotent
+    ingest + squeue de-dup make these safe-ish).
+  - *Per-executor:* singleproc is already one writer (daemon = pure
+    overhead + breaks `-X`); multiproc's coordinator wants the *parent* as
+    sole writer via a `multiprocessing` queue, not a bespoke daemon; dask
+    *already has* a daemon (its scheduler) with futures back to the client;
+    SLURM is the only real target and the worst fit. For every executor
+    except SLURM, single-writer is trivial or already provided by the
+    runtime.
+
+  What the daemon *is* good for — interactive, adaptive orchestration (live
+  retry of transient failures, rich progress, continuous in-process
+  replanning instead of continuation jobs, live SLURM monitor) — is real,
+  but should be an **optional, non-load-bearing layer**, never the sole DB
+  writer and never required for correctness:
+  - A foreground, restartable `remake monitor`/`watch`: live view +
+    opportunistic resubmit of failed/transient jobs. The pipeline stays
+    correct and crash-recoverable without it. (You cannot have both "daemon
+    is sole writer" and "works when the daemon dies"; on JASMIN you need
+    the latter.) Relates to the **SLURM monitor** item above.
+  - Transient SLURM failures: prefer sbatch `--requeue`/retry — SLURM does
+    node-death/preemption requeue better than a login-node daemon could.
+  - multiproc: drop local sidecars by making the parent the sole writer via
+    a queue (a real simplification, no daemon needed).
+
 ## Graduated (designed and implemented; kept for the record)
 
 - **SLURM job ids written to file** — `.remake/jobs/<rule>.jobids.json`

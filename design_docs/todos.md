@@ -120,3 +120,8 @@ assessment (2026-06-11). Ordered roughly by severity.
   `executor.raise_on_failure` so the first failure propagates with the
   original traceback (in-process executors only).
 - [ ] Check that failed SLURM jobs cause dependent jobs to not run.
+- [ ] Move `-X` from `remake -X run` to `remake run -X`, and have it run the
+  task(s) in-process directly so failures reach the debugger with the
+  original traceback. (`-X` was a global flag because it was occasionally
+  useful for debugging remake itself; trusting that's no longer needed.)
+  See the rejected orchestrator-daemon entry in discussion.md.
