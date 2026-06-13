@@ -93,9 +93,13 @@ assessment (2026-06-11). Ordered roughly by severity.
   **Fixed 2026-06-12 via sidecar/ingest** (design in
   slurm_implementation.md): `run-array-task` no longer opens the DB at
   all — results go to `.remake/tasks/results/...` sidecars, batch-ingested
-  by the next plan/run/info. Remaining: validate at 400/800-way through
-  the real pipeline path on JASMIN; `retry_lock_commit` still guards the
-  (now low-concurrency) ensure_rules/update_task/ingest paths.
+  by the next plan/run/info. Validated at 400/800-way through the real
+  pipeline path on JASMIN 2026-06-13 (`tests/benchmarks/bench_slurm_pipeline.py`
+  setup/submit/report): both PASS, zero lock-marker lines, all sidecars
+  ingested; `time-ingest` measured the single-writer ingest at ~2.5
+  ms/sidecar, linear (800 in ~2.0 s, 1600 in ~3.9 s), no cliff.
+  `retry_lock_commit` still guards the (now low-concurrency)
+  ensure_rules/update_task/ingest paths.
 - [ ] `ZarrStore.is_complete()` checks `.zmetadata` (zarr v2); zarr v3
   consolidated metadata lives in `zarr.json`. Handle both when xarray/zarr
   versions move.

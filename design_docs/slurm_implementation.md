@@ -185,10 +185,27 @@ X regardless of what the DB now shows for X's tasks.
   executors) also switch to sidecars, or only `run-array-task`?~~ Decided
   and implemented: only `run-array-task` writes sidecars; `run-task` keeps
   calling `update_task` directly (single writer).
-- Remaining validation: rerun the contention stress at 400/800-way on
-  JASMIN through the real pipeline path to confirm the livelock is gone
-  (bench_sqlite_contention.py exercises the old direct-write path by
-  design — it remains useful for measuring the ingest-side transaction).
+- ~~Remaining validation: rerun the contention stress at 400/800-way on
+  JASMIN through the real pipeline path to confirm the livelock is gone.~~
+  **Done 2026-06-13.** `tests/benchmarks/bench_slurm_pipeline.py` (added
+  for this) drives a genuine two-rule `remake run --executor slurm` array
+  (stage1 → stage2, aftercorr) and checks that every element completed,
+  all sidecars ingested, and no per-task log or SLURM stderr ever recorded
+  "database is locked". Ran at `--n 400` (800 tasks) and `--n 800` (1600
+  tasks), work_seconds=0 (synchronised-burst worst case), on JASMIN
+  standard/afesp: both PASS — every task status=success, all sidecars
+  ingested (0 left), zero lock-marker lines. The livelock is gone via the
+  sidecar path.
+  - **Ingest-side timing** (the `time-ingest` subcommand fabricates 2·N
+    real sidecars against a fresh DB and times `ingest_sidecars`, on
+    scratch): ~2.5 ms/sidecar, **linear** in count, no cliff — 800
+    sidecars in ~2.0 s, 1600 in ~3.9 s (one batched EXCLUSIVE transaction,
+    single writer). Per-sidecar cost is the read+delete of each file on
+    the parallel filesystem, not DB locking. Contrast the old direct-write
+    path: livelocked at 400+ way (5 min, most tasks never completing).
+  - `bench_sqlite_contention.py` exercises the old direct-write path by
+    design (the negative control) — it remains useful for measuring raw
+    lock behaviour.
 
 ## Suggested order
 
@@ -204,6 +221,8 @@ X regardless of what the DB now shows for X's tasks.
    any queued elements is skipped wholesale and picked up by a later run.
 3. ~~Submission flow + fake sbatch/squeue shim tests, locally.~~ Done.
 4. JASMIN: install, run ex2/ex4 for real; probe SQLite contention with a
-   wide array job; then ex8-style continuation chains.
+   wide array job; then ex8-style continuation chains. Second pass (the
+   post-sidecar revalidation): `tests/benchmarks/bench_slurm_pipeline.py`
+   at `--n 400` and `--n 800`.
 5. Delete the stale remake2 multiproc executor when ported (slurm done);
    tick the implementation-plan item after JASMIN validation.

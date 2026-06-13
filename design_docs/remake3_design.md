@@ -58,6 +58,13 @@ expansion, and SLURM support.
   mode).
 - **Testability as a first-class concern** — every subsystem is independently
   unit-testable; integration tests use `tmp_path` and in-memory SQLite.
+- **Config file formats — YAML for humans, JSON for internals** — any
+  config a user is expected to read or hand-edit (pipeline parameters,
+  benchmark/run settings) is YAML (`pyyaml` is a dependency; use
+  `yaml.safe_load`/`yaml.safe_dump`). JSON is fine — and preferred — for
+  internal machine-written/machine-read artefacts and command output that
+  is not meant to be edited by hand: the `.remake/jobs/*.json` specs and
+  jobid sidecars, per-task result sidecars, and `remake ... --json` output.
 
 ---
 

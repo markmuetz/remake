@@ -17,9 +17,10 @@ doc in `design_docs/` when work on it starts.
   - singleproc done; SLURM done and validated on JASMIN (ex2/ex4/ex8 on
     real SLURM, 2026-06-12; see
     [slurm_implementation.md](slurm_implementation.md)), with sidecar/
-    ingest result recording after the SQLite livelock finding — remaining
-    SLURM item is revalidating contention at 400/800-way through the real
-    pipeline path; multiproc rewritten 2026-06-12 (spawned workers reload
+    ingest result recording after the SQLite livelock finding; contention
+    revalidated at 400/800-way through the real pipeline path on JASMIN
+    (2026-06-13, bench_slurm_pipeline.py — both PASS, no lock errors,
+    ingest ~2.5 ms/sidecar linear); multiproc rewritten 2026-06-12 (spawned workers reload
     the remakefile, sidecar results, per-rule barriers; `-E multiproc -j N`);
     dask added 2026-06-12 on the same model (LocalCluster by default,
     `config={'dask': {'scheduler': ...}}` for real clusters; `distributed`
@@ -73,10 +74,13 @@ doc in `design_docs/` when work on it starts.
 
 ## What's left, at a glance (2026-06-12)
 
-1. **JASMIN revalidation** of the post-livelock stack: sidecar/ingest at
-   400/800-way through the real pipeline path, plus first real-cluster
-   exercise of multiproc-on-a-login-node, slurm-status/why/lint and the
-   skill (slurm_implementation.md §Suggested order item 4, second pass).
+1. **JASMIN revalidation** of the post-livelock stack:
+   - ~~sidecar/ingest at 400/800-way through the real pipeline path~~ —
+     done 2026-06-13 (bench_slurm_pipeline.py; both PASS, no lock errors,
+     ingest ~2.5 ms/sidecar linear; slurm_implementation.md §Suggested
+     order item 4, second pass).
+   - Remaining: first real-cluster exercise of multiproc-on-a-login-node,
+     slurm-status/why/lint and the skill.
 2. **Docs** — plan, write, deploy to GitHub Pages.
 3. **GitHub Actions** — CI + coverage first; docs/release jobs after.
 4. **PyPI** — metadata polish, TestPyPI, alpha upload.
