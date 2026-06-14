@@ -100,6 +100,61 @@ design discussion before any work starts.
   no-task-DAG principle that planning memory, SLURM array eligibility and
   failure-skip propagation all lean on — needs a real design discussion.
 
+- **Per-rule housekeeping job (SLURM) — probably to be implemented.** A
+  one-shot (non-array) SLURM job depending `aftercorr`/`afterok` on a
+  rule's array, running once after all its elements complete. Makes the
+  edge between rule N's array and rule N+1's array an explicit, first-class
+  job rather than relying solely on the global continuation job.
+  - *Primary action: DB sync.* It is the natural single-writer point to
+    ingest that rule's sidecars — exactly the low-concurrency path the
+    sidecar design assumes, no new contention. The next plan/run already
+    ingests, so the win is **timeliness** (mid-pipeline `info`/
+    `slurm-status` reflect reality without waiting for the next manual
+    command) plus being the *vehicle* for the cleanup actions below — not
+    ingest correctness, which sidecars already give us.
+  - *Fits the model.* Still submit-and-log-out: SLURM owns the graph for
+    the pipeline's life; this is just another node in it. **Not** the
+    rejected orchestrator daemon (see below) — nothing long-lived on a
+    login node, no IPC, recovery is still replan-from-DB + `squeue`.
+  - *Design question:* does housekeeping **replace** the single global
+    continuation job (becoming a finer-grained per-rule version of it), or
+    sit alongside it? Lean towards generalising the continuation into this.
+  - Relates to the **SLURM monitor** item (a place to surface progress) and
+    is the enabling mechanism for **temporary files** below.
+
+- **Temporary / scratch intermediate files — desirable feature, at some
+  point.** Let a pipeline mark intermediate outputs as deletable once fully
+  consumed (HPC scratch pressure: huge intermediates that only exist to
+  feed the next stage). Closest prior art: Snakemake's `temp()`, make's
+  `.INTERMEDIATE`/`.SECONDARY`. Likely API: a per-output marker, e.g.
+  `outputs={'x': temp('scratch/{site}.nc')}` or a rule-level
+  `temporary=[...]`. The per-rule housekeeping job above is the deletion
+  vehicle. This is **not** a SLURM add-on — it is a core-semantics change
+  and must behave identically under `multiproc`/`singleproc`. The sharp
+  parts:
+  - *Delete after the last **consumer**, not the last **producer**.* A file
+    may feed several downstream rules; safe deletion is "after the final
+    consumer completes", a different DAG edge than "after the producing
+    rule". So the deletion belongs on the file's last consumer, computed
+    from the graph.
+  - *The planner must not then try to rebuild it.* With the default
+    `check_outputs`, a missing output makes remake want to rerun the
+    producer — defeating the point. Temporary files need a distinct DB
+    lifecycle: **produced, consumed, intentionally deleted — do not rebuild
+    unless a consumer actually needs rerunning**, and when one does, rebuild
+    the temporary input first (recursive, possibly back several temp stages).
+  - *Failure interaction.* Deletion must be gated on consumers **succeeding**
+    (`afterok`/`aftercorr`, element-wise where matrices align), never
+    `afterany` — a partially-failed array must keep its inputs so the failed
+    elements can rerun.
+  - *Scratch is the flip side, design together.* Scratch files vanish on
+    their own (system purge after N days), so even non-`temp()` inputs may
+    be absent. Frame both as one **storage-class / lifecycle** attribute on
+    a token: "complete in the DB, may be absent on disk, rebuildable from
+    upstream" — `temp()` (we delete it) and scratch (the system deletes it)
+    become two cases of the same machinery, rather than two overlapping
+    mechanisms. Builds on the existing `check_outputs='fallback'` thinking.
+
 - **Orchestrator daemon — considered and rejected as load-bearing
   (2026-06-13).** Proposal: invoke a `remake-daemon` on most `remake run`
   to orchestrate tasks — a listener/responder subprocess + a process-runner
