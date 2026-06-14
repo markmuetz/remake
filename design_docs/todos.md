@@ -119,7 +119,18 @@ assessment (2026-06-11). Ordered roughly by severity.
   nothing ever reached the excepthook — `-X` now sets
   `executor.raise_on_failure` so the first failure propagates with the
   original traceback (in-process executors only).
-- [ ] Check that failed SLURM jobs cause dependent jobs to not run.
+- [x] Check that failed SLURM jobs cause dependent jobs to not run. Tested on
+  JASMIN 2026-06-14 (`tests/benchmarks/bench_slurm_failure.py`: stage1 fails a
+  subset, stage2 shares its matrix 1-to-1 → aftercorr). Found a real bug: the
+  per-rule sbatch wrapper ended with `echo "SLURM COMPLETED ..."`, whose exit 0
+  masked the task's real exit code, so SLURM saw *every* element as COMPLETED
+  0:0 and aftercorr/afterok never blocked anything (deliberate-fail elements +
+  their dependants both ran-and-failed). Fixed: wrapper now `rc=$?; echo ...;
+  exit $rc`, plus `#SBATCH --kill-on-invalid-dep=yes` so blocked dependants are
+  cancelled (not parked PD forever). Re-run PASS: 10/40 stage1 FAILED 1:0,
+  their 10 stage2 dependants never ran (absent from sacct, left pending), the
+  other 30 ran clean; 0 stage2 ran-and-failed. Regression assertions added to
+  `tests/integration/test_slurm.py`.
 - [ ] Move `-X` from `remake -X run` to `remake run -X`, and have it run the
   task(s) in-process directly so failures reach the debugger with the
   original traceback. (`-X` was a global flag because it was occasionally

@@ -42,20 +42,26 @@ ARRAY_SBATCH_TPL = """#!/bin/bash
 #SBATCH --array=0-{max_index}{array_throttle}
 #SBATCH -o {output_dir}/%a.out
 #SBATCH -e {output_dir}/%a.err
+#SBATCH --kill-on-invalid-dep=yes
 {opts}
 echo "SLURM RUNNING {rule_name} $SLURM_ARRAY_TASK_ID"
 remake run-array-task {remakefile} {rule_name} $SLURM_ARRAY_TASK_ID
-echo "SLURM COMPLETED {rule_name} $SLURM_ARRAY_TASK_ID"
+rc=$?
+echo "SLURM COMPLETED {rule_name} $SLURM_ARRAY_TASK_ID (rc=$rc)"
+exit $rc
 """
 
 # Individual jobs share one script per rule; the task index is passed as a
 # script argument by submit.sh, and -o/-e are set per job on the sbatch line.
 INDIVIDUAL_SBATCH_TPL = """#!/bin/bash
 #SBATCH --job-name={rule_name}
+#SBATCH --kill-on-invalid-dep=yes
 {opts}
 echo "SLURM RUNNING {rule_name} $1"
 remake run-array-task {remakefile} {rule_name} $1
-echo "SLURM COMPLETED {rule_name} $1"
+rc=$?
+echo "SLURM COMPLETED {rule_name} $1 (rc=$rc)"
+exit $rc
 """
 
 CONTINUATION_SBATCH_TPL = """#!/bin/bash
