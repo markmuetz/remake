@@ -155,6 +155,37 @@ design discussion before any work starts.
     become two cases of the same machinery, rather than two overlapping
     mechanisms. Builds on the existing `check_outputs='fallback'` thinking.
 
+- **Per-element SLURM startup cost (lazy networkx).** Each array element is
+  a fresh `remake run-array-task` process whose wall-time is dominated by
+  Python startup + imports, not the task. Measured cold: `import
+  remake.remake_cmd` ≈ 336 ms, of which ~260 ms is **networkx**, pulled in
+  eagerly by `remake.core.dag` at package load. But `run-array-task` never
+  builds or traverses the DAG — it loads one task spec (`finalize=False`)
+  and runs it. On JASMIN this bit hard during the failure-propagation test
+  (2026-06-14): 40 elements landed on one node and cold-imported the same
+  large module tree from the shared filesystem simultaneously — an import
+  storm that turned sub-second imports into minutes and pushed several past
+  a 20-min wall clock (`TIMEOUT`). Throttling (`--array=0-N%T`) caps
+  concurrency and removes the storm, but each element still pays the import.
+  Lazy-importing networkx (or keeping it off the `run-array-task` path)
+  would roughly halve per-element startup and ease the storm. Mostly a
+  benchmark artefact — real tasks compute for minutes, so startup is noise
+  (cf. the 1e6/real-pipeline benchmarks, where startup wasn't the
+  bottleneck) — so this is an optimisation, not a correctness issue. Needs
+  a design pass: which imports are truly needed per task path, and whether
+  to split a lean `run-array-task` entry point from the full CLI.
+
+- **Fragile `remake` on PATH in SLURM jobs.** The generated sbatch payload
+  invokes a bare `remake run-array-task ...`. The jobs only find it because
+  `submit.sh` runs inside the `uv` venv and sbatch inherits that PATH via
+  the default `--export=ALL`; submitted from a plain shell, `remake` is not
+  on PATH (`which remake` finds nothing on a JASMIN login node — it lives
+  only in the venv). Options to harden: emit `python -m remake.remake_cmd`
+  instead of the console script; or capture the resolved interpreter/venv
+  path at submission time and bake it into the sbatch script. Relates to
+  the per-element startup item (a `python -m` entry point is also where a
+  lean import path would live).
+
 - **Orchestrator daemon — considered and rejected as load-bearing
   (2026-06-13).** Proposal: invoke a `remake-daemon` on most `remake run`
   to orchestrate tasks — a listener/responder subprocess + a process-runner

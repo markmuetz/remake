@@ -93,7 +93,14 @@ be spent only on cluster-shaped problems.
      plan/continuation run (no concurrent DB writers at all) — **chosen**,
      see below.
 - **Scheduler quirks**: `aftercorr` semantics with partially-failed
-  upstream arrays; JASMIN array-size and queued-job limits; partition
+  upstream arrays — **validated on JASMIN 2026-06-14**
+  (`tests/benchmarks/bench_slurm_failure.py`): element N of a failed upstream
+  array blocks element N of the dependant only, survivors run. This needed two
+  fixes first: the sbatch wrapper was masking the task exit code with a
+  trailing `echo` (SLURM saw all elements COMPLETED 0:0, so no dependency ever
+  fired) — now `rc=$?; ...; exit $rc`; and `#SBATCH --kill-on-invalid-dep=yes`
+  so SLURM cancels never-satisfiable dependants instead of parking them PD.
+  JASMIN array-size and queued-job limits; partition
   names and accounting. Defaults updated 2026-06-12 after checking this
   JASMIN node: `short-serial`/`long-serial` no longer exist (SLURM 25.11);
   `DEFAULT_SLURM_CONFIG` now uses `partition=standard, qos=standard`.

@@ -121,10 +121,19 @@ def test_dry_run_writes_sbatch_scripts(slurm_dir):
     assert '#SBATCH --array=0-11' in gen
     assert '#SBATCH --partition=test-par' in gen
     assert '#SBATCH --mem=2G' in gen
+    # Cancel (don't indefinitely park) elements whose upstream dependency fails.
+    assert '#SBATCH --kill-on-invalid-dep=yes' in gen
     assert 'remake run-array-task pipeline.py gen $SLURM_ARRAY_TASK_ID' in gen
+    # The wrapper must propagate the task's exit code, not mask it with the
+    # trailing echo -- otherwise SLURM sees every element as exit 0 and
+    # aftercorr/afterok never block dependants of a failed task.
+    assert 'rc=$?' in gen
+    assert 'exit $rc' in gen
 
     agg = Path('.remake/slurm/agg.sbatch').read_text()
     assert '--array' not in agg  # below threshold: individual job
+    assert '#SBATCH --kill-on-invalid-dep=yes' in agg
+    assert 'rc=$?' in agg and 'exit $rc' in agg
     assert '#SBATCH --mem=8G' in agg  # rule config overrides Remake config
     assert '#SBATCH --partition=test-par' in agg
     assert 'remake run-array-task pipeline.py agg $1' in agg
