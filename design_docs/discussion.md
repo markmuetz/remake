@@ -9,6 +9,42 @@ design discussion before any work starts.
 - **SLURM monitor** — live view of queued/running/completed cluster jobs
   (remake2 had `monitor.py`); how it relates to `info` and the jobid
   sidecar files.
+  - **Completed-job resource audit (`sacct`).** The live `slurm-status`
+    only sees the queue (`squeue`); once a job finishes it's gone. The
+    post-mortem counterpart reads the accounting DB via `sacct` to report,
+    per rule (and per array element), how much was actually used vs
+    requested — and advise on right-sizing. The wiring already exists: job
+    ids are persisted at submission (`.remake/jobs/<rule>.jobids.json`) and
+    `slurm-status` keys off them; this is the same pattern with a
+    `sacct_snapshot()` next to `squeue_snapshot()` in `slurm_executor.py`.
+    Likely shape: `remake slurm-resources` (or a `--completed`/`--resources`
+    flag on `slurm-status`), `--json` for scripting, human view giving
+    over/under-allocation advice.
+    - Fields: `MaxRSS` (peak RAM used) vs `ReqMem`; `Elapsed`/`TotalCPU`
+      vs `Timelimit`; `State`/`ExitCode` to catch `OUT_OF_MEMORY` /
+      `TIMEOUT`; `AllocCPUS` vs `TotalCPU` for CPU efficiency.
+    - Suggestion logic: peak `MaxRSS` across elements × safety factor
+      (~1.3), rounded up, for `--mem`; similarly for `--time`. Flag OOM /
+      timeout as *under*-allocated so it advises in both directions, not
+      just "you wasted RAM".
+    - Gotchas (the classic `sacct`-parsing traps): `MaxRSS` lives on the
+      `.batch`/`.extern` step sub-rows, not the parent row (walk steps,
+      take the max); array elements report individually (`<jobid>_<n>`) so
+      report the distribution (max/median) across them — the heavy element
+      sets the `--mem` everyone pays for; `sacct`/accounting may be
+      disabled or jobs may have aged out of the DB (degrade gracefully like
+      `squeue_snapshot`); `ReqMem` units/semantics shifted between Slurm
+      versions (`16Gn` vs `16G`, per-node vs per-cpu) — normalise output
+      with `--units=M`, parse the requested side carefully.
+    - **Perfect fit for a Claude skill.** The mechanical part (one `sacct`
+      call per jobid, `-P` parsing, max-across-steps) belongs in remake;
+      but turning the numbers into *advice* — "this rule used 11% of its
+      RAM ask across 128 elements, drop `--mem` to 3G; this one OOM'd on 2
+      elements, bump it" — is exactly the judgement a skill is good at. A
+      `--json` resource dump gives the skill clean input; the skill reasons
+      over the distribution, weighs headroom against OOM risk, and proposes
+      concrete config edits to the remakefile. Sits naturally alongside the
+      existing `remake` skill (operate/debug/author pipelines).
 - **Web interface** — out of scope per the design doc, but the SQLite DB
   is queryable by external tools; revisit whether a thin read-only
   viewer is worth it.
