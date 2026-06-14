@@ -55,6 +55,11 @@ dev = [
     "pyyaml>=6.0.3",
     "distributed>=2024.8.0",
 ]
+docs = [
+    "mkdocs",
+    "mkdocs-material",
+    "mkdocstrings[python]",
+]
 
 [project.scripts]
 remake = "remake.remake_cmd:remake_cmd"
