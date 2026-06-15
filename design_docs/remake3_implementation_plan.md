@@ -94,7 +94,17 @@ doc in `design_docs/` when work on it starts.
      (respects the cpuset/SLURM `--cpus-per-task` mask) instead of
      `os.cpu_count()`, which would oversubscribe inside an allocation on a
      big node.
-   - Remaining: slurm-status/why/lint and the skill.
+   - ~~slurm-status/why/lint~~ — validated on JASMIN 2026-06-15 against a
+     live SLURM submission (12-task two-rule pipeline, `array_throttle=6`,
+     stage1 sleeping so the array stayed in R): `lint` reported "all inputs
+     wired to declared dependencies"; `why` on an unrun task gave "will run:
+     yes — never run (no DB record)"; `slurm-status` (human + `--json`) read
+     the queue accurately — `stage1 PD:6 R:6 [JobArrayTaskLimit]` (exactly
+     the %6 throttle), `stage2 PD:12 [Dependency]`, and the drained-queue
+     fallback ("not in queue") after scancel. Minor UX nit found: a `why`
+     `-Q` query matching >1 task raises `RemakeError` as an uncaught
+     traceback rather than a clean message (logged for the CLI-polish pass).
+   - Remaining: the skill.
 2. **Docs** — plan, write, deploy to GitHub Pages.
 3. **GitHub Actions** — CI + coverage first; docs/release jobs after.
 4. **PyPI** — metadata polish, TestPyPI, alpha upload.
