@@ -28,6 +28,18 @@ from .executor import Executor
 _worker_rmk = None
 
 
+def _default_nproc():
+    """Usable CPU count. `os.sched_getaffinity` respects the cpuset/cgroup
+    mask, so inside a SLURM allocation (`--cpus-per-task`) on a big shared
+    node it returns the allocation, not the whole machine — unlike
+    `os.cpu_count()`, which would oversubscribe. Falls back to `cpu_count()`
+    where affinity is unavailable (non-Linux)."""
+    try:
+        return len(os.sched_getaffinity(0))
+    except AttributeError:
+        return os.cpu_count()
+
+
 def _worker_init(remakefile):
     global _worker_rmk
     from ..loader import load_remake
@@ -65,7 +77,7 @@ class MultiprocExecutor(Executor):
                 'run via the remake CLI, or set rmk.remakefile'
             )
         self.nproc = (
-            nproc or rmk.config.get('multiproc', {}).get('nproc') or os.cpu_count()
+            nproc or rmk.config.get('multiproc', {}).get('nproc') or _default_nproc()
         )
 
     def run_tasks(self, tasks):

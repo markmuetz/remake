@@ -79,8 +79,22 @@ doc in `design_docs/` when work on it starts.
      done 2026-06-13 (bench_slurm_pipeline.py; both PASS, no lock errors,
      ingest ~2.5 ms/sidecar linear; slurm_implementation.md §Suggested
      order item 4, second pass).
-   - Remaining: first real-cluster exercise of multiproc-on-a-login-node,
-     slurm-status/why/lint and the skill.
+   - ~~first real-cluster exercise of multiproc-on-a-login-node~~ — done
+     2026-06-15 on a 48-core JASMIN sci node (`host838`, not in a SLURM
+     allocation). 64-task two-rule pipeline, 8 deliberate stage1 failures,
+     `-E multiproc -j 8`: 6.3 s wall vs a 32 s serial floor (~6–8× on 8
+     workers); `upstream_failed` skip correct (stage1 56/8/0, stage2
+     56/0/8 — the 8 dependants left pending, not run-into-missing-inputs);
+     per-task logs landed under `.remake/tasks/log/...` (120 files; skipped
+     tasks produce none); all worker sidecars ingested (0 left). Capped at
+     8 workers deliberately (shared node) — the concurrency-critical
+     sidecar path was already proven harder at 800-way under SLURM, so a
+     high-core run adds nothing for correctness. Follow-up made the same
+     day: `MultiprocExecutor` nproc default now `os.sched_getaffinity`
+     (respects the cpuset/SLURM `--cpus-per-task` mask) instead of
+     `os.cpu_count()`, which would oversubscribe inside an allocation on a
+     big node.
+   - Remaining: slurm-status/why/lint and the skill.
 2. **Docs** — plan, write, deploy to GitHub Pages.
 3. **GitHub Actions** — CI + coverage first; docs/release jobs after.
 4. **PyPI** — metadata polish, TestPyPI, alpha upload.

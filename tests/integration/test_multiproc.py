@@ -99,3 +99,23 @@ def test_multiproc_needs_remakefile():
 
     with pytest.raises(RemakeError, match='remakefile'):
         MultiprocExecutor(Remake())
+
+
+def test_default_nproc_respects_cpu_affinity(monkeypatch):
+    # The default must come from the cpuset mask (sched_getaffinity), not
+    # the machine's total cores -- otherwise inside a SLURM allocation on a
+    # big shared node multiproc oversubscribes. See _default_nproc.
+    import remake.executors.multiproc_executor as mp
+
+    monkeypatch.setattr(mp.os, 'sched_getaffinity', lambda pid: {0, 1, 2, 3}, raising=False)
+    monkeypatch.setattr(mp.os, 'cpu_count', lambda: 48)
+    assert mp._default_nproc() == 4  # the affinity mask, not 48
+
+
+def test_default_nproc_falls_back_without_affinity(monkeypatch):
+    # Non-Linux: sched_getaffinity may be absent -> fall back to cpu_count.
+    import remake.executors.multiproc_executor as mp
+
+    monkeypatch.delattr(mp.os, 'sched_getaffinity', raising=False)
+    monkeypatch.setattr(mp.os, 'cpu_count', lambda: 12)
+    assert mp._default_nproc() == 12
