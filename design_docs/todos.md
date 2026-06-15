@@ -62,13 +62,13 @@ assessment (2026-06-11). Ordered roughly by severity.
 
 - [ ] `RemakeError` prints a full traceback instead of a clean message:
   `remake_cmd` has no top-level `except RemakeError`, so user-facing errors
-  (e.g. a `why`/`task-info` `-Q` query matching >1 task) surface as
+  (e.g. a `task-info`/`task-log` `-Q` query matching >1 task) surface as
   tracebacks. Catch `RemakeError` at the top, print `error: {e}` and
   `sys.exit(2)`; keep the traceback only under `-X`/`--debug-exception`.
   Found during the slurm-status/why/lint JASMIN validation 2026-06-15.
-  Note: the `why` >1-match case is better *removed* than caught — extend
-  `why` to explain all matched tasks (see the CLI-interface "rerun reasons"
-  item in discussion.md), which dissolves that particular error entirely.
+  Note: the `why` >1-match case that first surfaced this is gone — `why`
+  now explains all matches (2026-06-15) — but the general missing-handler
+  problem remains for the other single-task commands and bad queries.
 - [ ] `eval`-based query filter (see MM comment in `core/planner.py`):
   consider a restricted-ops parser for better errors; revisit at CLI work.
 - [ ] `uses` injection silently shadows module globals on name collision —

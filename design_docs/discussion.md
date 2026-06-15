@@ -68,19 +68,15 @@ design discussion before any work starts.
     --check-outputs`.
   - **Rerun reasons (remake2's `info --reasons`).** remake3 has a dedicated
     `why` verb, so split along that seam rather than overloading `info`:
-    - *Per-task detail → multi-task `why`.* Drop the >1-match error in
-      `_select_task`; iterate and print a `will run / reasons` block per
-      matched task (the current single-task output is just N=1). `why -Q
-      "rule == 'stage1'"` → all 12; bare `why` (no key/query) → default to
-      the **runnable set** (what `plan` would run, with reasons) since it's
-      the most useful view and is bounded by what's actually going to run.
-      Implementation: ingest sidecars *once* then call the module-level
-      `explain_task(rules, dag, metadata, task)` per task (not
-      `rmk.explain_task`, which re-finalizes + re-ingests each call); guard
-      the unbounded case — over 1e6 tasks this is plan-scale (per-task DB +
-      stat), so require a query or the runnable default, never silently
-      stat everything. This also dissolves the `RemakeError`-as-traceback
-      nit (the >1 case stops being an error). Folded into that todo.
+    - ~~*Per-task detail → multi-task `why`.*~~ **Done 2026-06-15.** `why -Q
+      <query>` explains every match (block per task + summary); bare `why`
+      explains the runnable set; `why <key>` is the unchanged N=1 case.
+      `Remake.explain_tasks(tasks=None)` plans *once* and passes the runnable
+      list into the module-level `explain_task(..., runnable=...)` per task,
+      so it's plan-cost not N*plan; scope is bounded by the query or the
+      runnable default (never silently stats the whole matrix). Dissolved
+      the `RemakeError`-as-traceback nit for the >1 case (no longer an
+      error). Tests in test_cli.py.
     - *Aggregate rollup → `info --reasons`.* This is what matches remake2's
       name/altitude: `info` already iterates tasks per rule for its counts,
       so add a bucketed tally of would-run reasons (e.g. `stage1: 8

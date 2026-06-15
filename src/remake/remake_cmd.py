@@ -245,11 +245,13 @@ class RemakeParser:
             ],
         },
         'why': {
-            'help': 'Explain why a task would (or would not) rerun',
+            'help': 'Explain why task(s) would (or would not) rerun',
             'args': [
                 Arg('remakefile'),
                 Arg('task_key', nargs='?'),
-                Arg('--query', '-Q', help='Select the task by kwargs query instead of key'),
+                Arg('--query', '-Q',
+                    help='Explain all tasks matching this kwargs query; '
+                         'omit both key and query to explain the runnable set'),
             ],
         },
         'slurm-status': {
@@ -683,14 +685,38 @@ class RemakeParser:
 
     def remake_why(self, args):
         rmk = self._load(args)
-        task = _select_task(rmk, args)
-        will_run, reasons = rmk.explain_task(task)
-        print(f'{task}  {task.key}')
-        print(f'will run: {"yes" if will_run else "no"}')
-        if not reasons:
-            print('up to date: recorded success, code and uses unchanged, no upstream reruns')
-        for reason in reasons:
-            print(f'- {reason}')
+        # One task by key; all matches for a -Q query; the runnable set when
+        # neither is given. The query/runnable cases share a single plan()
+        # (explain_tasks), so explaining many tasks is plan-cost, not N*plan.
+        if args.task_key and args.query:
+            raise RemakeError('Give a task key or a -Q query, not both')
+        if args.task_key:
+            tasks = [rmk.task_from_key(args.task_key)]
+        elif args.query:
+            tasks = rmk.tasks(query=args.query)
+            if not tasks:
+                raise RemakeError(f'No task matches {args.query!r}')
+        else:
+            tasks = None  # default: explain the runnable set
+
+        results = list(rmk.explain_tasks(tasks))
+        if not results:
+            print('nothing would run: all tasks are up to date')
+            return
+
+        n_run = 0
+        for task, will_run, reasons in results:
+            n_run += will_run
+            print(f'{task}  {task.key}')
+            print(f'will run: {"yes" if will_run else "no"}')
+            if not reasons:
+                print('up to date: recorded success, code and uses unchanged, no upstream reruns')
+            for reason in reasons:
+                print(f'- {reason}')
+            print()
+        if len(results) > 1:
+            print(f'{len(results)} task(s): {n_run} would run, '
+                  f'{len(results) - n_run} up to date')
 
     def remake_slurm_status(self, args):
         import json

@@ -99,6 +99,24 @@ class Remake:
             self.rules, self.dag, self.metadata, task, check_outputs=self.check_outputs
         )
 
+    def explain_tasks(self, tasks=None):
+        """Yield (task, will_run, reasons) for each task — batch `remake why`.
+        Plans once and reuses the runnable set, so cost is one plan() plus
+        per-task record/stat checks, not one plan() per task. `tasks=None`
+        explains the runnable set itself (bare `remake why`)."""
+        if not self._finalized:
+            self.finalize()
+        self.metadata.ingest_sidecars(self.rules)
+        runnable, _ = plan(
+            self.rules, self.dag, self.metadata, check_outputs=self.check_outputs
+        )
+        for task in runnable if tasks is None else tasks:
+            will_run, reasons = explain_task(
+                self.rules, self.dag, self.metadata, task,
+                check_outputs=self.check_outputs, runnable=runnable,
+            )
+            yield task, will_run, reasons
+
     def iter_tasks(self, query=None):
         """Lazily yield tasks of all currently-expandable rules, one at a
         time — constant memory regardless of matrix size."""

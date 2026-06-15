@@ -65,10 +65,15 @@ def upstream_failed(task, failures):
     return False
 
 
-def explain_task(rules, dag, metadata, task, *, check_outputs='fallback'):
+def explain_task(rules, dag, metadata, task, *, check_outputs='fallback', runnable=None):
     """Why would (or wouldn't) this task run? Returns (will_run, reasons) —
-    reasons in the order the planner checks them. The `remake why` command."""
-    runnable, _ = plan(rules, dag, metadata, check_outputs=check_outputs)
+    reasons in the order the planner checks them. The `remake why` command.
+
+    `runnable` is the precomputed `plan()` runnable list; pass it to explain
+    many tasks without re-planning per task (one plan() shared across them).
+    Computed internally when not supplied (the single-task case)."""
+    if runnable is None:
+        runnable, _ = plan(rules, dag, metadata, check_outputs=check_outputs)
     will_run = any(t.key == task.key for t in runnable)
 
     reasons = []

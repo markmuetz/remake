@@ -384,6 +384,21 @@ def test_why_code_change_and_upstream_propagation(pipeline_dir, capsys):
     assert 'generate[n=1]' in out and 'generate[n=2]' not in out
 
 
+def test_why_multiple_matches_and_runnable_default(pipeline_dir, capsys):
+    # -Q matching >1 task explains each (no longer an error), with a summary.
+    cli('why', 'pipeline.py', '-Q', 'rule == "generate"')
+    out = capsys.readouterr().out
+    assert 'generate[n=1]' in out and 'generate[n=2]' in out
+    assert out.count('will run: yes') == 2
+    assert '2 task(s): 2 would run, 0 up to date' in out
+
+    # Bare `why` explains the runnable set; after a full run, nothing runs.
+    cli('run', 'pipeline.py')
+    capsys.readouterr()
+    cli('why', 'pipeline.py')
+    assert 'nothing would run: all tasks are up to date' in capsys.readouterr().out
+
+
 def test_run_query_force(pipeline_dir, capsys):
     cli('run', 'pipeline.py')
     (pipeline_dir / 'data/out_1.txt').unlink()
