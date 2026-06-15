@@ -1,0 +1,61 @@
+site_name: remake
+site_description: A smart Python build tool for reproducible scientific pipelines
+site_url: https://markmuetz.github.io/remake
+repo_url: https://github.com/markmuetz/remake
+repo_name: markmuetz/remake
+edit_uri: edit/remake3/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: true
+            docstring_style: google
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Getting started: getting-started.md
+  - User guide:
+      - Rules and tasks: guide/rules-and-tasks.md
+      - Running pipelines: guide/running.md
+      - SLURM: guide/slurm.md
+      - Debugging: guide/debugging.md
+  - CLI reference: cli.md
+  - API reference: api/index.md
