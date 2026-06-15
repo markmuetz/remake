@@ -63,12 +63,13 @@ doc in `design_docs/` when work on it starts.
     settles.
 - [ ] Create PyPI package
   - build/install/version verified locally (`uv build`, 0.8.0a0).
-    Remaining: metadata polish (classifiers still say 3.9/Beta; check
+    Remaining: metadata polish (Development Status classifier still says
+    Beta for an alpha; check
     README renders as the long description), TestPyPI dry run, first
     alpha upload.
 - [~] GitHub Actions: CI, docs, PyPI release
   - CI done (.github/workflows/ci.yml, 2026-06-15): pytest on a Python
-    3.9–3.12 matrix via uv (`uv sync --group dev` + `uv run pytest`), on
+    3.10–3.14 matrix via uv (`uv sync --group dev` + `uv run pytest`), on
     push to remake3/remake2/main and all PRs; SLURM tests run against the
     fake sbatch/squeue shims so no cluster is needed. Remaining: coverage
     above, the 1e6-task benchmark as a load-bearing job (todos.md), a docs
