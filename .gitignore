@@ -17,6 +17,8 @@ MANIFEST
 docs/_build/
 
 .coverage
+coverage.xml
+htmlcov/
 
 # vim
 .*.sw?
