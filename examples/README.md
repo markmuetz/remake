@@ -14,6 +14,7 @@ API, in roughly increasing order of complexity:
 | `ex7_multifile/` | Rules split across modules, combined in a top-level pipeline file |
 | `ex8_dynamic_matrix.py` | Dynamic matrices (`MatrixNotReady`), non-cartesian `list[dict]` matrices, dynamic fan-in |
 | `ex9_custom_token.py` | A custom `OutputToken` (a sqlite table row) and `--check-outputs` verification |
+| `ex10_tuple_matrix.py` | Tuple-key matrices: pre-filtered combo sequences and mixed scalar/tuple axes |
 
 ## Running
 
@@ -26,7 +27,7 @@ remake run /path/to/examples/ex1_simple.py
 remake info /path/to/examples/ex1_simple.py
 ```
 
-ex1, ex3, ex5, ex8 and ex9 need only the stdlib (+ pyyaml for ex5). ex2,
+ex1, ex3, ex5, ex8, ex9 and ex10 need only the stdlib (+ pyyaml for ex5). ex2,
 ex4, ex6 and ex7 additionally need `xarray netCDF4 h5netcdf zarr dask`
 (zarr v2 for older xarray versions).
 

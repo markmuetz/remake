@@ -36,9 +36,25 @@ def resolve_matrix(matrix):
         return matrix()
     if isinstance(matrix, list):
         return matrix
-    # {key: [values]} cartesian shorthand.
-    combos = itertools.product(*matrix.values())
-    return [dict(zip(matrix.keys(), combo)) for combo in combos]
+    # dict: cartesian product of axes. A scalar key is one kwarg per value; a
+    # tuple key binds several kwargs together per value (the remake2 grouped
+    # form), letting you supply an explicit, pre-filtered sequence of combos.
+    axes = []
+    for key, values in matrix.items():
+        if isinstance(key, tuple):
+            for v in values:
+                if not isinstance(v, tuple) or len(v) != len(key):
+                    raise SignatureError(
+                        f'matrix tuple key {key} expects value tuples of length '
+                        f'{len(key)}, got {v!r}'
+                    )
+            axes.append([dict(zip(key, v)) for v in values])
+        else:
+            axes.append([{key: v} for v in values])
+    return [
+        {k: v for axis in combo for k, v in axis.items()}
+        for combo in itertools.product(*axes)
+    ]
 
 
 def expand_rule(rule, predicate=None):
