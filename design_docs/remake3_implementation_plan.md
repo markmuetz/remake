@@ -53,16 +53,18 @@ doc in `design_docs/` when work on it starts.
   - All seven run end-to-end (synthetic inputs via
     examples/make_example_data.py); ex1/ex3/ex5 run in the test suite,
     heavier ones (xarray/zarr) verified manually and plan-tested.
-- [x] Documentation (GitHub Pages deployment still pending)
+- [x] Documentation + GitHub Pages deployment
   - MkDocs site (Material + mkdocstrings) under docs/, built from README,
     examples/, remake_cmd.py and the design/skill references: home,
     installation, getting-started, user guide (rules/tasks incl. all four
     matrix forms + dynamic matrices, running, SLURM, debugging), CLI
     reference, mkdocstrings API reference. `docs` dependency group added;
     `mkdocs build --strict` passes (`uv run mkdocs serve` to preview).
-    Merged to remake3 2026-06-15. Remaining: deploy to GitHub Pages (the
-    GitHub Actions item below) and a docs-vs-code accuracy pass as the API
-    settles.
+    Merged to remake3 2026-06-15. Deployed to GitHub Pages
+    (https://markmuetz.github.io/remake) via .github/workflows/docs.yml
+    on push to remake3 (Pages source switched from legacy main/docs to
+    the Actions workflow, 2026-06-15). Remaining: a docs-vs-code accuracy
+    pass as the API settles.
 - [ ] Create PyPI package
   - build/install/version verified locally (`uv build`, 0.8.0a0).
     Remaining: metadata polish (Development Status classifier still says
@@ -120,9 +122,9 @@ doc in `design_docs/` when work on it starts.
    - Remaining: the skill.
 2. **Docs** — ~~plan, write~~ done (MkDocs site merged 2026-06-15);
    remaining: deploy to GitHub Pages (via the Actions item below).
-3. **GitHub Actions** — ~~CI, coverage~~ done (pytest matrix + pytest-cov,
-   2026-06-15); remaining: docs-deploy (Pages) and tag-triggered release
-   jobs.
+3. **GitHub Actions** — ~~CI, coverage, docs-deploy~~ done (pytest matrix +
+   pytest-cov + Pages deploy, 2026-06-15); remaining: tag-triggered release
+   job.
 4. **PyPI** — metadata polish, TestPyPI, alpha upload.
 5. Backlog beyond the plan: open items in [todos.md](todos.md)
    (benchmark in CI, batched completion transactions, fallback-mode stat
