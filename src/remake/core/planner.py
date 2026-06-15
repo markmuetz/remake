@@ -6,6 +6,7 @@ compare), uses changed, or any relevant upstream task reruns. Filesystem
 checks happen only via the opt-in check_outputs modes.
 """
 import difflib
+from collections import namedtuple
 
 import networkx as nx
 
@@ -65,9 +66,17 @@ def upstream_failed(task, failures):
     return False
 
 
+# A reason carries a short `category` (for aggregate rollups like
+# `info --reasons`) and the human `message` (`remake why`). Reason is
+# str-compatible enough for printing via its message; consumers that want the
+# bucket read `.category`.
+Reason = namedtuple('Reason', 'category message')
+
+
 def explain_task(rules, dag, metadata, task, *, check_outputs='fallback', runnable=None):
-    """Why would (or wouldn't) this task run? Returns (will_run, reasons) —
-    reasons in the order the planner checks them. The `remake why` command.
+    """Why would (or wouldn't) this task run? Returns (will_run, reasons),
+    each reason a `Reason(category, message)` in the order the planner checks
+    them. The `remake why` command (messages) and `info --reasons` (categories).
 
     `runnable` is the precomputed `plan()` runnable list; pass it to explain
     many tasks without re-planning per task (one plan() shared across them).
@@ -80,16 +89,15 @@ def explain_task(rules, dag, metadata, task, *, check_outputs='fallback', runnab
     rec = metadata.get_tasks_status([task]).get(task.key)
     if rec is None:
         if check_outputs in ('fallback', 'always') and _outputs_complete(task):
-            reasons.append(
+            reasons.append(Reason('adopted-outputs',
                 f'never recorded in the DB, but all outputs are complete on disk '
-                f'(check_outputs={check_outputs!r} adopts them)'
-            )
+                f'(check_outputs={check_outputs!r} adopts them)'))
         else:
-            reasons.append('never run (no DB record)')
+            reasons.append(Reason('never-run', 'never run (no DB record)'))
     else:
         if rec.status != TASK_STATUS_SUCCESS:
             state = 'failed' if rec.status == TASK_STATUS_FAILED else 'pending'
-            reasons.append(f'last run {state} at {rec.timestamp}')
+            reasons.append(Reason(f'last-run-{state}', f'last run {state} at {rec.timestamp}'))
         run_src = task.rule.source['run']
         if not CodeComparer()(rec.run_code, run_src):
             diff = '\n'.join(
@@ -98,11 +106,12 @@ def explain_task(rules, dag, metadata, task, *, check_outputs='fallback', runnab
                     'last run', 'current', lineterm='',
                 )
             )
-            reasons.append(f'run code changed since last run:\n{diff}')
+            reasons.append(Reason('code-changed', f'run code changed since last run:\n{diff}'))
         if rec.uses_hash != uses_hash(task.rule.uses):
-            reasons.append('uses= changed since last run')
+            reasons.append(Reason('uses-changed', 'uses= changed since last run'))
         if check_outputs == 'always' and task.outputs and not _outputs_complete(task):
-            reasons.append('outputs missing/incomplete (check_outputs=always)')
+            reasons.append(Reason('outputs-missing',
+                'outputs missing/incomplete (check_outputs=always)'))
 
     for dep in task.rule.depends_on:
         dep_running = [t for t in runnable if t.rule is dep]
@@ -111,12 +120,12 @@ def explain_task(rules, dag, metadata, task, *, check_outputs='fallback', runnab
         if _same_matrix(task.rule, dep):
             match = [t for t in dep_running if t.kwargs == task.kwargs]
             if match:
-                reasons.append(f'upstream {match[0]} reruns (shared matrix: element-wise)')
+                reasons.append(Reason('upstream-rerun',
+                    f'upstream {match[0]} reruns (shared matrix: element-wise)'))
         else:
-            reasons.append(
+            reasons.append(Reason('upstream-rerun',
                 f'{len(dep_running)} upstream {dep.name} task(s) rerun '
-                f'(different matrix: conservative, all downstream tasks rerun)'
-            )
+                f'(different matrix: conservative, all downstream tasks rerun)'))
 
     return will_run, reasons
 

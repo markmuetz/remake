@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -130,6 +131,60 @@ rmk.rules_from_current_module()
     assert 'sometimes_fails[n=2]' in out and '(failed at' in out
     assert 'Traceback (most recent call last)' in out
     assert 'ValueError: boom from n=2' in out
+
+
+# A pipeline where many tasks fail the same way, with the differing kwarg
+# embedded in the message -- the case the signature-based dedup must collapse.
+SAME_BUG = '''
+from pathlib import Path
+from remake import Remake, rule
+
+@rule(outputs={'o': 'data/{i}.txt'}, matrix={'i': [0, 1, 2, 3]})
+def boom(outputs, i):
+    if i % 2 == 0:
+        raise ValueError(f'bad input for i={i}')
+    Path(outputs['o']).write_text('ok')
+
+rmk = Remake()
+rmk.rules_from_current_module()
+'''
+
+
+def test_info_failures_grouped_by_signature(pipeline_dir, capsys):
+    Path('bug.py').write_text(SAME_BUG)
+    assert cli('run', 'bug.py') == 1
+    capsys.readouterr()
+
+    # Default -F collapses the two i=0/i=2 failures (distinct messages, same
+    # traceback) into one group with a count, not two tracebacks.
+    cli('info', 'bug.py', '-F')
+    out = capsys.readouterr().out
+    assert out.count('Traceback (most recent call last)') == 1
+    assert '×2' in out and '+ 1 more' in out
+    assert 'ValueError' in out and 'boom[i=0]' in out and 'boom[i=2]' in out
+
+    # --all-failures restores the exhaustive per-task dump (two tracebacks).
+    capsys.readouterr()
+    cli('info', 'bug.py', '--all-failures')
+    out = capsys.readouterr().out
+    assert out.count('Traceback (most recent call last)') == 2
+
+    # JSON grouped: one group, count 2, both members listed.
+    capsys.readouterr()
+    cli('info', 'bug.py', '-F', '--json')
+    failures = json.loads(capsys.readouterr().out)['failures']
+    assert len(failures) == 1
+    assert failures[0]['count'] == 2 and len(failures[0]['members']) == 2
+
+
+def test_info_reasons_tally(pipeline_dir, capsys):
+    Path('bug.py').write_text(SAME_BUG)
+    cli('run', 'bug.py')  # i=0,2 fail; i=1,3 succeed
+    capsys.readouterr()
+    cli('info', 'bug.py', '--reasons')
+    out = capsys.readouterr().out
+    # The two failed tasks would rerun, categorised; successes don't appear.
+    assert 'boom: 2 last-run-failed' in out
 
 
 def test_debug_exception_propagates_task_failure(pipeline_dir, capsys, monkeypatch):

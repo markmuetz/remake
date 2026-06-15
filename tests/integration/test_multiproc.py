@@ -91,7 +91,8 @@ rmk.rules_from_current_module()
         'rule': 'g', 'deferred': False, 'tasks': 2,
         'success': 1, 'failed': 0, 'pending': 1, 'to_run': 1,
     }
-    assert 'boom from n=2' in data['failures'][0]['exception']
+    # -F --json now groups failures; the traceback is on the representative.
+    assert 'boom from n=2' in data['failures'][0]['example']['exception']
 
 
 def test_multiproc_needs_remakefile():

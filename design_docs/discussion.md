@@ -77,32 +77,31 @@ design discussion before any work starts.
       runnable default (never silently stats the whole matrix). Dissolved
       the `RemakeError`-as-traceback nit for the >1 case (no longer an
       error). Tests in test_cli.py.
-    - *Aggregate rollup → `info --reasons`.* This is what matches remake2's
-      name/altitude: `info` already iterates tasks per rule for its counts,
-      so add a bucketed tally of would-run reasons (e.g. `stage1: 8
-      never-run, 3 code-changed, 5 upstream-rerun`). Scales (counts, not
-      per-task lines) and lives where `--tasks`/`-F` already do. `ls-tasks`
-      stays pure selection — no reasons.
-  - **Dedup `info -F` failures (remake2's unwieldy `info -F`).** Today `-F`
-    prints a full traceback per failed task; one bug across an 800-element
-    array = 800 tracebacks. Default `-F` to **unique failures + count**:
-    group by a message-*insensitive* signature (exception type + the
-    traceback's frame locations `(file, line, func)`), so
-    `RuntimeError ... i=0/1/2/...` collapse into one group "RuntimeError at
-    stage1.py:34 ×N". Per group show: the count, one representative
-    traceback (its real message intact), one log path, and a few example
-    task keys ("+N more"). Plain text dedup-on-full-traceback won't collapse
-    the common case where the message embeds kwargs (`i={i}`), hence the
-    normalised signature. Keep the exhaustive per-task dump behind a flag
-    (`--failures all` / `-FF`). JSON (`--json`) emits the grouped structure
-    (signature, count, example keys, representative exception); full list
-    under the same flag.
+    - ~~*Aggregate rollup → `info --reasons`.*~~ **Done 2026-06-15.** `info
+      --reasons` adds a per-rule tally of would-run reason *categories*
+      (e.g. `stage1: 4 last-run-failed`), reusing the single `plan()` info
+      already does (plan-cost, not N*plan). Categories come from the planner
+      itself: `explain_task` now returns `Reason(category, message)` tuples
+      (`why` prints the message, this reads the category), so the buckets
+      are authoritative, not string-matched. A task can contribute several
+      categories, so counts may exceed the to-run total (documented).
+      `--json` puts a `reasons` dict on each rule row. `ls-tasks` stays pure
+      selection.
+  - ~~**Dedup `info -F` failures (remake2's unwieldy `info -F`).**~~ **Done
+    2026-06-15.** `-F` now groups failed tasks by a message-*insensitive*
+    signature (exception type + the traceback's frame locations) — so
+    `ValueError ... i=0/1/2/...` collapse into one group "ValueError at
+    stage1.py:9 ×N" with one representative traceback (real message intact),
+    its log, and `+N more: <tasks>`. `--all-failures` keeps the exhaustive
+    per-task dump; `--json` emits grouped (or the full list under
+    `--all-failures`). `_traceback_signature`/`_group_failures` in
+    remake_cmd.py; tests in test_cli.py.
     - A log-template miner like **Drain3** is *an* approach (clusters the
       message text itself, masks variable tokens → `... i=<*>`, recovers the
       per-message values); it handles partially-similar failures well. But
-      prefer the dep-free `(exception type, frame locations)` signature
-      above — keep deps down; the manual approach covers the "one bug, N
-      tasks" case that matters and needs no runtime dependency.
+      we used the dep-free `(exception type, frame locations)` signature —
+      keep deps down; it covers the "one bug, N tasks" case that matters and
+      needs no runtime dependency.
 - **Grab code version** — record the pipeline repo's git hash/status in
   task metadata at run time (remake2's `get_git_info` did this; dropped
   in the trim).

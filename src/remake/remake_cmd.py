@@ -4,6 +4,7 @@ Minimal surface: run, run-task, info, version. Declarative arg definitions
 and method-name dispatch carried over from remake2.
 """
 import argparse
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -21,6 +22,45 @@ STATUS_NAMES = {
     TASK_STATUS_SUCCESS: 'success',
     TASK_STATUS_FAILED: 'failed',
 }
+
+_TB_FRAME = re.compile(r'  File "(.+?)", line (\d+), in (.+)')
+
+
+def _traceback_signature(tb):
+    """A message-insensitive fingerprint of a stored traceback:
+    (exception type, frame locations). Tasks failing the same way at the same
+    place share a signature even when the message embeds kwargs (`i=0/1/...`),
+    so `info -F` can collapse "one bug, N tasks" into a single group."""
+    frames = tuple(_TB_FRAME.findall(tb or ''))
+    lines = (tb or '').strip().splitlines()
+    # Final line is `ExceptionType: message` (or bare `ExceptionType`).
+    exc_type = lines[-1].split(':', 1)[0].strip() if lines else ''
+    return exc_type, frames
+
+
+def _group_failures(failures):
+    """Collapse failed-task records into unique-signature groups (preserving
+    first-seen order). Each group: exc_type, location (the deepest frame),
+    count, a representative example (first member, full traceback kept) and
+    the member task names. The dedup that makes a wide-array `info -F`
+    readable -- one bug across N tasks becomes one group with count N."""
+    groups = {}
+    for f in failures:
+        sig = _traceback_signature(f['exception'])
+        groups.setdefault(sig, []).append(f)
+    out = []
+    for (exc_type, frames), members in groups.items():
+        last = frames[-1] if frames else None
+        location = f'{last[0]}:{last[1]} in {last[2]}' if last else '(no frames)'
+        out.append({
+            'exc_type': exc_type or '(unknown)',
+            'location': location,
+            'count': len(members),
+            'example': members[0],
+            'members': [m['task'] for m in members],
+        })
+    return out
+
 
 def _add_task_log_sink(task):
     """One process, one file — safe under concurrent SLURM array elements,
@@ -205,7 +245,14 @@ class RemakeParser:
                 Arg('--query', '-Q', help='Filter tasks based on a kwargs query'),
                 Arg('--tasks', '-t', help='List individual tasks with status',
                     action='store_true'),
-                Arg('--show-failures', '-F', help='Show stored tracebacks of failed tasks',
+                Arg('--show-failures', '-F',
+                    help='Show failures grouped by unique traceback signature + count',
+                    action='store_true'),
+                Arg('--all-failures',
+                    help='With -F, show every failed task individually (not grouped)',
+                    action='store_true'),
+                Arg('--reasons',
+                    help='Per-rule tally of why the to-run tasks would rerun',
                     action='store_true'),
                 Arg('--json', help='Machine-readable output', action='store_true'),
             ],
@@ -414,13 +461,29 @@ class RemakeParser:
         import json
 
         from .core import expand_rule
-        from .core.planner import make_predicate
+        from .core.planner import explain_task, make_predicate
 
         rmk = self._load(args)
         runnable, deferred = rmk.plan(query=args.query)
         remaining = Counter(task.rule.name for task in runnable)
         deferred_names = {rule.name for rule in deferred}
         predicate = make_predicate(args.query) if args.query else None
+        show_failures = args.show_failures or args.all_failures
+
+        # Per-rule tally of why the to-run tasks would rerun. One plan() is
+        # already done (`runnable`); reuse it per task so this is plan-cost,
+        # not N*plan. A task can contribute several categories (e.g. code
+        # changed *and* upstream rerun), so counts may exceed the to-run total.
+        reasons_by_rule = {}
+        if args.reasons:
+            for task in runnable:
+                _, rs = explain_task(
+                    rmk.rules, rmk.dag, rmk.metadata, task,
+                    check_outputs=rmk.check_outputs, runnable=runnable,
+                )
+                bucket = reasons_by_rule.setdefault(task.rule.name, Counter())
+                for r in rs:
+                    bucket[r.category] += 1
 
         rule_rows = []
         task_rows = []
@@ -438,22 +501,23 @@ class RemakeParser:
                 for t in tasks
             }
             counts = Counter(statuses.values())
-            rule_rows.append(
-                {
-                    'rule': rule.name,
-                    'deferred': False,
-                    'tasks': len(tasks),
-                    'success': counts['success'],
-                    'failed': counts['failed'],
-                    'pending': counts['pending'],
-                    'to_run': remaining.get(rule.name, 0),
-                }
-            )
+            row = {
+                'rule': rule.name,
+                'deferred': False,
+                'tasks': len(tasks),
+                'success': counts['success'],
+                'failed': counts['failed'],
+                'pending': counts['pending'],
+                'to_run': remaining.get(rule.name, 0),
+            }
+            if args.reasons:
+                row['reasons'] = dict(reasons_by_rule.get(rule.name, {}))
+            rule_rows.append(row)
             if args.tasks:
                 task_rows.extend(
                     {'task': str(t), 'key': t.key, 'status': statuses[t.key]} for t in tasks
                 )
-            if args.show_failures:
+            if show_failures:
                 failures.extend(
                     {
                         'task': str(t),
@@ -466,12 +530,16 @@ class RemakeParser:
                     if t.key in records and records[t.key].status == TASK_STATUS_FAILED
                 )
 
+        # Default -F groups failures by traceback signature; --all-failures
+        # keeps the exhaustive per-task dump.
+        grouped = None if args.all_failures else _group_failures(failures)
+
         if args.json:
             data = {'rules': rule_rows}
             if args.tasks:
                 data['tasks'] = task_rows
-            if args.show_failures:
-                data['failures'] = failures
+            if show_failures:
+                data['failures'] = failures if args.all_failures else grouped
             print(json.dumps(data, indent=1))
             return
 
@@ -485,12 +553,32 @@ class RemakeParser:
         widths = [max(len(str(r[i])) for r in rows + [header]) for i in range(len(header))]
         for row in [header] + rows:
             print('  '.join(f'{str(v):<{w}}' for v, w in zip(row, widths)))
+        if args.reasons:
+            for r in rule_rows:
+                rsn = r.get('reasons')
+                if rsn:
+                    tally = ', '.join(f'{n} {cat}' for cat, n in sorted(rsn.items()))
+                    print(f'  {r["rule"]}: {tally}')
         for task_row in task_rows:
             print(f'{task_row["status"]:<8} {task_row["task"]}')
-        for failure in failures:
-            print(f'\n=== {failure["task"]} (failed at {failure["timestamp"]}) ===')
-            print(f'log: {failure["log"]}')
-            print(failure['exception'].rstrip() or '(no stored exception)')
+        if args.all_failures:
+            for failure in failures:
+                print(f'\n=== {failure["task"]} (failed at {failure["timestamp"]}) ===')
+                print(f'log: {failure["log"]}')
+                print(failure['exception'].rstrip() or '(no stored exception)')
+        elif show_failures:
+            for grp in grouped:
+                print(f'\n=== {grp["exc_type"]} at {grp["location"]}  '
+                      f'×{grp["count"]} ===')
+                rep = grp['example']
+                print(f'example: {rep["task"]} (failed at {rep["timestamp"]})')
+                print(f'log: {rep["log"]}')
+                print(rep['exception'].rstrip() or '(no stored exception)')
+                others = grp['members'][1:]
+                if others:
+                    shown = ', '.join(others[:5])
+                    more = f' (+{len(others) - 5} more)' if len(others) > 5 else ''
+                    print(f'+ {len(others)} more: {shown}{more}')
 
     def remake_ls_tasks(self, args):
         import json
@@ -712,7 +800,7 @@ class RemakeParser:
             if not reasons:
                 print('up to date: recorded success, code and uses unchanged, no upstream reruns')
             for reason in reasons:
-                print(f'- {reason}')
+                print(f'- {reason.message}')
             print()
         if len(results) > 1:
             print(f'{len(results)} task(s): {n_run} would run, '
