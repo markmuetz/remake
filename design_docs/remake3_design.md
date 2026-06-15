@@ -481,6 +481,14 @@ illustrative — trivial tasks deliberately expose framework overhead that
 amortises away for minutes-long work — but they confirm the lazy,
 rule-level model behaves as designed at scale.
 
+This was measured on a laptop SSD; on JASMIN the gap would be *wider*. The
+workload is metadata-bound (creating and statting 100k files), and a Lustre
+group workspace has far higher metadata latency than a local SSD — so both
+the absolute times and the gap grow, since the more file-stat-heavy tool
+(Snakemake here, or remake's own `check_outputs='fallback'` path) is hit
+hardest. This is the same parallel-filesystem stat cost flagged under
+Performance/scaling in [todos.md](todos.md).
+
 ### The planner (pure)
 
 ```python
