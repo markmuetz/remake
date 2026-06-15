@@ -101,6 +101,12 @@ design discussion before any work starts.
     (`--failures all` / `-FF`). JSON (`--json`) emits the grouped structure
     (signature, count, example keys, representative exception); full list
     under the same flag.
+    - A log-template miner like **Drain3** is *an* approach (clusters the
+      message text itself, masks variable tokens → `... i=<*>`, recovers the
+      per-message values); it handles partially-similar failures well. But
+      prefer the dep-free `(exception type, frame locations)` signature
+      above — keep deps down; the manual approach covers the "one bug, N
+      tasks" case that matters and needs no runtime dependency.
 - **Grab code version** — record the pipeline repo's git hash/status in
   task metadata at run time (remake2's `get_git_info` did this; dropped
   in the trim).
