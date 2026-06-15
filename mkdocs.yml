@@ -57,6 +57,5 @@ nav:
       - Running pipelines: guide/running.md
       - SLURM: guide/slurm.md
       - Debugging: guide/debugging.md
-      - Migrating from remake2: guide/migrating-from-remake2.md
   - CLI reference: cli.md
   - API reference: api/index.md

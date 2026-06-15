@@ -36,16 +36,6 @@ On submission remake writes, under `.remake/`:
 | `jobs/<rule>.jobids.json` | submitted job ids (sidecar) |
 | `tasks/results/...` | per-task result **sidecars** |
 
-## Sidecar / ingest
-
-Array tasks do **not** open the metadata DB. At the concurrency a wide cluster
-job reaches, many processes contending on one SQLite file livelocks. Instead
-each task writes its result to a sidecar file under `.remake/tasks/results/`,
-and the next `plan`/`run`/`info` batch-ingests them with a single writer.
-
-The practical consequence: after a cluster run, run any read command (e.g.
-`remake info`) to ingest results before relying on the recorded state.
-
 ## Monitoring
 
 ```bash

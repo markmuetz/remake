@@ -41,18 +41,16 @@ def process(inputs, outputs, site, year):
     ...
 ```
 
-## Fan-in with callable inputs
+## Fan-in
 
-When a task needs *many* upstream outputs (e.g. all years for a site), pass a
-callable that returns the input dict for each task:
+When a task needs *many* upstream outputs (e.g. all years for a site), build an
+inputs dict with one entry per upstream output. The matrix key (`site`) stays a
+`{...}` placeholder — escaped as `{{site}}` so the f-string leaves it for remake
+to fill per task — while the fan-in dimension (`year`) is baked in:
 
 ```python
-def aggregate_inputs(site):
-    return {str(year): f'data/processed/{site}/{year}.nc' for year in YEARS}
-
-
 @rule(
-    inputs     = aggregate_inputs,
+    inputs     = {str(year): f'data/processed/{{site}}/{year}.nc' for year in YEARS},
     outputs    = {'agg': 'data/aggregated/{site}.nc'},
     matrix     = {'site': SITES},
     depends_on = [process],
@@ -63,6 +61,11 @@ def aggregate(inputs, outputs, site):
 
 This is fan-in: one `aggregate` task per site, each consuming every year.
 
+When the set of inputs can't be known at module load — it depends on the matrix
+value, or on upstream outputs that don't exist yet — pass a *callable* of the
+matrix keys instead, returning the dict per task. See
+`examples/ex5_callable_inputs_matrix.py`.
+
 ## Tracking code and constants with `uses`
 
 remake hashes each rule's function body. If a rule depends on a module-level
@@ -72,7 +75,7 @@ trigger reruns:
 ```python
 THRESHOLD = 0.5
 
-@rule(inputs=..., outputs=..., uses=[THRESHOLD, helper_fn])
+@rule(inputs=..., outputs=..., uses={'THRESHOLD': THRESHOLD, 'helper_fn': helper_fn})
 def filter_rows(inputs, outputs):
     ...
 ```

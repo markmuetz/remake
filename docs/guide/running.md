@@ -21,7 +21,7 @@ Select with `-E/--executor`:
 remake run pipeline.py -E multiproc -j 8
 ```
 
-`-j/--nprocs` sets the worker count for `multiproc`.
+`-j/--nproc` sets the worker count for `multiproc`.
 
 ## Running a subset
 
