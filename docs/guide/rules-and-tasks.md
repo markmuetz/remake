@@ -47,6 +47,33 @@ def matrix():
     ...
 ```
 
+### Dynamic matrices
+
+Sometimes the set of tasks isn't known until an upstream rule has run — e.g. a
+detection step writes a variable number of events per year, and you want one
+downstream task per event. Make `matrix` a zero-argument callable that reads
+those upstream outputs and returns the `list[dict]`:
+
+```python
+from remake import MatrixNotReady
+
+def event_matrix():
+    rows = []
+    for year in YEARS:
+        path = Path(f'data/events/{year}.json')
+        if not path.exists():
+            raise MatrixNotReady(path)        # outputs not ready — defer
+        rows += [{'year': year, 'event_id': e['id']}
+                 for e in json.loads(path.read_text())]
+    return rows
+```
+
+remake calls the matrix during planning. While the inputs it needs are missing
+it raises `MatrixNotReady`, and remake **defers** the rule — running its
+upstream first, then retrying. A single `remake run` resolves the whole chain
+(locally via a replanning loop; on SLURM via a continuation job). See
+`examples/ex8_dynamic_matrix.py` for a complete dynamic matrix + dynamic fan-in.
+
 Matrix values become task kwargs, so they must be JSON-serialisable and stable
 in `repr` (they define the task identity).
 
