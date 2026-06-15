@@ -66,10 +66,13 @@ doc in `design_docs/` when work on it starts.
     Remaining: metadata polish (classifiers still say 3.9/Beta; check
     README renders as the long description), TestPyPI dry run, first
     alpha upload.
-- [ ] GitHub Actions: CI, docs, PyPI release
-  - CI = pytest (+ coverage above) on a small Python matrix; later the
-    1e6-task benchmark as a load-bearing job (todos.md), docs deploy and
-    a tag-triggered PyPI release.
+- [~] GitHub Actions: CI, docs, PyPI release
+  - CI done (.github/workflows/ci.yml, 2026-06-15): pytest on a Python
+    3.9–3.12 matrix via uv (`uv sync --group dev` + `uv run pytest`), on
+    push to remake3/remake2/main and all PRs; SLURM tests run against the
+    fake sbatch/squeue shims so no cluster is needed. Remaining: coverage
+    above, the 1e6-task benchmark as a load-bearing job (todos.md), a docs
+    deploy job (GitHub Pages) and a tag-triggered PyPI release.
 - [ ] Claude Code remake skill (`.claude/skills/remake/`) — see
   [claude_remake_skill.md](claude_remake_skill.md)
   - skeleton + authoring + migration + triage/monitoring/status sections
@@ -103,7 +106,8 @@ doc in `design_docs/` when work on it starts.
    - Remaining: slurm-status/why/lint and the skill.
 2. **Docs** — ~~plan, write~~ done (MkDocs site merged 2026-06-15);
    remaining: deploy to GitHub Pages (via the Actions item below).
-3. **GitHub Actions** — CI + coverage first; docs/release jobs after.
+3. **GitHub Actions** — ~~CI~~ done (pytest matrix, 2026-06-15); remaining:
+   coverage, docs-deploy (Pages) and tag-triggered release jobs.
 4. **PyPI** — metadata polish, TestPyPI, alpha upload.
 5. Backlog beyond the plan: open items in [todos.md](todos.md)
    (benchmark in CI, batched completion transactions, fallback-mode stat
