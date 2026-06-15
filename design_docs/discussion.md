@@ -284,6 +284,10 @@ design discussion before any work starts.
   - multiproc: drop local sidecars by making the parent the sole writer via
     a queue (a real simplification, no daemon needed).
 
+- **Option for full variable dump on exception** To make debugging easier,
+  it could be possible to enable a full variable dump whenever an uncaught
+  exception is raised.
+
 ## Graduated (designed and implemented; kept for the record)
 
 - **SLURM job ids written to file** — `.remake/jobs/<rule>.jobids.json`
