@@ -144,5 +144,7 @@ including the `remake3`→`main` branch migration — is laid out in
    web interface, dask design, config cascade, logging injection,
    intra-rule deps, RO-Crate, plugins, .remake layout).
 
-See also: [todos.md](todos.md) (known problems and debts) and
-[discussion.md](discussion.md) (ideas to return to).
+See also: [todos.md](todos.md) (known problems and debts),
+[discussion.md](discussion.md) (ideas to return to) and
+[alternatives.md](alternatives.md) (how remake relates to other workflow
+tools, and its niche).
