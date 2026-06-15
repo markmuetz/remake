@@ -3,6 +3,7 @@ import pytest
 
 from remake import MatrixNotReady, rule
 from remake.core.dag import build_rule_dag, expand_rule, resolve_matrix
+from remake.core.exceptions import SignatureError
 
 
 def make_chain():
@@ -44,6 +45,33 @@ def test_resolve_matrix_forms():
         resolve_matrix(lambda: (_ for _ in ()).throw(MatrixNotReady('p')))
 
 
+def test_resolve_matrix_tuple_key():
+    # A tuple key binds its kwargs together — an explicit, pre-filtered
+    # sequence of combos rather than a cartesian product.
+    assert resolve_matrix({('x', 'y'): [(1, 'a'), (2, 'b')]}) == [
+        {'x': 1, 'y': 'a'},
+        {'x': 2, 'y': 'b'},
+    ]
+
+
+def test_resolve_matrix_mixed_axes():
+    # Scalar and tuple keys combine: cartesian product over the axes, with the
+    # tuple axis contributing grouped kwargs.
+    assert resolve_matrix({'expt': ['c', 'w'], ('x', 'y'): [(1, 'a'), (2, 'b')]}) == [
+        {'expt': 'c', 'x': 1, 'y': 'a'},
+        {'expt': 'c', 'x': 2, 'y': 'b'},
+        {'expt': 'w', 'x': 1, 'y': 'a'},
+        {'expt': 'w', 'x': 2, 'y': 'b'},
+    ]
+
+
+def test_resolve_matrix_tuple_key_length_guard():
+    with pytest.raises(SignatureError, match='length 2'):
+        resolve_matrix({('x', 'y'): [(1, 'a'), (2,)]})
+    with pytest.raises(SignatureError, match='length 2'):
+        resolve_matrix({('x', 'y'): [1, 2]})
+
+
 def test_expand_rule_cartesian():
     @rule(outputs={'o': '{model}_{year}.txt'}, matrix={'model': ['a', 'b'], 'year': [1, 2]})
     def r(outputs, model, year):
@@ -53,6 +81,18 @@ def test_expand_rule_cartesian():
     assert len(tasks) == 4
     assert {t.kwargs['model'] for t in tasks} == {'a', 'b'}
     assert len({t.key for t in tasks}) == 4
+
+
+def test_expand_rule_tuple_key():
+    # The signature check must accept a function whose params are the flattened
+    # tuple-key names, and expansion must bind them together.
+    @rule(outputs={'o': '{model}_{year}.txt'},
+          matrix={('model', 'year'): [('a', 1), ('b', 2)]})
+    def r(outputs, model, year):
+        pass
+
+    tasks = expand_rule(r)
+    assert [(t.kwargs['model'], t.kwargs['year']) for t in tasks] == [('a', 1), ('b', 2)]
 
 
 def test_expand_rule_predicate_filters_before_construction():

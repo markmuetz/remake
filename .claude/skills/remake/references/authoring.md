@@ -62,8 +62,14 @@ def fn([inputs,] [outputs,] <matrix keys...>):
 
 ## matrix
 
-Three forms:
+Four forms:
 - `{'year': YEARS, 'model': MODELS}` — cartesian product;
+- `{('year', 'model'): [(1980, 'a'), (1981, 'b'), ...]}` — a tuple key
+  binds several kwargs together: an explicit, pre-filtered sequence of
+  combos instead of the full product. Value tuples must match the key's
+  length (`SignatureError` otherwise). Mix with scalar keys freely
+  (`{'expt': EXPTS, ('year', 'model'): PAIRS}`) — each dict entry is one
+  product axis;
 - `[{'year': 1980, 'cluster_id': 'c1'}, ...]` — explicit task list;
 - a zero-arg callable returning `list[dict]` — a *dynamic* matrix.
   Raise `MatrixNotReady(path)` while upstream outputs are missing; the

@@ -58,7 +58,12 @@ def _matrix_keys(matrix):
     if callable(matrix):
         return None
     if isinstance(matrix, dict):
-        return set(matrix.keys())
+        # Tuple keys bind several kwargs together (the grouped form); flatten
+        # them so the signature check sees the individual parameter names.
+        keys = set()
+        for k in matrix:
+            keys.update(k if isinstance(k, tuple) else (k,))
+        return keys
     if isinstance(matrix, list):
         return set(matrix[0].keys()) if matrix else set()
     raise SignatureError(f'matrix must be dict, list[dict] or callable, not {type(matrix)}')

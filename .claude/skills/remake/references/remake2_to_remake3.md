@@ -34,7 +34,7 @@ with rules registered implicitly at class-definition time.
 | remake2 | remake3 |
 |---|---|
 | `class R(Rule/TaskRule):` | `@rule(...)` on a plain function |
-| `rule_matrix` / `var_matrix` | `matrix=` |
+| `rule_matrix` / `var_matrix` | `matrix=` (cartesian dict, tuple-key grouped dict, `list[dict]`, or callable — the remake2 tuple-key grouped form ports unchanged) |
 | `rule_inputs` / `rule_outputs` class attrs | `inputs=` / `outputs=` decorator args (same dict/callable forms) |
 | `def rule_run(inputs, outputs, a, b)` | the decorated function; same signature contract |
 | `def rule_run(self)` + `self.inputs`/`self.a` | rewrite to explicit params: `def fn(inputs, outputs, a)` |
