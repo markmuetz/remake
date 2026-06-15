@@ -29,7 +29,9 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
-    "Development Status :: 4 - Beta",
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: Apache Software License",
+    "Topic :: Scientific/Engineering",
 ]
 
 [project.urls]
@@ -49,6 +51,7 @@ dask = [
 [dependency-groups]
 dev = [
     "pytest",
+    "pytest-cov",
     "hypothesis",
     "xarray>=2024.7.0",
     "netcdf4>=1.7.2",
@@ -76,3 +79,11 @@ version = { attr = "remake.version.__version__" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["remake"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 85

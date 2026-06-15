@@ -44,36 +44,44 @@ doc in `design_docs/` when work on it starts.
   - 123 tests under tests/unit and tests/integration; examples are loaded
     and planned as part of the suite, SLURM tested against fake
     sbatch/squeue shims. Grow alongside remaining items.
-- [ ] Code coverage
-  - pytest-cov + a threshold, wired into CI when GitHub Actions lands;
-    use it to find untested corners (tokens, util) rather than chase 100%.
+- [x] Code coverage
+  - pytest-cov wired into CI (2026-06-15): `--cov=remake` with
+    term-missing + xml reports, `fail_under=85` (currently ~89%). Use the
+    term-missing output to find untested corners (util/config, dask/
+    multiproc executor branches) rather than chase 100%.
 - [x] Runnable examples
   - All seven run end-to-end (synthetic inputs via
     examples/make_example_data.py); ex1/ex3/ex5 run in the test suite,
     heavier ones (xarray/zarr) verified manually and plan-tested.
-- [x] Documentation (GitHub Pages deployment still pending)
+- [x] Documentation + GitHub Pages deployment
   - MkDocs site (Material + mkdocstrings) under docs/, built from README,
     examples/, remake_cmd.py and the design/skill references: home,
     installation, getting-started, user guide (rules/tasks incl. all four
     matrix forms + dynamic matrices, running, SLURM, debugging), CLI
     reference, mkdocstrings API reference. `docs` dependency group added;
     `mkdocs build --strict` passes (`uv run mkdocs serve` to preview).
-    Merged to remake3 2026-06-15. Remaining: deploy to GitHub Pages (the
-    GitHub Actions item below) and a docs-vs-code accuracy pass as the API
-    settles.
-- [ ] Create PyPI package
-  - build/install/version verified locally (`uv build`, 0.8.0a0).
-    Remaining: metadata polish (Development Status classifier still says
-    Beta for an alpha; check
-    README renders as the long description), TestPyPI dry run, first
-    alpha upload.
+    Merged to remake3 2026-06-15. Deployed to GitHub Pages
+    (https://markmuetz.github.io/remake) via .github/workflows/docs.yml
+    on push to remake3 (Pages source switched from legacy main/docs to
+    the Actions workflow, 2026-06-15). Remaining: a docs-vs-code accuracy
+    pass as the API settles.
+- [~] Create PyPI package (0.8.0a0)
+  - build/install/version verified locally (`uv build`); metadata polished
+    2026-06-15 (Development Status -> 3 - Alpha, Apache license + Topic
+    classifiers, Python 3.10–3.14, README as markdown long description);
+    `twine check` passes on both artifacts. The PyPI project `remake`
+    already exists (owned by the author, last 0.6.3). Release automated via
+    release.yml (Trusted Publishing). Remaining: register trusted
+    publishers (pypi.org + test.pypi.org), run the TestPyPI dry run, verify
+    `pip install`, then tag v0.8.0a0 for the first alpha upload.
 - [~] GitHub Actions: CI, docs, PyPI release
   - CI done (.github/workflows/ci.yml, 2026-06-15): pytest on a Python
     3.10–3.14 matrix via uv (`uv sync --group dev` + `uv run pytest`), on
     push to remake3/remake2/main and all PRs; SLURM tests run against the
-    fake sbatch/squeue shims so no cluster is needed. Remaining: coverage
-    above, the 1e6-task benchmark as a load-bearing job (todos.md), a docs
-    deploy job (GitHub Pages) and a tag-triggered PyPI release.
+    fake sbatch/squeue shims so no cluster is needed. Coverage wired in
+    too (see above). Remaining: the 1e6-task benchmark as a load-bearing
+    job (todos.md), a docs deploy job (GitHub Pages) and a tag-triggered
+    PyPI release.
 - [ ] Claude Code remake skill (`.claude/skills/remake/`) — see
   [claude_remake_skill.md](claude_remake_skill.md)
   - skeleton + authoring + migration + triage/monitoring/status sections
@@ -117,8 +125,11 @@ doc in `design_docs/` when work on it starts.
    - Remaining: the skill.
 2. **Docs** — ~~plan, write~~ done (MkDocs site merged 2026-06-15);
    remaining: deploy to GitHub Pages (via the Actions item below).
-3. **GitHub Actions** — ~~CI~~ done (pytest matrix, 2026-06-15); remaining:
-   coverage, docs-deploy (Pages) and tag-triggered release jobs.
+3. **GitHub Actions** — ~~CI, coverage, docs-deploy, release job~~ done
+   (pytest matrix + pytest-cov + Pages deploy + Trusted-Publishing release,
+   2026-06-15). release.yml: workflow_dispatch -> TestPyPI dry run, v* tag
+   -> PyPI. Needs trusted publishers registered on pypi.org (env `pypi`)
+   and test.pypi.org (pending publisher, env `testpypi`) before first run.
 4. **PyPI** — metadata polish, TestPyPI, alpha upload.
 5. Backlog beyond the plan: open items in [todos.md](todos.md)
    (benchmark in CI, batched completion transactions, fallback-mode stat
