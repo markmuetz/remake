@@ -30,3 +30,6 @@ remake/examples/data/outputs/
 remake2/examples/.remake
 remake2/examples/data/outputs
 
+
+# mkdocs build output
+site/
