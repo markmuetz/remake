@@ -66,6 +66,9 @@ assessment (2026-06-11). Ordered roughly by severity.
   tracebacks. Catch `RemakeError` at the top, print `error: {e}` and
   `sys.exit(2)`; keep the traceback only under `-X`/`--debug-exception`.
   Found during the slurm-status/why/lint JASMIN validation 2026-06-15.
+  Note: the `why` >1-match case is better *removed* than caught — extend
+  `why` to explain all matched tasks (see the CLI-interface "rerun reasons"
+  item in discussion.md), which dissolves that particular error entirely.
 - [ ] `eval`-based query filter (see MM comment in `core/planner.py`):
   consider a restricted-ops parser for better errors; revisit at CLI work.
 - [ ] `uses` injection silently shadows module globals on name collision —

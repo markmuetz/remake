@@ -66,6 +66,41 @@ design discussion before any work starts.
     `set-state -Q <query> (--success [--check-outputs] | --pending)`;
     migration adoption = `set-state file -Q True --success
     --check-outputs`.
+  - **Rerun reasons (remake2's `info --reasons`).** remake3 has a dedicated
+    `why` verb, so split along that seam rather than overloading `info`:
+    - *Per-task detail → multi-task `why`.* Drop the >1-match error in
+      `_select_task`; iterate and print a `will run / reasons` block per
+      matched task (the current single-task output is just N=1). `why -Q
+      "rule == 'stage1'"` → all 12; bare `why` (no key/query) → default to
+      the **runnable set** (what `plan` would run, with reasons) since it's
+      the most useful view and is bounded by what's actually going to run.
+      Implementation: ingest sidecars *once* then call the module-level
+      `explain_task(rules, dag, metadata, task)` per task (not
+      `rmk.explain_task`, which re-finalizes + re-ingests each call); guard
+      the unbounded case — over 1e6 tasks this is plan-scale (per-task DB +
+      stat), so require a query or the runnable default, never silently
+      stat everything. This also dissolves the `RemakeError`-as-traceback
+      nit (the >1 case stops being an error). Folded into that todo.
+    - *Aggregate rollup → `info --reasons`.* This is what matches remake2's
+      name/altitude: `info` already iterates tasks per rule for its counts,
+      so add a bucketed tally of would-run reasons (e.g. `stage1: 8
+      never-run, 3 code-changed, 5 upstream-rerun`). Scales (counts, not
+      per-task lines) and lives where `--tasks`/`-F` already do. `ls-tasks`
+      stays pure selection — no reasons.
+  - **Dedup `info -F` failures (remake2's unwieldy `info -F`).** Today `-F`
+    prints a full traceback per failed task; one bug across an 800-element
+    array = 800 tracebacks. Default `-F` to **unique failures + count**:
+    group by a message-*insensitive* signature (exception type + the
+    traceback's frame locations `(file, line, func)`), so
+    `RuntimeError ... i=0/1/2/...` collapse into one group "RuntimeError at
+    stage1.py:34 ×N". Per group show: the count, one representative
+    traceback (its real message intact), one log path, and a few example
+    task keys ("+N more"). Plain text dedup-on-full-traceback won't collapse
+    the common case where the message embeds kwargs (`i={i}`), hence the
+    normalised signature. Keep the exhaustive per-task dump behind a flag
+    (`--failures all` / `-FF`). JSON (`--json`) emits the grouped structure
+    (signature, count, example keys, representative exception); full list
+    under the same flag.
 - **Grab code version** — record the pipeline repo's git hash/status in
   task metadata at run time (remake2's `get_git_info` did this; dropped
   in the trim).
