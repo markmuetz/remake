@@ -92,6 +92,11 @@ doc in `design_docs/` when work on it starts.
 
 ## What's left, at a glance (2026-06-12)
 
+The road from the shipped `0.8.0a0` alpha to the full `0.8.0` release —
+including the `remake3`→`main` branch migration — is laid out in
+[remake3_0.8.0_release.md](remake3_0.8.0_release.md).
+
+
 1. **JASMIN revalidation** of the post-livelock stack:
    - ~~sidecar/ingest at 400/800-way through the real pipeline path~~ —
      done 2026-06-13 (bench_slurm_pipeline.py; both PASS, no lock errors,
