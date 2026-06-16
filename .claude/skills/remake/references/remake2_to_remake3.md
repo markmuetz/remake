@@ -73,6 +73,22 @@ remake3 validates the rule function signature at decoration time against
 So the no-input download/standalone rules need the most care — it's the
 one place the mechanical `(inputs, outputs, ...)` carry-over breaks.
 
+## Task kwargs must be hashable (dict-valued matrix entries break)
+
+remake2 happily took dict-valued matrix entries (a common "bag of plot
+options" pattern: `matrix={'plot_kwargs': [dict(smooth=24), dict(xlim=(0,
+20)), ...], ...}`). remake3's planner does `frozenset(task.kwargs.items())`
+for upstream-rerun tracking, so a dict (or list) kwarg value raises
+`TypeError: unhashable type: 'dict'` at plan time — *after* the file
+imports cleanly, so `-n` is the first place it shows.
+
+Fix: store the entry as a hashable `tuple(d.items())` and rebuild it with
+`dict()` wherever it's consumed (rule body and any inputs/outputs callable
+that reads it). Values inside must themselves be hashable (`(0, 20)` not
+`[0, 20]`). Output paths/keys derived from the dict are unchanged because
+`dict(tuple_of_items)` round-trips order. A small `_hashable` helper over
+the list keeps the matrix readable.
+
 ## Scope: the step that needs real judgement
 
 remake2 `rule_run` bodies freely referenced module globals (constants,
@@ -80,19 +96,29 @@ helper functions, other classes). remake3 rejects undeclared free
 variables at import (`ScopeWarning`/`ScopeError`) because untracked
 globals make rerun decisions wrong.
 
-For each free name in a rule body decide:
+The exemption rule is precise (`scope.py:_is_environment`): a name is
+exempt iff its value **is a module**, or its value's `__module__`
+top-level package is in `sys.stdlib_module_names`. So:
 - imported *module* (`import numpy as np`, `import x.y as z`) → exempt;
-- name bound by `from x import Name` (a class or function, e.g.
-  `from matplotlib.lines import Line2D`, `from mymod import MyClass`) → the
-  checker flags it like any other global and wants it in `uses={...}`. It is
-  *not* exempt just because it came from an import — only whole-module
-  imports are. For a local class this is correct (changes should rerun); for
-  a stdlib/third-party class it's harmless tracking, declare it to silence
-  the `ScopeWarning`;
-- constant or helper function → add to `uses={...}` (it then correctly
-  participates in rerun hashing);
-- mutable module state / config object → restructure: pass through the
-  matrix, or freeze into `uses`.
+- name `from x import Name` where `Name` is defined in the **stdlib**
+  (`from pathlib import Path`, `from itertools import product`,
+  `from datetime import datetime`) → exempt (its `__module__` is stdlib),
+  even though it's a from-import. No `uses=` needed;
+- name `from x import Name` where `Name` is a **third-party or local** class
+  or function (`from matplotlib.lines import Line2D`, `from mymod import
+  MyClass`) → flagged; add to `uses={...}`. For a local class this is
+  correct (its changes should rerun); for a third-party class it's harmless
+  tracking that silences the `ScopeWarning`;
+- module-level constant or helper function *defined in the remakefile* → add
+  to `uses={...}` (so it participates in rerun hashing). This includes a
+  `@dataclass` *instance* used as a settings/config object;
+- mutable module state → restructure: pass through the matrix, or freeze
+  into `uses`.
+
+Net practical effect: `np`/`pd`/`xr`/`Path`/`product`/`string`/`scipy` and
+friends never need declaring; the names you actually have to chase are the
+constants, helper functions, settings objects and local classes defined in
+(or imported into) the remakefile itself.
 
 `uses` tracking is one level deep — a helper calling another helper
 needs both declared.
