@@ -166,6 +166,7 @@ class RemakeParser:
 
     args = [
         MutuallyExclusiveGroup(
+            Arg('--trace', '-T', help='Enable trace logging (most verbose)', action='store_true'),
             Arg('--debug', '-D', help='Enable debug logging', action='store_true'),
             Arg('--info', '-I', help='Enable info logging', action='store_true', default=True),
             Arg('--warning', '-W', help='Warning logging only', action='store_true'),
@@ -485,10 +486,13 @@ class RemakeParser:
                 for r in rs:
                     bucket[r.category] += 1
 
+        import networkx as nx
+
         rule_rows = []
         task_rows = []
         failures = []
-        for rule in rmk.rules:
+        # Dependency (topological) order, so upstream rules read top-down.
+        for rule in nx.topological_sort(rmk.dag):
             if rule.name in deferred_names:
                 rule_rows.append({'rule': rule.name, 'deferred': True})
                 continue
@@ -534,8 +538,15 @@ class RemakeParser:
         # keeps the exhaustive per-task dump.
         grouped = None if args.all_failures else _group_failures(failures)
 
+        # Totals across non-deferred rules.
+        tallied = [r for r in rule_rows if not r['deferred']]
+        totals = {
+            field: sum(r[field] for r in tallied)
+            for field in ('tasks', 'success', 'failed', 'pending', 'to_run')
+        }
+
         if args.json:
-            data = {'rules': rule_rows}
+            data = {'rules': rule_rows, 'totals': totals}
             if args.tasks:
                 data['tasks'] = task_rows
             if show_failures:
@@ -550,9 +561,17 @@ class RemakeParser:
             else (r['rule'], r['tasks'], r['success'], r['failed'], r['pending'], r['to_run'])
             for r in rule_rows
         ]
-        widths = [max(len(str(r[i])) for r in rows + [header]) for i in range(len(header))]
+        totals_row = (
+            'TOTAL', totals['tasks'], totals['success'], totals['failed'],
+            totals['pending'], totals['to_run'],
+        )
+        widths = [
+            max(len(str(r[i])) for r in rows + [header, totals_row])
+            for i in range(len(header))
+        ]
         for row in [header] + rows:
             print('  '.join(f'{str(v):<{w}}' for v, w in zip(row, widths)))
+        print('  '.join(f'{str(v):<{w}}' for v, w in zip(totals_row, widths)))
         if args.reasons:
             for r in rule_rows:
                 rsn = r.get('reasons')
@@ -863,7 +882,9 @@ def remake_cmd(argv=None):
     # Logs go to stderr; stdout carries command output only (so --json and
     # piping stay clean).
     logger.remove()
-    if args.debug:
+    if args.trace:
+        logger.add(sys.stderr, colorize=True, level='TRACE')
+    elif args.debug:
         logger.add(sys.stderr, colorize=True, level='DEBUG')
     elif args.warning:
         logger.add(
@@ -879,10 +900,13 @@ def remake_cmd(argv=None):
     # NFS-class filesystems (see design_docs/per_task_logging.md).
     per_task = args.subcmd_name in ('run-task', 'run-array-task')
     if hasattr(args, 'remakefile') and not per_task:
-        # Always-on DEBUG file log next to the metadata DB.
+        # Always-on file log next to the metadata DB (DEBUG, or TRACE under -T).
         logfile = Path('.remake/remake.log')
         logfile.parent.mkdir(parents=True, exist_ok=True)
-        logger.add(logfile, level='DEBUG', rotation='5 MB', retention=3)
+        logger.add(
+            logfile, level='TRACE' if args.trace else 'DEBUG',
+            rotation='5 MB', retention=3,
+        )
         logger.debug(f'argv: {argv}')
 
     if getattr(args, 'debug_exception', False):

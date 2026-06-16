@@ -190,6 +190,7 @@ class Remake:
 
         nfailed = 0
         attempted = set()
+        wave = 0
         while True:
             runnable, deferred = _plan()
             force = False  # only force the first wave
@@ -199,6 +200,8 @@ class Remake:
                     names = ', '.join(rule.name for rule in deferred)
                     logger.warning(f'Blocked rules (matrix not ready): {names}')
                 break
+            wave += 1
+            logger.debug('wave {}: running {} task(s)', wave, len(runnable))
             attempted |= {t.key for t in runnable}
             nfailed += executor.run_tasks(runnable) or 0
         return nfailed

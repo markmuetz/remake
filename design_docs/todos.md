@@ -159,12 +159,18 @@ assessment (2026-06-11). Ordered roughly by severity.
 
 ## UX
 
-- [ ] Debug/trace logging for visibility into what's happening — e.g. log
-  sidecar ingest at debug level ("ingested N sidecars in M ms"). The always-on
-  `.remake/remake.log` DEBUG sink already exists; this is sprinkling
-  `logger.debug` at the right seams.
-- [ ] `remake info`: add a totals row at the bottom, and sort rules sensibly
-  (dependency/topological order rather than dict order).
-- [ ] `remake run -E slurm`: print one line per rule submitted with its task
-  count (e.g. "submitted extract: 1234 tasks, job 98765"). Natural home for the
-  "skipped N already-queued tasks" message from the SLURM item above.
+- [x] Debug/trace logging for visibility into what's happening. Added a new
+  `-T`/`--trace` level (loguru TRACE, below DEBUG); convention is DEBUG
+  summarises loops (counts/timings), TRACE logs each element — using loguru's
+  lazy `{}` formatting so trace lines cost nothing until a sink accepts them
+  (convention documented in per_task_logging.md). Seams: `planner.plan` (silent
+  before — per-rule + overall summaries at debug, per-task rerun reason at
+  trace), `remake.run` wave loop, `get_tasks_status`, `ensure_rules`,
+  `ingest_sidecars`, SLURM `run_tasks`.
+- [x] `remake info`: totals row at the bottom (text + `--json` `totals` key),
+  rules iterated in dependency (topological) order rather than declaration
+  order.
+- [x] `remake run -E slurm`: prints one line per rule submitted with its task
+  count and kind (e.g. "extract: submitting 1234 task(s) (array)"). Still the
+  natural home for the "skipped N already-queued tasks" message once the
+  per-task SLURM guard (see SLURM section) lands.

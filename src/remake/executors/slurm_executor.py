@@ -153,6 +153,10 @@ class SlurmExecutor(Executor):
                 continue
             self._write_job_specs(rule, tasks_for_rule)
             is_array = len(tasks_for_rule) >= self.array_threshold
+            kind = 'array' if is_array else 'individual'
+            logger.info(f'{rule.name}: submitting {len(tasks_for_rule)} task(s) ({kind})')
+            for task in tasks_for_rule:
+                logger.trace('  {}: {} {}', rule.name, task.key, task.kwargs)
             self._write_sbatch(rule, tasks_for_rule, is_array)
             dependency = self._dependency(rule, tasks_for_rule, is_array, submitted)
             lines.extend(self._submit_lines(rule, tasks_for_rule, is_array, dependency))
