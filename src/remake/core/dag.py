@@ -68,6 +68,27 @@ def expand_rule(rule, predicate=None):
     return list(iter_expand_rule(rule, predicate))
 
 
+# Matrix kwarg values must survive the JSON round-trip used to ship SLURM
+# job specs to compute nodes (a tuple/set comes back as a list, changing both
+# Task.key and any kwarg-derived output path). Restrict them to JSON scalars,
+# checked at plan time before anything is submitted. bool is an int subclass.
+_SCALAR_TYPES = (str, int, float, bool, type(None))
+
+
+def _check_scalar_kwargs(rule, kwargs):
+    for key, value in kwargs.items():
+        if not isinstance(value, _SCALAR_TYPES):
+            raise SignatureError(
+                f'{rule.name}: matrix value {key}={value!r} is a '
+                f'{type(value).__name__}; matrix kwarg values must be scalars '
+                f'(str, int, float, bool, None). Non-scalars do not survive the '
+                f'JSON round-trip used for SLURM job specs (e.g. a tuple returns '
+                f'as a list), which silently changes the task key and any output '
+                f'path built from it. Encode the value as a string instead — e.g. '
+                f'a short label, or a JSON string parsed inside the rule.'
+            )
+
+
 def iter_expand_rule(rule, predicate=None):
     """Generator form of expand_rule — yields Tasks one at a time."""
     kwargs_list = resolve_matrix(rule.matrix)
@@ -76,6 +97,7 @@ def iter_expand_rule(rule, predicate=None):
         # unknowable at decoration time for callable matrices.
         _check_expanded_kwargs(rule, kwargs_list[0])
     for kw in kwargs_list:
+        _check_scalar_kwargs(rule, kw)
         if predicate is None or predicate({**kw, 'rule': rule.name}):
             yield Task(rule=rule, kwargs=kw)
 

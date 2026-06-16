@@ -110,3 +110,25 @@ def test_no_matrix_is_single_task():
         pass
 
     assert len(expand_rule(r)) == 1
+
+
+def test_non_scalar_matrix_value_rejected():
+    # A tuple value would not survive the JSON round-trip used for SLURM job
+    # specs (it returns as a list), changing the key and any kwarg-derived
+    # path — so it must be rejected at expansion time, not silently corrupt.
+    @rule(outputs={'o': '{xlim}.txt'}, matrix={'xlim': [(0, 20), (0, 40)]})
+    def r(outputs, xlim):
+        pass
+
+    with pytest.raises(SignatureError, match='must be scalars'):
+        expand_rule(r)
+
+
+def test_scalar_matrix_values_accepted():
+    # str/int/float/bool/None all survive the round-trip and are allowed.
+    @rule(outputs={'o': '{a}_{b}_{c}_{d}.txt'},
+          matrix={'a': ['x'], 'b': [1], 'c': [1.5], 'd': [True]})
+    def r(outputs, a, b, c, d):
+        pass
+
+    assert len(expand_rule(r)) == 1
