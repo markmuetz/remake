@@ -148,3 +148,23 @@ assessment (2026-06-11). Ordered roughly by severity.
   when set it forces the singleproc executor (warning if `-E` was something
   else) so the failure propagates in-process into pdb/ipdb. See the rejected
   orchestrator-daemon entry in discussion.md.
+## SLURM
+
+- [ ] Per-task "already running?" detection. Rule-level skipping exists
+  (`squeue_snapshot`/`_active_jobids`/`_queued_jobids` skip a whole rule whose
+  last submission is still PD/R); make it per-task and replan-proof by stamping
+  each job with a run id + its spec path so a queue snapshot maps back to the
+  exact remake task. Also fixes the latent resubmit-all bug where a *failed*
+  squeue is read as an empty queue. Design: [slurm_already_running.md](slurm_already_running.md).
+
+## UX
+
+- [ ] Debug/trace logging for visibility into what's happening — e.g. log
+  sidecar ingest at debug level ("ingested N sidecars in M ms"). The always-on
+  `.remake/remake.log` DEBUG sink already exists; this is sprinkling
+  `logger.debug` at the right seams.
+- [ ] `remake info`: add a totals row at the bottom, and sort rules sensibly
+  (dependency/topological order rather than dict order).
+- [ ] `remake run -E slurm`: print one line per rule submitted with its task
+  count (e.g. "submitted extract: 1234 tasks, job 98765"). Natural home for the
+  "skipped N already-queued tasks" message from the SLURM item above.
