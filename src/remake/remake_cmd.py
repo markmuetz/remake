@@ -263,6 +263,13 @@ class RemakeParser:
             'args': [
                 Arg('remakefile'),
                 Arg('--query', '-Q', help='Filter tasks based on a kwargs query'),
+                Arg('--inputs', '-i', action='store_true',
+                    help='Show each task\'s input files (indented under it)'),
+                Arg('--outputs', '-o', action='store_true',
+                    help='Show each task\'s output files (indented under it)'),
+                Arg('--check', action='store_true',
+                    help='With -i/-o, stat each file and mark exists/complete '
+                         '(one stat per file — slow for large selections)'),
                 Arg('--json', help='Machine-readable output (full keys)', action='store_true'),
             ],
         },
@@ -622,17 +629,45 @@ class RemakeParser:
         rmk = self._load(args)
         rmk.finalize()
         predicate = make_predicate(args.query) if args.query else None
+
+        def input_files(task):
+            for name, value in task.inputs.items():
+                info = {'name': name, 'path': str(value)}
+                if args.check:
+                    info['exists'] = Path(value).exists()
+                yield info
+
+        def output_files(task):
+            for name, token in task.outputs.items():
+                info = {'name': name, 'path': str(token)}
+                if args.check:
+                    info['complete'] = token.is_complete()
+                yield info
+
         rows = []
         for rule in rmk.rules:
             try:
                 # Stream in text mode: constant memory however big the matrix.
                 for task in iter_expand_rule(rule, predicate):
                     if args.json:
-                        rows.append(
-                            {'key': task.key, 'rule': rule.name, 'kwargs': task.kwargs}
-                        )
-                    else:
-                        print(task)
+                        row = {'key': task.key, 'rule': rule.name, 'kwargs': task.kwargs}
+                        if args.inputs:
+                            row['inputs'] = list(input_files(task))
+                        if args.outputs:
+                            row['outputs'] = list(output_files(task))
+                        rows.append(row)
+                        continue
+                    print(task)
+                    if args.inputs:
+                        for f in input_files(task):
+                            mark = '' if not args.check else (
+                                ' [exists]' if f['exists'] else ' [MISSING]')
+                            print(f'  in  {f["name"]}: {f["path"]}{mark}')
+                    if args.outputs:
+                        for f in output_files(task):
+                            mark = '' if not args.check else (
+                                ' [complete]' if f['complete'] else ' [missing]')
+                            print(f'  out {f["name"]}: {f["path"]}{mark}')
             except MatrixNotReady:
                 logger.warning(f'{rule.name}: deferred (matrix not ready), tasks unknown')
         if args.json:
