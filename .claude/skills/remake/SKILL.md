@@ -88,6 +88,14 @@ work anywhere a key is accepted (like git).
 - *Environment* (ImportError/ModuleNotFoundError in job) → the job env
   lacks a package; fix the env the sbatch scripts run in, then
   `remake run` again (failed tasks rerun automatically).
+- *`remake` not found in the job* (`remake: command not found`, every
+  element `FAILED 127:0` at `00:00:00` elapsed, `info` shows 0 success/0
+  failed — nothing recorded) → the per-rule sbatch runs bare `remake
+  run-array-task …` with no env activation, so `remake` must be on the
+  compute node's PATH. SLURM propagates the *submit-time* PATH
+  (`--export=ALL`), so submit from an env where remake is actually
+  installed/on PATH — a dev checkout shadowed only via `PYTHONPATH` does
+  NOT carry over to the job.
 - *Resource kill* (sacct, no traceback) → raise mem/time in slurm config.
 - *Missing-input cascade* → find the most-upstream failure and fix only
   that; downstream failures clear themselves on the next run.
@@ -108,6 +116,15 @@ work anywhere a key is accepted (like git).
     afterok upstream failed. Same fix.
   - Instant-fail on submission (`Invalid qos`, partition errors) — check
     `partition`/`qos`/`account` in `Remake(config={'slurm': {...}})`.
+- Elements `COMPLETED 0:0` in sacct but still `pending`/`to run` in `info`,
+  and `why` says "never recorded in DB" → task-key mismatch: a kwarg value
+  isn't JSON-round-trip-stable (a `tuple`/`dict`/nested value reloads from
+  `.remake/jobs/*.json` as a `list` on the compute node, so `Task.key`
+  differs from plan time). Sidecars record under a key the planner never
+  queries, and outputs built from the kwargs may be mis-named. Passes every
+  *local* run (no JSON round-trip); only shows on SLURM. Fix: make matrix/
+  kwarg values plain JSON scalars (encode richer values as a canonical
+  string) — see references/remake2_to_remake3.md.
 - `remake run <file> -E slurm` is idempotent: complete tasks are skipped,
   queued rules are skipped, only the gap is submitted. `remake resubmit`
   re-executes the last submit.sh verbatim (after a cluster outage).
