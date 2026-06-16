@@ -279,6 +279,11 @@ class RemakeParser:
                     '(rule -> dependent rules)',
             'args': [
                 Arg('remakefile'),
+                Arg('--number-of-tasks', '-N', action='store_true',
+                    help="Annotate each rule with its task count as rule[N] "
+                         "(? when a dynamic matrix isn't resolvable yet)"),
+                Arg('--matrix-keys', '-M', action='store_true',
+                    help='Annotate each rule with its matrix keys as rule(m1, m2)'),
                 Arg('--json', help='Machine-readable output', action='store_true'),
             ],
         },
@@ -735,12 +740,16 @@ class RemakeParser:
     def remake_rule_dag(self, args):
         """Print the rule DAG in topological order, one line per rule:
         `rule -> dependent, dependent` (the rules that depend on it).
-        Rules with no dependents print as a bare name."""
+        Rules with no dependents print as a bare name. -N/-M annotate each
+        rule with its task count and/or matrix keys as `rule[N](m1, m2)`;
+        N (and the keys) show as ? when a dynamic matrix can't be resolved
+        yet (e.g. a continuation rule awaiting upstream outputs)."""
         import json
 
         import networkx as nx
 
-        from .core.dag import build_rule_dag
+        from .core.dag import build_rule_dag, resolve_matrix
+        from .core.exceptions import MatrixNotReady
 
         rmk = load_remake(args.remakefile)
         dag = build_rule_dag(rmk.rules)
@@ -751,13 +760,45 @@ class RemakeParser:
             for rule in order
         }
 
+        need_matrix = args.number_of_tasks or args.matrix_keys
+        matrix_info = {}  # rule name -> (n_tasks or None, keys or None)
+        if need_matrix:
+            for rule in order:
+                try:
+                    rows = resolve_matrix(rule.matrix)
+                except MatrixNotReady:
+                    matrix_info[rule.name] = (None, None)
+                    continue
+                keys = []
+                for row in rows:
+                    keys.extend(k for k in row if k not in keys)
+                matrix_info[rule.name] = (len(rows), keys)
+
         if args.json:
-            print(json.dumps({'order': [r.name for r in order], 'edges': edges}, indent=1))
+            data = {'order': [r.name for r in order], 'edges': edges}
+            if need_matrix:
+                data['rules'] = {
+                    name: {'n_tasks': n, 'matrix_keys': keys}
+                    for name, (n, keys) in matrix_info.items()
+                }
+            print(json.dumps(data, indent=1))
             return
+
+        def label(name):
+            s = name
+            n, keys = matrix_info.get(name, (None, None))
+            if args.number_of_tasks:
+                s += f'[{"?" if n is None else n}]'
+            if args.matrix_keys:
+                s += f'({"?" if keys is None else ", ".join(keys)})'
+            return s
 
         for rule in order:
             succs = edges[rule.name]
-            print(f'{rule.name} -> {", ".join(succs)}' if succs else rule.name)
+            line = label(rule.name)
+            if succs:
+                line += ' -> ' + ', '.join(succs)
+            print(line)
 
     def remake_task_info(self, args):
         import json
