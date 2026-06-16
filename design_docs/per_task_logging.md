@@ -73,7 +73,27 @@ options if it bites, in escalating order:
    logs — debugging value traded for inodes);
 3. fold into the wider `.remake` layout rethink (discussion.md).
 
-## Follow-ups — both since done (2026-06-12)
+## Log-level convention
+
+Verbosity is selected by a mutually-exclusive flag: `-W`/`--warning`,
+`-I`/`--info` (default), `-D`/`--debug`, `-T`/`--trace`. loguru has a `TRACE`
+level (no=5) below `DEBUG` (no=10); `-T` enables it on both the stderr sink and
+the always-on `.remake/remake.log` file (which is `DEBUG` otherwise). A
+`logger.trace(...)` call is a no-op — its message is never even formatted —
+unless a sink is accepting `TRACE`, so trace statements are free at the default
+verbosity and safe to leave in hot paths.
+
+The convention for the two verbose levels, especially around loops over tasks
+(potentially millions):
+
+- **DEBUG — aggregate / timings.** One line *per loop*, summarising the batch
+  and how long it took. E.g. `Ingested 824 sidecar result(s) in 1.974s`;
+  `extract: submitting 1234 task(s) (array)`. Cheap and bounded regardless of
+  task count; this is the always-on file-log granularity.
+- **TRACE — per element.** One line *per iteration* of the loop: each sidecar
+  ingested, each task submitted, each file stat'd. O(N_tasks) output, so it is
+  gated behind `-T` and meant for "why did *this one* task do that?"
+  debugging, not routine runs.
 
 - ~~`info --show-failures` could print each failed task's log path next
   to its stored traceback.~~ Done (also `task-info`/`task-log`).

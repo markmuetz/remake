@@ -8,7 +8,7 @@ import json
 import random
 import sqlite3
 from pathlib import Path
-from time import sleep
+from time import perf_counter, sleep
 
 from loguru import logger
 
@@ -110,7 +110,7 @@ class Sqlite3Backend(MetadataManager):
                 (rule.name, code_ids['inputs'], code_ids['outputs'], code_ids['run']),
             )
             self.rule_ids[rule.name] = (cur.lastrowid, code_ids['run'])
-            return
+            return True, False
 
         rule_id, *code_id_list = row
         code_ids = dict(zip(['inputs', 'outputs', 'run'], code_id_list))
@@ -123,23 +123,34 @@ class Sqlite3Backend(MetadataManager):
                 code_ids[part] = self._insert_code(source[part])
                 changed = True
         if changed:
+            logger.trace('rule {}: stored code changed', rule.name)
             self.conn.execute(
                 'UPDATE rule SET inputs_code_id = ?, outputs_code_id = ?, run_code_id = ? '
                 'WHERE id = ?',
                 (code_ids['inputs'], code_ids['outputs'], code_ids['run'], rule_id),
             )
         self.rule_ids[rule.name] = (rule_id, code_ids['run'])
+        return row is None, changed
 
     def ensure_rules(self, rules):
+        ninserted = nchanged = 0
         for rule in rules:
-            self._ensure_rule(rule)
+            inserted, changed = self._ensure_rule(rule)
+            ninserted += inserted
+            nchanged += changed
+        logger.debug(
+            'ensured {} rule(s): {} new, {} with changed code',
+            len(rules), ninserted, nchanged,
+        )
 
     # Below SQLite's historical SQLITE_MAX_VARIABLE_NUMBER default of 999.
     SELECT_CHUNK = 900
 
     def get_tasks_status(self, tasks):
+        start = perf_counter()
         records = {}
         keys = [task.key for task in tasks]
+        nchunks = (len(keys) + self.SELECT_CHUNK - 1) // self.SELECT_CHUNK
         for i in range(0, len(keys), self.SELECT_CHUNK):
             chunk = keys[i:i + self.SELECT_CHUNK]
             placeholders = ','.join('?' * len(chunk))
@@ -159,6 +170,10 @@ class Sqlite3Backend(MetadataManager):
                     uses_hash=stored_uses_hash or '',
                     exception=exception or '',
                 )
+        logger.debug(
+            'queried status of {} task(s) in {} chunk(s), {} found, in {:.3f}s',
+            len(keys), nchunks, len(records), perf_counter() - start,
+        )
         return records
 
     def ingest_sidecars(self, rules):
@@ -167,6 +182,7 @@ class Sqlite3Backend(MetadataManager):
         after commit. Cheap when there is nothing to ingest."""
         from .sidecar import RESULTS_ROOT
 
+        start = perf_counter()
         pending = []
         for rule in rules:
             rule_dir = RESULTS_ROOT / rule.name
@@ -181,6 +197,7 @@ class Sqlite3Backend(MetadataManager):
                 except json.JSONDecodeError:
                     logger.warning(f'Skipping unreadable sidecar: {path}')
                     continue
+                logger.trace('sidecar {} ({}): {}', key, rule.name, payload.get('status'))
                 pending.append((rule, key, payload, path))
         if not pending:
             return 0
@@ -190,7 +207,10 @@ class Sqlite3Backend(MetadataManager):
         # sidecar that survives a crash here is harmless (upsert).
         for *_, path in pending:
             path.unlink(missing_ok=True)
-        logger.debug(f'Ingested {len(pending)} sidecar result(s)')
+        logger.debug(
+            f'Ingested {len(pending)} sidecar result(s) in '
+            f'{perf_counter() - start:.3f}s'
+        )
         return len(pending)
 
     @retry_lock_commit

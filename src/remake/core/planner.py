@@ -7,8 +7,10 @@ checks happen only via the opt-in check_outputs modes.
 """
 import difflib
 from collections import namedtuple
+from time import perf_counter
 
 import networkx as nx
+from loguru import logger
 
 from ..metadata.metadata_manager import TASK_STATUS_FAILED, TASK_STATUS_SUCCESS
 from ..util.code_compare import CodeComparer
@@ -142,6 +144,7 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='fallba
     *succeeded* (failed counts as not run) or an upstream task reruns
     this wave (a fan-in must still pick up newly-run elements).
     """
+    start = perf_counter()
     predicate = make_predicate(query) if query else None
     code_comparer = CodeComparer()
     rules = set(rules)
@@ -156,12 +159,14 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='fallba
         if any(dep in deferred for dep in rule.depends_on):
             # Downstream of a deferred rule: cannot run this wave even if
             # its own matrix is static — its upstream tasks don't exist yet.
+            logger.debug('{}: deferred (downstream of a deferred rule)', rule.name)
             deferred.append(rule)
             rerun_kwargs[rule] = 'all'
             continue
         try:
             tasks = expand_rule(rule, predicate)
         except MatrixNotReady:
+            logger.debug('{}: deferred (matrix not ready)', rule.name)
             deferred.append(rule)
             # Unknown tasks: downstream rules must assume everything reruns.
             rerun_kwargs[rule] = 'all'
@@ -186,31 +191,42 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='fallba
 
         for task in tasks:
             rec = records.get(task.key)
+            # `reason` is a short literal (cheap to assign every iteration);
+            # only formatted into a log line when a TRACE sink is attached.
             if rec is None:
                 if check_outputs in ('fallback', 'always') and _outputs_complete(task):
-                    rerun = False  # recognised from outputs; DB record absent
+                    rerun, reason = False, 'outputs complete (no DB record)'
                 else:
-                    rerun = True
+                    rerun, reason = True, 'never run (no DB record)'
             else:
                 rerun = rec.status != TASK_STATUS_SUCCESS
+                reason = 'last run not successful' if rerun else 'up to date'
                 if not rerun and not ignore_code_changes:
-                    rerun = (
-                        not code_comparer(rec.run_code, run_src)
-                        or rec.uses_hash != current_uses_hash
-                    )
+                    if not code_comparer(rec.run_code, run_src):
+                        rerun, reason = True, 'run code changed'
+                    elif rec.uses_hash != current_uses_hash:
+                        rerun, reason = True, 'uses= changed'
                 if not rerun and check_outputs == 'always' and task.outputs:
-                    rerun = not _outputs_complete(task)
+                    if not _outputs_complete(task):
+                        rerun, reason = True, 'outputs missing (check_outputs=always)'
             if force:
-                rerun = True
+                rerun, reason = True, 'forced'
 
             if not rerun:
                 task_id = frozenset(task.kwargs.items())
-                rerun = upstream_all or any(task_id in dep_rerun for dep_rerun in elementwise_deps)
+                if upstream_all or any(task_id in dep_rerun for dep_rerun in elementwise_deps):
+                    rerun, reason = True, 'upstream reruns'
 
+            logger.trace('{}: {} — {}', task.key, 'rerun' if rerun else 'skip', reason)
             if rerun:
                 rule_rerun.add(frozenset(task.kwargs.items()))
                 runnable.append(task)
 
         rerun_kwargs[rule] = rule_rerun
+        logger.debug('{}: {} task(s), {} to rerun', rule.name, len(tasks), len(rule_rerun))
 
+    logger.debug(
+        'plan: {} runnable, {} deferred in {:.3f}s',
+        len(runnable), len(deferred), perf_counter() - start,
+    )
     return runnable, deferred
