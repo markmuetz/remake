@@ -36,7 +36,7 @@ with rules registered implicitly at class-definition time.
 | `class R(Rule/TaskRule):` | `@rule(...)` on a plain function |
 | `rule_matrix` / `var_matrix` | `matrix=` (cartesian dict, tuple-key grouped dict, `list[dict]`, or callable — the remake2 tuple-key grouped form ports unchanged) |
 | `rule_inputs` / `rule_outputs` class attrs | `inputs=` / `outputs=` decorator args (same dict/callable forms) |
-| `def rule_run(inputs, outputs, a, b)` | the decorated function; same signature contract |
+| `def rule_run(inputs, outputs, a, b)` | the decorated function: `def fn([inputs,] [outputs,] <matrix keys>)` — but **omit `inputs` (and/or `outputs`) when there's no `inputs=`/`outputs=`**; see note below |
 | `def rule_run(self)` + `self.inputs`/`self.a` | rewrite to explicit params: `def fn(inputs, outputs, a)` |
 | implicit registration at class definition | `rmk.rules_from_current_module()` as the LAST line |
 | dependency inferred from matching path strings | explicit `depends_on=[upstream_rule]` on every consumer |
@@ -50,6 +50,28 @@ with rules registered implicitly at class-definition time.
 | `partition='short-serial'/'long-serial'` (JASMIN) | `partition='standard', qos='standard'` (SLURM 25.11 renamed them) |
 | `remake archive` | gone |
 | `check_outputs_exist` config | `check_outputs='never'/'fallback'/'always'` Remake arg |
+
+## Signature contract (stricter than remake2)
+
+remake3 validates the rule function signature at decoration time against
+`def fn([inputs,] [outputs,] <matrix keys>)`, and this is **not** quite
+"the same contract" as remake2:
+
+- remake2's `rule_run(inputs, outputs, ...)` always took both leading
+  params, even for a rule with `rule_inputs = {}`. remake3 keys the
+  signature off what you pass: **no `inputs=` → no `inputs` param** (and
+  likewise for `outputs`). A download rule with no inputs becomes
+  `def fn(outputs, idx)`, not `def fn(inputs, outputs, idx)`. Leaving a
+  stale `inputs` param raises `SignatureError: signature must start with
+  (outputs, ...)`.
+- An empty `inputs={}` / `outputs={}` is rejected (`... is ambiguous —
+  omit the argument`) — drop the decorator arg entirely rather than passing
+  an empty dict.
+- The params after the leading ones must be exactly the matrix keys (for a
+  non-callable matrix); a mismatch is a `SignatureError` too.
+
+So the no-input download/standalone rules need the most care — it's the
+one place the mechanical `(inputs, outputs, ...)` carry-over breaks.
 
 ## Scope: the step that needs real judgement
 
@@ -235,8 +257,8 @@ plans stop re-statting every output file.
 
 1. Read the remake2 file end-to-end; list rules, globals each `rule_run`
    touches, and the implicit input/output chains.
-2. Translate per the table; wire `depends_on` explicitly (follow the old
-   path-string chains).
+2. Translate per the table; wire `depends_on` explicitly to match the
+   remake2 DAG (dump it — see below — don't eyeball the path strings).
 3. `remake run newfile.py -n` — must import cleanly (signature/scope
    errors surface here) and the plan must make sense: for a pipeline
    whose outputs exist, expect ~0 runnable; "everything runnable" means
@@ -245,3 +267,37 @@ plans stop re-statting every output file.
 5. Full run.
 
 Keep the remake2 file until step 5 has been verified.
+
+## Get the ground-truth DAG from remake2 (don't infer it by hand)
+
+For a multi-rule file, the `depends_on` wiring is the easy thing to get
+wrong. Rather than reconstruct the DAG from matching path strings, dump it
+straight from remake2 and use that as the target. remake2 builds the
+rule-level graph as `rmk.rule_dg` (a `networkx.DiGraph` of rule classes;
+`rmk.task_dag` is the task-level one). Load the file with remake2's own
+loader and read the graph — `finalize=False` skips metadata/DB setup so it
+works read-only without a configured `.remake/`:
+
+```python
+# run under the env that has remake2 installed (e.g. the old conda env)
+import networkx as nx
+from remake.loader import load_remake          # remake2's loader
+
+rmk = load_remake('old_remakefile.py', finalize=False)   # cwd-relative
+g = rmk.rule_dg
+for u, v in sorted((a.__name__, b.__name__) for a, b in g.edges):
+    print(f'{u} -> {v}')
+print('topo:', [n.__name__ for n in nx.topological_sort(g)])
+```
+
+The migrated remake3 DAG must reproduce these edges. Two gotchas this
+surfaces that a by-hand read misses:
+- **`enabled = False` rules are absent** from `rule_dg` (remake2's
+  `load_rules` skips them) — so a class count vs. node count mismatch tells
+  you exactly which rules get the "translate but don't register" treatment.
+- **isolated nodes** (a rule with no edges) are real — standalone
+  download/plot rules, not a wiring bug.
+
+If `load_remake` blows up on import (a stale module-level path stat, a
+missing optional dep), that's also useful: it's a dependency the migration
+must drop or stub anyway.
