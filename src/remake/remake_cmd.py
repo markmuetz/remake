@@ -274,6 +274,14 @@ class RemakeParser:
                 Arg('--json', help='Machine-readable output', action='store_true'),
             ],
         },
+        'rule-dag': {
+            'help': 'Print the rule dependency DAG in topological order '
+                    '(rule -> dependent rules)',
+            'args': [
+                Arg('remakefile'),
+                Arg('--json', help='Machine-readable output', action='store_true'),
+            ],
+        },
         'task-info': {
             'help': 'Detail view of one task: status, paths, log, SLURM job',
             'args': [
@@ -723,6 +731,33 @@ class RemakeParser:
         if not rows:
             print('all inputs wired to declared dependencies')
         return 1 if problems else 0
+
+    def remake_rule_dag(self, args):
+        """Print the rule DAG in topological order, one line per rule:
+        `rule -> dependent, dependent` (the rules that depend on it).
+        Rules with no dependents print as a bare name."""
+        import json
+
+        import networkx as nx
+
+        from .core.dag import build_rule_dag
+
+        rmk = load_remake(args.remakefile)
+        dag = build_rule_dag(rmk.rules)
+        order = list(nx.topological_sort(dag))
+        pos = {rule: i for i, rule in enumerate(order)}
+        edges = {
+            rule.name: [s.name for s in sorted(dag.successors(rule), key=pos.get)]
+            for rule in order
+        }
+
+        if args.json:
+            print(json.dumps({'order': [r.name for r in order], 'edges': edges}, indent=1))
+            return
+
+        for rule in order:
+            succs = edges[rule.name]
+            print(f'{rule.name} -> {", ".join(succs)}' if succs else rule.name)
 
     def remake_task_info(self, args):
         import json

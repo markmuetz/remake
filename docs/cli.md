@@ -19,6 +19,7 @@ remake <command> pipeline.py [options]
 | `task-log` | Print a task's per-task log |
 | `why` | Explain why a task would (or would not) rerun |
 | `lint` | Check input/output wiring between rules |
+| `rule-dag` | Print the rule dependency DAG in topological order |
 | `slurm-status` | Live SLURM queue state of the last submission, per rule |
 | `resubmit` | Re-execute `.remake/submit.sh` without replanning |
 | `version` | Print remake version |
