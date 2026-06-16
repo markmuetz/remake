@@ -58,6 +58,29 @@ assessment (2026-06-11). Ordered roughly by severity.
   rewritten 2026-06-12: spawned workers reload the remakefile, record via
   sidecars, per-rule barriers.)
 
+## Correctness
+
+- [ ] **Planner ignores `inputs=`/`outputs=` changes — only `run` code and
+  `uses` invalidate a task.** `task_will_run` (`core/planner.py`, ~ll.
+  101-111) compares `rec.run_code` vs `rule.source['run']` and `rec.uses_hash`
+  vs `uses_hash(rule.uses)`, but never the inputs/outputs spec. `TaskRecord`
+  (`metadata/metadata_manager.py`) stores only `run_code` + `uses_hash`. So
+  editing the **inputs/outputs dict or function** (not the resolved paths —
+  the spec that defines dataflow) does NOT trigger a rerun of an already-
+  succeeded task. `Rule.source` already computes `inputs`/`outputs` source
+  (callables by source, dicts by repr) — it's just not stored or compared.
+  Fix: persist `inputs_source`/`outputs_source` (or a combined hash) in
+  `TaskRecord` and add the comparison alongside the run-code/uses checks
+  (AST-normalise callables as `CodeComparer` does for `run`; repr dicts).
+  Caveat to decide: a pure output-*path* change (same function, different
+  resolved string via a config constant) won't be caught unless the repr/
+  source captures it — and arguably a moved output path *should* rerun.
+  Surfaced in the mcs_prime remake2→3 migration (2026-06-16): redirecting an
+  output directory did not re-run tasks that already had a DB success record,
+  leaving their outputs orphaned at the old path while downstream rules looked
+  at the new one. Workaround used there: fresh `.remake/` + a brand-new empty
+  output tree so every task is "never run".
+
 ## Smaller debts
 
 - [ ] `RemakeError` prints a full traceback instead of a clean message:
