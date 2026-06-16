@@ -467,6 +467,28 @@ ever needed it would be added as an explicit per-rule declaration (e.g.
 `task_depends_on=lambda kwargs: ...`), not by reintroducing global
 task-graph construction.
 
+**Measured payoff.** The flip side of that limitation is graph cost scaling
+with *rules*, not *tasks*. A synthetic head-to-head against Snakemake (a
+two-stage 20,000-task / 100,000-file pipeline of trivial work; see the
+`remake_vs` repo's `scale/` benchmark, 2026-06-15, one machine, local ext4)
+makes it concrete: planning the full graph (dry-run) took remake **1.25 s /
+79 MB** versus Snakemake's **40.8 s / 586 MB** — Snakemake materialises every
+job up front, remake does not. At a smaller completable size (4,000 tasks)
+the cold build was 18× faster and the no-op rebuild 22× faster; at full size
+remake's cold build finished in 48 s while Snakemake's had not completed in
+70+ min (its per-job scheduler overhead is superlinear). The numbers are
+illustrative — trivial tasks deliberately expose framework overhead that
+amortises away for minutes-long work — but they confirm the lazy,
+rule-level model behaves as designed at scale.
+
+This was measured on a laptop SSD; on JASMIN the gap would be *wider*. The
+workload is metadata-bound (creating and statting 100k files), and a Lustre
+group workspace has far higher metadata latency than a local SSD — so both
+the absolute times and the gap grow, since the more file-stat-heavy tool
+(Snakemake here, or remake's own `check_outputs='fallback'` path) is hit
+hardest. This is the same parallel-filesystem stat cost flagged under
+Performance/scaling in [todos.md](todos.md).
+
 ### The planner (pure)
 
 ```python

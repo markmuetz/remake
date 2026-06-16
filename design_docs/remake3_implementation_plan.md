@@ -65,15 +65,15 @@ doc in `design_docs/` when work on it starts.
     on push to remake3 (Pages source switched from legacy main/docs to
     the Actions workflow, 2026-06-15). Remaining: a docs-vs-code accuracy
     pass as the API settles.
-- [~] Create PyPI package (0.8.0a0)
-  - build/install/version verified locally (`uv build`); metadata polished
-    2026-06-15 (Development Status -> 3 - Alpha, Apache license + Topic
-    classifiers, Python 3.10–3.14, README as markdown long description);
-    `twine check` passes on both artifacts. The PyPI project `remake`
-    already exists (owned by the author, last 0.6.3). Release automated via
-    release.yml (Trusted Publishing). Remaining: register trusted
-    publishers (pypi.org + test.pypi.org), run the TestPyPI dry run, verify
-    `pip install`, then tag v0.8.0a0 for the first alpha upload.
+- [x] Create PyPI package — 0.8.0a0 published 2026-06-15
+  - metadata polished (Development Status -> 3 - Alpha, Apache license +
+    Topic classifiers, Python 3.10–3.14, README as markdown long
+    description); `twine check` clean. Published to PyPI via release.yml
+    Trusted Publishing on the v0.8.0a0 tag (TestPyPI dry run skipped —
+    login trouble; went straight to PyPI with a required-reviewer gate on
+    the `pypi` environment as the safety net). First publish attempt failed
+    on just-registered-publisher timing; rerun succeeded. Verified
+    `pip install remake==0.8.0a0` (pre-release, so not the default install).
 - [~] GitHub Actions: CI, docs, PyPI release
   - CI done (.github/workflows/ci.yml, 2026-06-15): pytest on a Python
     3.10–3.14 matrix via uv (`uv sync --group dev` + `uv run pytest`), on
@@ -91,6 +91,11 @@ doc in `design_docs/` when work on it starts.
   Claude skill (decision: LLM translation, not an automated tool)
 
 ## What's left, at a glance (2026-06-12)
+
+The road from the shipped `0.8.0a0` alpha to the full `0.8.0` release —
+including the `remake3`→`main` branch migration — is laid out in
+[remake3_0.8.0_release.md](remake3_0.8.0_release.md).
+
 
 1. **JASMIN revalidation** of the post-livelock stack:
    - ~~sidecar/ingest at 400/800-way through the real pipeline path~~ —
@@ -123,14 +128,14 @@ doc in `design_docs/` when work on it starts.
      `-Q` query matching >1 task raises `RemakeError` as an uncaught
      traceback rather than a clean message (logged for the CLI-polish pass).
    - Remaining: the skill.
-2. **Docs** — ~~plan, write~~ done (MkDocs site merged 2026-06-15);
-   remaining: deploy to GitHub Pages (via the Actions item below).
+2. **Docs** — ~~plan, write, deploy~~ done; live at
+   https://markmuetz.github.io/remake (Pages via Actions, 2026-06-15).
 3. **GitHub Actions** — ~~CI, coverage, docs-deploy, release job~~ done
    (pytest matrix + pytest-cov + Pages deploy + Trusted-Publishing release,
    2026-06-15). release.yml: workflow_dispatch -> TestPyPI dry run, v* tag
-   -> PyPI. Needs trusted publishers registered on pypi.org (env `pypi`)
-   and test.pypi.org (pending publisher, env `testpypi`) before first run.
-4. **PyPI** — metadata polish, TestPyPI, alpha upload.
+   -> PyPI.
+4. **PyPI** — ~~metadata polish, alpha upload~~ done: 0.8.0a0 live on PyPI
+   (2026-06-15, Trusted Publishing). TestPyPI dry run skipped.
 5. Backlog beyond the plan: open items in [todos.md](todos.md)
    (benchmark in CI, batched completion transactions, fallback-mode stat
    cost, eval-query parser, uses-shadowing warning, Hypothesis tests,
@@ -139,5 +144,7 @@ doc in `design_docs/` when work on it starts.
    web interface, dask design, config cascade, logging injection,
    intra-rule deps, RO-Crate, plugins, .remake layout).
 
-See also: [todos.md](todos.md) (known problems and debts) and
-[discussion.md](discussion.md) (ideas to return to).
+See also: [todos.md](todos.md) (known problems and debts),
+[discussion.md](discussion.md) (ideas to return to) and
+[alternatives.md](alternatives.md) (how remake relates to other workflow
+tools, and its niche).

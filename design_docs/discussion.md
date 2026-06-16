@@ -284,6 +284,33 @@ design discussion before any work starts.
   - multiproc: drop local sidecars by making the parent the sole writer via
     a queue (a real simplification, no daemon needed).
 
+- **Opt-in frame-locals dump on exception** — capture variable state at
+  the moment a task raises, written alongside the stored traceback, as the
+  *non-interactive* complement to `-X`.
+  - Motivation: remake already has the stored traceback (`info -F`) and
+    interactive post-mortem (`-X`, which forces singleproc, runs
+    in-process and needs the failure reproduced at a terminal). The gap is
+    a **failed SLURM array task that died on the cluster** — you can't pdb
+    into it, but a locals dump captured at failure time lets you inspect
+    what went wrong after the fact. That HPC case is the real value; this
+    is not redundant with `-X`.
+  - Design hazard — serialisation. "Full variable dump" taken literally is
+    dangerous: rule locals routinely hold multi-GB xarray Datasets, open
+    file handles, DB connections, unpicklable objects. Naive pickling
+    either explodes the dump size or crashes *inside the failure handler*.
+    So: best-effort **safe `repr()` with per-value truncation**, never
+    pickle live objects; default to the **innermost frame + the rule
+    function's frame**, not the whole chain at full depth.
+  - Opt-in (off by default): size/cost, and a dump can write sensitive
+    data/secrets to disk. A `config={'debug': {...}}` flag or a `run`
+    option.
+  - Lands alongside the per-task traceback under `.remake/tasks/log/...`
+    so `task-info`/`task-log` surface it; rides the existing sidecar
+    result path, so it works under SLURM arrays.
+  - Prior art: `stackprinter` renders tracebacks with truncated per-frame
+    values — a good dependency or reference implementation. (`cgitb`, the
+    old stdlib answer, is removed in 3.13 — don't reach for it.)
+
 ## Graduated (designed and implemented; kept for the record)
 
 - **SLURM job ids written to file** — `.remake/jobs/<rule>.jobids.json`
