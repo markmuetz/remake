@@ -73,21 +73,43 @@ remake3 validates the rule function signature at decoration time against
 So the no-input download/standalone rules need the most care — it's the
 one place the mechanical `(inputs, outputs, ...)` carry-over breaks.
 
-## Task kwargs must be hashable (dict-valued matrix entries break)
+## Task kwargs must be JSON-stable scalars (dict-valued matrix entries break)
 
 remake2 happily took dict-valued matrix entries (a common "bag of plot
 options" pattern: `matrix={'plot_kwargs': [dict(smooth=24), dict(xlim=(0,
-20)), ...], ...}`). remake3's planner does `frozenset(task.kwargs.items())`
-for upstream-rerun tracking, so a dict (or list) kwarg value raises
-`TypeError: unhashable type: 'dict'` at plan time — *after* the file
-imports cleanly, so `-n` is the first place it shows.
+20)), ...], ...}`). remake3 puts **two** constraints on a kwarg value, and
+they bite at different times:
 
-Fix: store the entry as a hashable `tuple(d.items())` and rebuild it with
-`dict()` wherever it's consumed (rule body and any inputs/outputs callable
-that reads it). Values inside must themselves be hashable (`(0, 20)` not
-`[0, 20]`). Output paths/keys derived from the dict are unchanged because
-`dict(tuple_of_items)` round-trips order. A small `_hashable` helper over
-the list keeps the matrix readable.
+1. **Hashable** — the planner does `frozenset(task.kwargs.items())` for
+   upstream-rerun tracking, so a `dict`/`list` value raises `TypeError:
+   unhashable type: 'dict'` at plan time (`-n` is the first place it shows).
+2. **JSON-round-trip-stable** — under the SLURM executor, kwargs are
+   serialised to `.remake/jobs/<rule>.json` and **reloaded on the compute
+   node**, and `Task.key = sha1(repr(sorted(kwargs)))`. JSON has no tuples,
+   so a tuple (or nested tuple) value comes back as a **list** → the
+   reload-time key differs from the plan-time key. Result: sidecar results
+   record under a key the planner never looks up (every such task shows
+   "never recorded in DB" despite succeeding), and any output path built
+   from the kwargs lands under the wrong name (`xlim=(0,20)` written as
+   `xlim=[0,20]`). Local executors don't round-trip, so this passes *every*
+   local test and only manifests at scale on SLURM.
+
+**So `tuple(d.items())` is the wrong fix** — it satisfies (1) but not (2),
+and silently breaks under SLURM. (An earlier version of this note
+recommended it; don't.) The robust fix: make the value a **JSON-stable
+scalar** — encode each variant as a canonical **string** (the `kwstr` you
+already use in output filenames works well), with a module-level
+`{str: dict}` map the rule bodies look up (pass the map via `uses=`; the
+inputs/outputs callables aren't scope-checked so they can read it freely).
+A string round-trips through JSON unchanged, so keys *and* output paths are
+identical in-process and on the compute node, and `-Q` queries stay
+readable (`plot_kwargs == 'xlim=(0,20)'`).
+
+Rule of thumb: **matrix/kwarg values should be plain JSON scalars — `str`,
+`int`, `bool`, `float`.** Encode anything richer (a dict, a tuple) as a
+canonical string and decode it inside the rule. (The deeper fix belongs in
+remake3 — canonicalise kwargs through JSON before keying, and/or reject
+non-JSON-stable kwarg values at plan time; see `design_docs/todos.md`.)
 
 ## Scope: the step that needs real judgement
 
