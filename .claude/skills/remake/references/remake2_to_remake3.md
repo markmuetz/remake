@@ -81,7 +81,14 @@ variables at import (`ScopeWarning`/`ScopeError`) because untracked
 globals make rerun decisions wrong.
 
 For each free name in a rule body decide:
-- imported module / stdlib → leave it, exempt;
+- imported *module* (`import numpy as np`, `import x.y as z`) → exempt;
+- name bound by `from x import Name` (a class or function, e.g.
+  `from matplotlib.lines import Line2D`, `from mymod import MyClass`) → the
+  checker flags it like any other global and wants it in `uses={...}`. It is
+  *not* exempt just because it came from an import — only whole-module
+  imports are. For a local class this is correct (changes should rerun); for
+  a stdlib/third-party class it's harmless tracking, declare it to silence
+  the `ScopeWarning`;
 - constant or helper function → add to `uses={...}` (it then correctly
   participates in rerun hashing);
 - mutable module state / config object → restructure: pass through the
