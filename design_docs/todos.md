@@ -25,6 +25,29 @@ assessment (2026-06-11). Ordered roughly by severity.
   transactions over a big run) — batch or relax when addressing the bulk
   query.
 
+## Correctness (cont.)
+
+- [ ] **SLURM JSON round-trip silently changes task identity for
+  non-JSON-stable kwarg values.** Task kwargs are serialised to
+  `.remake/jobs/<rule>.json` and reloaded on the compute node by
+  `run-array-task`. JSON has no tuples, so a tuple (or nested tuple) kwarg
+  value comes back as a list — and `Task.key` is `sha1(repr(dict(sorted(
+  kwargs.items()))))`, so the reloaded key differs from the plan-time key.
+  Consequences seen in the mcs_prime migration (2026-06-16): a `plot_kwargs`
+  matrix value stored as `tuple(d.items())` (e.g. `(('xlim', (0, 20)),)`)
+  ran fine locally but under SLURM every such task recorded its sidecar
+  under a list-derived key the planner never looked up → all showed "never
+  recorded in DB" despite succeeding; and any output path built from the
+  kwargs (`xlim=(0,20)` → `xlim=[0,20]`) was written under the wrong name →
+  planner saw it missing. Local executors are unaffected (no round-trip), so
+  it only bites at scale on SLURM. Options: (a) **canonicalise kwargs
+  through JSON before computing `Task.key`** (so plan-time and reload-time
+  agree by construction — simplest, makes keys round-trip-invariant); and/or
+  (b) **reject non-JSON-stable kwarg values at plan time** with a clear error
+  (tuples, sets, nested non-scalars), steering users to str/int/bool/scalar
+  matrix values. (a) is the real fix; (b) is a cheap guard. Workaround used
+  downstream: encode the dict as a canonical string matrix value.
+
 ## Failure UX
 
 - [x] `run_task` stores `repr(e)` — the traceback is lost (remake2 stored
