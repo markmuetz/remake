@@ -45,6 +45,15 @@ debugger on a failing task.
     `-X` is a flag on `run`. Install the `debug` extra for `ipdb`:
     `pip install "remake[debug]"`.
 
+For a non-interactive context (CI, a script, or when you just want the
+traceback and exit) use `--raise` instead: like `-X` it forces `singleproc`
+and re-raises the first task failure with its original traceback, but it does
+not attach the `pdb`/`ipdb` excepthook.
+
+```bash
+remake run pipeline.py --raise
+```
+
 ## Fixing one failure and continuing
 
 After fixing the cause, just rerun — remake picks up the previously-failed

@@ -197,6 +197,11 @@ class RemakeParser:
                     help='Run tasks in-process (forces singleproc) and launch '
                          'pdb/ipdb on the first task failure',
                     action='store_true'),
+                Arg('--raise', dest='do_raise',
+                    help='Re-raise the first task failure with its traceback '
+                         '(forces singleproc); unlike -X, does not attach a '
+                         'debugger',
+                    action='store_true'),
             ],
         },
         'run-task': {
@@ -369,19 +374,22 @@ class RemakeParser:
 
     def remake_run(self, args):
         rmk = self._load(args)
-        # -X: run tasks in this process so the first failure propagates (into
-        # the pdb/ipdb excepthook) with its original traceback, instead of
-        # being recorded-and-continued. Out-of-process executors can't reach
-        # the debugger, so force singleproc.
-        if args.debug_exception and args.executor != 'singleproc':
+        # -X and --raise both run tasks in this process so the first failure
+        # propagates with its original traceback instead of being recorded-
+        # and-continued; -X additionally attaches the pdb/ipdb excepthook
+        # (wired in remake_cmd, gated on debug_exception). Out-of-process
+        # executors can't do either, so force singleproc.
+        raise_first = args.debug_exception or args.do_raise
+        if raise_first and args.executor != 'singleproc':
+            flag = '-X/--debug-exception' if args.debug_exception else '--raise'
             logger.warning(
-                f'-X/--debug-exception runs tasks in-process; '
+                f'{flag} runs tasks in-process; '
                 f'ignoring --executor {args.executor}'
             )
             executor = _make_executor('singleproc', rmk, nproc=args.nproc)
         else:
             executor = _make_executor(args.executor, rmk, nproc=args.nproc)
-        executor.raise_on_failure = args.debug_exception
+        executor.raise_on_failure = raise_first
         if args.dry_run:
             if executor.supports_dry_run:
                 executor.dry_run = True

@@ -43,6 +43,7 @@ remake run pipeline.py [options]
 | `-n, --dry-run` | show what would run, run nothing |
 | `--check-outputs` | verify outputs of completed tasks (always mode) |
 | `-X, --debug-exception` | force `singleproc` and drop into pdb/ipdb on first failure |
+| `--raise` | force `singleproc` and re-raise the first failure (no debugger) |
 
 ## `set-state`
 
