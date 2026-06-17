@@ -210,6 +210,27 @@ rmk.rules_from_current_module()
         cli('run', 'boom.py', '--force', '-X')
 
 
+def test_raise_propagates_without_debugger(pipeline_dir):
+    Path('boom.py').write_text('''
+from remake import Remake, rule
+
+@rule(outputs={'o': 'data/{n}.txt'}, matrix={'n': [1]})
+def boom(outputs, n):
+    raise ValueError('boom')
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    import sys
+
+    sentinel = sys.excepthook
+    # --raise propagates the first failure like -X, but must NOT install the
+    # pdb/ipdb excepthook (that is -X's job alone).
+    with pytest.raises(ValueError, match='boom'):
+        cli('run', 'boom.py', '--raise')
+    assert sys.excepthook is sentinel
+
+
 def test_log_file_written(pipeline_dir):
     cli('run', 'pipeline.py')
     log = (pipeline_dir / '.remake/remake.log').read_text()

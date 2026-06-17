@@ -16,7 +16,7 @@ from ..metadata.metadata_manager import TASK_STATUS_FAILED, TASK_STATUS_SUCCESS
 from ..util.code_compare import CodeComparer
 from .dag import expand_rule
 from .exceptions import MatrixNotReady
-from .scope import uses_hash
+from .scope import io_hash, uses_hash
 
 
 def make_predicate(query):
@@ -111,6 +111,9 @@ def explain_task(rules, dag, metadata, task, *, check_outputs='fallback', runnab
             reasons.append(Reason('code-changed', f'run code changed since last run:\n{diff}'))
         if rec.uses_hash != uses_hash(task.rule.uses):
             reasons.append(Reason('uses-changed', 'uses= changed since last run'))
+        if rec.io_hash is not None and rec.io_hash != io_hash(task.rule):
+            reasons.append(Reason('io-changed',
+                'inputs/outputs spec changed since last run'))
         if check_outputs == 'always' and task.outputs and not _outputs_complete(task):
             reasons.append(Reason('outputs-missing',
                 'outputs missing/incomplete (check_outputs=always)'))
@@ -175,6 +178,7 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='fallba
         records = metadata.get_tasks_status(tasks)
         run_src = rule.source['run']
         current_uses_hash = uses_hash(rule.uses)
+        current_io_hash = io_hash(rule)
         rule_rerun = set()
 
         upstream_all = any(rerun_kwargs.get(dep) == 'all' for dep in rule.depends_on)
@@ -206,6 +210,10 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='fallba
                         rerun, reason = True, 'run code changed'
                     elif rec.uses_hash != current_uses_hash:
                         rerun, reason = True, 'uses= changed'
+                    # io_hash is None for pre-upgrade records — don't rerun on
+                    # that alone (treat as not-yet-tracked, not as changed).
+                    elif rec.io_hash is not None and rec.io_hash != current_io_hash:
+                        rerun, reason = True, 'inputs/outputs spec changed'
                 if not rerun and check_outputs == 'always' and task.outputs:
                     if not _outputs_complete(task):
                         rerun, reason = True, 'outputs missing (check_outputs=always)'

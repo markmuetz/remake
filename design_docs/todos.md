@@ -27,7 +27,18 @@ assessment (2026-06-11). Ordered roughly by severity.
 
 ## Correctness (cont.)
 
-- [ ] **SLURM JSON round-trip silently changes task identity for
+- [x] **SLURM JSON round-trip silently changes task identity for
+  non-JSON-stable kwarg values.** Fixed 2026-06-16 with option (b), the
+  guard: `iter_expand_rule` now rejects any matrix kwarg value that isn't a
+  JSON scalar (str/int/float/bool/None) with a `SignatureError` naming the
+  rule, the offending key/value/type, *why* (the JSON round-trip changes the
+  key + kwarg-derived paths), and the fix (encode as a string). Fires at plan
+  time before any SLURM submission, so bad specs are never written; scalar
+  kwargs round-trip identically so existing keys/DBs are unaffected. Tests in
+  test_dag.py. Chose the guard over (a) canonicalise-kwargs because list-valued
+  paths (`[0, 20]`) are a smell and a loud failure beats a silent type change.
+  Original report below.
+- [x] (was) **SLURM JSON round-trip silently changes task identity for
   non-JSON-stable kwarg values.** Task kwargs are serialised to
   `.remake/jobs/<rule>.json` and reloaded on the compute node by
   `run-array-task`. JSON has no tuples, so a tuple (or nested tuple) kwarg

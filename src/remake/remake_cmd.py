@@ -197,6 +197,11 @@ class RemakeParser:
                     help='Run tasks in-process (forces singleproc) and launch '
                          'pdb/ipdb on the first task failure',
                     action='store_true'),
+                Arg('--raise', dest='do_raise',
+                    help='Re-raise the first task failure with its traceback '
+                         '(forces singleproc); unlike -X, does not attach a '
+                         'debugger',
+                    action='store_true'),
             ],
         },
         'run-task': {
@@ -263,6 +268,13 @@ class RemakeParser:
             'args': [
                 Arg('remakefile'),
                 Arg('--query', '-Q', help='Filter tasks based on a kwargs query'),
+                Arg('--inputs', '-i', action='store_true',
+                    help='Show each task\'s input files (indented under it)'),
+                Arg('--outputs', '-o', action='store_true',
+                    help='Show each task\'s output files (indented under it)'),
+                Arg('--check', action='store_true',
+                    help='With -i/-o, stat each file and mark exists/complete '
+                         '(one stat per file — slow for large selections)'),
                 Arg('--json', help='Machine-readable output (full keys)', action='store_true'),
             ],
         },
@@ -362,19 +374,22 @@ class RemakeParser:
 
     def remake_run(self, args):
         rmk = self._load(args)
-        # -X: run tasks in this process so the first failure propagates (into
-        # the pdb/ipdb excepthook) with its original traceback, instead of
-        # being recorded-and-continued. Out-of-process executors can't reach
-        # the debugger, so force singleproc.
-        if args.debug_exception and args.executor != 'singleproc':
+        # -X and --raise both run tasks in this process so the first failure
+        # propagates with its original traceback instead of being recorded-
+        # and-continued; -X additionally attaches the pdb/ipdb excepthook
+        # (wired in remake_cmd, gated on debug_exception). Out-of-process
+        # executors can't do either, so force singleproc.
+        raise_first = args.debug_exception or args.do_raise
+        if raise_first and args.executor != 'singleproc':
+            flag = '-X/--debug-exception' if args.debug_exception else '--raise'
             logger.warning(
-                f'-X/--debug-exception runs tasks in-process; '
+                f'{flag} runs tasks in-process; '
                 f'ignoring --executor {args.executor}'
             )
             executor = _make_executor('singleproc', rmk, nproc=args.nproc)
         else:
             executor = _make_executor(args.executor, rmk, nproc=args.nproc)
-        executor.raise_on_failure = args.debug_exception
+        executor.raise_on_failure = raise_first
         if args.dry_run:
             if executor.supports_dry_run:
                 executor.dry_run = True
@@ -622,17 +637,45 @@ class RemakeParser:
         rmk = self._load(args)
         rmk.finalize()
         predicate = make_predicate(args.query) if args.query else None
+
+        def input_files(task):
+            for name, value in task.inputs.items():
+                info = {'name': name, 'path': str(value)}
+                if args.check:
+                    info['exists'] = Path(value).exists()
+                yield info
+
+        def output_files(task):
+            for name, token in task.outputs.items():
+                info = {'name': name, 'path': str(token)}
+                if args.check:
+                    info['complete'] = token.is_complete()
+                yield info
+
         rows = []
         for rule in rmk.rules:
             try:
                 # Stream in text mode: constant memory however big the matrix.
                 for task in iter_expand_rule(rule, predicate):
                     if args.json:
-                        rows.append(
-                            {'key': task.key, 'rule': rule.name, 'kwargs': task.kwargs}
-                        )
-                    else:
-                        print(task)
+                        row = {'key': task.key, 'rule': rule.name, 'kwargs': task.kwargs}
+                        if args.inputs:
+                            row['inputs'] = list(input_files(task))
+                        if args.outputs:
+                            row['outputs'] = list(output_files(task))
+                        rows.append(row)
+                        continue
+                    print(task)
+                    if args.inputs:
+                        for f in input_files(task):
+                            mark = '' if not args.check else (
+                                ' [exists]' if f['exists'] else ' [MISSING]')
+                            print(f'  in  {f["name"]}: {f["path"]}{mark}')
+                    if args.outputs:
+                        for f in output_files(task):
+                            mark = '' if not args.check else (
+                                ' [complete]' if f['complete'] else ' [missing]')
+                            print(f'  out {f["name"]}: {f["path"]}{mark}')
             except MatrixNotReady:
                 logger.warning(f'{rule.name}: deferred (matrix not ready), tasks unknown')
         if args.json:

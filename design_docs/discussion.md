@@ -311,6 +311,114 @@ design discussion before any work starts.
     values — a good dependency or reference implementation. (`cgitb`, the
     old stdlib answer, is removed in 3.13 — don't reach for it.)
 
+- **Output versioning** — a sanctioned mechanism for keeping (not
+  silently clobbering) old outputs when a rule's code or inputs change.
+  Today remake's stale-rebuild *detects* the change (run-code / `uses=` /
+  now `io_hash`) and reruns, overwriting the previous output in place;
+  the prior result is gone unless the user versioned the path by hand.
+  The motivating want: re-run an analysis after a code change and still
+  be able to compare against, or fall back to, the previous output.
+  Options, roughly in increasing order of magic:
+  - **(A) Manual `version=` matrix axis (no engine change).** The user
+    threads a `version`/`v` kwarg through `matrix=` and bakes it into the
+    output path (`out_{version}.nc`). Zero new machinery — it's just a
+    normal matrix key — and fully explicit. Cost: entirely on the user to
+    bump it, and every downstream rule must carry the axis too. This is
+    the status-quo "do it yourself"; worth documenting as the blessed
+    pattern even if we build nothing.
+  - **(B) Content/code-addressed output paths.** remake already computes
+    the hashes that change on a rerun (run-code, `uses_hash`, `io_hash`);
+    fold a short digest into the output path automatically
+    (`out.<hash8>.nc`), so a changed task writes a *new* file and the old
+    one survives. Pros: automatic, never clobbers, natural provenance.
+    Cons: paths become opaque; downstream resolution must agree on which
+    hash is "current"; explodes file count; users often *want* a stable
+    path to hand to external tools. Probably opt-in per rule.
+  - **(C) Archive-on-overwrite.** Before a rerun overwrites an output,
+    move the existing file to `.remake/archive/<key>/<timestamp>/` (or a
+    user-set archive root). Keeps the live path stable (best of both),
+    keeps history, and a `remake gc`/`--keep-last=N` prunes it. Cons:
+    doubles IO on rerun for large files; archive can balloon; restore is
+    a manual copy unless we add `remake restore`. Needs a retention
+    policy from day one.
+  - **(D) Metadata-tracked provenance only.** Don't touch the files;
+    record per-run (timestamp, code hash, io_hash, output paths) in the
+    DB and expose `remake versions <task>` to show the history. Cheapest,
+    and a prerequisite for (C)'s restore anyway, but on its own it only
+    *tells* you the output changed — it can't give the old bytes back.
+  - Cross-cutting questions for any of these: does a version bump
+    propagate downstream (almost certainly yes — it's a rerun trigger);
+    how does it interact with `check_outputs` (an archived/old output is
+    not "complete" at the live path); and SLURM-safety (archive move must
+    be atomic and idempotent across array elements, like the sidecars).
+  - Leaning: ship **(A)** as documentation now, build **(D)** next (it's
+    low-risk and unlocks inspection), and treat **(C)** as the real
+    feature once retention/restore is designed. **(B)** stays optional —
+    powerful but the opacity makes it a poor default.
+
+- **Optimistic direct DB write under SLURM, with sidecar fallback.**
+  Today per-task array processes never touch the DB: they write JSON
+  sidecars (design_docs/slurm_implementation.md), ingested in batch by
+  the next DB-reader. That is robust but defers visibility — results are
+  not in the DB until a *later* invocation (continuation job, next
+  `run`/`info`) ingests them; a terminal wave needs a follow-up `remake
+  info` before anything shows. Proposal: a task tries to write its result
+  directly to `remake.db`, and falls back to a sidecar only if it fails.
+  - The win is **latency-to-visibility**, not DB pressure relief.
+    Results land the instant a task finishes, in the common (low-
+    contention) case.
+  - Why it is self-regulating rather than a thundering herd: the
+    *fallback caps the herd*. A writer that fails gives up and goes quiet
+    (writes a sidecar) instead of continuing to contend, so contention
+    cannot escalate. And most real jobs are O(1–10 min) with natural
+    jitter around the mean, so completion times — and thus write
+    attempts — spread out rather than arriving as one synchronised burst.
+    Quiet period → direct write succeeds; busy period → fast-fail and
+    degrade gracefully to exactly today's sidecar behaviour.
+  - **Hard requirement: the retry must be bounded and fast-failing.** The
+    existing `retry_lock_commit` (sqlite3_backend.py) has *unbounded*
+    exponential backoff — it never gives up, just slows down — which is
+    the wrong primitive here. The direct-write path needs a separate
+    `try_commit(max_attempts=2, busy_timeout=short)` that raises quickly,
+    at which point the sidecar fallback engages.
+  - Correctness is never at risk: the sidecar net still catches any
+    failed/abandoned write, and the upsert is idempotent. Make ingest
+    last-writer-wins by timestamp so a stale sidecar can't clobber a
+    newer direct write.
+  - Caveats: SQLite locking over NFS/Lustre is the real JASMIN hazard
+    (flaky POSIX locks) — a bounded fast-fail could in principle falsely
+    fail/succeed there, so this needs a cluster validation run before the
+    default flips (`bench_sqlite_contention.py` extends to it). Don't
+    reach for WAL as an alternative — WAL is unsafe over NFS. Likely
+    shipped behind a config flag, perhaps auto-off above an array-size
+    threshold; sidecar-only stays the conservative default until proven.
+
+- **I/O verification / reconcile subcommand** (`remake verify`,
+  `-Q`-composable). On-demand reconciliation of filesystem reality into
+  the DB — snakemake-like, but opt-in rather than the only model. Three
+  distinct operations, only one of which is risky; they should be split,
+  not bundled:
+  - **(a) Output reconciliation (`--outputs`)** — DB says success but the
+    output is missing/incomplete on disk → mark the task pending. Safe;
+    the persistent, explicit sibling of the transient
+    `check_outputs='always'` plan-time check. Scratch-purge recovery.
+  - **(c) Adoption (`--adopt`)** — output complete on disk but no DB
+    record → mark success. Safe; persistent sibling of
+    `check_outputs='fallback'`. Migrates an existing output tree into
+    remake.
+  - **(b) mtime staleness (`--mtime`, off unless asked)** — input newer
+    than output → mark stale. This is the model remake deliberately
+    rejected: mtime is unreliable on HPC (rsync, tar restore, scratch
+    migration, Lustre all scramble it — the reason remake is DB-first).
+    Two scoping rules if built: only meaningful for **external/source
+    inputs** (rule-chained inputs are already ordered by the DB; mtime
+    there adds only false-staleness risk), and "the output's mtime" for a
+    zarr/multi-file output needs a defined answer (oldest part of tree).
+  - State-mutating, so **report-by-default, `--apply` to write** — the
+    state-writing sibling of the read-only `ls-tasks --check`. (a)+(c) are
+    the safe core to build first; (b) stays behind its flag, scoped to
+    external inputs, never default.
+
 ## Graduated (designed and implemented; kept for the record)
 
 - **SLURM job ids written to file** — `.remake/jobs/<rule>.jobids.json`
