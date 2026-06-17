@@ -41,8 +41,9 @@ matrix = {('site', 'year'): [('oxford', 2010), ('bristol', 2015)]}
 matrix = [{'site': 'oxford', 'year': 2010}, {'site': 'bristol', 'year': 2015}]
 
 # 4. Callable returning list[dict]: a *dynamic* matrix, resolved at plan time.
-#    Raise MatrixNotReady(path) while upstream outputs are missing and remake
-#    defers the rule until they exist.
+#    Mark it @deferrable and raise Defer(path) while upstream outputs are
+#    missing; remake defers the rule until they exist.
+@deferrable
 def matrix():
     ...
 ```
@@ -52,27 +53,35 @@ def matrix():
 Sometimes the set of tasks isn't known until an upstream rule has run — e.g. a
 detection step writes a variable number of events per year, and you want one
 downstream task per event. Make `matrix` a zero-argument callable that reads
-those upstream outputs and returns the `list[dict]`:
+those upstream outputs and returns the `list[dict]`, and mark it `@deferrable`:
 
 ```python
-from remake import MatrixNotReady
+from remake import Defer, deferrable
 
+@deferrable
 def event_matrix():
     rows = []
     for year in YEARS:
         path = Path(f'data/events/{year}.json')
         if not path.exists():
-            raise MatrixNotReady(path)        # outputs not ready — defer
+            raise Defer(path)                 # outputs not ready — defer
         rows += [{'year': year, 'event_id': e['id']}
                  for e in json.loads(path.read_text())]
     return rows
 ```
 
 remake calls the matrix during planning. While the inputs it needs are missing
-it raises `MatrixNotReady`, and remake **defers** the rule — running its
-upstream first, then retrying. A single `remake run` resolves the whole chain
-(locally via a replanning loop; on SLURM via a continuation job). See
+it raises `Defer`, and remake **defers** the rule — running its upstream first,
+then retrying. A single `remake run` resolves the whole chain (locally via a
+replanning loop; on SLURM via a continuation job). See
 `examples/ex8_dynamic_matrix.py` for a complete dynamic matrix + dynamic fan-in.
+
+The `@deferrable` marker is required to raise `Defer`: it makes the dynamic
+contract explicit (raising `Defer` from an unmarked matrix is an error). It
+also lets the planner defer the rule while its upstream is *rerunning* — not
+only when the upstream output is *absent* — so the matrix never expands from a
+stale, about-to-be-overwritten output. An ordinary callable matrix that merely
+computes a product (no upstream reads) needs no marker and is never deferred.
 
 Matrix values become task kwargs, so they must be JSON-serialisable and stable
 in `repr` (they define the task identity).

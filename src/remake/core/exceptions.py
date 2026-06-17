@@ -18,9 +18,16 @@ class ScopeError(RemakeError):
     pass
 
 
-class MatrixNotReady(RemakeError):
-    """Raised by a matrix callable whose required upstream outputs do not yet
-    exist. Treated as a deferral signal by the planner, not an error.
+class Defer(Exception):
+    """Raised by a `@deferrable` matrix callable to signal that the rule
+    cannot be expanded this wave — its task list derives from an upstream
+    output that does not yet exist. A control-flow signal, not an error
+    (hence not a RemakeError): the planner defers the rule and the replan
+    loop / SLURM continuation job retries it once the upstream completes.
+
+    The planner additionally defers a `@deferrable` rule when an upstream is
+    *rerunning* this wave (its on-disk output is stale), so the matrix never
+    expands from an about-to-be-overwritten output.
 
     Accepts path strings as context, surfaced to the user to show what is
     blocking resolution.
@@ -28,4 +35,4 @@ class MatrixNotReady(RemakeError):
 
     def __init__(self, *paths):
         self.paths = [str(p) for p in paths]
-        super().__init__(', '.join(self.paths) if self.paths else 'matrix not ready')
+        super().__init__(', '.join(self.paths) if self.paths else 'deferred')

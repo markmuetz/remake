@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from remake import MatrixNotReady, Remake, Sqlite3Backend, load_remake, rule
+from remake import Defer, Remake, Sqlite3Backend, deferrable, load_remake, rule
 from remake.metadata import TASK_STATUS_FAILED, TASK_STATUS_SUCCESS
 
 
@@ -76,10 +76,11 @@ def test_dynamic_matrix_defer_resolve_complete(tmp_path, meta):
     def find_clusters(outputs):
         Path(outputs['clusters']).write_text(json.dumps(['c1', 'c2', 'c3']))
 
+    @deferrable
     def cluster_matrix():
         p = tmp_path / 'clusters.json'
         if not p.exists():
-            raise MatrixNotReady(p)
+            raise Defer(p)
         return [{'cid': c} for c in json.loads(p.read_text())]
 
     @rule(outputs={'out': str(tmp_path / 'cluster_{cid}.txt')}, matrix=cluster_matrix,
@@ -115,16 +116,17 @@ def test_dynamic_matrix_defer_resolve_complete(tmp_path, meta):
 
 def test_tasks_and_task_from_key_skip_deferred_matrix(tmp_path, meta):
     """tasks()/task_from_key() (used by why/task-info/set-state) must not crash
-    when a rule's matrix callable raises MatrixNotReady — they skip the deferred
+    when a rule's @deferrable matrix raises Defer — they skip the deferred
     rule rather than propagating the exception."""
     @rule(outputs={'clusters': str(tmp_path / 'clusters.json')})
     def find_clusters(outputs):
         Path(outputs['clusters']).write_text(json.dumps(['c1', 'c2']))
 
+    @deferrable
     def cluster_matrix():
         p = tmp_path / 'clusters.json'
         if not p.exists():
-            raise MatrixNotReady(p)
+            raise Defer(p)
         return [{'cid': c} for c in json.loads(p.read_text())]
 
     @rule(outputs={'out': str(tmp_path / 'cluster_{cid}.txt')}, matrix=cluster_matrix,
@@ -149,6 +151,66 @@ def test_tasks_and_task_from_key_skip_deferred_matrix(tmp_path, meta):
     # Once the upstream output exists, the matrix resolves and tasks appear.
     rmk.run()
     assert {t.rule.name for t in rmk.tasks()} == {'find_clusters', 'process_cluster'}
+
+
+def test_deferrable_matrix_defers_when_upstream_reruns(tmp_path, meta):
+    """The stale-upstream bug: a @deferrable matrix reads an upstream output
+    that is about to be regenerated this wave. The planner must DEFER the
+    rule (re-expand after the upstream reruns), not expand it from the stale
+    on-disk output."""
+    @rule(outputs={'clusters': str(tmp_path / 'clusters.json')})
+    def find_clusters(outputs):
+        Path(outputs['clusters']).write_text(json.dumps(['c1', 'c2']))
+
+    @deferrable
+    def cluster_matrix():
+        p = tmp_path / 'clusters.json'
+        if not p.exists():
+            raise Defer(p)
+        return [{'cid': c} for c in json.loads(p.read_text())]
+
+    @rule(outputs={'out': str(tmp_path / 'cluster_{cid}.txt')}, matrix=cluster_matrix,
+          depends_on=[find_clusters])
+    def process_cluster(outputs, cid):
+        Path(outputs['out']).write_text(cid.upper())
+
+    rmk = Remake(rules=[find_clusters, process_cluster], metadata=meta)
+    rmk.run()
+    runnable, deferred = rmk.plan()
+    assert not runnable and not deferred  # all up to date
+
+    # Make find_clusters rerun (its output is now stale). process_cluster's
+    # matrix reads that output — defer rather than expand from the old value.
+    task = next(t for t in rmk.tasks() if t.rule is find_clusters)
+    rmk.metadata.update_task(task, TASK_STATUS_FAILED)
+    runnable, deferred = rmk.plan()
+    assert [t.rule.name for t in runnable] == ['find_clusters']
+    assert deferred == [process_cluster]
+
+
+def test_nondeferrable_callable_matrix_not_deferred_on_upstream_rerun(tmp_path, meta):
+    """Fix B's narrowing: an ordinary callable matrix (no upstream reads, not
+    @deferrable) is NOT deferred when an upstream reruns — it expands normally
+    and reruns conservatively, no needless extra wave."""
+    @rule(outputs={'seed': str(tmp_path / 'seed.txt')})
+    def seed(outputs):
+        Path(outputs['seed']).write_text('x')
+
+    def fixed_matrix():  # callable, but derives nothing from upstream outputs
+        return [{'i': 1}, {'i': 2}]
+
+    @rule(outputs={'o': str(tmp_path / 'o_{i}.txt')}, matrix=fixed_matrix,
+          depends_on=[seed])
+    def proc(outputs, i):
+        Path(outputs['o']).write_text(str(i))
+
+    rmk = Remake(rules=[seed, proc], metadata=meta)
+    rmk.run()
+    task = next(t for t in rmk.tasks() if t.rule is seed)
+    rmk.metadata.update_task(task, TASK_STATUS_FAILED)
+    runnable, deferred = rmk.plan()
+    assert not deferred  # not over-deferred
+    assert 'proc' in {t.rule.name for t in runnable}  # reruns conservatively
 
 
 def test_failure_recorded_and_run_continues(tmp_path, meta):

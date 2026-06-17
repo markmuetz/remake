@@ -12,7 +12,7 @@ API, in roughly increasing order of complexity:
 | `ex5_callable_inputs_matrix.py` | All input-spec styles, matrix subsetting |
 | `ex6_zarr_region.py` | Optional inputs/outputs: source, region-write and pure side-effect rules |
 | `ex7_multifile/` | Rules split across modules, combined in a top-level pipeline file |
-| `ex8_dynamic_matrix.py` | Dynamic matrices (`MatrixNotReady`), non-cartesian `list[dict]` matrices, dynamic fan-in |
+| `ex8_dynamic_matrix.py` | Dynamic matrices (`@deferrable` + `Defer`), non-cartesian `list[dict]` matrices, dynamic fan-in |
 | `ex9_custom_token.py` | A custom `OutputToken` (a sqlite table row) and `--check-outputs` verification |
 | `ex10_tuple_matrix.py` | Tuple-key matrices: pre-filtered combo sequences and mixed scalar/tuple axes |
 

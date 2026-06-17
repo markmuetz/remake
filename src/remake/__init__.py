@@ -1,7 +1,7 @@
 from .version import __version__
 
 from .core import (
-    MatrixNotReady,
+    Defer,
     Remake,
     RemakeError,
     Rule,
@@ -9,6 +9,7 @@ from .core import (
     ScopeWarning,
     SignatureError,
     Task,
+    deferrable,
     rule,
 )
 from .executors import (

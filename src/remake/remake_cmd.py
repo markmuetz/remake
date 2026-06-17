@@ -631,7 +631,7 @@ class RemakeParser:
         import json
 
         from .core.dag import iter_expand_rule
-        from .core.exceptions import MatrixNotReady
+        from .core.exceptions import Defer
         from .core.planner import make_predicate
 
         rmk = self._load(args)
@@ -676,7 +676,7 @@ class RemakeParser:
                             mark = '' if not args.check else (
                                 ' [complete]' if f['complete'] else ' [missing]')
                             print(f'  out {f["name"]}: {f["path"]}{mark}')
-            except MatrixNotReady:
+            except Defer:
                 logger.warning(f'{rule.name}: deferred (matrix not ready), tasks unknown')
         if args.json:
             print(json.dumps(rows, indent=1))
@@ -690,7 +690,7 @@ class RemakeParser:
         import json
 
         from .core.dag import iter_expand_rule
-        from .core.exceptions import MatrixNotReady
+        from .core.exceptions import Defer
 
         rmk = self._load(args)
         rmk.finalize()
@@ -703,7 +703,7 @@ class RemakeParser:
             try:
                 for task in iter_expand_rule(rule):
                     paths.extend(str(token) for token in task.outputs.values())
-            except MatrixNotReady:
+            except Defer:
                 deferred.add(rule.name)
                 logger.warning(f'{rule.name}: matrix not ready, outputs unknown — skipped')
                 continue
@@ -792,7 +792,7 @@ class RemakeParser:
         import networkx as nx
 
         from .core.dag import build_rule_dag, resolve_matrix
-        from .core.exceptions import MatrixNotReady
+        from .core.exceptions import Defer
 
         rmk = load_remake(args.remakefile)
         dag = build_rule_dag(rmk.rules)
@@ -809,7 +809,7 @@ class RemakeParser:
             for rule in order:
                 try:
                     rows = resolve_matrix(rule.matrix)
-                except MatrixNotReady:
+                except Defer:
                     matrix_info[rule.name] = (None, None)
                     continue
                 keys = []

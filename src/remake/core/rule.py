@@ -51,6 +51,24 @@ class Rule:
         return f'Rule({self.name})'
 
 
+def deferrable(matrix_fn):
+    """Mark a matrix callable as deferrable: it derives its task list from
+    upstream outputs and may raise `Defer`.
+
+    Only `@deferrable` matrices may defer — raising `Defer` from an unmarked
+    matrix is an error (it makes the dynamic contract explicit at the call
+    site). The planner also defers a `@deferrable` rule when an upstream is
+    rerunning this wave, so its matrix never expands from a stale output.
+    """
+    matrix_fn._remake_deferrable = True
+    return matrix_fn
+
+
+def is_deferrable(matrix):
+    """True if `matrix` is a callable marked with `@deferrable`."""
+    return callable(matrix) and getattr(matrix, '_remake_deferrable', False)
+
+
 def _matrix_keys(matrix):
     """Matrix parameter names, or None if not knowable at decoration time."""
     if matrix is None:

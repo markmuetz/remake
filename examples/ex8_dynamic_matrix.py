@@ -4,11 +4,13 @@
 # have run.
 #
 #   - detect_events finds a variable number of events per year.
-#   - event_matrix() is a *callable* matrix. It raises MatrixNotReady while
-#     the event files do not exist yet; the planner treats that as "defer
-#     this rule" and retries after each wave. It returns list[dict] — the
-#     canonical matrix form, here NOT a cartesian product (each year has a
-#     different number of events).
+#   - event_matrix() is a *callable* matrix, marked @deferrable because it
+#     derives its task list from upstream outputs. It raises Defer while the
+#     event files do not exist yet; the planner treats that as "defer this
+#     rule" and retries after each wave (and also defers it while
+#     detect_events is itself rerunning, so it never expands from a stale
+#     output). It returns list[dict] — the canonical matrix form, here NOT a
+#     cartesian product (each year has a different number of events).
 #   - summarise fans in over whatever was discovered.
 #
 # A single `remake run` handles the whole flow: detect_events runs first,
@@ -20,7 +22,7 @@ import json
 import random
 from pathlib import Path
 
-from remake import MatrixNotReady, Remake, rule
+from remake import Defer, Remake, deferrable, rule
 
 rmk = Remake()
 
@@ -38,14 +40,15 @@ def detect_events(outputs, year):
     Path(outputs['events']).write_text(json.dumps(events))
 
 
+@deferrable
 def event_matrix():
-    """Called during planning. Raises MatrixNotReady until detect_events
-    has produced its outputs; then returns one row per discovered event."""
+    """Called during planning. Raises Defer until detect_events has produced
+    its outputs; then returns one row per discovered event."""
     rows = []
     for year in YEARS:
         path = Path(f'data/events/{year}.json')
         if not path.exists():
-            raise MatrixNotReady(path)
+            raise Defer(path)
         for event in json.loads(path.read_text()):
             rows.append({'year': year, 'event_id': event['id']})
     return rows  # list[dict] — not a cartesian product

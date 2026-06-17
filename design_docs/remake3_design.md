@@ -423,7 +423,7 @@ def expand_rule(rule: Rule) -> list[Task]:
 
     list[dict] is the canonical internal format. The {key: [values]}
     cartesian shorthand is normalised to list[dict] here.
-    May raise MatrixNotReady if matrix is a callable whose required
+    May raise Defer if matrix is a @deferrable callable whose required
     upstream outputs do not yet exist.
     """
     kwargs_list = _resolve_matrix(rule.matrix)  # always returns list[dict]
@@ -433,7 +433,7 @@ def expand_rule(rule: Rule) -> list[Task]:
 def _resolve_matrix(matrix) -> list[dict]:
     """Normalise all matrix forms to list[dict]."""
     if callable(matrix):
-        return matrix()   # raises MatrixNotReady if not yet resolvable
+        return matrix()   # @deferrable: raises Defer if not yet resolvable
     if isinstance(matrix, list):
         return matrix     # already list[dict]
     # {key: [values]} cartesian shorthand
@@ -504,7 +504,7 @@ def plan(
     """
     Return (runnable_tasks, deferred_rules).
     runnable_tasks: ordered list of tasks that need running now.
-    deferred_rules: rules whose matrix callable raised MatrixNotReady.
+    deferred_rules: rules whose @deferrable matrix raised Defer.
     Pure except for metadata reads (injected).
     """
 ```
@@ -754,12 +754,13 @@ These cannot be expressed as a static `matrix` dict defined at decoration time.
 ### API
 
 `matrix` accepts a callable that returns `list[dict]`. The callable is called
-during planning; if the required upstream outputs do not yet exist it raises
-`MatrixNotReady`, which the planner treats as a deferral signal rather than
-an error.
+during planning; mark it `@deferrable` and, if the required upstream outputs
+do not yet exist, raise `Defer`, which the planner treats as a deferral signal
+rather than an error. The planner also defers a `@deferrable` rule while an
+upstream is rerunning, so its matrix never expands from a stale output.
 
 ```python
-from remake import Remake, MatrixNotReady, rule
+from remake import Remake, deferrable, rule
 import json
 from pathlib import Path
 
@@ -778,13 +779,14 @@ def cluster(inputs, outputs, year):
     Path(outputs['clusters']).write_text(json.dumps(ids))
 
 
+@deferrable
 def process_matrix():
     """Called during planning, after cluster has run."""
     rows = []
     for year in YEARS:
         path = Path(f'data/clusters/{year}.json')
         if not path.exists():
-            raise MatrixNotReady(str(path))
+            raise Defer(str(path))
         for cid in json.loads(path.read_text()):
             rows.append({'year': year, 'cluster_id': cid})
     return rows   # list[dict] — not a cartesian product
@@ -805,7 +807,7 @@ def process_cluster(inputs, outputs, year, cluster_id):
 rmk.rules_from_current_module()
 ```
 
-`MatrixNotReady` accepts one or more path strings as context, which remake3
+`Defer` accepts one or more path strings as context, which remake3
 surfaces in its output so the user knows what is blocking resolution.
 
 ### Execution model — local executors
@@ -826,7 +828,7 @@ loop:
 
 After each wave of tasks completes, the planner retries all deferred rules. If
 a rule remains deferred despite its `depends_on` tasks all completing, remake3
-reports it as blocked (the matrix callable raised `MatrixNotReady` but all
+reports it as blocked (the matrix callable raised `Defer` but all
 upstream tasks are done — likely a bug in the callable or a missing output).
 
 ### Execution model — SLURM executor

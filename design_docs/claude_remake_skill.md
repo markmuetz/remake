@@ -37,8 +37,8 @@ The conventions a model gets subtly wrong without the spec in context:
   in that order; inputs/outputs/matrix all optional;
 - scope rules: no free module globals — declare via `uses=`, environment
   objects (stdlib, modules) exempt; `strict_scope` tri-state;
-- matrix forms (dict cartesian / list[dict] / callable + `MatrixNotReady`),
-  `depends_on` is explicit, fan-in via input callables;
+- matrix forms (dict cartesian / list[dict] / `@deferrable` callable +
+  `Defer`), `depends_on` is explicit, fan-in via input callables;
 - `config={'slurm': {...}}` keys and merging; JSON-serialisable kwargs;
 - pointers at `examples/ex1–ex9` as few-shot examples, and
   `remake run <file> --dry-run` / `info` as the check-your-work loop.

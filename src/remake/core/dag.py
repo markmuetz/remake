@@ -7,7 +7,8 @@ import itertools
 
 import networkx as nx
 
-from .exceptions import SignatureError
+from .exceptions import Defer, SignatureError
+from .rule import is_deferrable
 from .task import Task
 
 
@@ -27,13 +28,26 @@ def build_rule_dag(rules):
 def resolve_matrix(matrix):
     """Normalise all matrix forms to the canonical list[dict].
 
-    May raise MatrixNotReady if matrix is a callable whose required upstream
-    outputs do not yet exist.
+    May raise Defer if matrix is a `@deferrable` callable whose required
+    upstream outputs do not yet exist. A non-`@deferrable` matrix that raises
+    Defer is a programming error (SignatureError) — the contract must be
+    declared explicitly.
     """
     if matrix is None:
         return [{}]
     if callable(matrix) and not isinstance(matrix, (dict, list)):
-        return matrix()
+        try:
+            return matrix()
+        except Defer:
+            if not is_deferrable(matrix):
+                name = getattr(matrix, '__name__', repr(matrix))
+                raise SignatureError(
+                    f'matrix callable {name!r} raised Defer but is not marked '
+                    f'@deferrable. Decorate it with @deferrable to declare that '
+                    f'it derives its task list from upstream outputs and so may '
+                    f'defer.'
+                ) from None
+            raise
     if isinstance(matrix, list):
         return matrix
     # dict: cartesian product of axes. A scalar key is one kwarg per value; a

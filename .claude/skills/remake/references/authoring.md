@@ -71,10 +71,14 @@ Four forms:
   (`{'expt': EXPTS, ('year', 'model'): PAIRS}`) — each dict entry is one
   product axis;
 - `[{'year': 1980, 'cluster_id': 'c1'}, ...]` — explicit task list;
-- a zero-arg callable returning `list[dict]` — a *dynamic* matrix.
-  Raise `MatrixNotReady(path)` while upstream outputs are missing; the
-  planner defers the rule and retries after each wave (locally via the
-  replanning loop, on SLURM via a continuation job).
+- a zero-arg callable returning `list[dict]` — a *dynamic* matrix. Mark it
+  `@deferrable` and raise `Defer(path)` while upstream outputs are missing;
+  the planner defers the rule and retries after each wave (locally via the
+  replanning loop, on SLURM via a continuation job). `@deferrable` is
+  required to raise `Defer` (unmarked is an error), and it also makes the
+  planner defer the rule while its upstream is *rerunning* — so the matrix
+  never expands from a stale output. Plain product callables (no upstream
+  reads) need no marker and are never deferred.
 
 Matrix values become task kwargs and must be JSON-serialisable (they
 ride through SLURM job specs) and stable in repr (they define the task

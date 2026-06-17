@@ -1,6 +1,6 @@
 import pytest
 
-from remake import MatrixNotReady, SignatureError, rule
+from remake import Defer, SignatureError, deferrable, rule
 from remake.core.dag import expand_rule
 
 
@@ -93,13 +93,26 @@ def test_callable_matrix_checked_at_expansion():
         expand_rule(r)
 
 
-def test_callable_matrix_not_ready_propagates():
+def test_deferrable_matrix_defer_propagates():
+    @deferrable
     def matrix():
-        raise MatrixNotReady('blocking/path.json')
+        raise Defer('blocking/path.json')
 
     @rule(outputs={'o': '{x}.txt'}, matrix=matrix)
     def r(outputs, x):
         pass
 
-    with pytest.raises(MatrixNotReady, match='blocking/path.json'):
+    with pytest.raises(Defer, match='blocking/path.json'):
+        expand_rule(r)
+
+
+def test_unmarked_matrix_defer_is_error():
+    def matrix():
+        raise Defer('blocking/path.json')
+
+    @rule(outputs={'o': '{x}.txt'}, matrix=matrix)
+    def r(outputs, x):
+        pass
+
+    with pytest.raises(SignatureError, match='not marked @deferrable'):
         expand_rule(r)

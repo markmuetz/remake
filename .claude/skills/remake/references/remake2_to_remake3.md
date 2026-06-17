@@ -281,7 +281,7 @@ def compare_delta_z_matrix():
 ```
 
 This preserves the original "deferred until upstream has run" behaviour
-without needing `MatrixNotReady` — `remake info` just reports 0 tasks for
+without needing `@deferrable`/`Defer` — `remake info` just reports 0 tasks for
 this rule until `find_candidate_delta_z` has actually written the
 `brackets` files.
 

@@ -58,16 +58,17 @@ rmk.rules_from_current_module()
 DYNAMIC_PIPELINE = '''
 import json
 from pathlib import Path
-from remake import MatrixNotReady, Remake, rule
+from remake import Defer, Remake, deferrable, rule
 
 @rule(outputs={'ids': 'data/ids.json'})
 def discover(outputs):
     Path(outputs['ids']).write_text(json.dumps([1, 2, 3]))
 
+@deferrable
 def dyn_matrix():
     p = Path('data/ids.json')
     if not p.exists():
-        raise MatrixNotReady(str(p))
+        raise Defer(str(p))
     return [{'i': i} for i in json.loads(p.read_text())]
 
 @rule(outputs={'o': 'data/dyn_{i}.txt'}, matrix=dyn_matrix, depends_on=[discover])

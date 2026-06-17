@@ -1,7 +1,7 @@
 import networkx as nx
 import pytest
 
-from remake import MatrixNotReady, rule
+from remake import Defer, deferrable, rule
 from remake.core.dag import build_rule_dag, expand_rule, resolve_matrix
 from remake.core.exceptions import SignatureError
 
@@ -41,8 +41,21 @@ def test_resolve_matrix_forms():
     explicit = [{'x': 1}, {'x': 5}]
     assert resolve_matrix(explicit) is explicit
     assert resolve_matrix(lambda: [{'x': 9}]) == [{'x': 9}]
-    with pytest.raises(MatrixNotReady):
-        resolve_matrix(lambda: (_ for _ in ()).throw(MatrixNotReady('p')))
+
+    # A @deferrable matrix may raise Defer and it propagates as the defer signal.
+    @deferrable
+    def deferring():
+        raise Defer('p')
+
+    with pytest.raises(Defer):
+        resolve_matrix(deferring)
+
+    # Raising Defer from an unmarked matrix is a programming error.
+    def undeclared():
+        raise Defer('p')
+
+    with pytest.raises(SignatureError, match='not marked @deferrable'):
+        resolve_matrix(undeclared)
 
 
 def test_resolve_matrix_tuple_key():

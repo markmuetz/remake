@@ -13,7 +13,9 @@ only need `Remake` and `rule`.
 
 ::: remake.Task
 
-::: remake.MatrixNotReady
+::: remake.deferrable
+
+::: remake.Defer
 
 ## Errors
 

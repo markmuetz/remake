@@ -1,6 +1,6 @@
 from .dag import build_rule_dag, expand_rule, resolve_matrix
 from .exceptions import (
-    MatrixNotReady,
+    Defer,
     RemakeError,
     RemakeLoadError,
     ScopeError,
@@ -8,6 +8,6 @@ from .exceptions import (
 )
 from .planner import plan
 from .remake import Remake
-from .rule import Rule, rule
+from .rule import Rule, deferrable, rule
 from .scope import ScopeWarning
 from .task import Task

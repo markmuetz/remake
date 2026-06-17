@@ -15,7 +15,8 @@ from loguru import logger
 from ..metadata.metadata_manager import TASK_STATUS_FAILED, TASK_STATUS_SUCCESS
 from ..util.code_compare import CodeComparer
 from .dag import expand_rule
-from .exceptions import MatrixNotReady
+from .exceptions import Defer
+from .rule import is_deferrable
 from .scope import io_hash, parse_uses_hash, uses_hash, uses_parts
 
 
@@ -35,6 +36,13 @@ def make_predicate(query):
             return False
 
     return predicate
+
+
+def _upstream_rerunning(rule, rerun_kwargs):
+    """Any depends_on upstream rerunning this wave? An entry is 'all'
+    (truthy) or a set of kwarg-tuples (truthy when non-empty); a rule that
+    fully passes leaves an empty set (falsy)."""
+    return any(rerun_kwargs.get(dep) for dep in rule.depends_on)
 
 
 def _same_matrix(rule, dep):
@@ -169,7 +177,9 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='fallba
     """Return (runnable_tasks, deferred_rules).
 
     runnable_tasks: ordered (rule-topologically) list of tasks needing a run.
-    deferred_rules: rules whose matrix callable raised MatrixNotReady.
+    deferred_rules: rules deferred this wave — a @deferrable matrix that
+    raised Defer (upstream output absent) or whose upstream is rerunning
+    (output stale), plus anything downstream of a deferred rule.
 
     ignore_code_changes: freshness checks off, dataflow on — code/uses
     comparisons are skipped, so a task reruns only if it has never
@@ -195,9 +205,21 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='fallba
             deferred.append(rule)
             rerun_kwargs[rule] = 'all'
             continue
+        if is_deferrable(rule.matrix) and _upstream_rerunning(rule, rerun_kwargs):
+            # A @deferrable matrix derives its task set from upstream outputs.
+            # If an upstream is rerunning this wave its on-disk output is stale,
+            # so expanding now would build the wrong task set. Defer: the local
+            # replan loop re-expands after the upstream finishes; the SLURM
+            # continuation job re-plans it with fresh outputs.
+            logger.debug(
+                '{}: deferred (deferrable matrix, upstream rerunning)', rule.name
+            )
+            deferred.append(rule)
+            rerun_kwargs[rule] = 'all'
+            continue
         try:
             tasks = expand_rule(rule, predicate)
-        except MatrixNotReady:
+        except Defer:
             logger.debug('{}: deferred (matrix not ready)', rule.name)
             deferred.append(rule)
             # Unknown tasks: downstream rules must assume everything reruns.
