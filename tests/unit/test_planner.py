@@ -86,6 +86,19 @@ def test_uses_change_triggers_rerun(tmp_path):
     assert len([t for t in runnable if t.rule is rule_b]) == 2
 
 
+def test_io_change_triggers_rerun(tmp_path):
+    # Editing the outputs spec (here via the attribute, so the run function
+    # source is untouched) must rerun the task and its downstream — the gap
+    # io_hash closes (run-code/uses tracking alone missed it).
+    rmk, rule_a, rule_b, rule_c = make_pipeline(tmp_path)
+    rmk.run()
+    rule_b.outputs = {'o': str(tmp_path / 'b_moved_{n}.txt')}
+    runnable, _ = rmk.plan()
+    names = sorted({t.rule.name for t in runnable})
+    assert names == ['rule_b', 'rule_c']  # rule_b and downstream, not rule_a
+    assert len([t for t in runnable if t.rule is rule_b]) == 2
+
+
 def test_ignore_code_changes(tmp_path):
     rmk, rule_a, rule_b, rule_c = make_pipeline(tmp_path)
     rmk.run()

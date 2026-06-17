@@ -16,6 +16,7 @@ import json
 import time
 from pathlib import Path
 
+from ..core.scope import io_hash as compute_io_hash
 from ..core.scope import uses_hash as compute_uses_hash
 from .metadata_manager import MetadataManager
 
@@ -43,6 +44,7 @@ class SidecarWriter(MetadataManager):
             'status': status,
             'exception': exception,
             'uses_hash': compute_uses_hash(task.rule.uses),
+            'io_hash': compute_io_hash(task.rule),
             # Matches the format sqlite's datetime('now') stores (UTC).
             'timestamp': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
         }

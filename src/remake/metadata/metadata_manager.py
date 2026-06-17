@@ -18,6 +18,7 @@ class TaskRecord:
     run_code: str
     uses_hash: str
     exception: str
+    io_hash: Optional[str] = None
 
 
 class MetadataManager(abc.ABC):

@@ -131,6 +131,33 @@ def _normalised_source(fn):
         return src
 
 
+def _normalised_src(src):
+    """AST-normalise an already-extracted source string (cosmetic changes do
+    not change it). Empty stays empty; unparseable falls back to the raw."""
+    if not src:
+        return ''
+    try:
+        return ast.dump(ast.parse(dedent(src)))
+    except SyntaxError:
+        return src
+
+
+def io_hash(rule):
+    """Stable string for a rule's inputs/outputs declarations, AST-normalised
+    the same way run code and uses are. Editing the inputs/outputs spec (the
+    dict or the callable that defines dataflow) changes it, so a completed
+    task is rerun — closing the gap where only run code and uses were tracked.
+
+    Note: a pure output-*path* change driven by a global constant the callable
+    reads at run time is not captured here (the source is unchanged) — that is
+    the `uses` tracking domain, same caveat as run code."""
+    src = rule.source
+    return (
+        f"inputs={_normalised_src(src['inputs'])}\n"
+        f"outputs={_normalised_src(src['outputs'])}"
+    )
+
+
 def uses_hash(uses):
     """Stable string representing the current state of a `uses` dict.
 

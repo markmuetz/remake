@@ -311,6 +311,51 @@ design discussion before any work starts.
     values — a good dependency or reference implementation. (`cgitb`, the
     old stdlib answer, is removed in 3.13 — don't reach for it.)
 
+- **Output versioning** — a sanctioned mechanism for keeping (not
+  silently clobbering) old outputs when a rule's code or inputs change.
+  Today remake's stale-rebuild *detects* the change (run-code / `uses=` /
+  now `io_hash`) and reruns, overwriting the previous output in place;
+  the prior result is gone unless the user versioned the path by hand.
+  The motivating want: re-run an analysis after a code change and still
+  be able to compare against, or fall back to, the previous output.
+  Options, roughly in increasing order of magic:
+  - **(A) Manual `version=` matrix axis (no engine change).** The user
+    threads a `version`/`v` kwarg through `matrix=` and bakes it into the
+    output path (`out_{version}.nc`). Zero new machinery — it's just a
+    normal matrix key — and fully explicit. Cost: entirely on the user to
+    bump it, and every downstream rule must carry the axis too. This is
+    the status-quo "do it yourself"; worth documenting as the blessed
+    pattern even if we build nothing.
+  - **(B) Content/code-addressed output paths.** remake already computes
+    the hashes that change on a rerun (run-code, `uses_hash`, `io_hash`);
+    fold a short digest into the output path automatically
+    (`out.<hash8>.nc`), so a changed task writes a *new* file and the old
+    one survives. Pros: automatic, never clobbers, natural provenance.
+    Cons: paths become opaque; downstream resolution must agree on which
+    hash is "current"; explodes file count; users often *want* a stable
+    path to hand to external tools. Probably opt-in per rule.
+  - **(C) Archive-on-overwrite.** Before a rerun overwrites an output,
+    move the existing file to `.remake/archive/<key>/<timestamp>/` (or a
+    user-set archive root). Keeps the live path stable (best of both),
+    keeps history, and a `remake gc`/`--keep-last=N` prunes it. Cons:
+    doubles IO on rerun for large files; archive can balloon; restore is
+    a manual copy unless we add `remake restore`. Needs a retention
+    policy from day one.
+  - **(D) Metadata-tracked provenance only.** Don't touch the files;
+    record per-run (timestamp, code hash, io_hash, output paths) in the
+    DB and expose `remake versions <task>` to show the history. Cheapest,
+    and a prerequisite for (C)'s restore anyway, but on its own it only
+    *tells* you the output changed — it can't give the old bytes back.
+  - Cross-cutting questions for any of these: does a version bump
+    propagate downstream (almost certainly yes — it's a rerun trigger);
+    how does it interact with `check_outputs` (an archived/old output is
+    not "complete" at the live path); and SLURM-safety (archive move must
+    be atomic and idempotent across array elements, like the sidecars).
+  - Leaning: ship **(A)** as documentation now, build **(D)** next (it's
+    low-risk and unlocks inspection), and treat **(C)** as the real
+    feature once retention/restore is designed. **(B)** stays optional —
+    powerful but the opacity makes it a poor default.
+
 ## Graduated (designed and implemented; kept for the record)
 
 - **SLURM job ids written to file** — `.remake/jobs/<rule>.jobids.json`

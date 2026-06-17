@@ -12,6 +12,7 @@ from time import perf_counter, sleep
 
 from loguru import logger
 
+from ..core.scope import io_hash as compute_io_hash
 from ..core.scope import uses_hash as compute_uses_hash
 from ..util.code_compare import CodeComparer
 from .metadata_manager import MetadataManager, TaskRecord
@@ -41,6 +42,7 @@ CREATE TABLE task (
     rule_id INTEGER NOT NULL,
     run_code_id INTEGER,
     uses_hash TEXT,
+    io_hash TEXT,
     last_run_timestamp TIMESTAMP,
     last_run_status INTEGER,
     exception TEXT,
@@ -88,8 +90,20 @@ class Sqlite3Backend(MetadataManager):
         self.conn = sqlite3.connect(self.dbloc)
         if create_db:
             self.conn.executescript(SQL_SCHEMA)
+        else:
+            self._add_missing_columns()
         self.conn.isolation_level = 'EXCLUSIVE'
         self.rule_ids = {}  # rule name -> (rule_id, run_code_id)
+
+    def _add_missing_columns(self):
+        """Lightweight forward-compat for columns added after a DB was first
+        created (still no general migration support — see the module docstring).
+        A pre-existing record left with io_hash NULL is treated as 'not yet
+        tracked' by the planner, so upgrading does not force a mass rerun."""
+        cols = {row[1] for row in self.conn.execute('PRAGMA table_info(task)')}
+        if 'io_hash' not in cols:
+            logger.info('Adding task.io_hash column to existing DB')
+            self.conn.execute('ALTER TABLE task ADD COLUMN io_hash TEXT')
 
     def _insert_code(self, code):
         cur = self.conn.execute('INSERT INTO code(code) VALUES (?)', (code,))
@@ -156,12 +170,12 @@ class Sqlite3Backend(MetadataManager):
             placeholders = ','.join('?' * len(chunk))
             rows = self.conn.execute(
                 'SELECT task.key, task.last_run_status, task.last_run_timestamp, '
-                '       task.uses_hash, task.exception, code.code '
+                '       task.uses_hash, task.io_hash, task.exception, code.code '
                 'FROM task LEFT JOIN code ON task.run_code_id = code.id '
                 f'WHERE task.key IN ({placeholders})',
                 chunk,
             ).fetchall()
-            for key, status, timestamp, stored_uses_hash, exception, run_code in rows:
+            for key, status, timestamp, stored_uses_hash, stored_io_hash, exception, run_code in rows:
                 records[key] = TaskRecord(
                     key=key,
                     status=status,
@@ -169,6 +183,7 @@ class Sqlite3Backend(MetadataManager):
                     run_code=run_code or '',
                     uses_hash=stored_uses_hash or '',
                     exception=exception or '',
+                    io_hash=stored_io_hash,  # None for pre-upgrade records
                 )
         logger.debug(
             'queried status of {} task(s) in {} chunk(s), {} found, in {:.3f}s',
@@ -218,12 +233,13 @@ class Sqlite3Backend(MetadataManager):
         for rule, key, payload, _ in pending:
             rule_id, run_code_id = self.rule_ids[rule.name]
             self.conn.execute(
-                'INSERT INTO task(key, rule_id, run_code_id, uses_hash, '
+                'INSERT INTO task(key, rule_id, run_code_id, uses_hash, io_hash, '
                 '                 last_run_timestamp, last_run_status, exception) '
-                'VALUES (?, ?, ?, ?, ?, ?, ?) '
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?) '
                 'ON CONFLICT(key) DO UPDATE SET '
                 '    run_code_id = excluded.run_code_id, '
                 '    uses_hash = excluded.uses_hash, '
+                '    io_hash = excluded.io_hash, '
                 '    last_run_timestamp = excluded.last_run_timestamp, '
                 '    last_run_status = excluded.last_run_status, '
                 '    exception = excluded.exception',
@@ -232,6 +248,7 @@ class Sqlite3Backend(MetadataManager):
                     rule_id,
                     run_code_id,
                     payload.get('uses_hash', ''),
+                    payload.get('io_hash') or compute_io_hash(rule),
                     payload.get('timestamp'),
                     payload['status'],
                     payload.get('exception', ''),
@@ -260,12 +277,13 @@ class Sqlite3Backend(MetadataManager):
     def _upsert_task(self, task, status, exception=''):
         rule_id, run_code_id = self.rule_ids[task.rule.name]
         self.conn.execute(
-            'INSERT INTO task(key, rule_id, run_code_id, uses_hash, '
+            'INSERT INTO task(key, rule_id, run_code_id, uses_hash, io_hash, '
             '                 last_run_timestamp, last_run_status, exception) '
-            "VALUES (?, ?, ?, ?, datetime('now'), ?, ?) "
+            "VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?) "
             'ON CONFLICT(key) DO UPDATE SET '
             '    run_code_id = excluded.run_code_id, '
             '    uses_hash = excluded.uses_hash, '
+            '    io_hash = excluded.io_hash, '
             "    last_run_timestamp = datetime('now'), "
             '    last_run_status = excluded.last_run_status, '
             '    exception = excluded.exception',
@@ -274,6 +292,7 @@ class Sqlite3Backend(MetadataManager):
                 rule_id,
                 run_code_id,
                 compute_uses_hash(task.rule.uses),
+                compute_io_hash(task.rule),
                 status,
                 exception,
             ),
