@@ -117,6 +117,36 @@ value, or on upstream outputs that don't exist yet — pass a *callable* of the
 matrix keys instead, returning the dict per task. See
 `examples/ex5_callable_inputs_matrix.py`.
 
+The callable can be a named function or a `lambda`:
+
+```python
+@rule(
+    inputs     = lambda site, year: {'in': f'data/{site}/{year}.nc'},
+    outputs    = {'out': 'data/processed/{site}/{year}.nc'},
+    matrix     = {'site': SITES, 'year': YEARS},
+    depends_on = [extract],
+)
+def process(inputs, outputs, site, year):
+    ...
+```
+
+Its parameter names must be matrix keys: remake calls it with the matching
+kwargs (extra kwargs it doesn't name are dropped, so `lambda site:` is fine; a
+parameter that *isn't* a matrix key raises `TypeError`). A `lambda` works, but
+change detection is coarser for one than for a named `def` — remake hashes the
+callable's source, and a lambda's source is captured as raw line text rather
+than AST-normalised, so cosmetic edits on that line can trigger reruns and two
+lambdas sharing a line are indistinguishable. Prefer a named function for
+non-trivial wiring.
+
+!!! warning "Closures are invisible to change detection"
+    A callable that closes over an outer variable — `lambda site: {'in':
+    BASE / f'{site}.nc'}` — hashes only its own source, *not* the captured
+    value. Changing `BASE` will **not** trigger a rerun. This applies to
+    named functions too, not just lambdas. Thread such values through the
+    matrix, or declare them with [`uses`](#tracking-code-and-constants-with-uses),
+    if you want them tracked.
+
 ## Tracking code and constants with `uses`
 
 remake hashes each rule's function body. If a rule depends on a module-level
