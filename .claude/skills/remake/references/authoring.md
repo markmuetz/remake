@@ -102,6 +102,31 @@ won't see changes to that helper — declare it too. Same for classes:
 inherited methods live in the base class, so declare the base in `uses`
 as well if its changes should trigger reruns.
 
+**Do not put stateful / IO objects in `uses` (loggers especially).**
+A non-callable `uses` value is hashed by `repr()`, so any object whose
+repr embeds mutable state poisons the rule fingerprint. The classic trap
+is a logger: `repr(loguru.logger)` is
+`<loguru.logger handlers=[(id=0, level=10, sink=<stderr>)]>` — the
+handler `id`, `level` and `sink` change with how logging happens to be
+configured in the current process (remake itself reconfigures loguru per
+its `-D/-W` verbosity flag). Declaring `'logger': logger` therefore makes
+`uses_hash` differ between invocations and **silently reruns every task
+of the rule even though nothing changed** (`remake why` → "uses=
+changed"). The same applies to DB connections, open files and sockets.
+Fix: keep them out of `uses` and obtain them inside the rule body —
+
+```python
+@rule(outputs=..., uses={'THRESH': THRESH})   # no 'logger'
+def analyse(outputs, year):
+    from loguru import logger                 # local: not a free global, not hashed
+    logger.info(year)
+```
+
+A local import makes the name function-local, so the scope checker no
+longer demands it in `uses` and it never enters the hash. (Longer term
+remake may treat loggers as environment — exempt from declaration and
+hashed by a stable token — but until then, import locally.)
+
 ## SLURM config
 
 ```python

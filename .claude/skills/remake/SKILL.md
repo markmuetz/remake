@@ -156,7 +156,13 @@ Background for interpreting its output — the planner's checks, in order:
 Common surprises: renaming a kwarg or changing matrix values changes
 task keys → everything looks never-run (rule 2 may rescue via outputs);
 editing a `uses=` helper reruns every task of the rule (rule 5);
-touching a file does NOT trigger reruns (no mtime checks, ever).
+touching a file does NOT trigger reruns (no mtime checks, ever); a
+stateful object in `uses=` whose `repr` embeds mutable state — above all
+a loguru/`logging` logger (its repr carries handler id/level/sink) —
+reruns every task whenever that state differs between invocations, so
+"uses= changed" with no code change usually means a logger (or DB
+connection / open file) is in `uses`. Keep them out and import locally —
+see references/authoring.md.
 
 ## Task status
 
