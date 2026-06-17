@@ -7,7 +7,7 @@ from loguru import logger
 
 from ..metadata.metadata_manager import TASK_STATUS_FAILED, TASK_STATUS_SUCCESS
 from .dag import build_rule_dag, iter_expand_rule
-from .exceptions import RemakeError
+from .exceptions import MatrixNotReady, RemakeError
 from .planner import explain_task, make_predicate, plan
 from .rule import Rule
 from .scope import check_scope, exec_function
@@ -119,12 +119,23 @@ class Remake:
 
     def iter_tasks(self, query=None):
         """Lazily yield tasks of all currently-expandable rules, one at a
-        time — constant memory regardless of matrix size."""
+        time — constant memory regardless of matrix size.
+
+        Rules whose matrix callable raises MatrixNotReady (an upstream output
+        they need does not exist yet) are skipped with a warning rather than
+        crashing — their task set is unknowable until their upstreams run. This
+        keeps introspection commands (why, task-info, set-state) usable while a
+        dynamic matrix is deferred."""
         if not self._finalized:
             self.finalize()
         predicate = make_predicate(query) if query else None
         for rule in self.rules:
-            yield from iter_expand_rule(rule, predicate)
+            try:
+                yield from iter_expand_rule(rule, predicate)
+            except MatrixNotReady:
+                logger.warning(
+                    '{}: deferred (matrix not ready), tasks unknown', rule.name
+                )
 
     def tasks(self, query=None):
         """All tasks of all currently-expandable rules. This materialises

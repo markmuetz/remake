@@ -113,6 +113,44 @@ def test_dynamic_matrix_defer_resolve_complete(tmp_path, meta):
     assert not runnable and not deferred
 
 
+def test_tasks_and_task_from_key_skip_deferred_matrix(tmp_path, meta):
+    """tasks()/task_from_key() (used by why/task-info/set-state) must not crash
+    when a rule's matrix callable raises MatrixNotReady — they skip the deferred
+    rule rather than propagating the exception."""
+    @rule(outputs={'clusters': str(tmp_path / 'clusters.json')})
+    def find_clusters(outputs):
+        Path(outputs['clusters']).write_text(json.dumps(['c1', 'c2']))
+
+    def cluster_matrix():
+        p = tmp_path / 'clusters.json'
+        if not p.exists():
+            raise MatrixNotReady(p)
+        return [{'cid': c} for c in json.loads(p.read_text())]
+
+    @rule(outputs={'out': str(tmp_path / 'cluster_{cid}.txt')}, matrix=cluster_matrix,
+          depends_on=[find_clusters])
+    def process_cluster(outputs, cid):
+        Path(outputs['out']).write_text(cid.upper())
+
+    rmk = Remake(rules=[find_clusters, process_cluster], metadata=meta)
+
+    # clusters.json does not exist yet, so process_cluster's matrix is not ready.
+    tasks = rmk.tasks()
+    # The deferred rule is skipped; the expandable rule's task is still returned.
+    assert [t.rule.name for t in tasks] == ['find_clusters']
+
+    # Querying only the deferred rule yields nothing (rather than crashing).
+    assert rmk.tasks(query="cid == 'c1'") == []
+
+    # A key belonging to an expandable rule still resolves.
+    key = tasks[0].key
+    assert rmk.task_from_key(key).rule.name == 'find_clusters'
+
+    # Once the upstream output exists, the matrix resolves and tasks appear.
+    rmk.run()
+    assert {t.rule.name for t in rmk.tasks()} == {'find_clusters', 'process_cluster'}
+
+
 def test_failure_recorded_and_run_continues(tmp_path, meta):
     @rule(outputs={'o': str(tmp_path / 'f_{n}.txt')}, matrix={'n': [1, 2]})
     def sometimes_fails(outputs, n):
