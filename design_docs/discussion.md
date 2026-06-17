@@ -356,6 +356,69 @@ design discussion before any work starts.
     feature once retention/restore is designed. **(B)** stays optional —
     powerful but the opacity makes it a poor default.
 
+- **Optimistic direct DB write under SLURM, with sidecar fallback.**
+  Today per-task array processes never touch the DB: they write JSON
+  sidecars (design_docs/slurm_implementation.md), ingested in batch by
+  the next DB-reader. That is robust but defers visibility — results are
+  not in the DB until a *later* invocation (continuation job, next
+  `run`/`info`) ingests them; a terminal wave needs a follow-up `remake
+  info` before anything shows. Proposal: a task tries to write its result
+  directly to `remake.db`, and falls back to a sidecar only if it fails.
+  - The win is **latency-to-visibility**, not DB pressure relief.
+    Results land the instant a task finishes, in the common (low-
+    contention) case.
+  - Why it is self-regulating rather than a thundering herd: the
+    *fallback caps the herd*. A writer that fails gives up and goes quiet
+    (writes a sidecar) instead of continuing to contend, so contention
+    cannot escalate. And most real jobs are O(1–10 min) with natural
+    jitter around the mean, so completion times — and thus write
+    attempts — spread out rather than arriving as one synchronised burst.
+    Quiet period → direct write succeeds; busy period → fast-fail and
+    degrade gracefully to exactly today's sidecar behaviour.
+  - **Hard requirement: the retry must be bounded and fast-failing.** The
+    existing `retry_lock_commit` (sqlite3_backend.py) has *unbounded*
+    exponential backoff — it never gives up, just slows down — which is
+    the wrong primitive here. The direct-write path needs a separate
+    `try_commit(max_attempts=2, busy_timeout=short)` that raises quickly,
+    at which point the sidecar fallback engages.
+  - Correctness is never at risk: the sidecar net still catches any
+    failed/abandoned write, and the upsert is idempotent. Make ingest
+    last-writer-wins by timestamp so a stale sidecar can't clobber a
+    newer direct write.
+  - Caveats: SQLite locking over NFS/Lustre is the real JASMIN hazard
+    (flaky POSIX locks) — a bounded fast-fail could in principle falsely
+    fail/succeed there, so this needs a cluster validation run before the
+    default flips (`bench_sqlite_contention.py` extends to it). Don't
+    reach for WAL as an alternative — WAL is unsafe over NFS. Likely
+    shipped behind a config flag, perhaps auto-off above an array-size
+    threshold; sidecar-only stays the conservative default until proven.
+
+- **I/O verification / reconcile subcommand** (`remake verify`,
+  `-Q`-composable). On-demand reconciliation of filesystem reality into
+  the DB — snakemake-like, but opt-in rather than the only model. Three
+  distinct operations, only one of which is risky; they should be split,
+  not bundled:
+  - **(a) Output reconciliation (`--outputs`)** — DB says success but the
+    output is missing/incomplete on disk → mark the task pending. Safe;
+    the persistent, explicit sibling of the transient
+    `check_outputs='always'` plan-time check. Scratch-purge recovery.
+  - **(c) Adoption (`--adopt`)** — output complete on disk but no DB
+    record → mark success. Safe; persistent sibling of
+    `check_outputs='fallback'`. Migrates an existing output tree into
+    remake.
+  - **(b) mtime staleness (`--mtime`, off unless asked)** — input newer
+    than output → mark stale. This is the model remake deliberately
+    rejected: mtime is unreliable on HPC (rsync, tar restore, scratch
+    migration, Lustre all scramble it — the reason remake is DB-first).
+    Two scoping rules if built: only meaningful for **external/source
+    inputs** (rule-chained inputs are already ordered by the DB; mtime
+    there adds only false-staleness risk), and "the output's mtime" for a
+    zarr/multi-file output needs a defined answer (oldest part of tree).
+  - State-mutating, so **report-by-default, `--apply` to write** — the
+    state-writing sibling of the read-only `ls-tasks --check`. (a)+(c) are
+    the safe core to build first; (b) stays behind its flag, scoped to
+    external inputs, never default.
+
 ## Graduated (designed and implemented; kept for the record)
 
 - **SLURM job ids written to file** — `.remake/jobs/<rule>.jobids.json`
