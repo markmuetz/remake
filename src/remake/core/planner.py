@@ -16,7 +16,7 @@ from ..metadata.metadata_manager import TASK_STATUS_FAILED, TASK_STATUS_SUCCESS
 from ..util.code_compare import CodeComparer
 from .dag import expand_rule
 from .exceptions import MatrixNotReady
-from .scope import io_hash, uses_hash
+from .scope import io_hash, parse_uses_hash, uses_hash, uses_parts
 
 
 def make_predicate(query):
@@ -75,6 +75,34 @@ def upstream_failed(task, failures):
 Reason = namedtuple('Reason', 'category message')
 
 
+def _plain_rendering(rendered):
+    """A `uses` value rendered as a plain `repr` (showable inline) rather
+    than a callable's AST-normalised source (an `ast.dump`, single-line but
+    starting with `Module(`) or a multi-line source fallback (e.g. a lambda
+    whose source didn't parse standalone)."""
+    return '\n' not in rendered and not rendered.startswith('Module(')
+
+
+def _uses_change_message(stored_hash, uses):
+    """Human description of which `uses` keys changed between the stored hash
+    and the current `uses` dict. Names the keys; for plain (repr) values it
+    shows before → after, for callables it says (body)."""
+    old = parse_uses_hash(stored_hash)
+    new = uses_parts(uses)
+    bits = []
+    for name in sorted(set(old) | set(new)):
+        if name not in new:
+            bits.append(f'{name} (removed)')
+        elif name not in old:
+            bits.append(f'{name} (added)')
+        elif old[name] != new[name]:
+            if _plain_rendering(old[name]) and _plain_rendering(new[name]):
+                bits.append(f'{name}: {old[name]} → {new[name]}')
+            else:
+                bits.append(f'{name} (body)')
+    return 'uses= changed since last run: ' + ', '.join(bits)
+
+
 def explain_task(rules, dag, metadata, task, *, check_outputs='fallback', runnable=None):
     """Why would (or wouldn't) this task run? Returns (will_run, reasons),
     each reason a `Reason(category, message)` in the order the planner checks
@@ -110,7 +138,8 @@ def explain_task(rules, dag, metadata, task, *, check_outputs='fallback', runnab
             )
             reasons.append(Reason('code-changed', f'run code changed since last run:\n{diff}'))
         if rec.uses_hash != uses_hash(task.rule.uses):
-            reasons.append(Reason('uses-changed', 'uses= changed since last run'))
+            reasons.append(Reason('uses-changed',
+                _uses_change_message(rec.uses_hash, task.rule.uses)))
         if rec.io_hash is not None and rec.io_hash != io_hash(task.rule):
             reasons.append(Reason('io-changed',
                 'inputs/outputs spec changed since last run'))

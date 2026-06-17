@@ -158,22 +158,46 @@ def io_hash(rule):
     )
 
 
-def uses_hash(uses):
-    """Stable string representing the current state of a `uses` dict.
+def uses_parts(uses):
+    """{name: rendered-value} for a `uses` dict, name-sorted.
 
-    Functions are represented by their AST-normalised source (a body change
-    is a change, a comment is not — tracking is one level deep: helpers a
+    Functions are rendered as their AST-normalised source (a body change is
+    a change, a comment is not — tracking is one level deep: helpers a
     uses-function calls must themselves be declared in uses); plain values
     by repr.
     """
-    parts = []
+    parts = {}
     for name in sorted(uses):
         value = uses[name]
         if callable(value):
-            parts.append(f'{name}={_normalised_source(value)}')
+            parts[name] = _normalised_source(value)
         else:
-            parts.append(f'{name}={value!r}')
-    return '\n'.join(parts)
+            parts[name] = repr(value)
+    return parts
+
+
+def uses_hash(uses):
+    """Stable string representing the current state of a `uses` dict: one
+    `name=<rendered>` line per key (see `uses_parts`)."""
+    return '\n'.join(f'{name}={rendered}' for name, rendered in uses_parts(uses).items())
+
+
+def parse_uses_hash(stored):
+    """Inverse of `uses_hash`: recover {name: rendered-value} from a stored
+    hash string. A rendered value may span several lines (a callable whose
+    source didn't parse standalone, e.g. a lambda), so a new key begins only
+    at a line matching `<identifier>=`; other lines continue the prior value.
+    """
+    parts = {}
+    name = None
+    for line in stored.split('\n'):
+        head, sep, rest = line.partition('=')
+        if sep and head.isidentifier():
+            name = head
+            parts[name] = rest
+        elif name is not None:
+            parts[name] += '\n' + line
+    return parts
 
 
 def exec_function(fn, uses):

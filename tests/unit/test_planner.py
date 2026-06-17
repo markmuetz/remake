@@ -86,6 +86,40 @@ def test_uses_change_triggers_rerun(tmp_path):
     assert len([t for t in runnable if t.rule is rule_b]) == 2
 
 
+def test_uses_change_message_names_changed_keys():
+    from remake.core.planner import _uses_change_message
+    from remake.core.scope import parse_uses_hash, uses_hash, uses_parts
+
+    def f(x):
+        return x * 2
+
+    def f2(x):
+        return x * 3
+
+    old = {'THRESHOLD': 0.5, 'helper': f, 'GONE': 1}
+    old_hash = uses_hash(old)
+    # The stored hash round-trips back to the per-key parts.
+    assert parse_uses_hash(old_hash) == uses_parts(old)
+
+    msg = _uses_change_message(old_hash, {'THRESHOLD': 0.7, 'helper': f2, 'SCALE': 10})
+    assert 'THRESHOLD: 0.5 → 0.7' in msg  # plain value: before → after
+    assert 'helper (body)' in msg  # callable: body change, not an AST dump
+    assert 'GONE (removed)' in msg
+    assert 'SCALE (added)' in msg
+
+
+def test_uses_change_explain_reason(tmp_path):
+    from remake.core.planner import explain_task
+
+    rmk, rule_a, rule_b, rule_c = make_pipeline(tmp_path)
+    rmk.run()
+    rule_b.uses = {'THRESHOLD': 0.7}
+    task = next(t for t in rmk.tasks() if t.rule is rule_b and t.kwargs == {'n': 1})
+    _, reasons = explain_task(rmk.rules, rmk.dag, rmk.metadata, task)
+    uses_reasons = [r for r in reasons if r.category == 'uses-changed']
+    assert uses_reasons and 'THRESHOLD (added)' in uses_reasons[0].message
+
+
 def test_io_change_triggers_rerun(tmp_path):
     # Editing the outputs spec (here via the attribute, so the run function
     # source is untouched) must rerun the task and its downstream — the gap
