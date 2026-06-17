@@ -229,3 +229,16 @@ assessment (2026-06-11). Ordered roughly by severity.
   count and kind (e.g. "extract: submitting 1234 task(s) (array)"). Still the
   natural home for the "skipped N already-queued tasks" message once the
   per-task SLURM guard (see SLURM section) lands.
+- [ ] Surface `io_hash` (and `uses_hash`/run-code) recorded-vs-current on the
+  "inputs/outputs spec changed" / "uses= changed" / "run code changed" verdicts.
+  `why` names the category but not *what* differs, and `task-info` doesn't expose
+  the stored hashes at all — so diagnosing a spec-change rerun means reading
+  `.remake/remake.db` directly and diffing the AST-normalised segments by hand.
+  Motivating case (wescon-tools, 2026-06-17): 5 of 1465 `compare` tasks reran on
+  "inputs/outputs spec changed"; the only way to find out why was to pull the
+  recorded `io_hash` from the DB and diff its `inputs=`/`outputs=` segments
+  against `scope.io_hash(rule)` — which revealed the 5 carried a malformed
+  `io_hash` (the `inputs` segment held the `outputs` AST) recorded by an earlier
+  build. Proposal: `why`/`task-info` (esp. `--json`) should show recorded vs
+  current for the relevant hash, and ideally a segment-level diff for io_hash
+  (`inputs=`/`outputs=`), so this needs no DB spelunking.
