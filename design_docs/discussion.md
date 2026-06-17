@@ -419,6 +419,57 @@ design discussion before any work starts.
     the safe core to build first; (b) stays behind its flag, scoped to
     external inputs, never default.
 
+- **Dynamic matrices: defer on *stale* upstream, not just *absent*
+  (and a `@deferrable` marker).** `MatrixNotReady` lets a callable matrix
+  defer when an upstream output it reads is *missing* — but not when that
+  output exists yet is *stale* because the upstream rule is itself rerunning
+  in the same invocation. The matrix is expanded at plan time
+  (`planner.py` `expand_rule`) from the on-disk output *before* the upstream
+  reruns, so the rule runs with the wrong task set.
+  - *Concrete case (from wescon-tools):* `compare_delta_z_candidates`'s
+    matrix reads the `brackets` file produced by `find_candidate_delta_z`.
+    Edit `find_candidate_delta_z` → it's runnable (not *deferred*), so the
+    planner doesn't defer `compare`; `compare`'s matrix is built from the
+    *old* brackets, then `find_candidate` rewrites them. `compare` runs the
+    stale pair set.
+  - *Why the matrix callable can't fix it itself:* it has no way to know its
+    input is about to be regenerated — the on-disk brackets look valid.
+    Staleness is only knowable to the planner, which has just decided the
+    upstream will rerun. So this **cannot** be solved by a smarter
+    `if exists(): ... else raise MatrixNotReady` guard.
+  - *Executor asymmetry:* the local executor's replan loop
+    (`remake.py` `run`, `while True`) eventually self-heals over extra waves
+    (with transient missing-input failures and orphaned outputs); the SLURM
+    path plans **once** (`handles_deferred`) and does **not** self-correct
+    within a single `remake run` — continuation jobs only re-plan the
+    *deferred* set, and the stale rule isn't deferred. So SLURM silently
+    runs the wrong matrix and needs a second invocation — the very
+    "run it multiple times" failure `MatrixNotReady` was meant to remove.
+  - *Fix A (planner):* defer a rule whose matrix is **callable** when any
+    `depends_on` upstream is rerunning this wave (track via `rerun_kwargs`),
+    not only when an upstream is in `deferred`. Local: the replan loop
+    re-expands after the upstream finishes; SLURM: the rule becomes
+    deferred, so the existing continuation-job machinery re-plans it with
+    fresh outputs. Caveat: over-defers callable matrices that *don't* read
+    upstream output (safe, just an extra wave; remake can't tell which
+    callables read files).
+  - *Fix B (`@deferrable` marker — preferred refinement of A):* a decorator
+    that explicitly marks a matrix function as one that may raise
+    `MatrixNotReady` (i.e. it derives its task list from upstream outputs).
+    Then: (1) raising `MatrixNotReady` from a matrix *not* marked
+    `@deferrable` is an error — it surfaces accidental/leaked defers and
+    makes the dynamic contract explicit at the call site; (2) the planner
+    applies Fix A's "defer when an upstream is absent **or** rerunning" rule
+    **only** to `@deferrable` matrices, eliminating the over-defer caveat —
+    ordinary callable matrices (that merely compute a product, no file
+    reads) are never needlessly deferred. Open questions: should
+    `@deferrable` optionally name *which* upstream outputs it depends on (so
+    the planner can defer precisely on those, rather than on any
+    `depends_on` rerun)? Does it belong on the matrix function or as a
+    `@rule(..., deferrable_matrix=True)` flag? Interaction with the static
+    `[{...}]` / dict matrix forms (presumably N/A — markers only on
+    callables).
+
 ## Graduated (designed and implemented; kept for the record)
 
 - **SLURM job ids written to file** — `.remake/jobs/<rule>.jobids.json`
