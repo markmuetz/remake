@@ -419,6 +419,72 @@ design discussion before any work starts.
     the safe core to build first; (b) stays behind its flag, scoped to
     external inputs, never default.
 
+- **Stats / run-history store (`remake stats`).** Record what *happened*
+  over time — observability/history, a fundamentally different concern
+  from `remake.db`, which holds mutable *operational state* ("what needs
+  rerunning right now?"). That distinction drives the design.
+  - *What to record, by grain:*
+    - **Per-run** (one `remake run`): `run_id`, start/end + wall duration,
+      host, user, remake version, executor, CLI args / `-Q` query, and
+      counts (planned / runnable / deferred / run / succeeded / failed /
+      skipped-upstream-failed), number of replan **waves**, sidecars
+      ingested. It may also *copy in* the pipeline's git hash and env hash
+      per run, but it does **not own** them — see *grab code version* and
+      *get python module state*, which are reproducibility data that should
+      be recorded for everyone (in `remake.db` / task metadata), not gated
+      behind this opt-in store.
+    - **Per-task-execution** — the richest seam (today only a single
+      `last_run_timestamp` is kept). One row *per execution* (full history,
+      not last-only): wall duration, CPU time, **peak RSS**, **output bytes
+      written**, status, exception type/signature (the `info -F` signature
+      already exists), the **rerun-reason category** (`explain_task` already
+      emits `Reason(category, …)` — recording it gives "58% code-changed,
+      31% upstream, 11% never-run" rollups), host/node, owning `run_id`,
+      attempt count.
+  - *Derived aggregates (the fun part):* per-rule mean/median/**p95**
+    duration, failure rate, total bytes, most-expensive rule;
+    **flakiness** (tasks that have both succeeded and failed historically);
+    **churn** (most-rerun tasks — smells of a volatile `uses` or poor
+    isolation); throughput; full-pipeline time-to-completion. The headline
+    value metric: **compute saved by stale-skipping** =
+    `count(up-to-date skips) × historical mean duration` → "remake saved
+    you ~14 CPU-hours this run" — the one number that justifies the tool to
+    a sceptic.
+  - *Separate DB (`.remake/stats.db`), not an extension to `remake.db`.*
+    Different lifecycle (append-only + **disposable** vs mutable +
+    mandatory), write pattern (pure inserts vs upsert-heavy), and schema
+    churn (will keep growing fields vs stable). Keeping them apart means
+    years of history can't bloat or threaten operational state, "stats off"
+    is just *don't open the file*, and a stats migration never touches
+    `remake.db`. Cost: no easy SQL join between current state and history —
+    cheap to live without (`ATTACH` if ever needed).
+  - *Write path rides existing machinery (no new contention).* `run_task`
+    (remake.py) is the single execution chokepoint — wrap it to time the
+    task, read RSS (`resource.getrusage`), stat output sizes, emit a stats
+    row alongside the metadata write. Under SLURM, **extend the sidecar
+    payload** (already carries status/timestamp/io_hash) with
+    duration/RSS/bytes/reason, and have `ingest_sidecars` write `stats.db`
+    in the same batched transaction — so stats inherit the sidecar
+    contention solution for free (and piggyback on the optimistic
+    direct-write hybrid if that ships).
+  - *Read path:* `remake stats` (lifetime totals + this-run summary +
+    per-rule table), `--rule X` / `--task <key>` for history, `--json` for
+    scripting — ideal skill input (same pattern as the sacct audit: remake
+    emits clean numbers, a skill turns them into advice).
+  - *Guardrails:* opt-in / cheaply disable-able (one config flag);
+    **retention/rotation from day one** (`stats prune --older-than`, or a
+    row cap) or it's the unbounded-growth trap logs have; peak-RSS is
+    approximate locally (`RUSAGE_CHILDREN` for multiproc), exact on the
+    SLURM/`sacct` path; args/git/host can leak — same privacy care as the
+    exception-dump item.
+  - *Overlaps (references, does not subsume):* *grab code version* and
+    *python module state* stay independent, always-on-if-implemented
+    reproducibility features (this opt-in store may copy their values per
+    run but must not be the only place they live); gives the **sacct
+    resource audit** a place to persist used-vs-requested history; the
+    `task_run` table *is* provenance history, feeding the output-versioning
+    **(D) metadata-tracked provenance** option directly.
+
 ## Graduated (designed and implemented; kept for the record)
 
 - **Dynamic matrices: defer on *stale* upstream, not just *absent* (Fix
