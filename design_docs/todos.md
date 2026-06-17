@@ -94,26 +94,24 @@ assessment (2026-06-11). Ordered roughly by severity.
 
 ## Correctness
 
-- [ ] **Planner ignores `inputs=`/`outputs=` changes — only `run` code and
-  `uses` invalidate a task.** `task_will_run` (`core/planner.py`, ~ll.
-  101-111) compares `rec.run_code` vs `rule.source['run']` and `rec.uses_hash`
-  vs `uses_hash(rule.uses)`, but never the inputs/outputs spec. `TaskRecord`
-  (`metadata/metadata_manager.py`) stores only `run_code` + `uses_hash`. So
-  editing the **inputs/outputs dict or function** (not the resolved paths —
-  the spec that defines dataflow) does NOT trigger a rerun of an already-
-  succeeded task. `Rule.source` already computes `inputs`/`outputs` source
-  (callables by source, dicts by repr) — it's just not stored or compared.
-  Fix: persist `inputs_source`/`outputs_source` (or a combined hash) in
-  `TaskRecord` and add the comparison alongside the run-code/uses checks
-  (AST-normalise callables as `CodeComparer` does for `run`; repr dicts).
-  Caveat to decide: a pure output-*path* change (same function, different
-  resolved string via a config constant) won't be caught unless the repr/
-  source captures it — and arguably a moved output path *should* rerun.
-  Surfaced in the mcs_prime remake2→3 migration (2026-06-16): redirecting an
-  output directory did not re-run tasks that already had a DB success record,
-  leaving their outputs orphaned at the old path while downstream rules looked
-  at the new one. Workaround used there: fresh `.remake/` + a brand-new empty
-  output tree so every task is "never run".
+- [x] **Planner ignores `inputs=`/`outputs=` changes — only `run` code and
+  `uses` invalidate a task.** Fixed 2026-06-16 (commit io_hash): added
+  `scope.io_hash(rule)` (AST-normalised `inputs`+`outputs` source, mirroring
+  `uses_hash`), persisted as a new `io_hash TEXT` column on `task` (with a
+  defensive `ALTER TABLE` migration so in-flight DBs upgrade without a delete;
+  pre-upgrade NULL rows are treated as not-yet-tracked, no mass rerun). The
+  planner reruns when the stored `io_hash` differs; `explain_task`/`why`
+  surface an `io-changed` reason. Caveat acknowledged: a pure output-*path*
+  change driven by a captured constant (not in the spec source) is the
+  closure case — won't be caught unless threaded through the matrix or
+  declared in `uses` (documented in the rules-and-tasks lambda/closure note).
+  Original report below.
+  - (was) `task_will_run` compared only `run_code` and `uses_hash`, never the
+    inputs/outputs spec, so editing the inputs/outputs dict or function did
+    not rerun an already-succeeded task. Surfaced in the mcs_prime remake2→3
+    migration (2026-06-16): redirecting an output directory left outputs
+    orphaned at the old path while downstream looked at the new one.
+    Workaround used there: fresh `.remake/` + empty output tree.
 
 ## Smaller debts
 
