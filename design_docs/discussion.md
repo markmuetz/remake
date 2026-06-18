@@ -550,6 +550,46 @@ design discussion before any work starts.
     `task_run` table *is* provenance history, feeding the output-versioning
     **(D) metadata-tracked provenance** option directly.
 
+- **`check_outputs='fallback'` silently adopts stale outputs after code
+  changes — defeats iterative development.** Discovered 2026-06-18 during
+  `theta_e_analysis.py` development: editing the plot function (changing
+  y-axis orientation, switching pcolormesh→contourf, etc.) then running
+  `set-state --pending` + `remake run` repeatedly produced apparently
+  identical output. The task's output file already existed on disk from a
+  previous run; the `--pending` cleared its DB record; but the next `run`
+  saw "no DB record + output exists" and silently re-adopted the stale
+  file under the default `check_outputs='fallback'` mode — so the new code
+  never actually executed. Only `remake run --force` bypassed the adoption
+  and ran the updated code.
+
+  This is clearly wrong behaviour for iterative work. The `fallback` mode
+  was designed for **migration** (adopt a pre-existing output tree into a
+  fresh `.remake/` without rerunning everything), and it works well for
+  that one-shot case. But as the default mode during normal development it
+  creates a trap: the user edits code, the planner sees "output complete,
+  no record → adopt", and the edit is silently ignored. The user sees
+  success, the output looks unchanged, and has no signal that the code
+  never ran — the tool lies by omission.
+
+  **Recommendation: default to `check_outputs='never'` for normal
+  operation.** Migration adoption should be an explicit opt-in step
+  (`set-state -Q True --success --check-outputs`, or a one-shot
+  `check_outputs='fallback'` on the first run of a migrated pipeline),
+  not an always-on default that silently swallows code changes. The
+  `'fallback'` mode's invariant — "if the output exists, the task
+  succeeded" — is only true when the code that produced it hasn't changed,
+  and the planner *cannot check that* when there is no DB record to compare
+  hashes against.
+
+  Alternatively, if `'fallback'` stays the default: at minimum, adoption
+  should be **loudly reported** (a per-task warning or an `info` summary
+  line: "N tasks adopted from disk without running"), so the user knows
+  their code was bypassed. But the deeper issue is that adoption is
+  semantically wrong when the user *intends* a rerun — there is no way
+  to distinguish "legacy output from a prior tool" from "stale output
+  from the current tool's previous run with different code", and the
+  default should not guess.
+
 ## Graduated (designed and implemented; kept for the record)
 
 - **Dynamic matrices: defer on *stale* upstream, not just *absent* (Fix
