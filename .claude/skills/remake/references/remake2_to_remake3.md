@@ -18,6 +18,26 @@ implicit globals, class inheritance tricks) needs judgement, not regex.
 > in local `-n`/runs) were the JSON-round-trip kwargs bug and the
 > output-path-redirect orphans; treat the SLURM full run as the real
 > acceptance test, not the local plan.
+>
+> **Field report (2026-06-18): `wescon-tools` — first `@deferrable` matrix
+> migration.** The `wescon_radar_dev.py` remakefile — 8 rules, 3176 tasks,
+> two `@deferrable` callable matrices (`compare_delta_z_matrix`,
+> `gather_delta_z_stats_matrix`) reading upstream bracket files — was
+> migrated and run end-to-end on JASMIN/SLURM. All 3176 tasks succeeded
+> (774 regrid + 774 plot + 18 find + 1465 compare + 18 gather + 108 match
+> + 18 analyse + 1 analyse-all). The deferred gather→match→analyse chain
+> correctly waited for compare to complete before expanding, both locally
+> (replanning loop) and on SLURM (`remake_continue` afterok). Additional
+> lessons banked from this migration: the loguru-logger-in-`uses` gotcha
+> (non-deterministic `repr` poisons `uses_hash` — import logger locally
+> inside rule bodies); the `@deferrable` staleness gap on SLURM (matrix
+> expanding from about-to-be-overwritten output — closed by the planner
+> also deferring when upstream is rerunning); and the nested-closure
+> pattern for large class-with-many-static-helpers (21 helpers in
+> `CompareDeltaZCandidates` → closures inside the rule function, avoiding
+> a wall of `uses=` entries). Three companion remakefiles
+> (`simple_tracking.py`, `extract_convert_radarnet_dat_to_nc.py`,
+> `kasbex_dev.py`) were migrated in the same pass without incident.
 
 ## Recognising the source dialect
 
