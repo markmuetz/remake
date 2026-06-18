@@ -4,6 +4,41 @@ Translate by reading and rewriting — there is deliberately no automated
 tool. Read the whole remake2 file first; the long tail (helper methods,
 implicit globals, class inheritance tricks) needs judgement, not regex.
 
+> **Field report (2026-06-18): the workflow below is validated.** The
+> `mcs_prime` paper pipeline — 6 production remakefiles, 24 rules, the
+> largest 19 rules / 18 edges (`N216_ens_analysis.py`) — was migrated by
+> this process and run end-to-end on JASMIN via the SLURM executor as a
+> side-by-side equivalence test against the original remake2 outputs.
+> **Every paper figure reproduced visually identically** (overlay-switch
+> check, no discernible difference). Most of the specific notes in this
+> file (the JSON-stable-kwargs rule, the from-import scope rule, the
+> signature contract, the DAG-dump-before-wiring step, the fresh-`.remake/`
+> redirect) are lessons banked from that migration — they are not
+> hypothetical. The two things that *only* surfaced at SLURM scale (never
+> in local `-n`/runs) were the JSON-round-trip kwargs bug and the
+> output-path-redirect orphans; treat the SLURM full run as the real
+> acceptance test, not the local plan.
+>
+> **Field report (2026-06-18): `wescon-tools` — first `@deferrable` matrix
+> migration.** The `wescon_radar_dev.py` remakefile — 8 rules, 3176 tasks,
+> two `@deferrable` callable matrices (`compare_delta_z_matrix`,
+> `gather_delta_z_stats_matrix`) reading upstream bracket files — was
+> migrated and run end-to-end on JASMIN/SLURM. All 3176 tasks succeeded
+> (774 regrid + 774 plot + 18 find + 1465 compare + 18 gather + 108 match
+> + 18 analyse + 1 analyse-all). The deferred gather→match→analyse chain
+> correctly waited for compare to complete before expanding, both locally
+> (replanning loop) and on SLURM (`remake_continue` afterok). Additional
+> lessons banked from this migration: the loguru-logger-in-`uses` gotcha
+> (non-deterministic `repr` poisons `uses_hash` — import logger locally
+> inside rule bodies); the `@deferrable` staleness gap on SLURM (matrix
+> expanding from about-to-be-overwritten output — closed by the planner
+> also deferring when upstream is rerunning); and the nested-closure
+> pattern for large class-with-many-static-helpers (21 helpers in
+> `CompareDeltaZCandidates` → closures inside the rule function, avoiding
+> a wall of `uses=` entries). Three companion remakefiles
+> (`simple_tracking.py`, `extract_convert_radarnet_dat_to_nc.py`,
+> `kasbex_dev.py`) were migrated in the same pass without incident.
+
 ## Recognising the source dialect
 
 Two remake2-era styles exist:
@@ -263,27 +298,57 @@ rmk.add_rules([
 
 remake2 patterns where a rule's matrix is computed by reading a small
 upstream output file (e.g. "which bracket-pairs are deltaZ candidates,
-read from a previously-written `.hdf`") and silently produces zero rows
-if that file doesn't exist yet — translate the callable-matrix function
-straight across, guarding with `.exists()`:
+read from a previously-written `.hdf`") translate to a *callable matrix*.
+remake2 silently produced zero rows when the upstream file didn't exist
+yet; remake3 has a first-class signal for this — mark the callable
+`@deferrable` and `raise Defer(path)` while the upstream output is
+missing:
 
 ```python
+@deferrable
 def compare_delta_z_matrix():
     rows = []
     for case in conf.CASES:
         brackets_path = find_candidate_delta_z_outputs(case)['brackets']
-        if brackets_path.exists():
-            brackets = pd.read_hdf(brackets_path, key='brackets')
-            for i in range(1, len(brackets)):
-                if brackets.iloc[i]['deltaZ_candidate']:
-                    rows.append({'case': case, 'bracket_idx1': i - 1, 'bracket_idx2': i})
+        if not Path(brackets_path).exists():
+            raise Defer(brackets_path)        # planner defers this rule
+        brackets = pd.read_hdf(brackets_path, key='brackets')
+        for i in range(1, len(brackets)):
+            if brackets.iloc[i]['deltaZ_candidate']:
+                rows.append({'case': case, 'bracket_idx1': i - 1, 'bracket_idx2': i})
     return rows
 ```
 
-This preserves the original "deferred until upstream has run" behaviour
-without needing `@deferrable`/`Defer` — `remake info` just reports 0 tasks for
-this rule until `find_candidate_delta_z` has actually written the
-`brackets` files.
+Why prefer this over the old "guard with `.exists()`, return `[]`" form:
+- **`@deferrable` is mandatory to raise `Defer`** — raising it from an
+  unmarked matrix is an error, so the intent ("this matrix may not be
+  ready") is explicit and checked.
+- It also closes a **staleness gap** the silent-empty form had: a
+  `@deferrable` matrix is deferred not only when upstream output is
+  *absent* but also when upstream is *rerunning in the same invocation*,
+  so the matrix never expands from an about-to-be-overwritten file.
+  The local executor's replanning loop self-heals this either way, but
+  SLURM's single up-front plan does not — without `@deferrable` a SLURM
+  run can expand the matrix from stale rows. (This was the concrete bug
+  in `wescon_radar_dev.py`'s `compare_delta_z_matrix` /
+  `gather_delta_z_stats_matrix`.)
+- Deferred rules (and everything downstream) are retried after each wave —
+  locally via the replanning loop, on SLURM via a `remake_continue`
+  continuation job chained with `afterok`. `remake info` shows them as
+  `?`/"deferred" until the upstream brackets files exist, then they expand
+  and run.
+
+Plain product callables that read *no* upstream output need no marker and
+are never deferred.
+
+### `remake why` / `task-info` and deferred matrices
+
+A `remake why`/`task-info` query iterates rules to expand their matrices;
+if one is `@deferrable` and currently raises `Defer`, the query must skip
+that rule rather than crash. Current remake3 handles this (`iter_tasks`
+catches `Defer` per-rule and warns). If you see `why`/`task-info` traceback
+through a matrix callable, your checkout predates that fix
+(`src/remake/core/remake.py`).
 
 ## `Path(outputs[...])` wrapping — when it's needed
 

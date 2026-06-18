@@ -20,6 +20,24 @@ version bump.
    on JASMIN under remake3. This is the last open item in the
    implementation plan ("validate the skill in anger on JASMIN").
 
+   **DONE — equivalence test PASSED 2026-06-17/18.** The `mcs_prime`
+   paper pipeline (6 production remakefiles: `download_gpm_imerg.py`,
+   `download_era5.py`, `ASoP_analysis.py`, `N216_ens_analysis.py` +
+   `proj_config.py`/`utils.py`; 24 rules total, the largest file 19
+   rules / 18 edges) was hand-translated per the skill, run end-to-end on
+   JASMIN via the SLURM executor into a parallel output tree, and diffed
+   against the existing remake2 outputs. **Every paper figure
+   (fig01–fig04, the supplementary, and the ASoP fig02/fig03 set) is
+   visually identical to the remake2 reference — confirmed by
+   overlay-switching, not just side-by-side.** No scientifically
+   meaningful difference. This is the real beta: it shook out the SLURM
+   JSON-round-trip kwargs bug (§Correctness in `todos.md`, now fixed by a
+   plan-time guard), the `io_hash` gap (output-path redirection leaving
+   orphans), the exit-127 PATH issue, and several skill-reference
+   refinements (see `references/remake2_to_remake3.md`). The migration is
+   documented downstream at
+   `mcs_prime_stoch_trigger/docs/remake2_to_remake3_migration_plan.md`.
+
 2. **Docs-vs-code accuracy pass.** The docs were written mid-flight and
    have already drifted:
    - `why` now explains multiple tasks (query matches / runnable set), and
