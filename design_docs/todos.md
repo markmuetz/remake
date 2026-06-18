@@ -242,3 +242,6 @@ assessment (2026-06-11). Ordered roughly by severity.
   build. Proposal: `why`/`task-info` (esp. `--json`) should show recorded vs
   current for the relevant hash, and ideally a segment-level diff for io_hash
   (`inputs=`/`outputs=`), so this needs no DB spelunking.
+- [ ] Calling e.g. `remake run path/to/remakefile.py` should cd into the 
+  remakefile's directory first, so that you don't create a new .remake directory
+  in cwd.
