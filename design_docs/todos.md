@@ -205,6 +205,16 @@ assessment (2026-06-11). Ordered roughly by severity.
   orchestrator-daemon entry in discussion.md.
 ## SLURM
 
+- [ ] `--dry-run` overwrites `.remake/jobs/<rule>.json` without checking
+  `squeue` for in-flight jobs. A real `run` guards against this (per-rule
+  `_queued_jobids` check skips the rule if any element is still PD/R), but
+  `--dry-run` bypasses that guard because it never enters the submit path.
+  Consequence: if a user modifies the remakefile (changing the matrix) and
+  does a `--dry-run` while array jobs from a previous submission are still
+  running, the spec files are overwritten with the new task mapping and
+  `run-array-task` looks up the wrong task for a given
+  `SLURM_ARRAY_TASK_ID`. Fix: apply the same `_queued_jobids` skip (or at
+  least don't overwrite the spec file) during `--dry-run`.
 - [ ] Per-task "already running?" detection. Rule-level skipping exists
   (`squeue_snapshot`/`_active_jobids`/`_queued_jobids` skip a whole rule whose
   last submission is still PD/R); make it per-task and replan-proof by stamping
