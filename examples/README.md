@@ -15,6 +15,7 @@ API, in roughly increasing order of complexity:
 | `ex8_dynamic_matrix.py` | Dynamic matrices (`@deferrable` + `Defer`), non-cartesian `list[dict]` matrices, dynamic fan-in |
 | `ex9_custom_token.py` | A custom `OutputToken` (a sqlite table row) and `--check-outputs` verification |
 | `ex10_tuple_matrix.py` | Tuple-key matrices: pre-filtered combo sequences and mixed scalar/tuple axes |
+| `ex11_chained_loop_rules.py` | Loop-generated rules with chained dependencies, `add_rules()` |
 
 ## Running
 
