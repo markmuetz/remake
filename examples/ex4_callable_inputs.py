@@ -1,12 +1,14 @@
-# examples/ex4_callable_inputs_matrix.py
+# examples/ex4_callable_inputs.py
 #
-# Shows the full range of input/output specification styles:
+# Shows the full range of *input* specification styles:
 #   - plain dict (static)
 #   - format-string dict (interpolated per task)
 #   - callable returning a dict (full Python logic)
 #   - `uses` to track a lookup table defined outside the rule
 #
-# Also demonstrates matrix inheritance and subsetting.
+# Also demonstrates matrix inheritance and subsetting. (The matrices here
+# are all plain dicts — for a *callable* matrix whose task set is computed
+# at plan time, see ex10_dynamic_matrix.py.)
 
 from pathlib import Path
 from remake import Remake, rule
@@ -40,6 +42,7 @@ def validate_config(inputs, outputs):
 
 # --- style 2: format-string dict, simple matrix ---
 
+# No depends_on: this rule is independent of validate_config.
 @rule(
     inputs  = {'raw': 'data/raw/{site}/{year}.csv'},
     outputs = {'cal': 'data/calibrated/{site}/{year}.csv'},

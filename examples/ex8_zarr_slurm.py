@@ -116,7 +116,8 @@ def aggregate(inputs, outputs, model):
 @rule(
     inputs     = {
         f'{model}_{var}': f'data/zarr/aggregated/{model}/{var}.zarr'
-        for model in MODELS for var in VARS
+        for model in MODELS
+        for var in VARS
     },
     outputs    = {'report': 'data/results/model_comparison.json'},
     depends_on = [aggregate],

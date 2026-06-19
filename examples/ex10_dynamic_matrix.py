@@ -49,6 +49,10 @@ def event_matrix():
         path = Path(f'data/events/{year}.json')
         if not path.exists():
             raise Defer(path)
+        # How many events/rows is not known in advance: detect_events has
+        # to have run before you can know this. Hence we defer until this
+        # has been run, and the planner will call this function again *after*
+        # detect_events has run.
         for event in json.loads(path.read_text()):
             rows.append({'year': year, 'event_id': event['id']})
     return rows  # list[dict] — not a cartesian product
@@ -69,7 +73,17 @@ def process_event(inputs, outputs, year, event_id):
 
 
 def summarise_inputs():
-    """Dynamic fan-in: resolved lazily, after process_event has run."""
+    """Dynamic fan-in: resolved lazily, after process_event has run.
+
+    This reuses event_matrix() to enumerate the same rows, so yes — it can
+    propagate a Defer. That's fine here: the @deferrable contract (raising
+    Defer from an *unmarked matrix* is an error) governs matrix callables
+    only, and this is an *input* callable. Input callables aren't evaluated
+    during planning anyway — only when the task runs — and summarise is
+    deferred while its upstream process_event is (it depends_on it), so by
+    the time this is called detect_events' outputs exist and event_matrix()
+    returns normally rather than deferring.
+    """
     rows = event_matrix()
     return {
         f"{r['year']}_{r['event_id']}": f"data/event_stats/{r['year']}_{r['event_id']}.json"

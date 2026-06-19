@@ -8,7 +8,7 @@ API, in roughly increasing order of complexity:
 | `ex1_simple.py` | Two chained rules, no matrix |
 | `ex2_matrix.py` | Matrix expansion, fan-in, final report |
 | `ex3_uses_scope.py` | `uses` tracking of constants and helper functions |
-| `ex4_callable_inputs_matrix.py` | All input-spec styles, matrix subsetting |
+| `ex4_callable_inputs.py` | Input-spec styles (dict, format-string, callable), matrix inheritance/subsetting |
 | `ex5_multifile/` | Rules split across modules, combined in a top-level pipeline file |
 | `ex6_tuple_matrix.py` | Tuple-key matrices: pre-filtered combo sequences and mixed scalar/tuple axes |
 | `ex7_orchestration_only.py` | Orchestration-only pattern: rules with no inputs/outputs |
@@ -20,18 +20,50 @@ API, in roughly increasing order of complexity:
 
 ## Running
 
-From any scratch directory (examples read and write paths relative to the
-current directory):
+remake resolves all paths — a rule's inputs and outputs, *and* the `.remake/`
+metadata directory — relative to the **current working directory**, not to the
+remakefile's location. So `cd` into a scratch directory first, generate the
+synthetic inputs there, then point remake at the example file:
 
 ```bash
-python /path/to/examples/make_example_data.py   # synthetic inputs (not ex9 — self-generating)
-remake run /path/to/examples/ex1_simple.py
+cd /tmp/remake-examples                            # any empty working directory
+python /path/to/examples/make_example_data.py      # synthetic inputs (not ex9 — self-generating)
+remake run  /path/to/examples/ex1_simple.py        # creates ./.remake and ./data here
 remake info /path/to/examples/ex1_simple.py
 ```
+
+The data and `.remake/` land in the directory you run from. (Running
+`remake run examples/ex1_simple.py` from the repo root would create
+`.remake/` *there*, not under `examples/` — choose your working directory
+deliberately.)
 
 ex1, ex3, ex4, ex7, ex10, ex11 and ex12 need only the stdlib (+ pyyaml for
 ex4). ex2, ex5, ex6, ex8 and ex9 additionally need `xarray netCDF4 h5netcdf
 zarr dask` (zarr v2 for older xarray versions).
+
+## Why heavy imports live inside rule functions
+
+Most examples `import xarray` (or `csv`, `tarfile`, …) *inside* the rule
+function body rather than at the top of the file. This is deliberate:
+
+- **Loading a remakefile stays cheap.** remake imports your pipeline file to
+  plan the DAG and to answer `info`, `why`, `ls-tasks`, `run --dry-run`, and
+  to submit SLURM jobs — none of which execute your tasks. Keeping
+  `import xarray` in the body means that whole class of commands doesn't pay
+  the (often multi-second) cost of importing heavy scientific libraries.
+- **You can inspect a pipeline without every runtime dependency installed.**
+  A login node, a CI job, or a colleague can load, plan and introspect the
+  pipeline even when `xarray`/`netCDF4`/`zarr` aren't present — those are only
+  needed on the machine that actually runs the task. (Contrast
+  `ex9_zarr_region.py`, which imports xarray at *module* level because it
+  builds coordinates at definition time — so, unlike the others, it can't even
+  be loaded without xarray installed.)
+- **Tasks often run in a fresh process anyway.** `multiproc` workers reload
+  the remakefile and SLURM array elements are brand-new processes; a
+  body-local import is the natural idiom there.
+
+Rule of thumb: import inside the function unless the module genuinely needs the
+library at definition time (e.g. building a matrix from a `pandas` date range).
 
 ## Seeing reruns
 
@@ -45,8 +77,9 @@ remake run /path/to/examples/ex3_uses_scope.py     # nothing to do
 now edit `THRESHOLD` (or the body of `normalise()`) in `ex3_uses_scope.py`
 and run again: only `filter_data` and its downstream `combine` rerun —
 both are tracked via `uses`. A cosmetic edit (comment, whitespace) reruns
-nothing: code is compared by AST. `remake run --dry-run` shows what would
-rerun without running it.
+nothing: code is compared by its *structure* (its abstract syntax tree, or
+AST), so reformatting never counts as a change. `remake run --dry-run` shows
+what would rerun without running it.
 
 Similarly for outputs that vanish behind remake's back (scratch purges):
 delete a row that ex11 wrote (`sqlite3 data/results.db "DELETE FROM stats

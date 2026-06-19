@@ -2,14 +2,10 @@
 #
 # Loop-generated rules with chained dependencies.
 #
-# Pattern: when a pipeline has N stages that form a sequential chain
+# Pattern: when a pipeline has N similar stages that form a sequential chain
 # (stage N must complete before stage N-1 can start), generate one
 # rule per stage in a loop with each depending on the previous.
 # Within each stage, tasks run in parallel over a matrix.
-#
-# Real-world use case: HEALPix coarsening, where zoom level Z is
-# built by averaging zoom level Z+1.  Each zoom level's tasks run
-# in parallel, but the levels themselves must run in order.
 #
 # DAG:
 #   generate (1 task — creates source data for each item)

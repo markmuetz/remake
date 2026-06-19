@@ -39,13 +39,19 @@ def extract(inputs, outputs, site, year):
     depends_on = [extract],
 )
 def process(inputs, outputs, site, year):
+    # Heavy imports go inside the rule body so loading/planning the pipeline
+    # stays cheap — see "Why heavy imports live inside rule functions" in the
+    # examples README.
     import xarray as xr
     ds = xr.open_dataset(inputs['nc'])
     ds.resample(time='1D').mean().to_netcdf(outputs['processed'])
 
 
 def aggregate_inputs(site):
-    """Fan-in: collect all years for this site."""
+    """Fan-in: collect all years for this site.
+
+    This function will be called once for each site, and will produce
+    an input for each year at that site."""
     return {str(year): f'data/processed/{site}/{year}.nc' for year in YEARS}
 
 

@@ -14,7 +14,7 @@ CASES = [
     ('ex1_simple.py', 2, 2),
     ('ex2_matrix.py', 4, 70),
     ('ex3_uses_scope.py', 2, 11),
-    ('ex4_callable_inputs_matrix.py', 4, 55),
+    ('ex4_callable_inputs.py', 4, 55),
     ('ex5_multifile/pipeline.py', 3, 69),
     ('ex6_tuple_matrix.py', 2, 27),
     ('ex7_orchestration_only.py', 3, 7),

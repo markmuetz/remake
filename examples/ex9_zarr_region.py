@@ -45,6 +45,8 @@ def create_store(outputs):
     import zarr
     time = pd.date_range(f'{YEARS[0]}-01-01', f'{YEARS[-1]}-12-31', freq='D')
     ds = xr.Dataset(
+        # Kept simple: this allocates the whole array in memory. Production
+        # code would back it with a dask array and write lazily.
         {'temp': (('time', 'lat', 'lon'),
                   np.full((len(time), 180, 360), np.nan, dtype='f4'))},
         coords={'time': time,
