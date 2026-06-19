@@ -62,9 +62,13 @@ version bump.
   raises `RemakeError` as an uncaught traceback instead of a clean
   message. Fix as part of a small CLI-polish pass (logged in the plan's
   "What's left").
-- **CHANGELOG / release notes** for 0.8.0 — there is none yet. A
-  clean-break "what changed since 0.6.3 / from remake2" summary; the
-  migration guide content already exists in the skill references.
+- ~~**CHANGELOG / release notes** for 0.8.0~~ **Done 2026-06-19.**
+  `CHANGELOG.md` at the repo root (Keep a Changelog format): a clean-break
+  "remake3 is a ground-up rewrite from the remake2 0.6.x line" summary
+  (Added/Changed/Fixed) plus a *Migrating from remake2* note pointing at
+  the skill's `references/remake2_to_remake3.md`. Surfaced on the docs site
+  as `docs/changelog.md` via a `pymdownx.snippets` include (no duplication)
+  and added to the nav.
 - **README as the PyPI long description** — confirm it renders well on
   the project page and points at the docs site and the alpha install
   (`pip install --pre remake`).
@@ -269,7 +273,8 @@ the JASMIN beta — see §A.1.)
 - [x] `check_outputs` default decided and pinned with a test (§E.3) — flipped
       to `'never'`; `'fallback'` is now the opt-in migration mode. **Done
       2026-06-19.**
-- [ ] CHANGELOG / release notes written.
+- [x] CHANGELOG / release notes written. **Done 2026-06-19** (`CHANGELOG.md`
+      + docs-site `changelog.md` include).
 - [ ] `main` fast-forwarded to remake3; branch refs in workflows/mkdocs
       updated; Pages branch policy trimmed.
 - [ ] Version bumped to `0.8.0`; tagged `v0.8.0`; release workflow

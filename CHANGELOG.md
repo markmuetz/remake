@@ -1,0 +1,123 @@
+# Changelog
+
+All notable changes to remake are documented here. The format is based on
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
+follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.8.0] — unreleased
+
+**remake 0.8.0 is a ground-up rewrite.** It shares the name and the core idea
+of the remake2 `0.6.x` line — declarative, code-aware, make-style incremental
+rebuilds in pure Python — but the API, the engine and the on-disk metadata are
+all new. Treat it as a new tool rather than an in-place upgrade; see
+*Migrating from remake2* below.
+
+(Published to PyPI as the `0.8.0a0` alpha during development; `0.8.0` is the
+first stable release of the rewrite.)
+
+### Added
+
+- **Lazy, rule-level engine.** A pipeline is a set of `@rule`s, each expanding
+  to many tasks via a `matrix`. Tasks are never materialised in bulk — the
+  planner works rule-by-rule — so pipelines of ~1e6 tasks plan in seconds with
+  flat memory (benchmarked in `tests/benchmarks/`).
+- **The `@rule` decorator API**: `inputs=`, `outputs=`, `matrix=`,
+  `depends_on=`, `uses=`, `config=`, `strict_scope=`, and `name=`. Rules are
+  free-standing objects registered via `rules_from_current_module()`,
+  `rules_from_modules()`, `add_rules()`, or `Remake(rules=[...])`.
+- **Matrix forms**: dict cartesian product, explicit `list[dict]`, tuple-keys
+  for pre-filtered / grouped combinations, plain callables, and `@deferrable`
+  callables for **dynamic matrices** whose task set is derived from upstream
+  outputs (raising `Defer` until the upstream is ready).
+- **`depends_on=` by name**: dependencies may be given as rule objects or as
+  string rule names, resolved at finalize time.
+- **Smart stale-rebuild via content, not timestamps.** A task reruns when its
+  run-code, its `uses=` values, or its `inputs`/`outputs` spec change — each
+  compared by AST-normalised hashing (`run` code, `uses_hash`, `io_hash`), so
+  cosmetic edits don't trigger reruns and mtime is never consulted.
+- **`uses=` scope tracking** with decoration-time scope analysis: undeclared
+  outer-scope names used by a rule are flagged (`ScopeWarning`, or
+  `ScopeError` under `strict_scope`).
+- **Output tokens**: `FileToken`/`PathToken`, `ZarrStore`, `S3Object`, and a
+  user-extensible `OutputToken` protocol (`identity()` / `is_complete()` /
+  `format()`) for non-file outputs.
+- **Executors**: `singleproc`, `multiproc`, `slurm`, and a basic `dask`
+  executor — plus injection of a custom `Executor` via dotted path
+  (`mymodule:MyExecutor`).
+- **SLURM support built for HPC reality**: array jobs, self-replanning
+  continuation jobs (submit-and-log-out), per-rule resource `config`,
+  `aftercorr`/`afterok` failure propagation, and **JSON sidecar result files**
+  ingested in a single batched transaction — validated lock-free at 800-way
+  concurrency on JASMIN, where direct SQLite writes livelock. Job ids are
+  persisted as sidecars and consumed by `slurm-status`, `task-info` and
+  resubmission.
+- **Per-task log files** under SLURM arrays (`.remake/tasks/log/...`), avoiding
+  the interleaved-write corruption of a single shared log.
+- **CLI**: `run`, `info`, `why`, `lint`, `set-state`, `ls-tasks`, `task-info`,
+  `task-log`, `rule-dag`, `slurm-status`, `resubmit`, `version`, plus the
+  internal `run-task`/`run-array-task` entry points.
+  - `why` explains why any task (or a `-Q` query set, or the runnable set)
+    will or won't rerun.
+  - `info --reasons` gives a per-rule tally of rerun-reason categories;
+    `info -F` groups failed tasks by traceback signature; `info` prints a
+    totals row in dependency order.
+  - `run -Q` to scope a run; `run --dry-run`; `run --force`;
+    `run --ignore-code-changes` (rerun only never-succeeded tasks);
+    `run -X/--debug-exception` to drop into pdb on the first failure.
+  - `set-state --success`/`--pending` (with `-Q`) to record state without
+    running; `--success --check-outputs` adopts an existing output tree.
+- **`-T`/`-D`/`-I`/`-W` logging levels** (trace/debug/info/warning) and an
+  always-on rotating file log at `.remake/remake.log`.
+- **SQLite metadata backend** (`.remake/remake.db`) with a defensive
+  `ALTER TABLE` migration path; pluggable via the `MetadataManager` interface.
+- **Documentation site** (MkDocs), **CI** across Python 3.10–3.14 with
+  coverage, and a Trusted-Publishing release workflow.
+
+### Changed
+
+- **`check_outputs` defaults to `'never'`** (DB is the sole source of truth).
+  An on-disk output is no longer implicitly adopted when there is no DB
+  record, so editing a task's code and clearing its record with
+  `set-state --pending` reliably forces a rerun instead of silently re-adopting
+  the stale output. The previous `'fallback'` behaviour is now the opt-in
+  *migration* mode; adopt an existing tree explicitly with
+  `run --check-outputs` or `set-state --success --check-outputs`. The three
+  modes (`'never'`, `'fallback'`, `'always'`) are documented in the running
+  guide.
+- **`run --ignore-code-changes` is long-form only** — its former `-I` short
+  flag collided with the global `--info`/`-I`, so `-I` now unambiguously means
+  info-logging.
+
+### Fixed
+
+- **User-facing errors print cleanly.** A `RemakeError` (bad query, a
+  single-task command matching >1 task, an unknown rule/executor, a missing
+  `submit.sh`, …) now prints `error: <message>` to stderr and exits 2, instead
+  of dumping a traceback. The full traceback is still shown under
+  `-X/--debug-exception`.
+- **SLURM JSON round-trip task-identity bug.** Non-JSON-stable matrix kwarg
+  values (e.g. tuples) changed a task's key/paths after the JSON round-trip on
+  the compute node, so sidecars were recorded under a key the planner never
+  looked up. Such values are now rejected at plan time with a clear
+  `SignatureError`, before any submission.
+- **`inputs=`/`outputs=` changes now invalidate a task** (`io_hash`) — editing
+  an output path no longer leaves orphaned outputs while downstream looks
+  elsewhere.
+- **SLURM exit-code masking.** The per-rule wrapper no longer masks a task's
+  real exit code with a trailing `echo`, so `aftercorr`/`afterok` correctly
+  block dependants of failed elements (`--kill-on-invalid-dep=yes`).
+- Downstream tasks of a same-run failure are **skipped (and reported)** rather
+  than run and failed on missing inputs; skipped tasks stay pending so fixing
+  the upstream picks them up.
+
+### Migrating from remake2
+
+remake3 is not a drop-in upgrade — remakefiles must be rewritten to the new
+`@rule` API, and the on-disk metadata format is new (start from a fresh
+`.remake/`, adopting existing outputs with `set-state --success
+--check-outputs`). A step-by-step remake2→remake3 translation guide ships with
+the `remake` Claude skill (`references/remake2_to_remake3.md`). The rewrite was
+validated by reproducing a real multi-figure paper pipeline (`mcs_prime`)
+end-to-end on JASMIN with outputs identical to the remake2 reference.
+
+[0.8.0]: https://github.com/markmuetz/remake/releases/tag/v0.8.0

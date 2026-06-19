@@ -46,7 +46,9 @@ markdown_extensions:
       anchor_linenums: true
   - pymdownx.superfences
   - pymdownx.inlinehilite
-  - pymdownx.snippets
+  - pymdownx.snippets:
+      base_path: [.]
+      check_paths: true
 
 nav:
   - Home: index.md
@@ -59,3 +61,4 @@ nav:
       - Debugging: guide/debugging.md
   - CLI reference: cli.md
   - API reference: api/index.md
+  - Changelog: changelog.md
