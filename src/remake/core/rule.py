@@ -22,12 +22,13 @@ class Rule:
     uses: dict = field(default_factory=dict)
     strict_scope: Optional[bool] = None  # None -> inherit Remake default
     config: dict = field(default_factory=dict)
+    _name: Optional[str] = None
     # Set by Remake at registration:
     remake: object = None
 
     @property
     def name(self):
-        return self.fn.__name__
+        return self._name if self._name is not None else self.fn.__name__
 
     @property
     def source(self):
@@ -138,6 +139,7 @@ def rule(
     uses=None,
     strict_scope=None,
     config=None,
+    name=None,
 ):
     """Define a rule. Returns a free-standing Rule object (not the function).
 
@@ -159,6 +161,7 @@ def rule(
             uses=uses_,
             strict_scope=strict_scope,
             config=dict(config) if config else {},
+            _name=name,
         )
 
     return decorator

@@ -18,6 +18,8 @@ CASES = [
     ('ex5_callable_inputs_matrix.py', 4, 55),
     ('ex7_multifile/pipeline.py', 3, 69),
     ('ex9_custom_token.py', 1, 3),
+    ('ex11_chained_loop_rules.py', 6, 16),
+    ('ex12_orchestration_only.py', 3, 7),
 ]
 
 
@@ -40,6 +42,8 @@ def test_example_loads_and_plans(filename, n_rules, n_tasks, tmp_path, monkeypat
     ('ex5', 'data/annual/site_a/2020.csv'),
     ('ex8', 'data/results/event_summary.json'),   # self-generating
     ('ex9', 'data/results.db'),                   # self-generating
+    ('ex11', 'data/stage0/alpha.txt'),              # self-generating
+    ('ex12', 'data/orchestrated/summary.txt'),    # self-generating
 ])
 def test_light_examples_run_end_to_end(example, result_file, tmp_path, monkeypatch):
     """These need no heavy deps: generate synthetic data (if any) and run."""

@@ -3,29 +3,29 @@
 # Loop-generated rules with chained dependencies.
 #
 # Pattern: when a pipeline has N stages that form a sequential chain
-# (stage N-1 must complete before stage N-2 can start), generate one
+# (stage N must complete before stage N-1 can start), generate one
 # rule per stage in a loop with each depending on the previous.
+# Within each stage, tasks run in parallel over a matrix.
 #
 # Real-world use case: HEALPix coarsening, where zoom level Z is
-# built by averaging zoom level Z+1.  Each zoom level's tasks run in
-# parallel, but the levels themselves must run in order.
+# built by averaging zoom level Z+1.  Each zoom level's tasks run
+# in parallel, but the levels themselves must run in order.
 #
 # DAG:
-#   generate (1 task — creates source data)
+#   generate (1 task — creates source data for each item)
 #       |
-#   stage_4  (N tasks in parallel)
+#   stage_4[item]  (N tasks in parallel)
 #       |
-#   stage_3  (N tasks in parallel)
+#   stage_3[item]  (N tasks in parallel)
 #       |
-#   stage_2  (N tasks in parallel)
+#   stage_2[item]  (N tasks in parallel)
 #       |
 #   ...
 #
 # Key techniques:
-#   - Factory function returns a Rule from @rule inside a closure
-#   - Default argument (_stage=stage) captures the loop variable
-#   - rmk.add_rules() instead of rules_from_current_module() since
-#     loop-generated rules aren't top-level module variables
+#   - name= gives each loop-generated rule a distinct identity
+#   - String depends_on= references a rule by name (resolved at
+#     finalize time), so the loop doesn't need to thread Rule objects
 #   - uses= tracks the captured stage value for change detection
 
 from pathlib import Path
@@ -47,33 +47,30 @@ def generate(outputs):
         Path(path).write_text(f'{item}: ' + ','.join(str(x) for x in range(32)))
 
 
-def _make_stage_rule(stage, upstream):
-    @rule(
-        inputs={item: f'data/stage{stage + 1}/{item}.txt' for item in ITEMS},
-        outputs={item: f'data/stage{stage}/{item}.txt' for item in ITEMS},
-        depends_on=[upstream],
-        uses={'stage': stage, 'ITEMS': ITEMS},
-    )
-    def process(inputs, outputs):
-        for item in ITEMS:
-            values = Path(inputs[item]).read_text().split(': ', 1)[1]
-            nums = [int(x) for x in values.split(',')]
-            # Reduce by summing pairs (halves the list each stage)
-            reduced = [nums[i] + nums[i + 1] for i in range(0, len(nums), 2)]
-            Path(outputs[item]).parent.mkdir(parents=True, exist_ok=True)
-            Path(outputs[item]).write_text(f'{item}: ' + ','.join(str(x) for x in reduced))
-
-    process.fn.__name__ = f'stage_{stage}'
-    process.fn.__qualname__ = f'stage_{stage}'
-    return process
+def _process(inputs, outputs, item):
+    values = Path(inputs['data']).read_text().split(': ', 1)[1]
+    nums = [int(x) for x in values.split(',')]
+    reduced = [nums[i] + nums[i + 1] for i in range(0, len(nums), 2)]
+    Path(outputs['data']).parent.mkdir(parents=True, exist_ok=True)
+    Path(outputs['data']).write_text(f'{item}: ' + ','.join(str(x) for x in reduced))
 
 
 chain_rules = []
-prev = generate
 for stage in range(N_STAGES - 1, -1, -1):
-    r = _make_stage_rule(stage, prev)
-    chain_rules.append(r)
-    prev = r
+    upstream = 'generate' if stage == N_STAGES - 1 else f'stage_{stage + 1}'
+
+    @rule(
+        name=f'stage_{stage}',
+        inputs={'data': f'data/stage{stage + 1}/{{item}}.txt'},
+        outputs={'data': f'data/stage{stage}/{{item}}.txt'},
+        matrix={'item': ITEMS},
+        depends_on=[upstream],
+        uses={'stage': stage, '_process': _process},
+    )
+    def process(inputs, outputs, item):
+        _process(inputs, outputs, item)
+
+    chain_rules.append(process)
 
 rmk.add_rules(chain_rules)
 rmk.add_rules([generate])

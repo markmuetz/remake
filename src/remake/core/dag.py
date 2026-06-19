@@ -14,11 +14,21 @@ from .task import Task
 
 def build_rule_dag(rules):
     """Directed rule-level DAG from explicit depends_on declarations."""
+    rules_by_name = {rule.name: rule for rule in rules}
     g = nx.DiGraph()
     for rule in rules:
         g.add_node(rule)
+        resolved = []
         for dep in rule.depends_on:
+            if isinstance(dep, str):
+                if dep not in rules_by_name:
+                    raise ValueError(
+                        f'{rule.name}: depends_on references unknown rule {dep!r}'
+                    )
+                dep = rules_by_name[dep]
+            resolved.append(dep)
             g.add_edge(dep, rule)
+        rule.depends_on = resolved
     if not nx.is_directed_acyclic_graph(g):
         cycle = nx.find_cycle(g)
         raise ValueError(f'Rule dependencies contain a cycle: {cycle}')
