@@ -612,6 +612,119 @@ design discussion before any work starts.
   from the current tool's previous run with different code", and the
   default should not guess.
 
+- **Key-concepts documentation.** The docs site is currently task-oriented
+  (getting-started, running, SLURM, debugging) — it teaches you *how* to do
+  things but never lays out *what the pieces are* and how they fit. A reader
+  who hits an unfamiliar term (`token`, `Defer`, "rule-level DAG", `io_hash`)
+  has nowhere to look it up. Propose a dedicated **Concepts** page (or short
+  cluster of pages) sitting between "Getting started" and the "User guide",
+  explaining each core idea once, in prose, with a one-line definition + a
+  small example + links to the how-to guide that uses it. The model worth
+  cribbing is Django's "topic guides" or Snakemake's "Rules" reference: a
+  glossary you can read top-to-bottom *or* jump into.
+
+  *The concept list (the ask, plus what I'd add):*
+  - *Top-level objects:*
+    - **Remakefile** — the Python file defining a pipeline; the `Remake`
+      object; how rules get registered (`rules_from_current_module` /
+      `add_rules` / `Remake(rules=...)`). **Must cover the cwd / `.remake`
+      gotcha** (see the related todo): `remake run path/to/rmk.py` creates
+      `.remake/` in the *current* directory, not next to the remakefile —
+      this surprises everyone (flagged in the examples README too).
+    - **Rule** — the `@rule`-decorated function; a template, not a unit of
+      work.
+    - **Task** — one concrete `(rule, kwargs)` instance; the actual unit of
+      work; its identity/`key`; the relationship rule → many tasks.
+    - **Matrix** — how a rule expands into tasks; the forms (dict product,
+      `list[dict]`, tuple-keys, callable, `@deferrable`); fan-out/fan-in.
+    - **The planner** — what decides what runs: DB-as-source-of-truth, the
+      **rule-level (not task-level) DAG** and *why* (a deliberate design
+      choice that SLURM-array eligibility, planning memory and failure-skip
+      propagation all lean on), waves/replanning, deferral.
+    - **Executors** — `singleproc` / `multiproc` / `slurm` / `dask` and the
+      custom-executor injection point; what each is for; the
+      submit-and-log-out SLURM model at a conceptual level.
+    - **Metadata DB / tokens** — `.remake/remake.db` as operational state;
+      **output tokens** (`FileToken`, `ZarrStore`, `S3Object`, custom
+      `OutputToken`) and the `is_complete()` contract for non-file outputs.
+  - *`@rule` parameters (the lower-level ask):* `inputs`, `outputs`,
+    `matrix`, `depends_on` (incl. by-name strings), `uses`, `config`,
+    `name`, `strict_scope` — each with the when/why, not just the type.
+  - *Cross-cutting concepts I'd add:*
+    - **Stale-rebuild / change detection** — *the* core idea: a task reruns
+      when its run-code, `uses=` values or `inputs`/`outputs` spec change,
+      compared by **content not timestamp** (`run` code / `uses_hash` /
+      `io_hash`, AST-normalised so cosmetic edits don't count). This is the
+      headline concept and currently only implied across scattered pages.
+    - **Scope analysis & `uses`** — why free variables must be declared, what
+      `ScopeWarning`/`strict_scope` do, the one-level-deep rule, the closure
+      caveat.
+    - **`check_outputs` modes** (`never`/`fallback`/`always`) — now documented
+      in the running guide; the concept page should cross-link, not
+      duplicate.
+    - **Deferral** — `Defer` / `@deferrable` / dynamic matrices, as a named
+      concept rather than only an example.
+    - **Queries (`-Q`)** — the kwargs/rule predicate language shared by
+      `run`/`info`/`why`/`set-state`/`ls-tasks`; its one evaluation-time
+      limit (matrix-expansion, before the DB — so no `status ==` queries).
+  - *Open questions for the design pass:* one long glossary page vs. a
+    Concepts section of short pages; how much overlaps existing guide pages
+    (rules-and-tasks already covers some) and whether to **move** that
+    material into Concepts and leave the guides purely how-to; whether to
+    auto-link glossary terms across the docs. The mkdocstrings API reference
+    stays the source of truth for signatures — Concepts explains *meaning*,
+    not types.
+
+- **Explainer: task state and how to find it out.** A companion how-to (or a
+  Concepts sub-page) for the single most common user question: *"what's going
+  on, and what happens if I hit run?"* Today the answer is spread across five
+  verbs with no page tying them together, and newcomers don't know which to
+  reach for. The explainer's job is to draw the one distinction that makes it
+  all click: **recorded state (the past, from the DB)** vs. **the plan (the
+  future, computed by the planner)** vs. **the task set (what exists,
+  independent of either)** — and show which tool answers which question.
+
+  *The three questions and their tools:*
+  - *"What is the recorded state?"* (past — reads the DB, no planning)
+    - **`remake info`** — the headline overview: per-rule counts of
+      `pending` / `success` / `failed` (the three recorded statuses) plus
+      `to_run`, in dependency order, with a totals row. `-t` lists individual
+      tasks with status; `-F` groups failures by traceback signature;
+      `--json` for scripting.
+    - **`remake task-info <key>`** — the deep dive on one task: status,
+      resolved input/output paths, log location, SLURM job id.
+  - *"What exists?"* (the matrix, independent of state)
+    - **`remake ls-tasks`** — pure selection: materialise the matrices and
+      list the tasks (optionally `-i`/`-o` their inputs/outputs, `--check` to
+      stat them on disk). Deliberately says nothing about rerun logic — it
+      answers "which tasks does this pipeline define", the denominator the
+      other verbs report against.
+  - *"What will happen if I run, and why?"* (future — runs the planner)
+    - **`remake run --dry-run`** — the authoritative answer: the exact plan
+      (what would run, counts, deferrals) without executing. The thing to
+      reach for before a real or SLURM run.
+    - **`remake why`** — the *reasoning* behind the plan: per task (`why
+      <key>`), a query set (`why -Q ...`), or the runnable set (bare `why`),
+      each with the planner's `Reason` (never-run / last-run-failed /
+      run-code-changed / uses-changed / io-changed / upstream-rerunning / …).
+    - **`remake info --reasons`** — the same reasons rolled up: a per-rule
+      tally of *why* the to-run tasks would rerun ("stage1: 4 last-run-failed,
+      2 code-changed"). The aggregate companion to per-task `why`.
+
+  *The mental model the page must land:* recorded status is only an input.
+  The planner combines it with code/`uses`/`io` hashes, upstream reruns, the
+  `check_outputs` mode and deferral to reach a **verdict** — *will-run*,
+  *up-to-date*, *deferred*, or *skipped (upstream failed)* — and the verdict,
+  not the stored status, is what `run` acts on. So a `success` task can still
+  rerun (its code changed) and a `pending` task can be skipped (its upstream
+  failed). `info` shows you the status; `why` / `--dry-run` show you the
+  verdict and the reason. A worked example — run, edit one rule, then walk
+  `info` → `why` → `run --dry-run` on the same pipeline — is the spine of the
+  page. Relates to the **Queries (`-Q`)** concept (the selector every one of
+  these verbs shares) and the **query-by-status** discussion item (why you
+  *can't* yet ask `-Q 'status == "failed"'` and must use `info -F` /
+  `run --ignore-code-changes` instead).
+
 ## Graduated (designed and implemented; kept for the record)
 
 - **Dynamic matrices: defer on *stale* upstream, not just *absent* (Fix
