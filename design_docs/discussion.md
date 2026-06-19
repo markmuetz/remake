@@ -276,6 +276,28 @@ design discussion before any work starts.
   a design pass: which imports are truly needed per task path, and whether
   to split a lean `run-array-task` entry point from the full CLI.
 
+- **No-inputs/outputs orchestration pattern.** The hk26 pyflextrkr
+  migration (2026-06-19) uses rules with only `depends_on` and `matrix` —
+  no `inputs=` or `outputs=`. pyflextrkr manages its own file layout
+  internally via `root_path`; duplicating those paths in remake outputs
+  would be fragile and add no value. remake3 tracks completion via the
+  metadata DB alone. This is a valid and likely common pattern when
+  wrapping tools that own their own I/O (climate models, simulation
+  frameworks, etc.). Worth documenting as a first-class pattern — the
+  current examples all use inputs/outputs, which may give the impression
+  they're required. A minimal example (e.g. `ex11_orchestration_only.py`)
+  would help.
+
+- **Variant-dict matrix pattern.** Same migration: domain/experiment
+  overlay combinations are parameterised as a `VARIANTS` dict mapping
+  labels to config file lists (`{'global': [], 'sahel_z10':
+  ['configs/domains/sahel_z10.yml'], ...}`), with
+  `list(VARIANTS.keys())` as the matrix dimension and the dict passed
+  via `uses`. Adding a new variant is a one-line dict entry. This is a
+  clean pattern for "matrix over configurations" (as opposed to simple
+  scalars) that could be documented alongside the callable-matrix
+  examples.
+
 - **Fragile `remake` on PATH in SLURM jobs.** The generated sbatch payload
   invokes a bare `remake run-array-task ...`. The jobs only find it because
   `submit.sh` runs inside the `uv` venv and sbatch inherits that PATH via
