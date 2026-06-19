@@ -1,4 +1,4 @@
-# examples/ex11_chained_loop_rules.py
+# examples/ex12_chained_loop_rules.py
 #
 # Loop-generated rules with chained dependencies.
 #

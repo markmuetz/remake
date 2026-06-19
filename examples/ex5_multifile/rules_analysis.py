@@ -1,4 +1,4 @@
-# examples/ex7_multifile/rules_analysis.py
+# examples/ex5_multifile/rules_analysis.py
 #
 # Cross-file rule wiring: inputs=extract.outputs, matrix=extract.matrix
 # and depends_on=[extract] are ordinary attribute accesses on the

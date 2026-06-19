@@ -1,4 +1,4 @@
-# examples/ex4_zarr_slurm.py
+# examples/ex8_zarr_slurm.py
 #
 # Full climate pipeline using:
 #   - ZarrStore output tokens (non-file outputs)

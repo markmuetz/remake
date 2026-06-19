@@ -1,4 +1,4 @@
-# examples/ex12_orchestration_only.py
+# examples/ex7_orchestration_only.py
 #
 # Orchestration-only pattern: rules with no inputs= or outputs=.
 #

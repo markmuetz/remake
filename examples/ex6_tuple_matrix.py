@@ -1,4 +1,4 @@
-# examples/ex10_tuple_matrix.py
+# examples/ex6_tuple_matrix.py
 #
 # Tuple-key matrices: an explicit, pre-filtered sequence of parameter combos
 # instead of the full cartesian product.

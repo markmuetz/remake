@@ -6,7 +6,7 @@
 #   python make_example_data.py            # all examples
 #   python make_example_data.py ex1 ex3    # just some
 #
-# ex6 generates its own data and needs nothing here.
+# ex9 generates its own data and needs nothing here.
 import io
 import random
 import sys
@@ -44,7 +44,7 @@ def _temperature_nc_bytes(year, seed):
 
 
 def ex2():
-    """data/raw/{site}/{year}.tar.gz, each containing {year}.nc (also ex7)."""
+    """data/raw/{site}/{year}.tar.gz, each containing {year}.nc (also ex5)."""
     sites = ['oxford', 'cambridge', 'bristol']
     years = range(2010, 2021)
     for i, site in enumerate(sites):
@@ -69,6 +69,19 @@ def ex3():
 
 
 def ex4():
+    """config/pipeline.yaml and data/raw/{site}/{year}.csv."""
+    Path('config').mkdir(exist_ok=True)
+    Path('config/pipeline.yaml').write_text('version: 1\nname: ex4\n')
+    rng = random.Random(5)
+    for site in ['site_a', 'site_b', 'site_c']:
+        for year in [2020, 2021, 2022]:
+            path = Path(f'data/raw/{site}/{year}.csv')
+            path.parent.mkdir(parents=True, exist_ok=True)
+            rows = ['value'] + [f'{rng.uniform(5, 15):.2f}' for _ in range(30)]
+            path.write_text('\n'.join(rows) + '\n')
+
+
+def ex8():
     """data/archive/... — one small monthly netCDF per model/var/year."""
     import numpy as np
     import pandas as pd
@@ -97,21 +110,8 @@ def ex4():
                 ds.to_netcdf(path, engine='h5netcdf')
 
 
-def ex5():
-    """config/pipeline.yaml and data/raw/{site}/{year}.csv."""
-    Path('config').mkdir(exist_ok=True)
-    Path('config/pipeline.yaml').write_text('version: 1\nname: ex5\n')
-    rng = random.Random(5)
-    for site in ['site_a', 'site_b', 'site_c']:
-        for year in [2020, 2021, 2022]:
-            path = Path(f'data/raw/{site}/{year}.csv')
-            path.parent.mkdir(parents=True, exist_ok=True)
-            rows = ['value'] + [f'{rng.uniform(5, 15):.2f}' for _ in range(30)]
-            path.write_text('\n'.join(rows) + '\n')
-
-
 def main(argv):
-    which = argv[1:] or ['ex1', 'ex2', 'ex3', 'ex4', 'ex5']
+    which = argv[1:] or ['ex1', 'ex2', 'ex3', 'ex4', 'ex8']
     for name in which:
         print(f'generating data for {name}')
         globals()[name]()

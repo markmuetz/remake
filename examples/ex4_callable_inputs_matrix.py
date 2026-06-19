@@ -1,4 +1,4 @@
-# examples/ex5_callable_inputs_matrix.py
+# examples/ex4_callable_inputs_matrix.py
 #
 # Shows the full range of input/output specification styles:
 #   - plain dict (static)

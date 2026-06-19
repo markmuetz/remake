@@ -1,4 +1,4 @@
-# examples/ex8_dynamic_matrix.py
+# examples/ex10_dynamic_matrix.py
 #
 # Dynamic matrices: the number of tasks is not known until upstream rules
 # have run.

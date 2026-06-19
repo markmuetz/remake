@@ -1,4 +1,4 @@
-# examples/ex6_zarr_region.py
+# examples/ex9_zarr_region.py
 #
 # Demonstrates optional inputs and outputs:
 #   - create_store: a source rule (no inputs) that initialises an empty

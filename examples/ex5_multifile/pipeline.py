@@ -1,4 +1,4 @@
-# examples/ex7_multifile/pipeline.py
+# examples/ex5_multifile/pipeline.py
 #
 # Top-level pipeline file combining rules defined in other modules.
 #

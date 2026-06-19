@@ -40,7 +40,7 @@ The conventions a model gets subtly wrong without the spec in context:
 - matrix forms (dict cartesian / list[dict] / `@deferrable` callable +
   `Defer`), `depends_on` is explicit, fan-in via input callables;
 - `config={'slurm': {...}}` keys and merging; JSON-serialisable kwargs;
-- pointers at `examples/ex1–ex9` as few-shot examples, and
+- pointers at `examples/ex1–ex12` as few-shot examples, and
   `remake run <file> --dry-run` / `info` as the check-your-work loop.
 
 ### Failure triage

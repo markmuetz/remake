@@ -1,4 +1,4 @@
-# examples/ex9_custom_token.py
+# examples/ex11_custom_token.py
 #
 # Custom output tokens: any object with identity() / is_complete() /
 # format() can be an output. Here a DBRow token represents one row in a

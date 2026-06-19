@@ -285,7 +285,7 @@ design discussion before any work starts.
   wrapping tools that own their own I/O (climate models, simulation
   frameworks, etc.). Worth documenting as a first-class pattern — the
   current examples all use inputs/outputs, which may give the impression
-  they're required. A minimal example (e.g. `ex11_orchestration_only.py`)
+  they're required. A minimal example (e.g. `ex7_orchestration_only.py`)
   would help.
 
 - **Variant-dict matrix pattern.** Same migration: domain/experiment

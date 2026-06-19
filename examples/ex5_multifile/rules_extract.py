@@ -1,4 +1,4 @@
-# examples/ex7_multifile/rules_extract.py
+# examples/ex5_multifile/rules_extract.py
 #
 # Rules defined in a standalone module — no Remake instance here.
 # @rule is the module-level decorator; it produces free-standing Rule
