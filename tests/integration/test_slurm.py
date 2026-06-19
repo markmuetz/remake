@@ -198,11 +198,10 @@ def test_resubmit_reexecutes_submit_sh(slurm_dir):
     assert len(sbatch_calls(slurm_dir)) == nsubmitted * 2
 
 
-def test_resubmit_without_submit_sh_errors(slurm_dir):
-    from remake import RemakeError
-
-    with pytest.raises(RemakeError, match='No .remake/submit.sh'):
-        cli('resubmit', 'pipeline.py')
+def test_resubmit_without_submit_sh_errors(slurm_dir, capsys):
+    # User-facing error: caught by the CLI as exit 2 + clean message.
+    assert cli('resubmit', 'pipeline.py') == 2
+    assert 'No .remake/submit.sh' in capsys.readouterr().err
 
 
 # --- run-array-task: the payload SLURM jobs execute ---

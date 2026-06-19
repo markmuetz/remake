@@ -39,7 +39,7 @@ remake run pipeline.py [options]
 | `-j, --nproc` | worker processes for `multiproc` (default: all cores) |
 | `-Q, --query` | filter tasks by a kwargs query |
 | `-f, --force` | force rerun of matched tasks |
-| `-I, --ignore-code-changes` | run only tasks that have never succeeded |
+| `--ignore-code-changes` | run only tasks that have never succeeded |
 | `-n, --dry-run` | show what would run, run nothing |
 | `--check-outputs` | verify outputs of completed tasks (always mode) |
 | `-X, --debug-exception` | force `singleproc` and drop into pdb/ipdb on first failure |

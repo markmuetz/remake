@@ -33,12 +33,12 @@ remake run pipeline.py -Q "rule in ['extract', 'process']"
 
 ## Only rerun what never succeeded
 
-`-I/--ignore-code-changes` reruns only tasks that have never *succeeded*
+`--ignore-code-changes` reruns only tasks that have never *succeeded*
 (e.g. previously failed), ignoring code-hash changes. Upstream propagation
 still applies so fan-ins pick up newly-run elements.
 
 ```bash
-remake run pipeline.py -I
+remake run pipeline.py --ignore-code-changes
 ```
 
 ## Exit codes

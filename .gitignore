@@ -26,6 +26,9 @@ htmlcov/
 # PyCharm
 .idea
 
+# remake runtime metadata (created next to any pipeline run)
+.remake/
+
 # Examples dirs.
 remake/examples/.remake
 remake/examples/data/outputs/

@@ -111,7 +111,7 @@ def _uses_change_message(stored_hash, uses):
     return 'uses= changed since last run: ' + ', '.join(bits)
 
 
-def explain_task(rules, dag, metadata, task, *, check_outputs='fallback', runnable=None):
+def explain_task(rules, dag, metadata, task, *, check_outputs='never', runnable=None):
     """Why would (or wouldn't) this task run? Returns (will_run, reasons),
     each reason a `Reason(category, message)` in the order the planner checks
     them. The `remake why` command (messages) and `info --reasons` (categories).
@@ -172,7 +172,7 @@ def explain_task(rules, dag, metadata, task, *, check_outputs='fallback', runnab
     return will_run, reasons
 
 
-def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='fallback',
+def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never',
          ignore_code_changes=False):
     """Return (runnable_tasks, deferred_rules).
 

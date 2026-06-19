@@ -185,7 +185,7 @@ class RemakeParser:
                          '(default: all cores)'),
                 Arg('--query', '-Q', help='Filter tasks based on a kwargs query'),
                 Arg('--force', '-f', help='Force rerun of matched tasks', action='store_true'),
-                Arg('--ignore-code-changes', '-I',
+                Arg('--ignore-code-changes',
                     help='Run only tasks that have never succeeded (skip code/uses '
                          'change detection; upstream reruns still propagate)',
                     action='store_true'),
@@ -234,12 +234,13 @@ class RemakeParser:
                 Arg('--success', action='store_true',
                     help='Record success (with current code/uses hashes)'),
                 Arg('--pending', action='store_true',
-                    help='Delete records: tasks become never-run (NB with the '
-                         'default check_outputs mode, complete outputs are '
-                         're-adopted at the next plan — to force a rerun use '
-                         'run --force, or delete the outputs too)'),
+                    help='Delete records: tasks become never-run and rerun at '
+                         'the next plan (the default check_outputs=never mode '
+                         'does not re-adopt on-disk outputs)'),
                 Arg('--check-outputs', action='store_true',
-                    help='With --success: only tasks whose outputs are complete on disk'),
+                    help='With --success: only tasks whose outputs are complete '
+                         'on disk (the explicit adoption path for migrating an '
+                         'existing output tree)'),
                 Arg('--dry-run', '-n', help='Show affected tasks, change nothing',
                     action='store_true'),
             ],
@@ -1032,7 +1033,15 @@ def remake_cmd(argv=None):
         # Handle top level exceptions with a debugger (run -X only).
         sys.excepthook = exception_info
 
-    return parser.dispatch()
+    try:
+        return parser.dispatch()
+    except RemakeError as e:
+        # User-facing errors (bad query, >1-task match, unknown rule, ...)
+        # print cleanly and exit 2; keep the traceback only under -X.
+        if getattr(args, 'debug_exception', False):
+            raise
+        print(f'error: {e}', file=sys.stderr)
+        return 2
 
 
 if __name__ == '__main__':

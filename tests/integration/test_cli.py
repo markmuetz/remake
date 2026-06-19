@@ -35,6 +35,17 @@ def cli(*args):
     return remake_cmd(['remake', *args])
 
 
+def cli_error(capsys, *args, match=''):
+    """A user-facing RemakeError is caught by the CLI: exit 2 + clean
+    `error: ...` on stderr (no traceback). Returns the stderr text."""
+    assert cli(*args) == 2
+    err = capsys.readouterr().err
+    assert 'error:' in err
+    if match:
+        assert match in err
+    return err
+
+
 def test_version(capsys):
     cli('version')
     assert capsys.readouterr().out.strip() == __version__
@@ -102,11 +113,17 @@ class MarkerExecutor(Executor):
     assert (pipeline_dir / 'data/out_1.txt').exists()
 
 
-def test_unknown_executor_errors(pipeline_dir):
-    from remake import RemakeError
+def test_unknown_executor_errors(pipeline_dir, capsys):
+    cli_error(capsys, 'run', 'pipeline.py', '-E', 'bogus', match='Unknown executor')
 
-    with pytest.raises(RemakeError, match='Unknown executor'):
-        cli('run', 'pipeline.py', '-E', 'bogus')
+
+def test_remake_error_prints_clean_message_no_traceback(pipeline_dir, capsys):
+    # The top-level handler turns a RemakeError into exit 2 + a one-line
+    # `error: ...` on stderr, with no traceback leaking to the user.
+    assert cli('run', 'pipeline.py', '-E', 'bogus') == 2
+    err = capsys.readouterr().err
+    assert any(line.startswith('error:') for line in err.splitlines())
+    assert 'Traceback' not in err
 
 
 def test_info_show_failures_prints_traceback(pipeline_dir, capsys):
@@ -259,7 +276,7 @@ def test_ignore_code_changes_flag(pipeline_dir, capsys):
     capsys.readouterr()
     cli('run', 'pipeline.py', '--dry-run')
     assert '4 task(s) would run' in capsys.readouterr().out  # code changed
-    cli('run', 'pipeline.py', '--dry-run', '-I')
+    cli('run', 'pipeline.py', '--dry-run', '--ignore-code-changes')
     assert '0 task(s) would run' in capsys.readouterr().out  # changes ignored
 
 
@@ -269,13 +286,9 @@ def test_set_state_pending_forces_forget(pipeline_dir, capsys):
     cli('set-state', 'pipeline.py', '-Q', 'rule == "generate" and n == 1', '--pending')
     out = capsys.readouterr().out
     assert 'generate[n=1] -> pending' in out and '1 task(s) set to pending' in out
-    # Record gone, but the output still exists: default fallback mode
-    # re-adopts it, so nothing reruns.
-    cli('run', 'pipeline.py', '--dry-run')
-    assert '0 task(s) would run' in capsys.readouterr().out
-    # With the output gone too, the forgotten task reruns; element-wise
-    # propagation brings process[n=1].
-    (pipeline_dir / 'data/raw_1.txt').unlink()
+    # Record gone: under the default check_outputs=never mode the forgotten
+    # task reruns even though its output still exists on disk (no silent
+    # re-adoption). Element-wise propagation brings process[n=1] too.
     cli('run', 'pipeline.py', '--dry-run')
     out = capsys.readouterr().out
     assert 'generate[n=1]' in out and '2 task(s) would run' in out
@@ -306,11 +319,8 @@ def test_set_state_success_adopts_outputs(pipeline_dir, capsys):
     }
 
 
-def test_set_state_requires_exactly_one_state(pipeline_dir):
-    from remake import RemakeError
-
-    with pytest.raises(RemakeError, match='exactly one'):
-        cli('set-state', 'pipeline.py', '-Q', 'True')
+def test_set_state_requires_exactly_one_state(pipeline_dir, capsys):
+    cli_error(capsys, 'set-state', 'pipeline.py', '-Q', 'True', match='exactly one')
 
 
 def test_info_json(pipeline_dir, capsys):
@@ -406,24 +416,20 @@ def test_task_info_text_and_json(pipeline_dir, capsys):
     assert data['slurm'] == {'jobids': None, 'array_index': None}  # never submitted
 
 
-def test_task_select_ambiguous_query_errors(pipeline_dir):
-    from remake import RemakeError
-
+def test_task_select_ambiguous_query_errors(pipeline_dir, capsys):
     cli('run', 'pipeline.py')
+    capsys.readouterr()
     # n == 1 matches one task in each of the two rules sharing the matrix.
-    with pytest.raises(RemakeError, match='2 tasks match'):
-        cli('task-info', 'pipeline.py', '-Q', 'n == 1')
+    cli_error(capsys, 'task-info', 'pipeline.py', '-Q', 'n == 1', match='2 tasks match')
 
 
 def test_task_log_path_and_content(pipeline_dir, capsys):
-    from remake import RemakeError
-
     cli('run', 'pipeline.py')  # singleproc run: no per-task logs yet
     capsys.readouterr()
     cli('task-log', 'pipeline.py', '--path', '-Q', 'rule == "generate" and n == 1')
     path = Path(capsys.readouterr().out.strip())
-    with pytest.raises(RemakeError, match='No log'):
-        cli('task-log', 'pipeline.py', '-Q', 'rule == "generate" and n == 1')
+    cli_error(capsys, 'task-log', 'pipeline.py', '-Q',
+              'rule == "generate" and n == 1', match='No log')
 
     key = path.parent.name + path.stem  # <k:2>/<k2:>.log
     cli('run-task', 'pipeline.py', key)

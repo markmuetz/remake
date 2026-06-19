@@ -239,8 +239,8 @@ def test_task_from_spec_and_key_lookup(tmp_path):
 def test_fallback_recognises_outputs_with_fresh_db(tmp_path):
     rmk, *_ = make_pipeline(tmp_path)
     rmk.run()
-    # Same rules, fresh DB: fallback recognises completed outputs.
-    rmk2, *_ = make_pipeline(tmp_path)
+    # Same rules, fresh DB: opt-in fallback recognises completed outputs.
+    rmk2, *_ = make_pipeline(tmp_path, check_outputs='fallback')
     runnable, _ = rmk2.plan()
     assert not runnable
 

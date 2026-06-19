@@ -152,11 +152,123 @@ The working-branch name is hard-coded in several places; switch them from
 - The session's git memory ("Main branch for PRs: remake2") becomes
   obsolete; PRs target `main` thereafter.
 
+## E. Code-review findings (2026-06-19)
+
+A full review (design docs → core → executors → CLI → examples → tests;
+155 tests passing, ~86% coverage) found **no critical correctness bugs in
+the engine**. The architecture matches the design and the layers are
+consistent. What follows are the actionable items it surfaced, folded into
+the release plan. (The deep SLURM/migration bugs were already shaken out by
+the JASMIN beta — see §A.1.)
+
+### Solid (recorded so we don't second-guess it later)
+
+- Lazy rule-level model is cleanly implemented; the 1e6-task scaling
+  claims are backed by `tests/benchmarks/`.
+- Rerun propagation (element-wise vs. conservative `_same_matrix`) is
+  mirrored correctly in three places — planner, `upstream_failed`
+  (executors), and the SLURM `aftercorr`/`afterok` wiring.
+- Sidecar result files (`metadata/sidecar.py` + `ingest_sidecars`) are a
+  correct, benchmark-validated fix for the measured SQLite livelock.
+- Scope analysis (`core/scope.py`) and the `io_hash`/`uses_hash`/run-code
+  triad close the remake2 change-detection gaps.
+- CLI introspection verbs (`why`, `info --reasons`, `info -F` dedup,
+  `lint`, `rule-dag`) share a single `plan()` rather than re-planning.
+
+### Newly-surfaced blocking items (promoted into §A's DoD)
+
+1. **No top-level `RemakeError` handler in the CLI.** `remake_cmd`
+   (`remake_cmd.py`, the `remake_cmd` entry) has no `try/except
+   RemakeError`, so user-facing errors (a `-Q` query matching >1 task in
+   `task-info`/`task-log`, an unknown rule, a bad query) surface as full
+   tracebacks. This **subsumes** the §B `why`-multi-match nit (that
+   specific case is already fixed, but the missing handler remains for the
+   other single-task commands). Fix:
+   ```python
+   try:
+       return parser.dispatch()
+   except RemakeError as e:
+       if getattr(args, 'debug_exception', False):
+           raise
+       print(f'error: {e}', file=sys.stderr)
+       return 2
+   ```
+   Also matches the `todos.md` "Smaller debts" entry. Add a test asserting
+   clean `error:` output + exit code 2 (none exists today).
+
+2. **`-I` flag collision.** `--info`/`-I` is defined on the global parser
+   (`remake_cmd.py:171`) and `--ignore-code-changes`/`-I` on the `run`
+   subcommand (`remake_cmd.py:188`). argparse doesn't error (different
+   parsers), but `-I` means *info-logging* before the subcommand and
+   *ignore-code-changes* after it — so `remake -I run pipeline.py` silently
+   does the wrong thing. Give `--ignore-code-changes` a distinct short flag
+   (or drop the short form). Part of the stable CLI surface, so settle it
+   before tagging.
+
+3. **`check_outputs='fallback'` default silently swallows code changes.**
+   The strongest open design concern (logged in `discussion.md`,
+   2026-06-18 `theta_e_analysis` case): under the default `fallback` mode,
+   `set-state --pending` + edit + `run` re-adopts the stale on-disk output
+   without running the new code. This is a **default-behaviour decision**
+   far cheaper to make before 1.0 than after. Decide for 0.8.0: flip the
+   default to `'never'` (adoption becomes explicit, e.g. `set-state -Q True
+   --success --check-outputs`), or at minimum loudly report adoptions. Pin
+   the decision with a test on the `set-state --pending` re-adoption path.
+
+### Should-do (0.8.0 or fast-follow — added to §B)
+
+- **Bound and message-match `retry_lock_commit`** (`sqlite3_backend.py:58`).
+  It catches *any* `OperationalError` (not just "database is locked" — also
+  "no such table", disk-full, malformed schema) and retries forever with
+  growing backoff, so a genuine error becomes a silent hang. Match on the
+  lock message, re-raise others, cap attempts. The sidecar design removed
+  the high-concurrency pressure, so this is robustness, not the old
+  livelock. `discussion.md` already flags it as "the wrong primitive" for
+  the optimistic-write idea.
+- **Delete dead code** (`util/config.py` `Config` — 29% coverage, the
+  repo's lowest; `util/util.py` `sysrun`/`format_path`/`Capturing`).
+  Exported but unused in src/tests/examples; a remake2 carryover
+  superseded by plain-dict config. The `todos.md` dead-code section sets
+  the precedent ("do not leave it to mislead readers"); removing them lifts
+  coverage cheaply. Otherwise wire them in.
+- **Coverage corners** (already in §B): the upstream-failure-skip branches
+  in `multiproc_executor.py` (77%) / `dask_executor.py` (74%), plus the new
+  CLI error-path test from item 1.
+
+### Minor / nits (no release gate)
+
+- **`Task.key` doc drift:** `remake3_design.md` (~line 392) specifies
+  `f'{rule.fn.__name__}:{kwargs!r}'`, but the implementation (`task.py:42`)
+  uses `self.rule.name` + sorted-kwargs repr. The implementation is
+  *better* (honours the new `name=` override; sorts kwargs for stability) —
+  fix the doc, not the code.
+- `load_module` appends to `sys.path` on every call without dedup
+  (`loader/__init__.py`) — unbounded growth across repeated loads.
+- `eval`-based query filter (`planner.py:33`) with `{'__builtins__': {}}`
+  is escapable in principle; low risk for a local CLI on self-authored
+  queries. `todos.md` already defers the restricted-ops parser to "CLI
+  work" — fine for 0.8.x.
+- `_default_nproc` can return `None` (`multiproc_executor.py:40`) if
+  `os.cpu_count()` is `None`; harmless (`ProcessPoolExecutor` treats it as
+  cpu_count) but `or 1` would be clearer.
+- `CodeComparer` has the only `# TODO` in src (`code_compare.py:55`, a
+  `RecursionError` re-raise with a stray `print`).
+- `ZarrStore.is_complete()` checks `.zmetadata` (zarr v2); v3 uses
+  `zarr.json` — already in `todos.md`, contained by the `zarr<3` env pin.
+
 ## Definition of done for 0.8.0
 
-- [ ] A real pipeline migrated and run end-to-end on JASMIN under remake3.
+- [x] A real pipeline migrated and run end-to-end on JASMIN under remake3
+      (mcs_prime equivalence PASS 2026-06-17/18 — see §A.1).
 - [ ] Docs reconciled with shipped CLI/API; `mkdocs build --strict` green.
-- [ ] `why`-multi-match (and any other dogfood-found) CLI nits fixed.
+- [x] Top-level `except RemakeError` handler in the CLI (§E.1), with a test
+      asserting clean `error:` output + exit 2. **Done 2026-06-19.**
+- [x] `-I` flag collision resolved (§E.2) — dropped the `-I` short form from
+      `--ignore-code-changes` (long form only; the symmetric `-T/-D/-I/-W`
+      logging convention keeps `-I`). **Done 2026-06-19.**
+- [x] `check_outputs` default decided and pinned with a test (§E.3) — flipped
+      to `'never'`; `'fallback'` is now the opt-in migration mode. **Done
+      2026-06-19.**
 - [ ] CHANGELOG / release notes written.
 - [ ] `main` fast-forwarded to remake3; branch refs in workflows/mkdocs
       updated; Pages branch policy trimmed.

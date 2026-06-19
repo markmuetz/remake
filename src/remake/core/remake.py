@@ -21,7 +21,7 @@ class Remake:
         rules=None,
         config=None,
         metadata=None,
-        check_outputs='fallback',
+        check_outputs='never',
         strict_scope=False,
     ):
         self.config = config or {}

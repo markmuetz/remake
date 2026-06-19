@@ -498,7 +498,7 @@ def plan(
     metadata: MetadataManager,
     query:    str | None = None,   # eval'd vs task kwargs + rule name
     force:    bool = False,
-    check_outputs: str = 'fallback',
+    check_outputs: str = 'never',
     ignore_code_changes: bool = False,
 ) -> tuple[list[Task], list[Rule]]:
     """
@@ -971,16 +971,23 @@ created — the store itself is written by zarr. Non-path tokens
 
 `Remake(check_outputs=...)` selects one of three modes:
 
-- **`'never'`** — DB is the sole source of truth. Fastest; no I/O beyond
-  the DB at plan time.
-- **`'fallback'`** (default) — tokens are consulted only for tasks the DB
-  has no record of. This makes a lost or absent DB recoverable: completed
+- **`'never'`** (default) — DB is the sole source of truth. Fastest; no
+  I/O beyond the DB at plan time. A task with no DB record always reruns,
+  even if its outputs exist on disk — so an edit after `set-state
+  --pending` is never silently swallowed by re-adopting a stale output
+  (the iterative-development trap that `'fallback'`-as-default created).
+- **`'fallback'`** — tokens are consulted only for tasks the DB has no
+  record of. This makes a lost or absent DB recoverable: completed
   file-backed work is recognised from its outputs instead of rerun.
-  Per-run cost is zero once the DB is populated.
+  Per-run cost is zero once the DB is populated. This is the **migration**
+  mode — adopt a pre-existing output tree into a fresh `.remake/` — and is
+  opt-in rather than the default. The explicit, persistent adoption path
+  is `set-state -Q <query> --success --check-outputs`.
 - **`'always'`** — every planned task's outputs are checked. Detects
   outputs deleted behind the DB's back — e.g. scratch-filesystem purges —
   at the cost of touching the filesystem (or S3) for every output. Also
-  available per-invocation as `remake run --check-outputs`.
+  available per-invocation as `remake run --check-outputs` (which also
+  adopts complete outputs with no DB record, like `'fallback'`).
 
 In every mode, tasks with no declared outputs are DB-authoritative: there
 is nothing to check, and that is fine.
