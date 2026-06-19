@@ -144,9 +144,9 @@ kwargs (extra kwargs it doesn't name are dropped, so `lambda site:` is fine; a
 parameter that *isn't* a matrix key raises `TypeError`). A `lambda` works, but
 change detection is coarser for one than for a named `def` — remake hashes the
 callable's source, and a lambda's source is captured as raw line text rather
-than AST-normalised, so cosmetic edits on that line can trigger reruns and two
-lambdas sharing a line are indistinguishable. Prefer a named function for
-non-trivial wiring.
+than compared by code structure, so cosmetic edits on that line can trigger
+reruns and two lambdas sharing a line are indistinguishable. Prefer a named
+function for non-trivial wiring.
 
 !!! warning "Closures are invisible to change detection"
     A callable that closes over an outer variable — `lambda site: {'in':
