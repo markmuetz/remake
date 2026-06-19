@@ -255,3 +255,12 @@ assessment (2026-06-11). Ordered roughly by severity.
 - [ ] Calling e.g. `remake run path/to/remakefile.py` should cd into the 
   remakefile's directory first, so that you don't create a new .remake directory
   in cwd.
+- [ ] "AST" is too technical for user-facing material. Reserve the term for
+  internal docs/code and a deep-dive "how the planner decides" technical
+  section; everywhere a user reads it say "code structure" (or "the code,
+  compared by structure"), with "(AST)" at most in parentheses on first
+  mention. The `why`/`info --reasons` reason strings are already clean
+  ("run code changed since last run"); the planner.py "AST" mentions are
+  internal docstrings/comments (fine to keep). Done in examples/README and
+  ex3 (2026-06-19); still to do: `docs/guide/rules-and-tasks.md` (the one
+  user-facing doc that uses the term).
