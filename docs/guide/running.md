@@ -50,6 +50,40 @@ remake run pipeline.py --ignore-code-changes
 | `0` | success — everything needed completed |
 | non-zero | one or more tasks failed (see [Debugging](debugging.md)) |
 
+## Checking outputs on disk
+
+By default the **metadata DB is the sole source of truth** for what has run.
+A task is considered done only if the DB says so — the mere presence of an
+output file on disk does *not* count. This is the `check_outputs='never'`
+mode (the default), set on the `Remake()` object:
+
+```python
+rmk = Remake(check_outputs='never')   # the default
+```
+
+The three modes:
+
+| Mode | Behaviour |
+|---|---|
+| `'never'` (default) | DB only. A task with no DB record reruns even if its output exists. |
+| `'fallback'` | A task with no DB record is treated as done if its outputs are complete on disk. The **migration** mode — adopt a pre-existing tree into a fresh `.remake/`. |
+| `'always'` | Every planned task's outputs are checked, catching outputs deleted behind the DB's back (e.g. a scratch purge). |
+
+Why `'never'` is the default: under `'fallback'`, editing a task's code and
+then clearing its record with `set-state --pending` would *silently re-adopt*
+the old output instead of rerunning — the edit is swallowed. With `'never'`,
+clearing the record always forces a rerun.
+
+`--check-outputs` on `run` turns on `'always'` mode for that invocation
+(and also adopts complete outputs with no DB record, like `'fallback'`):
+
+```bash
+remake run pipeline.py --check-outputs    # verify/recover outputs this run
+```
+
+Tasks with no declared outputs are always DB-authoritative — there is nothing
+to check.
+
 ## Forcing state
 
 `set-state` records task state without running, for adopting an existing tree
@@ -63,5 +97,7 @@ remake set-state pipeline.py -Q True --success --check-outputs
 remake set-state pipeline.py -Q "rule == 'process'" --pending
 ```
 
-`--success --check-outputs` is the adoption path: lock in a pipeline whose
-outputs already exist without recomputing them.
+`--success --check-outputs` is the explicit adoption path: lock in a pipeline
+whose outputs already exist without recomputing them. Because the default
+`check_outputs='never'` mode never adopts on-disk outputs implicitly, this is
+how you migrate an existing output tree into remake.
