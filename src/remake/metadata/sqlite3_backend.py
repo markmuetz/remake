@@ -30,6 +30,12 @@ CREATE TABLE rule (
     inputs_code_id INTEGER NOT NULL,
     outputs_code_id INTEGER NOT NULL,
     run_code_id INTEGER NOT NULL,
+    -- The remakefile that last defined this rule. Rules are namespaced only by
+    -- name (so co-located remakefiles share this store, by design), so this
+    -- records provenance and powers the duplicate-rule-name guard: a same-named
+    -- rule with different code last written by a *different* remakefile is a
+    -- collision, not an edit. NULL = unknown (programmatic use / pre-upgrade).
+    remakefile TEXT,
     PRIMARY KEY (id),
     FOREIGN KEY(inputs_code_id) REFERENCES code (id),
     FOREIGN KEY(outputs_code_id) REFERENCES code (id),
@@ -122,6 +128,10 @@ class Sqlite3Backend(MetadataManager):
         if 'run_seq' not in cols:
             logger.info('Adding task.run_seq column to existing DB')
             self.conn.execute('ALTER TABLE task ADD COLUMN run_seq INTEGER')
+        rule_cols = {row[1] for row in self.conn.execute('PRAGMA table_info(rule)')}
+        if 'remakefile' not in rule_cols:
+            logger.info('Adding rule.remakefile column to existing DB')
+            self.conn.execute('ALTER TABLE rule ADD COLUMN remakefile TEXT')
         tables = {row[0] for row in self.conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         if 'meta' not in tables:
@@ -159,23 +169,25 @@ class Sqlite3Backend(MetadataManager):
         return cur.lastrowid
 
     @retry_lock_commit
-    def _ensure_rule(self, rule):
+    def _ensure_rule(self, rule, remakefile=None):
         row = self.conn.execute(
-            'SELECT id, inputs_code_id, outputs_code_id, run_code_id FROM rule WHERE name = ?',
+            'SELECT id, inputs_code_id, outputs_code_id, run_code_id, remakefile '
+            'FROM rule WHERE name = ?',
             (rule.name,),
         ).fetchone()
         source = rule.source
         if row is None:
             code_ids = {part: self._insert_code(source[part]) for part in source}
             cur = self.conn.execute(
-                'INSERT INTO rule(name, inputs_code_id, outputs_code_id, run_code_id) '
-                'VALUES (?, ?, ?, ?)',
-                (rule.name, code_ids['inputs'], code_ids['outputs'], code_ids['run']),
+                'INSERT INTO rule(name, inputs_code_id, outputs_code_id, run_code_id, '
+                '                 remakefile) VALUES (?, ?, ?, ?, ?)',
+                (rule.name, code_ids['inputs'], code_ids['outputs'], code_ids['run'],
+                 remakefile),
             )
             self.rule_ids[rule.name] = (cur.lastrowid, code_ids['run'])
             return True, False
 
-        rule_id, *code_id_list = row
+        rule_id, *code_id_list, stored_remakefile = row
         code_ids = dict(zip(['inputs', 'outputs', 'run'], code_id_list))
         changed = False
         for part in ['inputs', 'outputs', 'run']:
@@ -185,20 +197,44 @@ class Sqlite3Backend(MetadataManager):
             if not self.code_comparer(stored, source[part]):
                 code_ids[part] = self._insert_code(source[part])
                 changed = True
+        # Duplicate-rule-name guard: in a shared .remake/ store, a same-named
+        # rule whose code differs and was last written by a *different* known
+        # remakefile is a collision (two pipelines clobbering each other's
+        # state/logs/jobs), not an ordinary edit. See discussion in
+        # design_docs/discussion.md ("single .remake/ per directory").
+        if (changed and remakefile and stored_remakefile
+                and stored_remakefile != remakefile):
+            logger.warning(
+                "rule '{}' is defined in both '{}' and '{}', which share the "
+                "same .remake/ store in this directory. They will overwrite each "
+                "other's recorded state (causing spurious reruns) and clash on "
+                ".remake/jobs/{}.json and the per-task log/SLURM-output dirs. "
+                "Rename one rule, run them in separate directories, or — if it is "
+                "meant to be the same rule — import it from a shared module. "
+                "(If the rule is intentionally shared, this fires after an edit "
+                "and can be ignored.)",
+                rule.name, remakefile, stored_remakefile, rule.name,
+            )
         if changed:
             logger.trace('rule {}: stored code changed', rule.name)
             self.conn.execute(
-                'UPDATE rule SET inputs_code_id = ?, outputs_code_id = ?, run_code_id = ? '
-                'WHERE id = ?',
-                (code_ids['inputs'], code_ids['outputs'], code_ids['run'], rule_id),
+                'UPDATE rule SET inputs_code_id = ?, outputs_code_id = ?, '
+                '                run_code_id = ?, remakefile = ? WHERE id = ?',
+                (code_ids['inputs'], code_ids['outputs'], code_ids['run'],
+                 remakefile if remakefile is not None else stored_remakefile, rule_id),
             )
+        elif remakefile is not None and remakefile != stored_remakefile:
+            # Provenance moved (e.g. a shared rule run from another file) but the
+            # code is unchanged: record the new owner without a spurious rerun.
+            self.conn.execute(
+                'UPDATE rule SET remakefile = ? WHERE id = ?', (remakefile, rule_id))
         self.rule_ids[rule.name] = (rule_id, code_ids['run'])
         return row is None, changed
 
-    def ensure_rules(self, rules):
+    def ensure_rules(self, rules, remakefile=None):
         ninserted = nchanged = 0
         for rule in rules:
-            inserted, changed = self._ensure_rule(rule)
+            inserted, changed = self._ensure_rule(rule, remakefile)
             ninserted += inserted
             nchanged += changed
         logger.debug(

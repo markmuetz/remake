@@ -24,8 +24,10 @@ class TaskRecord:
 
 class MetadataManager(abc.ABC):
     @abc.abstractmethod
-    def ensure_rules(self, rules):
-        """Create/update stored rule metadata (source code) for these rules."""
+    def ensure_rules(self, rules, remakefile=None):
+        """Create/update stored rule metadata (source code) for these rules.
+        `remakefile` records which file defined them (provenance + the
+        duplicate-rule-name guard)."""
 
     @abc.abstractmethod
     def get_tasks_status(self, tasks) -> dict:

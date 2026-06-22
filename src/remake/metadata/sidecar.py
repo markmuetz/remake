@@ -37,7 +37,7 @@ class SidecarWriter(MetadataManager):
         # of which compute node ran it (no node-clock dependence).
         self.run_seq = run_seq
 
-    def ensure_rules(self, rules):
+    def ensure_rules(self, rules, remakefile=None):
         pass
 
     def get_tasks_status(self, tasks):

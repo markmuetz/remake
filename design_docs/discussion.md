@@ -732,6 +732,29 @@ design discussion before any work starts.
 
 ## Graduated (designed and implemented; kept for the record)
 
+- **Single `.remake/` per directory: rule provenance + duplicate-rule-name
+  guard.** **Done 2026-06-22.** One `.remake/remake.db` is shared by everything
+  run in a directory, and identity is namespaced only by rule name + kwargs
+  (`Task.key = sha1('<rule>:<kwargs>')`, task.py; `rule` looked up by name,
+  sqlite3_backend.py) — *no* remakefile component. This is deliberate: it lets a
+  pipeline split across imported files compose over one shared state/output
+  store. The cost is when two *different* co-located remakefiles define a rule
+  under the same name: they silently clobber each other's `rule`/`task` rows
+  (spurious code-change thrash), `.remake/jobs/<rule>.json`, and the per-task
+  log / SLURM-output dirs — and a code edit is indistinguishable from a
+  collision without provenance. Shipped: a `remakefile` column on the `rule`
+  table (recording which file last defined each rule; forward-compat migration
+  in `_add_missing_columns`), threaded via `ensure_rules(..., remakefile=)`. The
+  guard warns in `_ensure_rule` when a same-named rule's code differs *and* was
+  last written by a different known remakefile — distinguishing a collision from
+  an ordinary same-file edit; identical-source shared rules never warn. Tests in
+  test_metadata.py. Provenance is independently useful (inspection, future GC of
+  orphaned records once a remakefile is deleted).
+  - *Still open (parked):* surface the same check statically in `remake lint`
+    (pre-run, scans sibling remakefiles); and a `Remake(name=…)` namespace as an
+    opt-in escape hatch if real collisions warrant full isolation. Default stays
+    a warning (not an error) — co-location is rare and sometimes intentional.
+
 - **Dynamic matrices: defer on *stale* upstream, not just *absent* (Fix
   A+B).** **Done 2026-06-17.** A callable matrix expanded at plan time from
   an on-disk output that an upstream was about to overwrite ran the wrong

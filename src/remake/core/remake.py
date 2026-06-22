@@ -69,7 +69,7 @@ class Remake:
 
             self.metadata = Sqlite3Backend()
         self.dag = build_rule_dag(self.rules)
-        self.metadata.ensure_rules(self.rules)
+        self.metadata.ensure_rules(self.rules, remakefile=self.remakefile)
         self._finalized = True
         return self
 

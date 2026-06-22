@@ -70,6 +70,15 @@ originated with him, reconstructed from the session transcripts in
 - **remake-daemon** orchestration concept (discussed and parked).
 - **Opt-in stats/run-history record** — proposed recording run statistics, kept
   deliberately opt-in.
+- **Rule provenance + duplicate-rule-name guard.** From discussing the single
+  `.remake/` store shared by co-located remakefiles, identified the silent
+  collision when two remakefiles define a different rule under the same name
+  (they clobber each other's recorded state, logs and SLURM job specs) and
+  directed the fix: record the owning remakefile in the `rule` table and warn
+  when a same-named rule's code differs and was last written by another file.
+  Framed the broader rationale — *"it is good for the DB to know where rules
+  are defined anyway"* — so provenance also underpins inspection and future GC
+  of orphaned records.
 
 ## CLI and tooling
 
