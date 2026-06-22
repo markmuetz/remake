@@ -62,5 +62,12 @@ class CodeComparer:
             # If you do this, the debugger will be stuck down the
             # recursion loop, and you cannot inspect vars.
             raise re
+        except Exception:
+            # Any other parse/compare failure (e.g. ValueError on source
+            # containing null bytes): degrade to "changed" rather than crashing
+            # the plan — code1 != code2 already, so rerunning is the safe
+            # outcome. Catches Exception, not BaseException, so KeyboardInterrupt
+            # / SystemExit still propagate (unlike remake2's bare except).
+            res = False
         self.compare_cache[key] = res
         return res
