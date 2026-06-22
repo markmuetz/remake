@@ -127,9 +127,77 @@ This bug and its fix are Mark's, end to end (see
   the `key concepts` and `task state` explainers, the basic→advanced ordering of
   the worked examples, and the `remake_vs` comparison study and niche write-up.
 
+## Field validation on JASMIN (added on the HPC machine)
+
+The contributions below were reconstructed from the session transcripts on the
+**JASMIN machine** — the sessions where remake3 first met real SLURM, real
+shared NFS, and real remake2 pipelines. They are Mark's, made or approved by him
+under the same framing as above. Where they touch areas already listed (the
+sidecar model, SLURM layout, the skill), they record the empirical pressure that
+shaped those decisions in practice rather than on paper.
+
+### SQLite contention — empirical scepticism
+
+- **Refused to declare the lock-retry machinery proven on one data point.** After
+  a 176-element `ex4` array hit `.remake/remake.db` on NFS with zero lock errors,
+  rejected marking `retry_lock_commit` resolved: *"I don't think we've stressed
+  `.remake/remake.db` enough yet. Let's write a custom script to really hammer it
+  from a bunch of SLURM array jobs."* Directed a dedicated stress harness
+  (`tests/benchmarks/bench_sqlite_contention.py`) of independent, output-less,
+  near-instant rules with no `depends_on`, so all array jobs hammer the DB
+  concurrently with no staggering.
+- **Drove the bisection toward the contention cliff** (800-way → 400-way) and
+  recognised the harness was pushing the DB far harder than any real run so far —
+  surfacing a livelock well below 400-way concurrency that the moderate `ex4`
+  width had hidden.
+- **Single-source-of-truth critique of the sidecar/serial-ingest fix.** Flagged
+  the cost that the proposed contention relief introduces: *"there's no longer a
+  single source of truth for the state of the tasks. Any `remake info` call will
+  be seeing the state as it was when the tasks were submitted, unless it walks
+  the sidecars."* — the tension the "halfway house" fallback (above) has to
+  resolve.
+- **Concurrency-of-invocation question** — asked what happens if a user runs a
+  remakefile while jobs are still queued/running on SLURM, and whether array jobs
+  have changed the answer.
+
+### Concurrency bugs found in anger
+
+- **Shared-log corruption under array writers.** Identified that
+  `.remake/remake.log` (a single loguru file sink) interleaves and garbles under
+  concurrent SLURM array writers on NFS — a real bug invisible to single-process
+  runs — and directed the move to **per-task log files**
+  (`.remake/tasks/log/<rule>/<key[:2]>/<key[2:]>.log`).
+- **Upstream-failure propagation, tested for real.** Asked for the
+  failure-propagation test to be drafted and for the **`--kill-on-invalid-dep`**
+  sbatch-template change, so a failed array element actually stops its dependents
+  rather than letting them run into missing inputs.
+- **Multiproc CPU detection on shared nodes** — questioned whether the multiproc
+  executor needed checking on a high-CPU JASMIN node, then had it switched to
+  `os.sched_getaffinity` so it respects the cores actually allocated rather than
+  the machine's total.
+
+### CLI and dependency philosophy
+
+- **`remake why` across many tasks** — recalled remake2's `remake info
+  --reasons` (the per-task "why") and proposed surfacing it for *all* matching
+  tasks, not one.
+- **Deduplicated failure reporting** — proposed shortening remake2's unwieldy
+  `remake info -F` to *unique failures plus a count*. When offered Drain3 for the
+  log-template dedup, steered to a lighter touch: *"Drain3 is an approach, but use
+  the original. Let's keep deps down."* — a standing **dependency-minimalism**
+  rule for the project.
+
+### Dogfooding the skill on real pipelines
+
+- Drove the first real-world exercise of the remake skill and the hand-migration
+  workflow: copying `wescon-tools` and migrating its `ctrl/remakefiles/` from
+  remake2 to remake3 by hand (LLM), validating the migration guide against
+  genuine Style-A `Rule` pipelines rather than toy examples.
+
 ---
 
 *Compiled by Claude Code from the project's session transcripts at Mark's
-request. The framing throughout: Mark Muetzelfeldt is the designer and decision
--maker; Claude Code implemented under his direction, starting from the remake2
-codebase.*
+request — the original sections on the local development machine, the "Field
+validation on JASMIN" section on the HPC machine. The framing throughout: Mark
+Muetzelfeldt is the designer and decision-maker; Claude Code implemented under
+his direction, starting from the remake2 codebase.*
