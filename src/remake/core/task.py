@@ -9,8 +9,8 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from hashlib import sha1
 
-from ..tokens import OutputToken, as_token
 from .rule import Rule
+from .tokens import OutputToken, as_token
 
 
 def _resolve(spec, kwargs, wrap_tokens):

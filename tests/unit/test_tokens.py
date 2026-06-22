@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from remake.tokens import FileToken, S3Object, ZarrStore, as_token
+from remake.core.tokens import FileToken, S3Object, ZarrStore, as_token
 
 
 def test_file_token_is_path_like():

@@ -331,8 +331,8 @@ remake/
 │   ├── task.py            # Task dataclass — lightweight, lazy
 │   ├── dag.py             # Rule-level DAG construction (pure functions)
 │   ├── planner.py         # Decides which tasks need running (pure)
-│   └── scope.py           # Free-variable analysis, uses tracking
-├── tokens.py              # OutputToken ABC + FileToken/ZarrStore/S3Object
+│   ├── scope.py           # Free-variable analysis, uses tracking
+│   └── tokens.py          # OutputToken ABC + FileToken/ZarrStore/S3Object
 ├── metadata/
 │   ├── metadata_manager.py # MetadataManager ABC, TaskRecord, statuses
 │   ├── sqlite3_backend.py  # Production backend (+ sidecar ingestion)

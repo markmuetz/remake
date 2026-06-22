@@ -8,7 +8,7 @@
 > described in §4; the SLURM payload is `run-array-task` with sidecar
 > results (see slurm_implementation.md, "Sidecar result files"); dask was
 > re-added 2026-06-12 on the same model (basic executor only — see
-> discussion.md, parked); tokens are one module (`tokens.py`).
+> discussion.md, parked); tokens are one module (`core/tokens.py`).
 
 How to transform the existing remake2 code in `src/remake/` into the design in
 [remake3_design.md](remake3_design.md). Covers the next five items of the
@@ -210,9 +210,11 @@ the next plan — but tests should pin it.
 
 New code; remake2 has no equivalent (outputs are bare `Path`s).
 
-- **One module, `src/remake/tokens.py`** — not a `tokens/` package. Four
+- **One module, `src/remake/core/tokens.py`** — not a `tokens/` package. Four
   small classes don't need five files; split later if token types
-  proliferate.
+  proliferate. (Lives in `core/`: an output token is part of the core build
+  model — `core/task.py`/`planner.py`/`remake.py` depend on it. Moved from the
+  top level 2026-06-22.)
 - Contents per the design doc: `OutputToken` ABC (`identity()`,
   `is_complete()`, `__str__`), transparent `PathToken` base (`__fspath__`),
   `FileToken`, `ZarrStore`, `S3Object`. Plus `as_token(value)`: wraps plain
@@ -368,7 +370,7 @@ replacements land, not up front — the package stays importable throughout.
 | `core/archive.py` | Delete |
 | `core/exceptions.py` | Keep, extend |
 | `core/dag.py` / `core/planner.py` / `core/scope.py` | New |
-| `tokens.py` | New |
+| `core/tokens.py` | New |
 | `metadata/metadata_manager.py` | Adapt |
 | `metadata/sqlite3_metadata_manager.py` | Adapt |
 | `executors/executor.py` | Keep |

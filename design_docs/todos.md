@@ -271,3 +271,27 @@ assessment (2026-06-11). Ordered roughly by severity.
   since last run"); the remaining "AST" mentions are internal only
   (`core/scope.py`, `util/code_compare.py`, `core/planner.py` docstrings/
   comments) and are fine to keep.
+- [ ] Execution observability: per-task timing + a run summary. Logging is
+  well-structured (debug-summarises / trace-per-element, followed consistently)
+  and planning/metadata are well covered with counts and timings, but there is
+  **no timing in execution** — `perf_counter` appears only in the planner and
+  metadata, nowhere in the executors or `run_task` (verified by grep). For a
+  tool built for long SLURM pipelines this is the biggest logging gap. Concrete
+  asks, in priority order:
+  1. **Per-task duration.** Executors log a task's *start* (`3/100: process[n=3]`)
+     but never its completion or elapsed time. Add timing in the `Executor`
+     base / `run_task` so all four executors (singleproc/multiproc/dask/slurm)
+     get it uniformly — completion + duration at `debug` (per the "summarise
+     loops" convention; avoid per-task `info` spam). This is the raw material
+     for the MaxRSS/wallclock resource-advice idea and the parked stats /
+     run-history store (discussion.md) — a lightweight logging precursor.
+  2. **Run-level summary at `info`.** `run()` returns `nfailed` and only logs on
+     failure; add a one-line success summary, e.g. "ran 100 task(s), 0 failed
+     in 42.3s".
+  3. **`run_task` debug line with resolved I/O paths.** It currently logs only
+     on failure; a `debug`/`trace` "running {task}" with the resolved
+     input/output paths would show what a task actually read/wrote — the logging
+     side of the `io_hash` recorded-vs-current item above.
+  - Lesser: log the chosen executor/nproc/config at run start (debug); the
+    direct-DB-write-vs-sidecar decision and per-task `update_task` are unlogged
+    (trace would suffice).
