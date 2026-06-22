@@ -9,7 +9,11 @@ stopping the world, and skips downstream tasks that depended on it.
 remake info pipeline.py --show-failures
 ```
 
-prints each failed task with its stored traceback and failure timestamp.
+groups failed tasks by their unique traceback signature with a count (so one
+bug across a thousand tasks is one entry), each with its stored traceback and
+timestamp. Add `--all-failures` to list every failed task individually instead
+of grouping. `remake info pipeline.py --reasons` gives the complementary view:
+a per-rule tally of *why* the to-run tasks would rerun.
 
 ## Why did (or didn't) a task run?
 
@@ -17,8 +21,11 @@ prints each failed task with its stored traceback and failure timestamp.
 remake why pipeline.py <task>
 ```
 
-explains the planner's decision for a task — up to date, code changed, input
-newer, never run, upstream failed, and so on.
+explains the planner's decision for a task — up to date, never run, last run
+failed/pending, run code changed, `uses=` changed, inputs/outputs spec changed,
+outputs missing, or an upstream rerunning (remake never consults file mtimes).
+`<task>` is a task-key prefix; or pass `-Q "<query>"` to explain every matching
+task, or omit both to explain the whole runnable set.
 
 One reason worth knowing is **upstream-newer**: an upstream was rebuilt in a
 later invocation than this task without rerunning it in the same pass — for

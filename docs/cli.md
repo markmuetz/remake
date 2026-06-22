@@ -62,7 +62,9 @@ remake run pipeline.py [options]
 |---|---|
 | `-Q, --query` | filter tasks |
 | `-t, --tasks` | list individual tasks with status |
-| `-F, --show-failures` | show stored tracebacks of failed tasks |
+| `-F, --show-failures` | show failures grouped by unique traceback signature + count |
+| `--all-failures` | with `-F`, show every failed task individually (not grouped) |
+| `--reasons` | per-rule tally of *why* the to-run tasks would rerun |
 | `--json` | machine-readable output |
 
 ## Selecting a single task

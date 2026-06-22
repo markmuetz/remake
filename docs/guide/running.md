@@ -7,6 +7,12 @@ remake run pipeline.py
 `run` plans the DAG, works out which tasks are needed, and executes them with
 the chosen executor.
 
+remake operates from the remakefile's own directory: `remake run sub/pipeline.py`
+changes into `sub/` first, so the `.remake/` store, the log, and the pipeline's
+relative input/output paths are all anchored to the remakefile rather than to
+wherever you launched the command. Running from the remakefile's directory (the
+usual case) is unaffected.
+
 ## Executors
 
 Select with `-E/--executor`:
@@ -101,3 +107,9 @@ remake set-state pipeline.py -Q "rule == 'process'" --pending
 whose outputs already exist without recomputing them. Because the default
 `check_outputs='never'` mode never adopts on-disk outputs implicitly, this is
 how you migrate an existing output tree into remake.
+
+`set-state --success` also **cascades** by default: it re-stamps the matched
+tasks *and* their already-complete downstream tasks, so settling a mid-pipeline
+task doesn't leave its descendants looking stale and needlessly rerunning (a
+guard skips any descendant that has a genuinely-newer other upstream). Use
+`--no-cascade` to stamp only the matched tasks.

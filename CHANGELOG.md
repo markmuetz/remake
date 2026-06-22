@@ -65,7 +65,14 @@ first stable release of the rewrite.)
     `run --ignore-code-changes` (rerun only never-succeeded tasks);
     `run -X/--debug-exception` to drop into pdb on the first failure.
   - `set-state --success`/`--pending` (with `-Q`) to record state without
-    running; `--success --check-outputs` adopts an existing output tree.
+    running; `--success --check-outputs` adopts an existing output tree;
+    `--success` cascades to downstream complete tasks by default (guarded),
+    with `--no-cascade` to opt out.
+- **Duplicate-rule-name guard.** The `rule` table records which remakefile
+  defined each rule; when two co-located remakefiles (sharing one `.remake/`)
+  define a *different* rule under the same name — which would otherwise silently
+  clobber each other's state, logs and SLURM job specs — `ensure_rules` warns,
+  distinguishing a collision from an ordinary same-file edit.
 - **`-T`/`-D`/`-I`/`-W` logging levels** (trace/debug/info/warning) and an
   always-on rotating file log at `.remake/remake.log`.
 - **SQLite metadata backend** (`.remake/remake.db`) with a defensive
@@ -87,9 +94,26 @@ first stable release of the rewrite.)
 - **`run --ignore-code-changes` is long-form only** — its former `-I` short
   flag collided with the global `--info`/`-I`, so `-I` now unambiguously means
   info-logging.
+- **Commands run from the remakefile's directory.** `remake <cmd> sub/pipeline.py`
+  now changes into `sub/` first, so `.remake/`, the log, and the pipeline's
+  relative input/output paths anchor to the remakefile rather than the
+  invocation cwd (no stray `.remake/` left in the launch directory). cwd is
+  restored after the command; running from the remakefile's own directory is
+  unchanged.
 
 ### Fixed
 
+- **Durable upstream→downstream rerun propagation.** Previously the
+  "an upstream reran, so rerun its consumer" signal lived only within a single
+  plan, so running an upstream without its consumer in the same pass — via a
+  targeted `run -Q`, or a crash between the two — left the consumer falsely
+  up-to-date, silently serving output built from stale input. A monotonic
+  `run_seq`, stamped on every task per invocation (and threaded through SLURM
+  sidecars), now makes the signal durable: a task reruns when an upstream's
+  stamp is newer. `remake why` reports this as **upstream-newer**, and
+  `set-state --success` is the supported way to declare a consumer still valid
+  (it stamps it current, cascading to downstream as above). See
+  `design_docs/bugs/01_durable_rerun_propagation.md`.
 - **User-facing errors print cleanly.** A `RemakeError` (bad query, a
   single-task command matching >1 task, an unknown rule/executor, a missing
   `submit.sh`, …) now prints `error: <message>` to stderr and exits 2, instead
