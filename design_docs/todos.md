@@ -252,9 +252,15 @@ assessment (2026-06-11). Ordered roughly by severity.
   build. Proposal: `why`/`task-info` (esp. `--json`) should show recorded vs
   current for the relevant hash, and ideally a segment-level diff for io_hash
   (`inputs=`/`outputs=`), so this needs no DB spelunking.
-- [ ] Calling e.g. `remake run path/to/remakefile.py` should cd into the 
+- [x] Calling e.g. `remake run path/to/remakefile.py` should cd into the
   remakefile's directory first, so that you don't create a new .remake directory
-  in cwd.
+  in cwd. **Done 2026-06-22.** `remake_cmd` cds into the remakefile's parent for
+  any subcommand with a `remakefile` arg, rewrites the arg to its bare name, and
+  restores cwd after dispatch (so in-process/library callers don't see cwd
+  move). `.remake/`, the pipeline's relative outputs, and the file log now
+  anchor to the remakefile; the SLURM scripts re-invoke `run-array-task` with
+  the bare name from the submit dir, so they stay consistent. Test:
+  test_cli.py::test_run_cds_into_remakefile_directory.
 - [x] "AST" is too technical for user-facing material. Reserve the term for
   internal docs/code and a deep-dive "how the planner decides" technical
   section; everywhere a user reads it say "code structure" (or "the code,

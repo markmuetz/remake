@@ -63,6 +63,27 @@ def test_dry_run_runs_nothing(pipeline_dir, capsys):
     assert not (pipeline_dir / 'data').exists()
 
 
+def test_run_cds_into_remakefile_directory(tmp_path, monkeypatch):
+    # `remake run sub/pipeline.py` from elsewhere must anchor .remake/ and the
+    # pipeline's relative outputs to the remakefile's directory, not cwd
+    # (todos.md), and must leave cwd unchanged afterwards.
+    monkeypatch.chdir(tmp_path)
+    sub = tmp_path / 'sub'
+    sub.mkdir()
+    (sub / 'pipeline.py').write_text(PIPELINE)
+
+    assert cli('run', 'sub/pipeline.py') == 0
+
+    # Anchored to the remakefile dir...
+    assert (sub / '.remake' / 'remake.db').exists()
+    assert (sub / 'data' / 'out_1.txt').read_text() == '11'
+    # ...not the invocation cwd.
+    assert not (tmp_path / '.remake').exists()
+    assert not (tmp_path / 'data').exists()
+    # cwd restored.
+    assert Path.cwd() == tmp_path
+
+
 def test_run_and_info(pipeline_dir, capsys):
     assert cli('run', 'pipeline.py') == 0
     assert (pipeline_dir / 'data/out_2.txt').read_text() == '22'

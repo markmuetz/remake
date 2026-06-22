@@ -4,6 +4,7 @@ Minimal surface: run, run-task, info, version. Declarative arg definitions
 and method-name dispatch carried over from remake2.
 """
 import argparse
+import os
 import re
 import sys
 from collections import Counter
@@ -1068,6 +1069,24 @@ def remake_cmd(argv=None):
             sys.stderr, colorize=True, format='<bold><lvl>{message}</lvl></bold>', level='INFO'
         )
 
+    # Anchor execution to the remakefile's directory: cd there so .remake/ and
+    # the pipeline's relative paths resolve next to the remakefile, not wherever
+    # the command happened to be invoked (todos.md). The embedded remakefile arg
+    # becomes a bare name, so the SLURM scripts (which re-invoke `remake
+    # run-array-task <remakefile>` from the submit dir) stay consistent.
+    # Restored after dispatch so in-process/library callers don't see cwd move.
+    orig_cwd = os.getcwd()
+    if getattr(args, 'remakefile', None):
+        rf = Path(args.remakefile).expanduser()
+        if str(rf.parent) not in ('', '.'):
+            try:
+                os.chdir(rf.parent)
+            except OSError as e:
+                print(f'error: cannot enter remakefile directory {rf.parent}: {e}',
+                      file=sys.stderr)
+                return 1
+        args.remakefile = rf.name
+
     # Per-task-process subcommands (SLURM array elements) get a per-task log
     # sink instead — concurrent appends to the shared log corrupt it on
     # NFS-class filesystems (see design_docs/per_task_logging.md).
@@ -1095,6 +1114,8 @@ def remake_cmd(argv=None):
             raise
         print(f'error: {e}', file=sys.stderr)
         return 2
+    finally:
+        os.chdir(orig_cwd)
 
 
 if __name__ == '__main__':
