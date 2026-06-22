@@ -241,6 +241,12 @@ class RemakeParser:
                     help='With --success: only tasks whose outputs are complete '
                          'on disk (the explicit adoption path for migrating an '
                          'existing output tree)'),
+                Arg('--no-cascade', action='store_true',
+                    help='With --success: stamp only the selected tasks. By '
+                         'default success also re-stamps downstream complete '
+                         'tasks so they are not left looking stale (a guard '
+                         'skips any descendant with an independently-newer '
+                         'upstream)'),
                 Arg('--dry-run', '-n', help='Show affected tasks, change nothing',
                     action='store_true'),
             ],
@@ -431,9 +437,12 @@ class RemakeParser:
         # finalizing (no ensure_rules, no DB connection) and record the
         # result as a sidecar file, ingested by the next plan/info.
         rmk = load_remake(args.remakefile, finalize=False)
-        rmk.metadata = SidecarWriter()
         specs = json.loads(Path(f'.remake/jobs/{args.rule}.json').read_text())
         spec = specs[args.index]
+        # run_seq was fixed at submission; carry it into the sidecar so its
+        # stamp matches the rest of this submission's tasks (older job specs
+        # without the field fall back to None — durable check just won't fire).
+        rmk.metadata = SidecarWriter(run_seq=spec.get('run_seq'))
         task = rmk.task_from_spec(spec['rule'], spec['kwargs'])
         _add_task_log_sink(task)
         logger.info(f'Running {task}')
@@ -455,15 +464,21 @@ class RemakeParser:
             raise RemakeError(f'{submit} failed (exit {result.returncode})')
 
     def remake_set_state(self, args):
+        from .core import expand_rule
+        from .core.exceptions import Defer
+        from .core.planner import cascade_settled
         from .metadata import TASK_STATUS_SUCCESS
 
         if args.success == args.pending:
             raise RemakeError('Give exactly one of --success / --pending')
         if args.check_outputs and not args.success:
             raise RemakeError('--check-outputs only applies to --success')
+        if args.no_cascade and not args.success:
+            raise RemakeError('--no-cascade only applies to --success')
 
         rmk = self._load(args)
         rmk.finalize()
+        rmk.metadata.begin_invocation()  # fresh run_seq for this set-state
         tasks = rmk.tasks(query=args.query)
         skipped = 0
         if args.check_outputs:
@@ -474,18 +489,56 @@ class RemakeParser:
             skipped = len(tasks) - len(verified)
             tasks = verified
 
+        cascaded = []
+        if args.success and not args.no_cascade:
+            cascaded = self._cascade_descendants(rmk, tasks, expand_rule, Defer,
+                                                 cascade_settled)
+
         state = 'success' if args.success else 'pending'
         for task in tasks:
             print(f'{task} -> {state}')
+        for task in cascaded:
+            print(f'{task} -> {state} (cascade)')
         suffix = f' ({skipped} skipped: outputs missing/incomplete)' if skipped else ''
+        cas = f', {len(cascaded)} cascaded' if cascaded else ''
         if args.dry_run:
-            print(f'{len(tasks)} task(s) would be set to {state}{suffix}')
+            print(f'{len(tasks)} task(s) would be set to {state}{cas}{suffix}')
             return
         if args.success:
-            rmk.metadata.update_tasks(tasks, TASK_STATUS_SUCCESS)
+            # One invocation → one run_seq, shared by selected + cascaded, so no
+            # intra-batch ordering false-triggers (equal run_seq, strict >).
+            rmk.metadata.update_tasks(tasks + cascaded, TASK_STATUS_SUCCESS)
         else:
             rmk.metadata.delete_tasks(tasks)
-        print(f'{len(tasks)} task(s) set to {state}{suffix}')
+        print(f'{len(tasks)} task(s) set to {state}{cas}{suffix}')
+
+    @staticmethod
+    def _cascade_descendants(rmk, selected_tasks, expand_rule, Defer, cascade_settled):
+        """Downstream SUCCESS tasks to re-stamp alongside `selected_tasks` so the
+        settled region stays consistent (see cascade_settled / bug 01)."""
+        run_seq, status, task_of = {}, {}, {}
+        for rule in rmk.rules:
+            try:
+                rtasks = expand_rule(rule)
+            except Defer:
+                continue
+            recs = rmk.metadata.get_tasks_status(rtasks)
+            run_seq[rule], status[rule], task_of[rule] = {}, {}, {}
+            for t in rtasks:
+                tid = frozenset(t.kwargs.items())
+                rec = recs.get(t.key)
+                run_seq[rule][tid] = rec.run_seq if rec else None
+                status[rule][tid] = rec.status if rec else None
+                task_of[rule][tid] = t
+        selected = {}
+        for t in selected_tasks:
+            selected.setdefault(t.rule, set()).add(frozenset(t.kwargs.items()))
+        settled = cascade_settled(set(rmk.rules), rmk.dag, selected, run_seq, status)
+        cascaded = []
+        for rule, ids in settled.items():
+            for tid in ids - selected.get(rule, set()):
+                cascaded.append(task_of[rule][tid])
+        return cascaded
 
     def remake_info(self, args):
         import json

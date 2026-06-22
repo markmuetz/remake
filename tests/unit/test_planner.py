@@ -166,6 +166,114 @@ def test_query_filters_and_missing_name_means_no_match(tmp_path):
     assert all(t.kwargs['n'] == 2 for t in runnable)
 
 
+def test_durable_propagation_after_partial_upstream_run(tmp_path):
+    # Rerun rule_a alone in a *later* invocation (query excludes b/c), so the
+    # in-pass propagation signal never reaches b. b must still rerun on the
+    # next plan because a's stored run_seq is now greater than b's (the
+    # cross-pass backstop). See bugs/01_durable_rerun_propagation.md.
+    rmk, rule_a, rule_b, rule_c = make_pipeline(tmp_path)
+    rmk.run()
+    rmk.run(query='rule == "rule_a"', force=True)  # a only, fresh run_seq
+    runnable, _ = rmk.plan()
+    names = sorted({t.rule.name for t in runnable})
+    assert names == ['rule_b', 'rule_c']  # b via run_seq, c via in-pass from b
+    assert len([t for t in runnable if t.rule is rule_b]) == 2
+
+
+def test_explain_reports_upstream_newer(tmp_path):
+    from remake.core.planner import explain_task
+
+    rmk, rule_a, rule_b, rule_c = make_pipeline(tmp_path)
+    rmk.run()
+    rmk.run(query='rule == "rule_a"', force=True)
+    task = next(t for t in rmk.tasks() if t.rule is rule_b and t.kwargs == {'n': 1})
+    will_run, reasons = explain_task(rmk.rules, rmk.dag, rmk.metadata, task)
+    cats = [r.category for r in reasons]
+    assert will_run and 'upstream-newer' in cats
+    msg = next(r.message for r in reasons if r.category == 'upstream-newer')
+    assert 'ran more recently' in msg
+
+
+def make_diamond(tmp_path):
+    # up1, up2 -> down -> tail. No matrices: one task per rule.
+    @rule(outputs={'o': str(tmp_path / 'up1.txt')})
+    def up1(outputs):
+        Path(outputs['o']).write_text('1')
+
+    @rule(outputs={'o': str(tmp_path / 'up2.txt')})
+    def up2(outputs):
+        Path(outputs['o']).write_text('2')
+
+    @rule(inputs={'a': str(tmp_path / 'up1.txt'), 'b': str(tmp_path / 'up2.txt')},
+          outputs={'o': str(tmp_path / 'down.txt')}, depends_on=[up1, up2])
+    def down(inputs, outputs):
+        Path(outputs['o']).write_text('d')
+
+    @rule(inputs=down.outputs, outputs={'o': str(tmp_path / 'tail.txt')}, depends_on=[down])
+    def tail(inputs, outputs):
+        Path(outputs['o']).write_text('t')
+
+    rmk = Remake(rules=[up1, up2, down, tail], metadata=Sqlite3Backend(':memory:'))
+    rmk.finalize()
+    return rmk, up1, up2, down, tail
+
+
+def test_cascade_settled_linear_stamps_descendants(tmp_path):
+    from remake.core.planner import cascade_settled
+    from remake.metadata import TASK_STATUS_SUCCESS
+
+    rmk, rule_a, rule_b, rule_c = make_pipeline(tmp_path)
+    rmk.finalize()
+    fs = frozenset()
+    a1, a2 = frozenset({'n': 1}.items()), frozenset({'n': 2}.items())
+    # a re-stamped newer (5); b, c older (1). All SUCCESS.
+    run_seq = {rule_a: {a1: 5, a2: 5}, rule_b: {a1: 1, a2: 1}, rule_c: {fs: 1}}
+    status = {r: {k: TASK_STATUS_SUCCESS for k in run_seq[r]} for r in run_seq}
+    selected = {rule_a: {a1, a2}}
+    settled = cascade_settled(set(rmk.rules), rmk.dag, selected, run_seq, status)
+    # Single-dep descendants: guard never fires, so b and c are both cascaded.
+    assert settled[rule_b] == {a1, a2}
+    assert settled[rule_c] == {fs}
+
+
+def test_cascade_settled_diamond_guard_protects_independent_upstream(tmp_path):
+    from remake.core.planner import cascade_settled
+    from remake.metadata import TASK_STATUS_SUCCESS
+
+    rmk, up1, up2, down, tail = make_diamond(tmp_path)
+    fs = frozenset()
+    # Settle up1 (=5). up2 reran independently (=4) and is NOT settled; down/tail
+    # old (=2). The guard must skip `down` (up2 newer & unsettled) — and so its
+    # descendant `tail` is not reached either.
+    run_seq = {up1: {fs: 5}, up2: {fs: 4}, down: {fs: 2}, tail: {fs: 2}}
+    status = {r: {fs: TASK_STATUS_SUCCESS} for r in run_seq}
+    settled = cascade_settled(set(rmk.rules), rmk.dag, {up1: {fs}}, run_seq, status)
+    assert settled.get(down, set()) == set()   # guarded: down left to rerun
+    assert settled.get(tail, set()) == set()
+
+    # If up2 is *also* settled, down's only newer upstreams are settled → cascade.
+    settled = cascade_settled(set(rmk.rules), rmk.dag, {up1: {fs}, up2: {fs}},
+                              run_seq, status)
+    assert settled[down] == {fs} and settled[tail] == {fs}
+
+
+def test_cascade_settled_skips_non_success_descendant(tmp_path):
+    from remake.core.planner import cascade_settled
+    from remake.metadata import TASK_STATUS_FAILED, TASK_STATUS_SUCCESS
+
+    rmk, rule_a, rule_b, rule_c = make_pipeline(tmp_path)
+    rmk.finalize()
+    fs = frozenset()
+    a1, a2 = frozenset({'n': 1}.items()), frozenset({'n': 2}.items())
+    run_seq = {rule_a: {a1: 5, a2: 5}, rule_b: {a1: 1, a2: 1}, rule_c: {fs: 1}}
+    status = {rule_a: {a1: TASK_STATUS_SUCCESS, a2: TASK_STATUS_SUCCESS},
+              rule_b: {a1: TASK_STATUS_SUCCESS, a2: TASK_STATUS_FAILED},
+              rule_c: {fs: TASK_STATUS_SUCCESS}}
+    settled = cascade_settled(set(rmk.rules), rmk.dag, {rule_a: {a1, a2}},
+                              run_seq, status)
+    assert settled[rule_b] == {a1}  # the failed b[n=2] is left to rerun
+
+
 def test_make_predicate():
     pred = make_predicate("n > 1 and model == 'era5'")
     assert pred({'n': 2, 'model': 'era5'})

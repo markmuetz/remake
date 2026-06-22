@@ -90,6 +90,21 @@ doc in `design_docs/` when work on it starts.
 - [x] ~~remake2 migration tool~~ replaced by the migration section of the
   Claude skill (decision: LLM translation, not an automated tool)
 
+## Known bugs (tracked in `design_docs/bugs/`)
+
+- [x] **01 — Durable rerun propagation.** (Fixed 2026-06-22.) Upstream→downstream rerun
+  propagation is ephemeral (in-pass only), so running an upstream without its
+  consumer in the same pass — via a crash, or routine `run -Q` targeting —
+  strands the consumer in a falsely up-to-date state, silently serving stale
+  output. Fix: a persisted monotonic `run_seq` per `remake run`, compared
+  against upstreams in the planner (option 2 of the design); plus a new
+  `upstream-newer` reason in `remake why` and a guarded, cascade-by-default
+  `set-state --success` (`--no-cascade` to opt out). Full design, scenarios
+  and implementation steps:
+  [bugs/01_durable_rerun_propagation.md](bugs/01_durable_rerun_propagation.md).
+  Regression test already red:
+  `test_partial_target_rerun_propagates_to_downstream`.
+
 ## What's left, at a glance (2026-06-12)
 
 The road from the shipped `0.8.0a0` alpha to the full `0.8.0` release —

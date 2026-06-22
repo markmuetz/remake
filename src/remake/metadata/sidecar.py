@@ -31,11 +31,20 @@ class SidecarWriter(MetadataManager):
     """Metadata backend for per-task array processes: records results as
     sidecar files and opens no DB connection at all."""
 
+    def __init__(self, run_seq=None):
+        # Assigned on the submit node and read from the job spec, so every
+        # array element of one submission records the same run_seq regardless
+        # of which compute node ran it (no node-clock dependence).
+        self.run_seq = run_seq
+
     def ensure_rules(self, rules):
         pass
 
     def get_tasks_status(self, tasks):
         return {}
+
+    def current_run_seq(self):
+        return self.run_seq
 
     def update_task(self, task, status, exception=''):
         path = task_result_path(task.rule.name, task.key)
@@ -45,6 +54,7 @@ class SidecarWriter(MetadataManager):
             'exception': exception,
             'uses_hash': compute_uses_hash(task.rule.uses),
             'io_hash': compute_io_hash(task.rule),
+            'run_seq': self.run_seq,
             # Matches the format sqlite's datetime('now') stores (UTC).
             'timestamp': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
         }

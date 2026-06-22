@@ -24,7 +24,7 @@ tell the user: that's a CLI gap worth reporting upstream.
 
 ```
 remake run <remakefile> [-E singleproc|multiproc|slurm|dask|mod:Class] [-j nproc] [-Q query] [-f|--force] [-I|--ignore-code-changes] [-n|--dry-run] [--check-outputs]
-remake set-state <remakefile> -Q query (--success [--check-outputs] | --pending) [-n]
+remake set-state <remakefile> -Q query (--success [--check-outputs] [--no-cascade] | --pending) [-n]
 remake info <remakefile> [-Q query] [-t|--tasks] [-F|--show-failures] [--json]
 remake ls-tasks <remakefile> [-Q query] [--json]   # enumerate tasks/keys (no DB reads)
 remake lint <remakefile> [--json]                  # check input/output wiring between rules
@@ -133,7 +133,8 @@ work anywhere a key is accepted (like git).
 
 **`remake why <file> <selector>`** answers this directly: will-run
 yes/no plus the applicable reasons (never run / failed / code changed
-with diff / uses changed / outputs incomplete / upstream propagation).
+with diff / uses changed / outputs incomplete / upstream propagation,
+in-pass or durable `upstream-newer`).
 
 Background for interpreting its output — the planner's checks, in order:
 
@@ -149,9 +150,19 @@ Background for interpreting its output — the planner's checks, in order:
    repr) → reruns.
 6. check_outputs `always` only: a declared output is missing/incomplete
    → reruns.
-7. Upstream propagation: an upstream task reran. Element-wise if this
-   rule shares the upstream's matrix (only the matching element reruns);
-   otherwise conservative (ALL tasks rerun — fan-in pays this).
+7. Upstream propagation (in-pass): an upstream task reran *this pass*.
+   Element-wise if this rule shares the upstream's matrix (only the
+   matching element reruns); otherwise conservative (ALL tasks rerun —
+   fan-in pays this).
+8. Upstream propagation (durable / cross-pass): an upstream committed in
+   a *later invocation* than this task without rerunning it in the same
+   pass — e.g. you ran the upstream alone with `run -Q`, or a crash
+   killed the consumer before it ran. Caught by a persisted per-run
+   counter (`run_seq`): a task reruns when an upstream's stamp is greater
+   than its own. `why` reports this as **upstream-newer** ("an upstream
+   ran more recently … output may be stale"). Without it, settling an
+   upstream alone would silently strand the consumer as falsely
+   up-to-date.
 
 Common surprises: renaming a kwarg or changing matrix values changes
 task keys → everything looks never-run (rule 2 may rescue via outputs);
@@ -195,6 +206,19 @@ running anything (migration adoption: `set-state file -Q True --success
 --check-outputs`); `--pending` deletes records — but note complete
 outputs are re-adopted by the default check_outputs mode, so to force a
 rerun use `run --force` instead.
+
+`--success` stamps the current `run_seq` (see rerun reason 8), so a
+settled task becomes the newest in the graph and no upstream out-ranks
+it. By default it also **cascades**: downstream complete tasks are
+re-stamped too, so settling a mid-graph task doesn't leave its
+descendants looking stale and rerunning. A guard skips any descendant
+that has an *independently newer* upstream (a diamond where another
+branch genuinely changed), so cascade never swallows a real rerun. Use
+`--no-cascade` to stamp only the selected tasks. Because `--success`
+makes a task newer than its upstreams, it's also the escape hatch for
+the conservative cross-pass rerun: if an upstream reran but its output
+didn't actually change, `set-state -Q 'rule == "consumer"' --success`
+stops the spurious rebuild.
 
 **The fix-one-failure idiom.** proc[n=42] of 100 failed; the user edits
 the rule code to handle it. A plain `run` now wants all 100 (code

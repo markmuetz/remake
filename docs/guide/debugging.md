@@ -20,6 +20,16 @@ remake why pipeline.py <task>
 explains the planner's decision for a task — up to date, code changed, input
 newer, never run, upstream failed, and so on.
 
+One reason worth knowing is **upstream-newer**: an upstream was rebuilt in a
+later invocation than this task without rerunning it in the same pass — for
+example you ran the upstream alone with `run -Q`, or a crash killed the
+consumer first. remake tracks this with a per-run counter, so the consumer is
+not silently left looking up-to-date; it reruns, and `why` reports "an upstream
+ran more recently … output may be stale". If the upstream's output did *not*
+actually change and you want to stop the rebuild, mark the consumer complete
+with `set-state -Q '<consumer>' --success` (which by default also settles its
+downstream).
+
 ## Per-task logs
 
 ```bash

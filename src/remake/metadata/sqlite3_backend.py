@@ -43,6 +43,7 @@ CREATE TABLE task (
     run_code_id INTEGER,
     uses_hash TEXT,
     io_hash TEXT,
+    run_seq INTEGER,
     last_run_timestamp TIMESTAMP,
     last_run_status INTEGER,
     exception TEXT,
@@ -52,6 +53,17 @@ CREATE TABLE task (
 );
 
 CREATE UNIQUE INDEX task_key_index ON task(key);
+
+-- Key/value store. run_seq: a monotonic counter, one value allocated per
+-- `remake run`/`set-state` invocation, stamped onto every task that
+-- invocation commits. The planner reruns a task when an upstream's stamp is
+-- greater (a durable replacement for in-pass-only rerun propagation) — see
+-- design_docs/bugs/01_durable_rerun_propagation.md.
+CREATE TABLE meta (
+    key TEXT NOT NULL PRIMARY KEY,
+    value INTEGER NOT NULL
+);
+INSERT INTO meta(key, value) VALUES ('run_seq', 0);
 """
 
 
@@ -94,16 +106,53 @@ class Sqlite3Backend(MetadataManager):
             self._add_missing_columns()
         self.conn.isolation_level = 'EXCLUSIVE'
         self.rule_ids = {}  # rule name -> (rule_id, run_code_id)
+        # Lazily allocated once per process (= per invocation); shared by every
+        # task this invocation commits. See the `meta` table comment.
+        self._run_seq = None
 
     def _add_missing_columns(self):
         """Lightweight forward-compat for columns added after a DB was first
         created (still no general migration support — see the module docstring).
-        A pre-existing record left with io_hash NULL is treated as 'not yet
-        tracked' by the planner, so upgrading does not force a mass rerun."""
+        A pre-existing record left with io_hash/run_seq NULL is treated as 'not
+        yet tracked' by the planner, so upgrading does not force a mass rerun."""
         cols = {row[1] for row in self.conn.execute('PRAGMA table_info(task)')}
         if 'io_hash' not in cols:
             logger.info('Adding task.io_hash column to existing DB')
             self.conn.execute('ALTER TABLE task ADD COLUMN io_hash TEXT')
+        if 'run_seq' not in cols:
+            logger.info('Adding task.run_seq column to existing DB')
+            self.conn.execute('ALTER TABLE task ADD COLUMN run_seq INTEGER')
+        tables = {row[0] for row in self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        if 'meta' not in tables:
+            logger.info('Adding meta table to existing DB')
+            self.conn.execute(
+                'CREATE TABLE meta (key TEXT NOT NULL PRIMARY KEY, value INTEGER NOT NULL)')
+            self.conn.execute("INSERT INTO meta(key, value) VALUES ('run_seq', 0)")
+            self.conn.commit()
+
+    @retry_lock_commit
+    def _allocate_run_seq(self):
+        self.conn.execute("UPDATE meta SET value = value + 1 WHERE key = 'run_seq'")
+        (value,) = self.conn.execute(
+            "SELECT value FROM meta WHERE key = 'run_seq'").fetchone()
+        return value
+
+    def begin_invocation(self):
+        """Allocate a fresh run_seq for a new logical invocation (a `run()` or
+        a `set-state`), so repeated invocations on one backend instance still
+        advance — the CLI starts a fresh process each time, but programmatic
+        callers reuse the object."""
+        self._run_seq = self._allocate_run_seq()
+
+    def current_run_seq(self):
+        """This invocation's run_seq, allocating it on first use. Every task
+        committed in the invocation shares the value, so a single run/set-state
+        stamps one logical 'wave' (cross-node-safe: assigned here, not read
+        from a compute node's clock)."""
+        if self._run_seq is None:
+            self._run_seq = self._allocate_run_seq()
+        return self._run_seq
 
     def _insert_code(self, code):
         cur = self.conn.execute('INSERT INTO code(code) VALUES (?)', (code,))
@@ -170,12 +219,13 @@ class Sqlite3Backend(MetadataManager):
             placeholders = ','.join('?' * len(chunk))
             rows = self.conn.execute(
                 'SELECT task.key, task.last_run_status, task.last_run_timestamp, '
-                '       task.uses_hash, task.io_hash, task.exception, code.code '
+                '       task.uses_hash, task.io_hash, task.run_seq, task.exception, code.code '
                 'FROM task LEFT JOIN code ON task.run_code_id = code.id '
                 f'WHERE task.key IN ({placeholders})',
                 chunk,
             ).fetchall()
-            for key, status, timestamp, stored_uses_hash, stored_io_hash, exception, run_code in rows:
+            for (key, status, timestamp, stored_uses_hash, stored_io_hash,
+                 run_seq, exception, run_code) in rows:
                 records[key] = TaskRecord(
                     key=key,
                     status=status,
@@ -184,6 +234,7 @@ class Sqlite3Backend(MetadataManager):
                     uses_hash=stored_uses_hash or '',
                     exception=exception or '',
                     io_hash=stored_io_hash,  # None for pre-upgrade records
+                    run_seq=run_seq,  # None for pre-upgrade/never-stamped records
                 )
         logger.debug(
             'queried status of {} task(s) in {} chunk(s), {} found, in {:.3f}s',
@@ -234,12 +285,13 @@ class Sqlite3Backend(MetadataManager):
             rule_id, run_code_id = self.rule_ids[rule.name]
             self.conn.execute(
                 'INSERT INTO task(key, rule_id, run_code_id, uses_hash, io_hash, '
-                '                 last_run_timestamp, last_run_status, exception) '
-                'VALUES (?, ?, ?, ?, ?, ?, ?, ?) '
+                '                 run_seq, last_run_timestamp, last_run_status, exception) '
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) '
                 'ON CONFLICT(key) DO UPDATE SET '
                 '    run_code_id = excluded.run_code_id, '
                 '    uses_hash = excluded.uses_hash, '
                 '    io_hash = excluded.io_hash, '
+                '    run_seq = excluded.run_seq, '
                 '    last_run_timestamp = excluded.last_run_timestamp, '
                 '    last_run_status = excluded.last_run_status, '
                 '    exception = excluded.exception',
@@ -249,22 +301,29 @@ class Sqlite3Backend(MetadataManager):
                     run_code_id,
                     payload.get('uses_hash', ''),
                     payload.get('io_hash') or compute_io_hash(rule),
+                    # run_seq is allocated on the submit node and threaded
+                    # through the job spec into the sidecar, so all array
+                    # elements of one submission share it regardless of node.
+                    payload.get('run_seq'),
                     payload.get('timestamp'),
                     payload['status'],
                     payload.get('exception', ''),
                 ),
             )
 
-    @retry_lock_commit
     def update_task(self, task, status, exception=''):
-        self._upsert_task(task, status, exception)
+        # Allocate run_seq (own txn) before opening the upsert's EXCLUSIVE txn.
+        self._commit_updates([task], status, exception, self.current_run_seq())
+
+    def update_tasks(self, tasks, status, exception=''):
+        self._commit_updates(tasks, status, exception, self.current_run_seq())
 
     @retry_lock_commit
-    def update_tasks(self, tasks, status, exception=''):
+    def _commit_updates(self, tasks, status, exception, run_seq):
         # One EXCLUSIVE transaction for the lot (bulk state changes:
         # set-state, migration adoption).
         for task in tasks:
-            self._upsert_task(task, status, exception)
+            self._upsert_task(task, status, exception, run_seq)
 
     @retry_lock_commit
     def delete_tasks(self, tasks):
@@ -274,16 +333,17 @@ class Sqlite3Backend(MetadataManager):
             placeholders = ','.join('?' * len(chunk))
             self.conn.execute(f'DELETE FROM task WHERE key IN ({placeholders})', chunk)
 
-    def _upsert_task(self, task, status, exception=''):
+    def _upsert_task(self, task, status, exception='', run_seq=None):
         rule_id, run_code_id = self.rule_ids[task.rule.name]
         self.conn.execute(
             'INSERT INTO task(key, rule_id, run_code_id, uses_hash, io_hash, '
-            '                 last_run_timestamp, last_run_status, exception) '
-            "VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?) "
+            '                 run_seq, last_run_timestamp, last_run_status, exception) '
+            "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?, ?) "
             'ON CONFLICT(key) DO UPDATE SET '
             '    run_code_id = excluded.run_code_id, '
             '    uses_hash = excluded.uses_hash, '
             '    io_hash = excluded.io_hash, '
+            '    run_seq = excluded.run_seq, '
             "    last_run_timestamp = datetime('now'), "
             '    last_run_status = excluded.last_run_status, '
             '    exception = excluded.exception',
@@ -293,6 +353,7 @@ class Sqlite3Backend(MetadataManager):
                 run_code_id,
                 compute_uses_hash(task.rule.uses),
                 compute_io_hash(task.rule),
+                run_seq,
                 status,
                 exception,
             ),

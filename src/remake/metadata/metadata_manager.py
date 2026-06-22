@@ -19,6 +19,7 @@ class TaskRecord:
     uses_hash: str
     exception: str
     io_hash: Optional[str] = None
+    run_seq: Optional[int] = None  # None for pre-upgrade/never-stamped records
 
 
 class MetadataManager(abc.ABC):
@@ -29,6 +30,17 @@ class MetadataManager(abc.ABC):
     @abc.abstractmethod
     def get_tasks_status(self, tasks) -> dict:
         """{task.key: TaskRecord} for tasks that have a stored record."""
+
+    def begin_invocation(self):
+        """Start a new logical invocation: allocate a fresh run_seq so tasks
+        committed from here share one stamp, distinct from earlier invocations.
+        A no-op for backends without a persistent counter."""
+
+    def current_run_seq(self):
+        """This invocation's run_seq (a monotonic stamp shared by every task it
+        commits). Backends without a persistent counter return None — no
+        durable propagation, only in-pass."""
+        return None
 
     @abc.abstractmethod
     def update_task(self, task, status, exception=''):

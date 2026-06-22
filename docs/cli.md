@@ -53,6 +53,7 @@ remake run pipeline.py [options]
 | `--success` | record success with current code/uses hashes |
 | `--pending` | delete records — tasks become never-run |
 | `--check-outputs` | with `--success`, only tasks whose outputs are complete on disk |
+| `--no-cascade` | with `--success`, stamp only the selected tasks (by default success also re-stamps downstream complete tasks so they aren't left looking stale; a guard skips any descendant with an independently-newer upstream) |
 | `-n, --dry-run` | show affected tasks, change nothing |
 
 ## `info`

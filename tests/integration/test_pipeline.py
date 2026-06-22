@@ -312,6 +312,48 @@ rmk.rules_from_current_module()
     assert Path('out_1.txt').read_text() == '3'
 
 
+def test_partial_target_rerun_propagates_to_downstream(tmp_path, monkeypatch):
+    # Scenario 2 of the propagation gap (design_docs/discussion.md): editing an
+    # upstream rule and rerunning only it via a query (`run -Q "rule == 'a'"`)
+    # must still cause the downstream consumer to rerun on the next unfiltered
+    # run. The in-pass propagation signal never fires for B here (B is filtered
+    # out of A's pass), so a durable signal is required.
+    monkeypatch.chdir(tmp_path)
+    # Rewriting pipeline.py twice within one second can leave a stale .pyc
+    # (mtime is whole-second) so exec_module replays old bytecode; compile
+    # fresh every load to keep this test about propagation, not caching.
+    monkeypatch.setattr('sys.dont_write_bytecode', True)
+    pipeline_v1 = '''
+from pathlib import Path
+from remake import Remake, rule
+
+@rule(outputs={'o': 'a_{n}.txt'}, matrix={'n': [1]})
+def a(outputs, n):
+    Path(outputs['o']).write_text(str(n * 2))
+
+@rule(inputs=a.outputs, outputs={'o': 'b_{n}.txt'}, matrix=a.matrix, depends_on=[a])
+def b(inputs, outputs, n):
+    Path(outputs['o']).write_text(str(int(Path(inputs['o']).read_text()) + 1))
+
+rmk = Remake()
+rmk.rules_from_current_module()
+'''
+    Path('pipeline.py').write_text(pipeline_v1)
+    load_remake('pipeline.py').run()
+    assert Path('a_1.txt').read_text() == '2'
+    assert Path('b_1.txt').read_text() == '3'
+
+    # Edit A's code, then deliberately rerun only A.
+    Path('pipeline.py').write_text(pipeline_v1.replace('n * 2', 'n * 3'))
+    load_remake('pipeline.py').run(query="rule == 'a'")
+    assert Path('a_1.txt').read_text() == '3'   # A reran
+    assert Path('b_1.txt').read_text() == '3'   # B did not run this pass
+
+    # Next unfiltered run: B must rerun because its upstream A was rebuilt.
+    load_remake('pipeline.py').run()
+    assert Path('b_1.txt').read_text() == '4'
+
+
 def test_custom_executor_injection(tmp_path, meta):
     from remake import Executor
 

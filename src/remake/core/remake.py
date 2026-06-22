@@ -180,6 +180,10 @@ class Remake:
         which don't know at submission time)."""
         if not self._finalized:
             self.finalize()
+        # One run_seq for this whole invocation (shared across replanning
+        # waves); committed onto every task so downstream propagation survives
+        # to later invocations. See bugs/01_durable_rerun_propagation.md.
+        self.metadata.begin_invocation()
         if executor is None:
             from ..executors import SingleprocExecutor
 

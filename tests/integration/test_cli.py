@@ -323,6 +323,76 @@ def test_set_state_requires_exactly_one_state(pipeline_dir, capsys):
     cli_error(capsys, 'set-state', 'pipeline.py', '-Q', 'True', match='exactly one')
 
 
+LINEAR3 = '''
+from pathlib import Path
+from remake import Remake, rule
+
+@rule(outputs={'o': 'a.txt'})
+def a(outputs):
+    Path(outputs['o']).write_text('a')
+
+@rule(inputs=a.outputs, outputs={'o': 'b.txt'}, depends_on=[a])
+def b(inputs, outputs):
+    Path(outputs['o']).write_text('b')
+
+@rule(inputs=b.outputs, outputs={'o': 'c.txt'}, depends_on=[b])
+def c(inputs, outputs):
+    Path(outputs['o']).write_text('c')
+
+rmk = Remake()
+rmk.rules_from_current_module()
+'''
+
+
+def _setup_linear_stale_upstream(capsys):
+    """Linear a->b->c, all run, then a alone re-run in a later invocation so
+    b (and c) are durably stale. Returns nothing; leaves a ahead of b, c."""
+    Path('pipeline.py').write_text(LINEAR3)
+    cli('run', 'pipeline.py')
+    cli('run', 'pipeline.py', '-Q', 'rule == "a"', '--force')  # a only, newer run_seq
+    capsys.readouterr()
+
+
+def test_why_upstream_newer_after_partial_target(pipeline_dir, capsys):
+    _setup_linear_stale_upstream(capsys)
+    # a is not rerunning this pass, so b's only reason is the durable stamp.
+    cli('why', 'pipeline.py', '-Q', 'rule == "b"')
+    out = capsys.readouterr().out
+    assert 'will run: yes' in out
+    assert 'ran more recently' in out  # the upstream-newer reason
+
+
+def test_set_state_cascade_settles_downstream(pipeline_dir, capsys):
+    _setup_linear_stale_upstream(capsys)
+    # Before settling: b (durable) and c (in-pass) would run.
+    cli('run', 'pipeline.py', '--dry-run')
+    assert '2 task(s) would run' in capsys.readouterr().out
+
+    # Settle b: cascade also re-stamps its descendant c (single dep, guard
+    # never fires), so nothing is left looking stale.
+    cli('set-state', 'pipeline.py', '-Q', 'rule == "b"', '--success')
+    out = capsys.readouterr().out
+    assert 'b[] -> success' in out
+    assert 'c[] -> success (cascade)' in out
+    assert '1 task(s) set to success, 1 cascaded' in out
+
+    cli('run', 'pipeline.py', '--dry-run')
+    assert '0 task(s) would run' in capsys.readouterr().out
+
+
+def test_set_state_no_cascade_leaves_descendant_stale(pipeline_dir, capsys):
+    _setup_linear_stale_upstream(capsys)
+    cli('set-state', 'pipeline.py', '-Q', 'rule == "b"', '--success', '--no-cascade')
+    out = capsys.readouterr().out
+    assert 'cascade' not in out  # only b stamped
+    assert '1 task(s) set to success' in out and 'cascaded' not in out
+
+    # c is now older than the freshly-stamped b, so c alone reruns.
+    cli('run', 'pipeline.py', '--dry-run')
+    out = capsys.readouterr().out
+    assert '1 task(s) would run' in out
+
+
 def test_info_json(pipeline_dir, capsys):
     import json
 

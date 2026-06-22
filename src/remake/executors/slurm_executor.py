@@ -191,8 +191,13 @@ class SlurmExecutor(Executor):
 
     def _write_job_specs(self, rule, tasks):
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
+        # One run_seq for this whole submission, allocated here on the submit
+        # node; the array elements stamp it into their sidecars so downstream
+        # propagation survives across the submit→compute boundary.
+        run_seq = self.rmk.metadata.current_run_seq()
         specs = [
-            {'task_key': task.key, 'rule': rule.name, 'kwargs': task.kwargs}
+            {'task_key': task.key, 'rule': rule.name, 'kwargs': task.kwargs,
+             'run_seq': run_seq}
             for task in tasks
         ]
         (self.jobs_dir / f'{rule.name}.json').write_text(json.dumps(specs, indent=1))

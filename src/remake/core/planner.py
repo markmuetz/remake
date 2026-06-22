@@ -51,9 +51,70 @@ def _same_matrix(rule, dep):
     return rule.matrix is dep.matrix or rule.matrix == dep.matrix
 
 
+def _max_upstream_run_seq(rule, task_id, run_seq_by_rule):
+    """Highest run_seq among the upstream tasks feeding this task — element-wise
+    when the matrices match, else the max over all of the upstream rule's tasks
+    (conservative, mirroring rerun propagation). `run_seq_by_rule` maps a rule
+    to {frozenset(kwargs.items()): run_seq or None}. Returns None when no
+    upstream run_seq is known (nothing to compare against)."""
+    best = None
+    for dep in rule.depends_on:
+        seqs = run_seq_by_rule.get(dep, {})
+        candidates = [seqs.get(task_id)] if _same_matrix(rule, dep) else seqs.values()
+        for s in candidates:
+            if s is not None and (best is None or s > best):
+                best = s
+    return best
+
+
 def _outputs_complete(task):
     outputs = task.outputs
     return bool(outputs) and all(token.is_complete() for token in outputs.values())
+
+
+def cascade_settled(rule_set, dag, selected, run_seq, status):
+    """Guarded downstream cascade for `set-state --success`.
+
+    Stamping a task with the current (highest) run_seq makes it newer than its
+    descendants, which would then look stale and rerun. To keep a settled
+    region self-consistent, the cascade also re-stamps downstream tasks — but
+    *guards* against a descendant that has an independently-newer upstream
+    (a diamond where another branch genuinely changed): re-stamping it would
+    swallow that branch's propagation. See
+    design_docs/bugs/01_durable_rerun_propagation.md.
+
+    Inputs are materialised maps keyed by rule then frozenset(kwargs.items()):
+    `selected` (the user's chosen task-ids, the settle seed), `run_seq`
+    (task-id -> run_seq or None), `status` (task-id -> status int). Returns the
+    full settled set {rule: set(task_id)} = selected + cascaded; only already
+    SUCCESS descendants are ever added (never-run/failed are left to rerun).
+
+    The cascade is local and needs no subtree pruning: a descendant skipped by
+    the guard reruns through normal propagation and re-stamps higher when it
+    does, re-triggering its own descendants on the next pass.
+    """
+    settled = {rule: set(ids) for rule, ids in selected.items()}
+    for rule in nx.topological_sort(dag):
+        if rule not in rule_set or not rule.depends_on:
+            continue
+        for task_id, st in status.get(rule, {}).items():
+            if st != TASK_STATUS_SUCCESS or task_id in settled.get(rule, set()):
+                continue
+            this_seq = run_seq.get(rule, {}).get(task_id)
+            downstream_of_settled = independent_newer = False
+            for dep in rule.depends_on:
+                dep_ids = ([task_id] if _same_matrix(rule, dep)
+                           else list(run_seq.get(dep, {})))
+                for did in dep_ids:
+                    if did in settled.get(dep, set()):
+                        downstream_of_settled = True
+                    else:
+                        dseq = run_seq.get(dep, {}).get(did)
+                        if dseq is not None and (this_seq is None or dseq > this_seq):
+                            independent_newer = True
+            if downstream_of_settled and not independent_newer:
+                settled.setdefault(rule, set()).add(task_id)
+    return settled
 
 
 def upstream_failed(task, failures):
@@ -155,6 +216,7 @@ def explain_task(rules, dag, metadata, task, *, check_outputs='never', runnable=
             reasons.append(Reason('outputs-missing',
                 'outputs missing/incomplete (check_outputs=always)'))
 
+    in_pass_upstream = False
     for dep in task.rule.depends_on:
         dep_running = [t for t in runnable if t.rule is dep]
         if not dep_running:
@@ -162,12 +224,39 @@ def explain_task(rules, dag, metadata, task, *, check_outputs='never', runnable=
         if _same_matrix(task.rule, dep):
             match = [t for t in dep_running if t.kwargs == task.kwargs]
             if match:
+                in_pass_upstream = True
                 reasons.append(Reason('upstream-rerun',
                     f'upstream {match[0]} reruns (shared matrix: element-wise)'))
         else:
+            in_pass_upstream = True
             reasons.append(Reason('upstream-rerun',
                 f'{len(dep_running)} upstream {dep.name} task(s) rerun '
                 f'(different matrix: conservative, all downstream tasks rerun)'))
+
+    # Durable cross-pass propagation: an upstream was committed in a later
+    # invocation than this task without rerunning it in the same pass (the gap
+    # that an in-pass-only signal misses). Only reported when nothing upstream
+    # is rerunning *this* pass — otherwise the upstream-rerun reason above is
+    # the live cause. Mirrors the planner's `_max_upstream_run_seq` check.
+    if rec is not None and rec.run_seq is not None and not in_pass_upstream:
+        run_seq_by_rule = {}
+        for dep in task.rule.depends_on:
+            try:
+                dep_tasks = expand_rule(dep)
+            except Defer:
+                continue
+            dep_recs = metadata.get_tasks_status(dep_tasks)
+            run_seq_by_rule[dep] = {
+                frozenset(t.kwargs.items()):
+                    (dep_recs[t.key].run_seq if t.key in dep_recs else None)
+                for t in dep_tasks
+            }
+        up_seq = _max_upstream_run_seq(
+            task.rule, frozenset(task.kwargs.items()), run_seq_by_rule)
+        if up_seq is not None and up_seq > rec.run_seq:
+            reasons.append(Reason('upstream-newer',
+                f'an upstream ran more recently (run_seq {up_seq} > {rec.run_seq}) '
+                f'without rerunning this task — output may be stale'))
 
     return will_run, reasons
 
@@ -194,6 +283,10 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
     runnable = []
     deferred = []
     rerun_kwargs = {}  # rule -> set of frozenset(kwargs.items()), or 'all'
+    # rule -> {frozenset(kwargs.items()): run_seq or None}. Threaded in topo
+    # order so a task can compare its stored run_seq against its upstreams'
+    # (durable cross-pass propagation; see bugs/01_durable_rerun_propagation.md).
+    task_run_seq = {}
 
     for rule in nx.topological_sort(dag):
         if rule not in rules:
@@ -246,6 +339,7 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
 
         for task in tasks:
             rec = records.get(task.key)
+            task_id = frozenset(task.kwargs.items())
             # `reason` is a short literal (cheap to assign every iteration);
             # only formatted into a log line when a TRACE sink is attached.
             if rec is None:
@@ -272,16 +366,28 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
                 rerun, reason = True, 'forced'
 
             if not rerun:
-                task_id = frozenset(task.kwargs.items())
                 if upstream_all or any(task_id in dep_rerun for dep_rerun in elementwise_deps):
                     rerun, reason = True, 'upstream reruns'
+            # Durable cross-pass backstop: an upstream committed in a later
+            # invocation than this task (e.g. an upstream rerun via `run -Q`,
+            # or after a crash) without rerunning it in the same pass. run_seq
+            # None = not-yet-tracked (pre-upgrade): don't rerun on that alone.
+            if not rerun and rec is not None and rec.run_seq is not None:
+                up_seq = _max_upstream_run_seq(rule, task_id, task_run_seq)
+                if up_seq is not None and up_seq > rec.run_seq:
+                    rerun, reason = True, 'upstream ran more recently'
 
             logger.trace('{}: {} — {}', task.key, 'rerun' if rerun else 'skip', reason)
             if rerun:
-                rule_rerun.add(frozenset(task.kwargs.items()))
+                rule_rerun.add(task_id)
                 runnable.append(task)
 
         rerun_kwargs[rule] = rule_rerun
+        task_run_seq[rule] = {
+            frozenset(task.kwargs.items()):
+                (records[task.key].run_seq if task.key in records else None)
+            for task in tasks
+        }
         logger.debug('{}: {} task(s), {} to rerun', rule.name, len(tasks), len(rule_rerun))
 
     logger.debug(

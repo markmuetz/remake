@@ -725,77 +725,10 @@ design discussion before any work starts.
   *can't* yet ask `-Q 'status == "failed"'` and must use `info -F` /
   `run --ignore-code-changes` instead).
 
-- **Crash gap: upstream→downstream rerun propagation is not crash-atomic.**
-  *The bug.* The planner's "an upstream is rerunning → rerun the downstream"
-  signal is **ephemeral** — it lives only inside a single `plan()` pass
-  (`rerun_kwargs`, planner.py), computed in one topological sweep, and is
-  never persisted. A task's stored `TaskRecord` carries `status`,
-  `timestamp`, `run_code`, `uses_hash`, `io_hash` — but *nothing about its
-  upstream's state*. So the rule is really "B reruns if A is rerunning **in
-  the same pass**", which only holds if A and B rerun together atomically.
-
-  *The scenario.* Both A and B succeeded earlier (B consumed A's old output).
-  Edit A's code, `remake run`: the plan flags A (code-changed) and B
-  (upstream-reruns), ordered A-then-B. A runs and commits `SUCCESS` with the
-  new code hash; **the process dies before B runs** (kill, OOM, node loss;
-  under SLURM: A's array job succeeds, B's is cancelled). B's record is
-  untouched — still `SUCCESS` from the first run. On the *next* `remake run`,
-  A is now up-to-date (its stored code == current), so A is **not** rerunning
-  this pass; B's own code/`uses`/`io_hash` are unchanged → B is judged
-  up-to-date and **never reruns**, silently keeping a result built from A's
-  stale output. This is the flip side of rejecting mtimes: robust against
-  scrambled clocks, but not crash-atomic across the producer→consumer edge.
-
-  *Fix options (the durable signal must be persisted, not recomputed):*
-  - **(1) DB-stored execution time (make's model, trustworthy clock).** The
-    design rejected *file mtimes* because the *filesystem* sets them and
-    rsync/tar/Lustre rewrite them — **not** timestamps as such. A timestamp
-    remake writes into its own DB on success is a clock we control. Add a
-    plan check: B reruns if `max(upstream.timestamp) > B.timestamp`. Reuses
-    the existing (today display-only) `timestamp` field. In the scenario A=t3
-    > B=t2 → B reruns. Cheap, durable, survives process boundaries.
-    - *Caveat — granularity.* Both write paths store **whole seconds**
-      (`datetime('now')`, sqlite3_backend.py; `strftime('%Y-%m-%d %H:%M:%S')`,
-      sidecar.py). Fast tasks tie within a second: strict `>` misses a real
-      "A after B" inside one second, `>=` causes spurious reruns on every
-      tie. Needs sub-second resolution before timestamps can *order* rather
-      than merely *display*.
-    - *Caveat — cross-node clocks (SLURM).* The sidecar timestamp is
-      `time.gmtime()` on whatever compute node ran the task, so under SLURM
-      we'd be comparing A's clock (node X) against B's (node Y) — making
-      correctness depend on inter-node NTP sync, exactly the environmental
-      assumption remake otherwise avoids. Fine locally (single writer, one
-      clock); only partly "in our control" distributed.
-  - **(2) Logical clock / run-sequence id (clock-independent (1)).** Assign a
-    monotonic run/commit sequence number at launch and thread it through the
-    SLURM job spec into the sidecar, alongside (or instead of) wall-clock.
-    B reruns iff `max(upstream.run_seq) > B.run_seq`. Tie-free, no node-clock
-    or sub-second dependence — arguably the most in-our-control form of (1),
-    since the sequence is assigned by remake at submission time, not read
-    from any clock on the node.
-  - **(3) Persisted upstream-provenance hash.** Store in B's record a hash of
-    its upstream provenance at build time (the producing tasks' `run_code`,
-    or a content hash of B's actual inputs). Plan check: recorded
-    upstream-hash ≠ current → rerun. *Precise* — skips B when A's rerun
-    produced byte-identical output (which (1)/(2) would conservatively
-    rerun, like make) — and a content hash doubles as corruption detection.
-    Cost: storing/comparing the extra hash, and content-hashing possibly-huge
-    outputs (ties into the output-checksum capability under *Integrate
-    RO-Crate* and the stats store).
-
-  *Relationship.* (1)/(2)/(3) all make the propagation signal **durable**;
-  none replaces the existing `run_code`/`uses_hash`/`io_hash` checks (those
-  catch "recipe changed" with no upstream run) or in-pass propagation (still
-  wanted so a single `remake run` does A and B in one go). (1)/(2) are the
-  cheap, conservative correctness fix (rerun-if-newer, may over-rebuild);
-  (3) is the precise but heavier option. Leaning: a **run-sequence id (2)**
-  is the smallest change that is correct under both local and SLURM execution
-  without depending on node clocks or sub-second timestamps; ship that to
-  close the gap, and treat (3)/content-addressing as the later precision +
-  corruption-detection upgrade. Relates to the **I/O verification /
-  reconcile** item (its rejected `--mtime` option is the *file*-mtime version
-  of this same idea) and the **stats / run-history store** (a `run_id` per
-  invocation is the natural home for the run-sequence).
+- **Propagation gap: upstream→downstream rerun propagation is not durable.**
+  Moved to a tracked bug doc: see
+  [design_docs/bugs/01_durable_rerun_propagation.md](bugs/01_durable_rerun_propagation.md)
+  (crash + partial-target scenarios, fix = run-sequence id).
 
 ## Graduated (designed and implemented; kept for the record)
 

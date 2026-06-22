@@ -242,11 +242,15 @@ def test_run_array_task_writes_sidecar_not_db(slurm_dir):
     # The array process must not touch the shared DB (livelock on shared
     # filesystems); the result goes to a sidecar instead.
     assert Path('.remake/remake.db').read_bytes() == db_before
-    key = json.loads(Path('.remake/jobs/gen.json').read_text())[3]['task_key']
+    spec = json.loads(Path('.remake/jobs/gen.json').read_text())[3]
+    key = spec['task_key']
     sidecar = Path(f'.remake/tasks/results/gen/{key[:2]}/{key[2:]}.json')
     payload = json.loads(sidecar.read_text())
     assert payload['status'] == 1  # TASK_STATUS_SUCCESS
     assert 'uses_hash' in payload and 'timestamp' in payload
+    # run_seq is fixed at submission (in the job spec) and carried into the
+    # sidecar so durable propagation survives the submit->compute boundary.
+    assert spec['run_seq'] is not None and payload['run_seq'] == spec['run_seq']
 
     # The next planning invocation ingests: sidecar gone, task complete.
     cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')
