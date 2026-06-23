@@ -121,7 +121,7 @@ def exception_info(ex_type, value, tb):
     debug.post_mortem(tb)
 
 
-class RemakeParser:
+class RemakeCLI:
     """Command line args and dispatch.
 
     Responsible for handling arguments and dispatching to a Remake instance,
@@ -317,11 +317,11 @@ class RemakeParser:
 
     def _build_parser(self):
         parser = argparse.ArgumentParser(description='remake command line tool')
-        for argset in RemakeParser.args:
+        for argset in RemakeCLI.args:
             add_argset(parser, argset)
 
         subparsers = parser.add_subparsers(dest='subcmd_name')
-        for cmd_key, cmd_kwargs in RemakeParser.sub_cmds.items():
+        for cmd_key, cmd_kwargs in RemakeCLI.sub_cmds.items():
             subparser = subparsers.add_parser(cmd_key, help=cmd_kwargs['help'])
             for argset in cmd_kwargs['args']:
                 add_argset(subparser, argset)
@@ -747,10 +747,10 @@ def remake_cmd(argv=None):
     """Main entry point."""
     if argv is None:
         argv = sys.argv
-    parser = RemakeParser()
-    args = parser.parse_args(argv)
+    cli = RemakeCLI()
+    args = cli.parse_args(argv)
     if not args.subcmd_name:
-        parser.parser.print_help()
+        cli.parser.print_help()
         return 1
 
     # Logs go to stderr; stdout carries command output only (so --json and
@@ -806,7 +806,7 @@ def remake_cmd(argv=None):
         sys.excepthook = exception_info
 
     try:
-        return parser.dispatch()
+        return cli.dispatch()
     except RemakeError as e:
         # User-facing errors (bad query, >1-task match, unknown rule, ...)
         # print cleanly and exit 2; keep the traceback only under -X.
