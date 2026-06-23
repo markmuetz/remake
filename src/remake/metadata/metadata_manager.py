@@ -6,6 +6,14 @@ TASK_STATUS_PENDING = 0
 TASK_STATUS_SUCCESS = 1
 TASK_STATUS_FAILED = 2
 
+# Human-readable names for the stored status codes; None (no record) and an
+# unmapped code both read as 'pending' via STATUS_NAMES.get(status, 'pending').
+STATUS_NAMES = {
+    None: 'pending',
+    TASK_STATUS_SUCCESS: 'success',
+    TASK_STATUS_FAILED: 'failed',
+}
+
 
 @dataclass(frozen=True)
 class TaskRecord:

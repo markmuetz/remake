@@ -14,15 +14,13 @@ from loguru import logger
 
 from .core import RemakeError
 from .loader import load_remake
-from .metadata import TASK_STATUS_FAILED, TASK_STATUS_SUCCESS
+from .metadata import STATUS_NAMES
 from .util import Arg, MutuallyExclusiveGroup, add_argset, task_log_path as _task_log_path
 from .version import __version__
 
-STATUS_NAMES = {
-    None: 'pending',
-    TASK_STATUS_SUCCESS: 'success',
-    TASK_STATUS_FAILED: 'failed',
-}
+# Heavy/optional imports (networkx, the executor stack, squeue) stay local to
+# the methods that need them so `remake version`/`task-log` don't pay to import
+# them; cheap stdlib (json, ...) is hoisted where it is used widely.
 
 _TB_FRAME = re.compile(r'  File "(.+?)", line (\d+), in (.+)')
 
@@ -54,6 +52,7 @@ def _group_failures(failures):
         last = frames[-1] if frames else None
         location = f'{last[0]}:{last[1]} in {last[2]}' if last else '(no frames)'
         out.append({
+            # MM: this is neat syntax.
             'exc_type': exc_type or '(unknown)',
             'location': location,
             'count': len(members),
@@ -71,29 +70,10 @@ def _add_task_log_sink(task):
     logger.add(logfile, level='DEBUG', mode='w')
 
 
-def _select_task(rmk, args):
-    """Resolve the task a command addresses: a key prefix, or a -Q query
-    matching exactly one task."""
-    if args.task_key and args.query:
-        raise RemakeError('Give a task key or a -Q query, not both')
-    if args.task_key:
-        return rmk.task_from_key(args.task_key)
-    if args.query:
-        tasks = rmk.tasks(query=args.query)
-        if not tasks:
-            raise RemakeError(f'No task matches {args.query!r}')
-        if len(tasks) > 1:
-            raise RemakeError(
-                f'{len(tasks)} tasks match {args.query!r}; narrow the query '
-                f"(add `rule == '<name>'` if the matrix is shared between rules)"
-            )
-        return tasks[0]
-    raise RemakeError('Give a task key prefix or a -Q query')
-
-
 def _slurm_submission(rule_name, task_key=None):
     """(jobids, array_index) from the last submission's sidecar/job spec,
     (None, None) if never submitted."""
+    # MM: Could this function live somewhere more suitable?
     import json
 
     sidecar = Path(f'.remake/jobs/{rule_name}.jobids.json')
@@ -163,8 +143,11 @@ def exception_info(ex_type, value, tb):
 
 
 class RemakeParser:
-    """Command line args and dispatch."""
+    """Command line args and dispatch.
 
+    Responsible for handling arguments and dispatching to a Remake instance."""
+
+    # Top level args, i.e. `remake --trace...`
     args = [
         MutuallyExclusiveGroup(
             Arg('--trace', '-T', help='Enable trace logging (most verbose)', action='store_true'),
@@ -465,168 +448,51 @@ class RemakeParser:
             raise RemakeError(f'{submit} failed (exit {result.returncode})')
 
     def remake_set_state(self, args):
-        from .core import expand_rule
-        from .core.exceptions import Defer
-        from .core.planner import cascade_settled
-        from .metadata import TASK_STATUS_SUCCESS
-
-        if args.success == args.pending:
-            raise RemakeError('Give exactly one of --success / --pending')
-        if args.check_outputs and not args.success:
-            raise RemakeError('--check-outputs only applies to --success')
+        # Flag validation that is CLI-specific (the --no-cascade spelling)
+        # stays here; the rest is Remake.set_state.
         if args.no_cascade and not args.success:
             raise RemakeError('--no-cascade only applies to --success')
-
         rmk = self._load(args)
-        rmk.finalize()
-        rmk.metadata.begin_invocation()  # fresh run_seq for this set-state
-        tasks = rmk.tasks(query=args.query)
-        skipped = 0
-        if args.check_outputs:
-            verified = [
-                t for t in tasks
-                if t.outputs and all(token.is_complete() for token in t.outputs.values())
-            ]
-            skipped = len(tasks) - len(verified)
-            tasks = verified
-
-        cascaded = []
-        if args.success and not args.no_cascade:
-            cascaded = self._cascade_descendants(rmk, tasks, expand_rule, Defer,
-                                                 cascade_settled)
-
-        state = 'success' if args.success else 'pending'
+        result = rmk.set_state(
+            args.query,
+            success=args.success,
+            pending=args.pending,
+            check_outputs=args.check_outputs,
+            cascade=not args.no_cascade,
+            dry_run=args.dry_run,
+        )
+        state, tasks, cascaded = result['state'], result['tasks'], result['cascaded']
+        skipped = result['skipped']
         for task in tasks:
             print(f'{task} -> {state}')
         for task in cascaded:
             print(f'{task} -> {state} (cascade)')
         suffix = f' ({skipped} skipped: outputs missing/incomplete)' if skipped else ''
         cas = f', {len(cascaded)} cascaded' if cascaded else ''
-        if args.dry_run:
-            print(f'{len(tasks)} task(s) would be set to {state}{cas}{suffix}')
-            return
-        if args.success:
-            # One invocation → one run_seq, shared by selected + cascaded, so no
-            # intra-batch ordering false-triggers (equal run_seq, strict >).
-            rmk.metadata.update_tasks(tasks + cascaded, TASK_STATUS_SUCCESS)
-        else:
-            rmk.metadata.delete_tasks(tasks)
-        print(f'{len(tasks)} task(s) set to {state}{cas}{suffix}')
-
-    @staticmethod
-    def _cascade_descendants(rmk, selected_tasks, expand_rule, Defer, cascade_settled):
-        """Downstream SUCCESS tasks to re-stamp alongside `selected_tasks` so the
-        settled region stays consistent (see cascade_settled / bug 01)."""
-        run_seq, status, task_of = {}, {}, {}
-        for rule in rmk.rules:
-            try:
-                rtasks = expand_rule(rule)
-            except Defer:
-                continue
-            recs = rmk.metadata.get_tasks_status(rtasks)
-            run_seq[rule], status[rule], task_of[rule] = {}, {}, {}
-            for t in rtasks:
-                tid = frozenset(t.kwargs.items())
-                rec = recs.get(t.key)
-                run_seq[rule][tid] = rec.run_seq if rec else None
-                status[rule][tid] = rec.status if rec else None
-                task_of[rule][tid] = t
-        selected = {}
-        for t in selected_tasks:
-            selected.setdefault(t.rule, set()).add(frozenset(t.kwargs.items()))
-        settled = cascade_settled(set(rmk.rules), rmk.dag, selected, run_seq, status)
-        cascaded = []
-        for rule, ids in settled.items():
-            for tid in ids - selected.get(rule, set()):
-                cascaded.append(task_of[rule][tid])
-        return cascaded
+        verb = 'would be set' if args.dry_run else 'set'
+        print(f'{len(tasks)} task(s) {verb} to {state}{cas}{suffix}')
 
     def remake_info(self, args):
         import json
 
-        from .core import expand_rule
-        from .core.planner import explain_task, make_predicate
-
         rmk = self._load(args)
-        runnable, deferred = rmk.plan(query=args.query)
-        remaining = Counter(task.rule.name for task in runnable)
-        deferred_names = {rule.name for rule in deferred}
-        predicate = make_predicate(args.query) if args.query else None
         show_failures = args.show_failures or args.all_failures
-
-        # Per-rule tally of why the to-run tasks would rerun. One plan() is
-        # already done (`runnable`); reuse it per task so this is plan-cost,
-        # not N*plan. A task can contribute several categories (e.g. code
-        # changed *and* upstream rerun), so counts may exceed the to-run total.
-        reasons_by_rule = {}
-        if args.reasons:
-            for task in runnable:
-                _, rs = explain_task(
-                    rmk.rules, rmk.dag, rmk.metadata, task,
-                    check_outputs=rmk.check_outputs, runnable=runnable,
-                )
-                bucket = reasons_by_rule.setdefault(task.rule.name, Counter())
-                for r in rs:
-                    bucket[r.category] += 1
-
-        import networkx as nx
-
-        rule_rows = []
-        task_rows = []
-        failures = []
-        # Dependency (topological) order, so upstream rules read top-down.
-        for rule in nx.topological_sort(rmk.dag):
-            if rule.name in deferred_names:
-                rule_rows.append({'rule': rule.name, 'deferred': True})
-                continue
-            tasks = expand_rule(rule, predicate)
-            records = rmk.metadata.get_tasks_status(tasks)
-            statuses = {
-                t.key: STATUS_NAMES.get(records[t.key].status, 'pending')
-                if t.key in records
-                else 'pending'
-                for t in tasks
-            }
-            counts = Counter(statuses.values())
-            row = {
-                'rule': rule.name,
-                'deferred': False,
-                'tasks': len(tasks),
-                'success': counts['success'],
-                'failed': counts['failed'],
-                'pending': counts['pending'],
-                'to_run': remaining.get(rule.name, 0),
-            }
-            if args.reasons:
-                row['reasons'] = dict(reasons_by_rule.get(rule.name, {}))
-            rule_rows.append(row)
-            if args.tasks:
-                task_rows.extend(
-                    {'task': str(t), 'key': t.key, 'status': statuses[t.key]} for t in tasks
-                )
-            if show_failures:
-                failures.extend(
-                    {
-                        'task': str(t),
-                        'key': t.key,
-                        'timestamp': records[t.key].timestamp,
-                        'exception': records[t.key].exception,
-                        'log': str(_task_log_path(t)),
-                    }
-                    for t in tasks
-                    if t.key in records and records[t.key].status == TASK_STATUS_FAILED
-                )
+        # Remake.status_summary does the gathering; this method only renders
+        # (table / --json) and groups failures for display.
+        summary = rmk.status_summary(
+            query=args.query,
+            reasons=args.reasons,
+            list_tasks=args.tasks,
+            list_failures=show_failures,
+        )
+        rule_rows = summary['rules']
+        totals = summary['totals']
+        task_rows = summary.get('tasks', [])
+        failures = summary.get('failures', [])
 
         # Default -F groups failures by traceback signature; --all-failures
         # keeps the exhaustive per-task dump.
         grouped = None if args.all_failures else _group_failures(failures)
-
-        # Totals across non-deferred rules.
-        tallied = [r for r in rule_rows if not r['deferred']]
-        totals = {
-            field: sum(r[field] for r in tallied)
-            for field in ('tasks', 'success', 'failed', 'pending', 'to_run')
-        }
 
         if args.json:
             data = {'rules': rule_rows, 'totals': totals}
@@ -902,7 +768,7 @@ class RemakeParser:
         import json
 
         rmk = self._load(args)
-        task = _select_task(rmk, args)
+        task = rmk.select_task(args.task_key, args.query)
         record = rmk.metadata.get_tasks_status([task]).get(task.key)
         log_path = _task_log_path(task)
         jobids, array_index = _slurm_submission(task.rule.name, task.key)
@@ -952,7 +818,7 @@ class RemakeParser:
 
     def remake_task_log(self, args):
         rmk = self._load(args)
-        task = _select_task(rmk, args)
+        task = rmk.select_task(args.task_key, args.query)
         log_path = _task_log_path(task)
         if args.path:
             print(log_path)
