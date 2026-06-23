@@ -68,6 +68,13 @@ first stable release of the rewrite.)
     running; `--success --check-outputs` adopts an existing output tree;
     `--success` cascades to downstream complete tasks by default (guarded),
     with `--no-cascade` to opt out.
+- **Programmatic API mirroring the CLI.** Every read-only command and
+  `set-state` is also a method on the `Remake` object, returning structured
+  data rather than printing: `status_summary()` (info), `lint()`,
+  `task_info()`, `rule_dag()`, `why()` / `explain_tasks()`, `select_task()`,
+  and `set_state()`. The CLI is a thin rendering layer over these, so a
+  pipeline can be driven and inspected entirely from Python (e.g. in a
+  notebook) without shelling out.
 - **Duplicate-rule-name guard.** The `rule` table records which remakefile
   defined each rule; when two co-located remakefiles (sharing one `.remake/`)
   define a *different* rule under the same name — which would otherwise silently
