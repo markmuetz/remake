@@ -123,6 +123,23 @@ class Remake:
             )
             yield task, will_run, reasons
 
+    def why(self, key=None, query=None):
+        """Explain why task(s) would (or would not) rerun — the data behind
+        `remake why`, with CLI-style selection: one task by key, all matches
+        for a query, or the runnable set when neither is given. Yields
+        (task, will_run, reasons) via explain_tasks (one plan() shared)."""
+        if key and query:
+            raise RemakeError('Give a task key or a -Q query, not both')
+        if key:
+            tasks = [self.task_from_key(key)]
+        elif query:
+            tasks = self.tasks(query=query)
+            if not tasks:
+                raise RemakeError(f'No task matches {query!r}')
+        else:
+            tasks = None  # default: explain the runnable set
+        return self.explain_tasks(tasks)
+
     def iter_tasks(self, query=None):
         """Lazily yield tasks of all currently-expandable rules, one at a
         time — constant memory regardless of matrix size.

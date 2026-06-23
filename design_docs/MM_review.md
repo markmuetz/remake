@@ -44,12 +44,12 @@ Status of the remaining read-only commands against that test:
 
 | Command | Verdict | Notes |
 | --- | --- | --- |
-| `why` | Already done | Backed by `Remake.explain_tasks()`; CLI only selects + prints. Minor tidy possible (its selection block partly duplicates `select_task`). |
+| `why` | Done | `Remake.why(key, query)` wraps `explain_tasks()` with CLI-style key/query/runnable selection; CLI only prints. |
 | `lint` | Done | `Remake.lint()` → findings rows; CLI keeps formatting + `1 if problems` exit code. |
 | `task-info` | Done | `Remake.task_info(task)` → data dict (same shape as `status_summary`); CLI renders. |
 | `rule-dag` | Done | `Remake.rule_dag(with_matrix=...)` → `{order, edges, matrix_info?}`; builds a fresh DAG, no finalize/metadata needed. |
 | `ls-tasks` | Covered | `Remake.iter_tasks()` already exists; input/output detail is presentation. |
 | `slurm-status` | Covered | `squeue_snapshot` + `last_submission` already accessible. |
 
-`lint`/`task-info`/`rule-dag` lifted 2026-06-23. Remaining optional: `why`
-selection-logic tidy (low value — data already exposed).
+`lint`/`task-info`/`rule-dag` lifted 2026-06-23; `why` tidied the same day.
+All read-only commands now have Python-API parity.

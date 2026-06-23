@@ -124,7 +124,8 @@ def exception_info(ex_type, value, tb):
 class RemakeParser:
     """Command line args and dispatch.
 
-    Responsible for handling arguments and dispatching to a Remake instance."""
+    Responsible for handling arguments and dispatching to a Remake instance,
+    and then rendering the results to terminal."""
 
     # Top level args, i.e. `remake --trace...`
     args = [
@@ -681,21 +682,7 @@ class RemakeParser:
 
     def remake_why(self, args):
         rmk = self._load(args)
-        # One task by key; all matches for a -Q query; the runnable set when
-        # neither is given. The query/runnable cases share a single plan()
-        # (explain_tasks), so explaining many tasks is plan-cost, not N*plan.
-        if args.task_key and args.query:
-            raise RemakeError('Give a task key or a -Q query, not both')
-        if args.task_key:
-            tasks = [rmk.task_from_key(args.task_key)]
-        elif args.query:
-            tasks = rmk.tasks(query=args.query)
-            if not tasks:
-                raise RemakeError(f'No task matches {args.query!r}')
-        else:
-            tasks = None  # default: explain the runnable set
-
-        results = list(rmk.explain_tasks(tasks))
+        results = list(rmk.why(args.task_key, args.query))
         if not results:
             print('nothing would run: all tasks are up to date')
             return
