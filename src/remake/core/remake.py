@@ -288,6 +288,150 @@ class Remake:
             out['failures'] = failures
         return out
 
+    def task_info(self, task):
+        """Detail view of one task as a dict — the data behind `remake
+        task-info`: status/timestamp/exception, kwargs, key, input and output
+        paths (with exists/complete flags), the per-task log path, and the last
+        SLURM submission's job ids + array index."""
+        from ..executors.slurm_executor import last_submission
+
+        if not self._finalized:
+            self.finalize()
+        record = self.metadata.get_tasks_status([task]).get(task.key)
+        log_path = task_log_path(task)
+        jobids, array_index = last_submission(task.rule.name, task.key)
+        inputs = (
+            {k: {'path': str(v), 'exists': Path(v).exists()} for k, v in task.inputs.items()}
+            if task.rule.inputs is not None
+            else {}
+        )
+        outputs = (
+            {k: {'path': str(v), 'complete': v.is_complete()} for k, v in task.outputs.items()}
+            if task.rule.outputs is not None
+            else {}
+        )
+        return {
+            'task': str(task),
+            'rule': task.rule.name,
+            'kwargs': task.kwargs,
+            'key': task.key,
+            'status': STATUS_NAMES.get(record.status, 'pending') if record else 'pending',
+            'timestamp': record.timestamp if record else None,
+            'exception': record.exception if record else '',
+            'inputs': inputs,
+            'outputs': outputs,
+            'log': {'path': str(log_path), 'exists': log_path.exists()},
+            'slurm': {'jobids': jobids, 'array_index': array_index},
+        }
+
+    def lint(self):
+        """Wiring check — the data behind `remake lint`: every input of a
+        dependent rule should be produced by one of its depends_on rules.
+        Returns findings rows sorted near-miss-first, each
+        {'kind', 'rule', 'other_rule', 'count', 'example'} where kind is
+        'near_miss' (input matches a near-identical produced path — a likely
+        typo/off-by-one), 'missing_dependency' (input is produced by a rule
+        not in depends_on) or 'external' (input produced by no rule).
+        Materialises all tasks; rules with an unresolved (deferred) matrix are
+        skipped with a warning."""
+        import difflib
+
+        if not self._finalized:
+            self.finalize()
+
+        producers = {}  # output path -> set of rule names
+        rule_outputs = {}  # rule name -> [output paths]
+        deferred = set()
+        for rule in self.rules:
+            paths = []
+            try:
+                for task in iter_expand_rule(rule):
+                    paths.extend(str(token) for token in task.outputs.values())
+            except Defer:
+                deferred.add(rule.name)
+                logger.warning('{}: matrix not ready, outputs unknown — skipped', rule.name)
+                continue
+            rule_outputs[rule.name] = paths
+            for path in paths:
+                producers.setdefault(path, set()).add(rule.name)
+
+        findings = {}  # (kind, rule, other) -> {'count': n, 'example': ...}
+
+        def record(kind, rule_name, other, example):
+            entry = findings.setdefault(
+                (kind, rule_name, other), {'count': 0, 'example': example}
+            )
+            entry['count'] += 1
+
+        for rule in self.rules:
+            if rule.inputs is None or rule.name in deferred:
+                continue
+            dep_names = {dep.name for dep in rule.depends_on}
+            if dep_names & deferred:
+                logger.warning('{}: upstream matrix not ready — skipped', rule.name)
+                continue
+            candidates = [p for name in dep_names for p in rule_outputs.get(name, [])]
+            for task in iter_expand_rule(rule):
+                for path in map(str, task.inputs.values()):
+                    made_by = producers.get(path)
+                    if made_by:
+                        if not made_by & (dep_names | {rule.name}):
+                            record('missing_dependency', rule.name, min(made_by), path)
+                        continue
+                    if not dep_names:
+                        record('external', rule.name, None, path)
+                        continue
+                    close = difflib.get_close_matches(path, candidates, n=1, cutoff=0.9)
+                    if close:
+                        producer = min(producers[close[0]])
+                        record(
+                            'near_miss', rule.name, producer,
+                            {'input': path, 'closest': close[0]},
+                        )
+                    else:
+                        record('external', rule.name, None, path)
+
+        return [
+            {'kind': kind, 'rule': rule_name, 'other_rule': other, **entry}
+            for (kind, rule_name, other), entry in sorted(
+                findings.items(), key=lambda kv: (kv[0][0] != 'near_miss', kv[0])
+            )
+        ]
+
+    def rule_dag(self, *, with_matrix=False):
+        """The rule dependency DAG as data — behind `remake rule-dag`. Returns
+        {'order': [rule names, topological], 'edges': {rule: [dependent rule
+        names]}}. With `with_matrix`, also 'matrix_info': {rule: (n_tasks,
+        keys)}, each (None, None) when a dynamic matrix can't be resolved yet
+        (e.g. a continuation rule awaiting upstream outputs). Builds a fresh DAG
+        and does not finalize — no metadata backend needed."""
+        import networkx as nx
+
+        from .dag import resolve_matrix
+
+        dag = build_rule_dag(self.rules)
+        order = list(nx.topological_sort(dag))
+        pos = {rule: i for i, rule in enumerate(order)}
+        edges = {
+            rule.name: [s.name for s in sorted(dag.successors(rule), key=pos.get)]
+            for rule in order
+        }
+        out = {'order': [r.name for r in order], 'edges': edges}
+        if with_matrix:
+            matrix_info = {}  # rule name -> (n_tasks or None, keys or None)
+            for rule in order:
+                try:
+                    rows = resolve_matrix(rule.matrix)
+                except Defer:
+                    matrix_info[rule.name] = (None, None)
+                    continue
+                keys = []
+                for row in rows:
+                    keys.extend(k for k in row if k not in keys)
+                matrix_info[rule.name] = (len(rows), keys)
+            out['matrix_info'] = matrix_info
+        return out
+
     # --- state ---
 
     def set_state(self, query, *, success=False, pending=False,

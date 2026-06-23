@@ -15,7 +15,6 @@ from loguru import logger
 
 from .core import RemakeError
 from .loader import load_remake
-from .metadata import STATUS_NAMES
 from .util import Arg, MutuallyExclusiveGroup, add_argset, task_log_path as _task_log_path
 from .version import __version__
 
@@ -577,75 +576,8 @@ class RemakeParser:
             print(json.dumps(rows, indent=1))
 
     def remake_lint(self, args):
-        """Wiring check: every input of a dependent rule should be produced
-        by one of its depends_on rules. Flags near-miss paths (typos in
-        format strings, off-by-one kwargs) and produced-but-undeclared
-        dependencies. Materialises all tasks."""
-        import difflib
-
-        from .core.dag import iter_expand_rule
-        from .core.exceptions import Defer
-
         rmk = self._load(args)
-        rmk.finalize()
-
-        producers = {}  # output path -> set of rule names
-        rule_outputs = {}  # rule name -> [output paths]
-        deferred = set()
-        for rule in rmk.rules:
-            paths = []
-            try:
-                for task in iter_expand_rule(rule):
-                    paths.extend(str(token) for token in task.outputs.values())
-            except Defer:
-                deferred.add(rule.name)
-                logger.warning(f'{rule.name}: matrix not ready, outputs unknown — skipped')
-                continue
-            rule_outputs[rule.name] = paths
-            for path in paths:
-                producers.setdefault(path, set()).add(rule.name)
-
-        findings = {}  # (kind, rule, other) -> {'count': n, 'example': ...}
-
-        def record(kind, rule_name, other, example):
-            entry = findings.setdefault(
-                (kind, rule_name, other), {'count': 0, 'example': example}
-            )
-            entry['count'] += 1
-
-        for rule in rmk.rules:
-            if rule.inputs is None or rule.name in deferred:
-                continue
-            dep_names = {dep.name for dep in rule.depends_on}
-            if dep_names & deferred:
-                logger.warning(f'{rule.name}: upstream matrix not ready — skipped')
-                continue
-            candidates = [p for name in dep_names for p in rule_outputs.get(name, [])]
-            for task in iter_expand_rule(rule):
-                for path in map(str, task.inputs.values()):
-                    made_by = producers.get(path)
-                    if made_by:
-                        if not made_by & (dep_names | {rule.name}):
-                            record('missing_dependency', rule.name, min(made_by), path)
-                        continue
-                    if not dep_names:
-                        record('external', rule.name, None, path)
-                        continue
-                    close = difflib.get_close_matches(path, candidates, n=1, cutoff=0.9)
-                    if close:
-                        producer = min(producers[close[0]])
-                        record(
-                            'near_miss', rule.name, producer, {'input': path, 'closest': close[0]}
-                        )
-                    else:
-                        record('external', rule.name, None, path)
-
-        rows = [
-            {'kind': kind, 'rule': rule_name, 'other_rule': other, **entry}
-            for (kind, rule_name, other), entry in sorted(
-                findings.items(), key=lambda kv: (kv[0][0] != 'near_miss', kv[0])
-            )
-        ]
+        rows = rmk.lint()
         problems = [r for r in rows if r['kind'] in ('near_miss', 'missing_dependency')]
         if args.json:
             print(json.dumps(rows, indent=1))
@@ -675,42 +607,14 @@ class RemakeParser:
         return 1 if problems else 0
 
     def remake_rule_dag(self, args):
-        """Print the rule DAG in topological order, one line per rule:
-        `rule -> dependent, dependent` (the rules that depend on it).
-        Rules with no dependents print as a bare name. -N/-M annotate each
-        rule with its task count and/or matrix keys as `rule[N](m1, m2)`;
-        N (and the keys) show as ? when a dynamic matrix can't be resolved
-        yet (e.g. a continuation rule awaiting upstream outputs)."""
-        import networkx as nx
-
-        from .core.dag import build_rule_dag, resolve_matrix
-        from .core.exceptions import Defer
-
         rmk = load_remake(args.remakefile)
-        dag = build_rule_dag(rmk.rules)
-        order = list(nx.topological_sort(dag))
-        pos = {rule: i for i, rule in enumerate(order)}
-        edges = {
-            rule.name: [s.name for s in sorted(dag.successors(rule), key=pos.get)]
-            for rule in order
-        }
-
         need_matrix = args.number_of_tasks or args.matrix_keys
-        matrix_info = {}  # rule name -> (n_tasks or None, keys or None)
-        if need_matrix:
-            for rule in order:
-                try:
-                    rows = resolve_matrix(rule.matrix)
-                except Defer:
-                    matrix_info[rule.name] = (None, None)
-                    continue
-                keys = []
-                for row in rows:
-                    keys.extend(k for k in row if k not in keys)
-                matrix_info[rule.name] = (len(rows), keys)
+        info = rmk.rule_dag(with_matrix=need_matrix)
+        order, edges = info['order'], info['edges']
+        matrix_info = info.get('matrix_info', {})
 
         if args.json:
-            data = {'order': [r.name for r in order], 'edges': edges}
+            data = {'order': order, 'edges': edges}
             if need_matrix:
                 data['rules'] = {
                     name: {'n_tasks': n, 'matrix_keys': keys}
@@ -728,44 +632,16 @@ class RemakeParser:
                 s += f'({"?" if keys is None else ", ".join(keys)})'
             return s
 
-        for rule in order:
-            succs = edges[rule.name]
-            line = label(rule.name)
-            if succs:
-                line += ' -> ' + ', '.join(succs)
+        for name in order:
+            line = label(name)
+            if edges[name]:
+                line += ' -> ' + ', '.join(edges[name])
             print(line)
 
     def remake_task_info(self, args):
-        from .executors.slurm_executor import last_submission
-
         rmk = self._load(args)
         task = rmk.select_task(args.task_key, args.query)
-        record = rmk.metadata.get_tasks_status([task]).get(task.key)
-        log_path = _task_log_path(task)
-        jobids, array_index = last_submission(task.rule.name, task.key)
-        inputs = (
-            {k: {'path': str(v), 'exists': Path(v).exists()} for k, v in task.inputs.items()}
-            if task.rule.inputs is not None
-            else {}
-        )
-        outputs = (
-            {k: {'path': str(v), 'complete': v.is_complete()} for k, v in task.outputs.items()}
-            if task.rule.outputs is not None
-            else {}
-        )
-        data = {
-            'task': str(task),
-            'rule': task.rule.name,
-            'kwargs': task.kwargs,
-            'key': task.key,
-            'status': STATUS_NAMES.get(record.status, 'pending') if record else 'pending',
-            'timestamp': record.timestamp if record else None,
-            'exception': record.exception if record else '',
-            'inputs': inputs,
-            'outputs': outputs,
-            'log': {'path': str(log_path), 'exists': log_path.exists()},
-            'slurm': {'jobids': jobids, 'array_index': array_index},
-        }
+        data = rmk.task_info(task)
         if args.json:
             print(json.dumps(data, indent=1))
             return
@@ -773,14 +649,16 @@ class RemakeParser:
         print(f'{task}  {task.key}')
         when = f' at {data["timestamp"]}' if data['timestamp'] else ''
         print(f'status:   {data["status"]}{when}')
-        for name, path_info in inputs.items():
+        for name, path_info in data['inputs'].items():
             mark = 'exists' if path_info['exists'] else 'MISSING'
             print(f'input:    {path_info["path"]}  [{mark}]  ({name})')
-        for name, path_info in outputs.items():
+        for name, path_info in data['outputs'].items():
             mark = 'complete' if path_info['complete'] else 'missing'
             print(f'output:   {path_info["path"]}  [{mark}]  ({name})')
-        mark = '' if log_path.exists() else '  [no log yet]'
-        print(f'log:      {log_path}{mark}')
+        log = data['log']
+        mark = '' if log['exists'] else '  [no log yet]'
+        print(f'log:      {log["path"]}{mark}')
+        jobids, array_index = data['slurm']['jobids'], data['slurm']['array_index']
         if jobids is not None:
             index = f', array index {array_index}' if array_index is not None else ''
             print(f'slurm:    job {",".join(jobids)} (last submission{index})')
