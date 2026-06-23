@@ -37,6 +37,16 @@ expansion, and SLURM support.
   handing `Rule` objects to a `Remake` instance (`Remake(rules=[...])`,
   `Remake.from_modules(...)`, `Remake.from_current_module()`). Two independent
   `Remake` objects can coexist in one process; nothing leaks between tests.
+- **CLI is a thin render layer over a complete Python API** — every operation
+  the command line exposes is a method on `Remake` that returns structured
+  data: `run`/`plan`, `status_summary` (info), `lint`, `why`/`explain_tasks`,
+  `task_info`, `rule_dag`, `select_task` and `set_state`. `remake_cmd.py`
+  (`RemakeCLI`) only parses args and renders that data as tables or `--json`;
+  it holds no behaviour of its own. A pipeline can therefore be driven and
+  introspected entirely from Python (e.g. a notebook), and the CLI stays
+  trivially testable. The test for where code belongs: *would a programmatic
+  caller want this back as a dict/list?* — if yes it is a `Remake` method, and
+  only the terminal formatting lives in the CLI.
 - **Explicit dependencies** — the rule-level DAG is declared via `depends_on`,
   not inferred from path strings.
 - **Only declare what exists** — `inputs`, `outputs`, and `matrix` are all
