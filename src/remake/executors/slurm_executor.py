@@ -99,6 +99,25 @@ def squeue_snapshot():
     return snapshot
 
 
+def last_submission(rule_name, task_key=None):
+    """(jobids, array_index) from the last submission's sidecar/job spec,
+    (None, None) if the rule was never submitted. `array_index` is the task's
+    position in the submitted job spec (None unless task_key is given)."""
+    sidecar = Path(f'.remake/jobs/{rule_name}.jobids.json')
+    if not sidecar.exists():
+        return None, None
+    recorded = json.loads(sidecar.read_text())
+    jobids = recorded.get('slurm_job_ids', [])
+    if 'slurm_array_job_id' in recorded:
+        jobids = [recorded['slurm_array_job_id']]
+    index = None
+    specs_path = Path(f'.remake/jobs/{rule_name}.json')
+    if task_key is not None and specs_path.exists():
+        specs = json.loads(specs_path.read_text())
+        index = next((i for i, s in enumerate(specs) if s['task_key'] == task_key), None)
+    return jobids, index
+
+
 class _SubmittedRule:
     """How submit.sh refers to one rule's job(s)."""
 

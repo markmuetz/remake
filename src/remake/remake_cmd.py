@@ -4,6 +4,7 @@ Minimal surface: run, run-task, info, version. Declarative arg definitions
 and method-name dispatch carried over from remake2.
 """
 import argparse
+import json
 import os
 import re
 import sys
@@ -68,27 +69,6 @@ def _add_task_log_sink(task):
     logfile = _task_log_path(task)
     logfile.parent.mkdir(parents=True, exist_ok=True)
     logger.add(logfile, level='DEBUG', mode='w')
-
-
-def _slurm_submission(rule_name, task_key=None):
-    """(jobids, array_index) from the last submission's sidecar/job spec,
-    (None, None) if never submitted."""
-    # MM: Could this function live somewhere more suitable?
-    import json
-
-    sidecar = Path(f'.remake/jobs/{rule_name}.jobids.json')
-    if not sidecar.exists():
-        return None, None
-    recorded = json.loads(sidecar.read_text())
-    jobids = recorded.get('slurm_job_ids', [])
-    if 'slurm_array_job_id' in recorded:
-        jobids = [recorded['slurm_array_job_id']]
-    index = None
-    specs_path = Path(f'.remake/jobs/{rule_name}.json')
-    if task_key is not None and specs_path.exists():
-        specs = json.loads(specs_path.read_text())
-        index = next((i for i, s in enumerate(specs) if s['task_key'] == task_key), None)
-    return jobids, index
 
 
 def _make_executor(name, rmk, nproc=None):
@@ -412,8 +392,6 @@ class RemakeParser:
         rmk.run_task(task)
 
     def remake_run_array_task(self, args):
-        import json
-
         from .metadata.sidecar import SidecarWriter
 
         # Hundreds of concurrent array elements must not touch the shared
@@ -473,8 +451,6 @@ class RemakeParser:
         print(f'{len(tasks)} task(s) {verb} to {state}{cas}{suffix}')
 
     def remake_info(self, args):
-        import json
-
         rmk = self._load(args)
         show_failures = args.show_failures or args.all_failures
         # Remake.status_summary does the gathering; this method only renders
@@ -549,8 +525,6 @@ class RemakeParser:
                     print(f'+ {len(others)} more: {shown}{more}')
 
     def remake_ls_tasks(self, args):
-        import json
-
         from .core.dag import iter_expand_rule
         from .core.exceptions import Defer
         from .core.planner import make_predicate
@@ -608,7 +582,6 @@ class RemakeParser:
         format strings, off-by-one kwargs) and produced-but-undeclared
         dependencies. Materialises all tasks."""
         import difflib
-        import json
 
         from .core.dag import iter_expand_rule
         from .core.exceptions import Defer
@@ -708,8 +681,6 @@ class RemakeParser:
         rule with its task count and/or matrix keys as `rule[N](m1, m2)`;
         N (and the keys) show as ? when a dynamic matrix can't be resolved
         yet (e.g. a continuation rule awaiting upstream outputs)."""
-        import json
-
         import networkx as nx
 
         from .core.dag import build_rule_dag, resolve_matrix
@@ -765,13 +736,13 @@ class RemakeParser:
             print(line)
 
     def remake_task_info(self, args):
-        import json
+        from .executors.slurm_executor import last_submission
 
         rmk = self._load(args)
         task = rmk.select_task(args.task_key, args.query)
         record = rmk.metadata.get_tasks_status([task]).get(task.key)
         log_path = _task_log_path(task)
-        jobids, array_index = _slurm_submission(task.rule.name, task.key)
+        jobids, array_index = last_submission(task.rule.name, task.key)
         inputs = (
             {k: {'path': str(v), 'exists': Path(v).exists()} for k, v in task.inputs.items()}
             if task.rule.inputs is not None
@@ -866,15 +837,13 @@ class RemakeParser:
                   f'{len(results) - n_run} up to date')
 
     def remake_slurm_status(self, args):
-        import json
-
-        from .executors.slurm_executor import squeue_snapshot
+        from .executors.slurm_executor import last_submission, squeue_snapshot
 
         rmk = self._load(args)
         snapshot = squeue_snapshot()
         rows = []
         for rule in rmk.rules:
-            jobids, _ = _slurm_submission(rule.name)
+            jobids, _ = last_submission(rule.name)
             if jobids is None:
                 continue
             for jobid in jobids:
