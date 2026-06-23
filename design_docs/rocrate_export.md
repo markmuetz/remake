@@ -2,11 +2,11 @@
 
 Design for `remake ro-crate` — packaging a completed (or partially
 completed) pipeline as an [RO-Crate](https://www.researchobject.org/ro-crate/)
-for publication, archival and citation. Scheduled for **0.9.0** (the
-observability/correctness/provenance slice — see
-[roadmap.md](roadmap.md) and [future_releases/v0.9.0.md](future_releases/v0.9.0.md)).
-Graduates the idea sketched in [discussion.md](discussion.md) into a concrete
-design.
+for publication, archival and citation. Scheduled for **0.10.x** — bundled
+with the environment/git/checksum provenance *capture* it consumes, so the
+crate ships rich rather than emitting omitted fields (see
+[roadmap.md](roadmap.md); moved here from 0.9 on 2026-06-23). Graduates the
+idea sketched in [discussion.md](discussion.md) into a concrete design.
 
 ## Goal
 
@@ -65,18 +65,23 @@ evolving.)
 ## What is missing, and graceful degradation
 
 The crate must be **valid with whatever is recorded today**, and get *richer*
-as the sibling 0.9/0.10 capture features land. Fields not yet stored:
+as the capture features land. Bundling export into **0.10.x** alongside the
+provenance *capture* (the reason for the move from 0.9) means the
+environment / git / checksum fields are being recorded in the *same* milestone
+rather than back-filled later. Fields not stored by 0.8:
 
 | Field | Status | Plan |
 | --- | --- | --- |
-| `startTime` / wall time / peak RSS | not stored — `TaskRecord` has only completion `timestamp` | filled once **per-task resource capture** (also 0.9) lands; until then emit `endTime` only |
-| `sha256` per file | not stored | comes from the **general stored-checksum capability** (see below); else `--checksums` cold-reread fallback, else omit |
+| `startTime` / wall time / peak RSS | not stored — `TaskRecord` has only completion `timestamp` | filled once **per-task resource capture** (0.9) lands; until then emit `endTime` only |
+| `sha256` per file | not stored | the **general stored-checksum capability** (see below), captured in 0.10 alongside export; else `--checksums` cold-reread fallback, else omit |
 | `agent` (producing user/host) | not stored per task | SLURM sidecars could carry it; otherwise omit (or, weakly, the crate author at export time — *not* provenance-accurate, so prefer omit) |
-| environment (conda/uv lock or hash), pipeline git hash | not stored | **0.10 provenance capture**; attach to the workflow / `CreateAction`s when present |
+| environment (conda/uv lock or hash), pipeline git hash | not stored | **0.10 provenance capture**, co-shipped with export — attach to the workflow / `CreateAction`s when present |
 
 Design rule: **never block the crate on a missing optional field** — emit a
 conformant Workflow Run Crate, and let provenance completeness scale with the
-capture features. This keeps RO-Crate decoupled from those features' timelines.
+capture features. So even a crate of a pre-0.10 (0.8/0.9) run stays valid, just
+sparser; the 0.10 co-shipping means a *natively-0.10* run is rich from the
+first export.
 
 ## Checksums — a general capability, not a crate detail
 

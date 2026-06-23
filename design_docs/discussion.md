@@ -128,8 +128,9 @@ design discussion before any work starts.
   conda/pip/uv/pixi lockfile or `pip freeze` snapshot; how much is
   remake's job vs the user's.
 - **Integrate RO-Crate** — *graduated to a full design doc:
-  [rocrate_export.md](rocrate_export.md) (scheduled 0.9.0). The notes below
-  are the origin sketch, kept for the record.* Package outputs + metadata +
+  [rocrate_export.md](rocrate_export.md) (scheduled 0.10.x, bundled with the
+  env/git provenance capture). The notes below are the origin sketch, kept for
+  the record.* Package outputs + metadata +
   provenance as an
   [RO-Crate](https://www.researchobject.org/ro-crate/) for
   publication/archival; natural successor to remake2's archive feature.

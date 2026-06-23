@@ -30,21 +30,24 @@ web control plane in 0.12.x — see below.)
 
 ## Milestones
 
-### 0.9.x — observability, correctness & provenance
+### 0.9.x — observability & correctness
 The scoped slice in [future_releases/v0.9.0.md](future_releases/v0.9.0.md):
 output validation (`ensure`-style on the token ABC), per-task resource capture
 (wall time + peak RSS, all executors), static DAG/rule-graph export, the
-single-file HTML run report, **RO-Crate export** (provenance/archival
-serialiser over the existing DB — promoted in here 2026-06-23), and execution
-profiles (a shipped `jasmin` profile). The report and the crate are two
-renderers of the same metadata.
+single-file HTML run report, and execution profiles (a shipped `jasmin`
+profile).
 
-### 0.10.x — provenance & reproducibility *capture*
-Where 0.9 *serialises* what is already recorded, 0.10 *records more* so the
-crate/report get richer: environment capture (conda/pip/uv lockfile or hash
-per run), pipeline git hash/status per run, `remake stats` run-history store,
-and query-by-status (`-Q 'status == "failed"'`, which needs queries to see DB
-state). Also clears scale-debt that gates everything (see Cross-cutting).
+### 0.10.x — provenance & reproducibility (capture + export)
+Bundle the provenance *capture* with the *export* that consumes it, so the
+crate ships rich from the start. **Capture:** environment (conda/pip/uv
+lockfile or hash per run), pipeline git hash/status per run, optional run-time
+output checksums (the shared capability in
+[rocrate_export.md](rocrate_export.md)), plus `remake stats` run-history and
+query-by-status (`-Q 'status == "failed"'`). **Export:** **RO-Crate export**
+([rocrate_export.md](rocrate_export.md)) — a Workflow Run Crate serialised from
+the metadata DB; moved here from 0.9 (2026-06-23) precisely so the `agent` /
+environment / git / checksum fields it wants are being recorded rather than
+omitted. Also clears scale-debt that gates everything (see Cross-cutting).
 
 ### 0.11.x — extensibility
 Open the abstractions up: storage-backend tokens (generalise `OutputToken` so
