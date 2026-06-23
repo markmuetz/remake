@@ -45,9 +45,28 @@ design discussion before any work starts.
       over the distribution, weighs headroom against OOM risk, and proposes
       concrete config edits to the remakefile. Sits naturally alongside the
       existing `remake` skill (operate/debug/author pipelines).
-- **Web interface** — out of scope per the design doc, but the SQLite DB
-  is queryable by external tools; revisit whether a thin read-only
-  viewer is worth it.
+- **Web interface** — *being actively reconsidered (2026-06-23); scheduled
+  as a 0.12.x exploration in [roadmap.md](roadmap.md).* The original design
+  doc rules a GUI/dashboard out of scope, and a *passive read-only viewer*
+  over the SQLite DB remains low-value (external tools can already query it).
+  The idea now on the table is bigger and changes the calculus: a
+  **single-page, interactive control plane** — launch and cancel runs, watch
+  tasks change state in real time, drill into a failing task's log/traceback,
+  re-run or `set-state` a selection, all from the browser. That is a genuine
+  differentiator (no SLURM-native, stale-rebuild-aware tool offers live
+  interaction at remake's scale), and the just-built programmatic `Remake`
+  API is the natural backend for it — the web layer would be another *render
+  + drive* client over the same methods the CLI uses, consistent with the
+  "CLI is a thin render layer" principle (see compatibility.md / design doc).
+  - *Open tensions to resolve before any work:* it reverses the "static
+    reports, not a server" discipline that has kept remake lean (a live UI
+    needs a running process — how does that coexist with a batch tool whose
+    runs are detached SLURM submissions?); real-time task state under SLURM
+    means polling `squeue`/sidecars or a push channel; auth/exposure on a
+    shared HPC login node; and keeping it strictly optional (an extra, never
+    a dependency of the core). Decide whether "real-time" means *observe* a
+    detached run or *also drive* one, and whether the server is local-only
+    (developer laptop / `ssh -L` tunnel) vs deployed.
 - **Dask integration — long grass.** A basic dask executor exists
   (2026-06-12: spec-based like multiproc/SLURM, LocalCluster or a
   configured scheduler address) and that is where it stops: dask is a

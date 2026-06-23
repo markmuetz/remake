@@ -1153,6 +1153,9 @@ hierarchies and implicit globals needs judgement, not regex.
 
 - Content-based change detection (hashing file contents) — the DB is the
   source of truth; filesystem checks are opt-in
-- A GUI or web dashboard — out of scope, but the SQLite DB is queryable
-  directly by external tools
+- A *passive* GUI or web dashboard — out of scope (the SQLite DB is queryable
+  directly by external tools). Note (2026-06-23): an *interactive,
+  API-backed* web control plane is being reconsidered as a deliberate
+  exception — scheduled as a 0.12.x exploration; see
+  [roadmap.md](roadmap.md) and [discussion.md](discussion.md).
 - Distributed state beyond what SLURM provides natively
