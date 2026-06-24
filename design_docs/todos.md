@@ -124,8 +124,35 @@ assessment (2026-06-11). Ordered roughly by severity.
   Note: the `why` >1-match case that first surfaced this is gone — `why`
   now explains all matches (2026-06-15) — but the general missing-handler
   problem remains for the other single-task commands and bad queries.
-- [ ] `eval`-based query filter (see MM comment in `core/planner.py`):
-  consider a restricted-ops parser for better errors; revisit at CLI work.
+- [ ] `eval`-based query filter (see MM comment in `core/planner.py:27`):
+  `make_predicate` does `eval(compile(query, ...))` against task kwargs.
+  Hardened (`__builtins__` stripped, kwargs as the only locals) and the query
+  is the user's own, so the threat model is low — but it is not a sandbox
+  (dunder traversal on passed objects, resource exhaustion). Replace with a
+  restricted-ops parser that walks the AST and allow-lists a small set of
+  comparisons/boolean ops (the pyquerylist approach), which also yields better
+  error messages than a bare `NameError`/`SyntaxError`. Pre-1.0 fix; revisit
+  at CLI work.
+- [ ] **`planner.plan` records only the first rerun trigger** (MM comment,
+  `core/planner.py:354`). `reason` is overwritten, so code-changed shadows
+  uses-changed shadows io-changed when several are true at once. The dry-run
+  "why" view therefore shows one cause when there may be several. To give full
+  fidelity, collect a list of reasons instead of overwriting (then surface them
+  in `why`/`info --reasons`). Minor, but a real fidelity gap.
+- [ ] **`planner.plan` does redundant work when `force` is set** (MM comment,
+  `core/planner.py:369`). The per-task loop computes `rec`, runs the code
+  compare, the `uses`/`io` hash compares and `_outputs_complete`, then
+  unconditionally overwrites the verdict with `'forced'`. Hoist `if force:` to
+  the top of the task loop and skip straight to appending — saves the
+  hash/compare/stat calls per task, which matter at 1e6 tasks. Behaviour-
+  preserving; covered by existing force tests.
+- [ ] **`planner.plan` is long and interleaves three concerns** (MM comments,
+  `core/planner.py:278-279`): matrix-deferral, per-task freshness, and rerun
+  propagation (the same-pass `rerun_kwargs` path *and* the durable `run_seq`
+  backstop). Extract the per-task decision (the body of `for task in tasks`)
+  into a `_task_rerun(task, rec, ...) -> (rerun, reason)` helper so `plan` reads
+  as orchestration. Behaviour-preserving readability refactor; well covered by
+  the planner tests.
 - [ ] `uses` injection silently shadows module globals on name collision —
   warn at decoration time.
 - [x] File logging was dropped in the CLI rewrite; restored: always-on DEBUG
