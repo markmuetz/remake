@@ -520,9 +520,9 @@ class RemakeCLI:
                 print(rep['exception'].rstrip() or '(no stored exception)')
                 others = grp['members'][1:]
                 if others:
-                    shown = ', '.join(others[:5])
+                    shown = '\n'.join(others[:5])
                     more = f' (+{len(others) - 5} more)' if len(others) > 5 else ''
-                    print(f'+ {len(others)} more: {shown}{more}')
+                    print(f'+ {len(others)} more:\n{shown}{more}')
 
     def remake_ls_tasks(self, args):
         from .core.dag import iter_expand_rule
