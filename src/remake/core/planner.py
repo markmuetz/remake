@@ -51,7 +51,7 @@ def _same_matrix(rule, dep):
     return rule.matrix is dep.matrix or rule.matrix == dep.matrix
 
 
-def _max_upstream_run_seq(rule, task_id, run_seq_by_rule):
+def _max_upstream_run_seq(rule, task_kwargs, run_seq_by_rule):
     """Highest run_seq among the upstream tasks feeding this task — element-wise
     when the matrices match, else the max over all of the upstream rule's tasks
     (conservative, mirroring rerun propagation). `run_seq_by_rule` maps a rule
@@ -60,7 +60,7 @@ def _max_upstream_run_seq(rule, task_id, run_seq_by_rule):
     best = None
     for dep in rule.depends_on:
         seqs = run_seq_by_rule.get(dep, {})
-        candidates = [seqs.get(task_id)] if _same_matrix(rule, dep) else seqs.values()
+        candidates = [seqs.get(task_kwargs)] if _same_matrix(rule, dep) else seqs.values()
         for s in candidates:
             if s is not None and (best is None or s > best):
                 best = s
@@ -86,7 +86,7 @@ def cascade_settled(rule_set, dag, selected, run_seq, status):
     Inputs are materialised maps keyed by rule then frozenset(kwargs.items()):
     `selected` (the user's chosen task-ids, the settle seed), `run_seq`
     (task-id -> run_seq or None), `status` (task-id -> status int). Returns the
-    full settled set {rule: set(task_id)} = selected + cascaded; only already
+    full settled set {rule: set(task_kwargs)} = selected + cascaded; only already
     SUCCESS descendants are ever added (never-run/failed are left to rerun).
 
     The cascade is local and needs no subtree pruning: a descendant skipped by
@@ -97,13 +97,13 @@ def cascade_settled(rule_set, dag, selected, run_seq, status):
     for rule in nx.topological_sort(dag):
         if rule not in rule_set or not rule.depends_on:
             continue
-        for task_id, st in status.get(rule, {}).items():
-            if st != TASK_STATUS_SUCCESS or task_id in settled.get(rule, set()):
+        for task_kwargs, st in status.get(rule, {}).items():
+            if st != TASK_STATUS_SUCCESS or task_kwargs in settled.get(rule, set()):
                 continue
-            this_seq = run_seq.get(rule, {}).get(task_id)
+            this_seq = run_seq.get(rule, {}).get(task_kwargs)
             downstream_of_settled = independent_newer = False
             for dep in rule.depends_on:
-                dep_ids = ([task_id] if _same_matrix(rule, dep)
+                dep_ids = ([task_kwargs] if _same_matrix(rule, dep)
                            else list(run_seq.get(dep, {})))
                 for did in dep_ids:
                     if did in settled.get(dep, set()):
@@ -113,7 +113,7 @@ def cascade_settled(rule_set, dag, selected, run_seq, status):
                         if dseq is not None and (this_seq is None or dseq > this_seq):
                             independent_newer = True
             if downstream_of_settled and not independent_newer:
-                settled.setdefault(rule, set()).add(task_id)
+                settled.setdefault(rule, set()).add(task_kwargs)
     return settled
 
 
@@ -339,7 +339,7 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
 
         for task in tasks:
             rec = records.get(task.key)
-            task_id = frozenset(task.kwargs.items())
+            task_kwargs = frozenset(task.kwargs.items())
             # `reason` is a short literal (cheap to assign every iteration);
             # only formatted into a log line when a TRACE sink is attached.
             if rec is None:
@@ -366,20 +366,20 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
                 rerun, reason = True, 'forced'
 
             if not rerun:
-                if upstream_all or any(task_id in dep_rerun for dep_rerun in elementwise_deps):
+                if upstream_all or any(task_kwargs in dep_rerun for dep_rerun in elementwise_deps):
                     rerun, reason = True, 'upstream reruns'
             # Durable cross-pass backstop: an upstream committed in a later
             # invocation than this task (e.g. an upstream rerun via `run -Q`,
             # or after a crash) without rerunning it in the same pass. run_seq
             # None = not-yet-tracked (pre-upgrade): don't rerun on that alone.
             if not rerun and rec is not None and rec.run_seq is not None:
-                up_seq = _max_upstream_run_seq(rule, task_id, task_run_seq)
+                up_seq = _max_upstream_run_seq(rule, task_kwargs, task_run_seq)
                 if up_seq is not None and up_seq > rec.run_seq:
                     rerun, reason = True, 'upstream ran more recently'
 
             logger.trace('{}: {} — {}', task.key, 'rerun' if rerun else 'skip', reason)
             if rerun:
-                rule_rerun.add(task_id)
+                rule_rerun.add(task_kwargs)
                 runnable.append(task)
 
         rerun_kwargs[rule] = rule_rerun
