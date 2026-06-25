@@ -152,7 +152,7 @@ def rule(
         # Rule-level strict_scope=True errors now; None defers strictness to
         # registration (warnings are still emitted now).
         check_scope(fn, uses_, strict=bool(strict_scope))
-        return Rule(
+        rule_obj = Rule(
             fn=fn,
             inputs=inputs,
             outputs=outputs,
@@ -163,5 +163,10 @@ def rule(
             config=dict(config) if config else {},
             _name=name,
         )
+        # Surface the decorated function's docstring on the Rule itself so
+        # `help(rule)` / `rule.__doc__` see through to the user's function
+        # (the Rule object replaces the function, so wraps doesn't apply).
+        rule_obj.__doc__ = fn.__doc__
+        return rule_obj
 
     return decorator
