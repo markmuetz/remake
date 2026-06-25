@@ -32,9 +32,14 @@ def _loaded_globals(code):
     """Names loaded as globals by a code object, recursing into nested code
     objects (comprehensions, lambdas, nested defs)."""
     names = set()
+    # A global read compiles to LOAD_GLOBAL carrying the name as its argument
+    # (locals/args use LOAD_FAST, so they are excluded for free).
     for instr in dis.get_instructions(code):
         if instr.opname == 'LOAD_GLOBAL':
             names.add(instr.argval)
+    # Comprehensions, lambdas and nested defs each compile to their own code
+    # object stored in co_consts; their LOAD_GLOBALs live there, not in the
+    # parent, so recurse to catch a global only referenced inside them.
     for const in code.co_consts:
         if isinstance(const, types.CodeType):
             names |= _loaded_globals(const)
@@ -48,6 +53,12 @@ def undeclared_names(fn, uses):
     resolve to modules (changing libraries is environment, not code), and
     names not resolvable at all (left to fail naturally at run time).
     """
+    # Resolve closed-over names to their values up front: each freevar is
+    # backed by a cell in __closure__, and we need the value (not just the
+    # name) to apply the environment filter below. An *empty* cell — the name
+    # is closed over but its enclosing assignment never ran — raises ValueError
+    # on cell_contents; skip it here, and it falls through to the freevar
+    # branch below (reported, since we have no value to inspect).
     closure_values = {}
     if fn.__closure__:
         for name, cell in zip(fn.__code__.co_freevars, fn.__closure__):
@@ -56,31 +67,46 @@ def undeclared_names(fn, uses):
             except ValueError:  # cell not yet filled (recursive def)
                 pass
 
+    # The two ways a function reaches outer scope: module globals (LOAD_GLOBAL)
+    # and closure free variables (co_freevars). Their union is every name it
+    # could pull from a higher scope.
     names = _loaded_globals(fn.__code__) | set(fn.__code__.co_freevars)
     undeclared = []
     for name in sorted(names):
+        # Builtins and stdlib module names are environment, not the rule's code.
         if name in _BUILTIN_NAMES or name in _STDLIB_MODULE_NAMES:
             continue
+        # Already opted in to change tracking.
         if name in uses:
             continue
+        # Closed-over value we could read: report unless it's environment
+        # (a module, or a stdlib-defined object like Path/datetime).
         if name in closure_values:
             if _is_environment(closure_values[name]):
                 continue
             undeclared.append(name)
+        # Module global: same environment check.
         elif name in fn.__globals__:
             if _is_environment(fn.__globals__[name]):
                 continue
             undeclared.append(name)
+        # In co_freevars but with no inspectable value (empty cell above):
+        # a real outer-scope reference, so report it rather than drop it.
         elif name in fn.__code__.co_freevars:
             undeclared.append(name)
+        # Otherwise: a LOAD_GLOBAL name with no current binding (not in globals
+        # or closure) — left to fail naturally at run time, not reported.
     return undeclared
 
 
 def _is_environment(value):
     """Modules, and objects imported from the stdlib (e.g. Path, datetime),
     are environment, not trackable code."""
+    # A module reference itself (e.g. `import numpy as np`).
     if isinstance(value, types.ModuleType):
         return True
+    # An object whose defining module is rooted in the stdlib — its top-level
+    # package name (before the first dot) is a known stdlib module.
     defining_module = getattr(value, '__module__', '') or ''
     return defining_module.split('.')[0] in _STDLIB_MODULE_NAMES
 
