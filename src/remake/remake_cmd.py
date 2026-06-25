@@ -15,7 +15,13 @@ from loguru import logger
 
 from .core import RemakeError
 from .loader import load_remake
-from .util import Arg, MutuallyExclusiveGroup, add_argset, task_log_path as _task_log_path
+from .util import (
+    Arg,
+    MutuallyExclusiveGroup,
+    Painter,
+    add_argset,
+    task_log_path as _task_log_path,
+)
 from .version import __version__
 
 # Heavy/optional imports (networkx, the executor stack, squeue) stay local to
@@ -135,6 +141,10 @@ class RemakeCLI:
             Arg('--info', '-I', help='Enable info logging', action='store_true', default=True),
             Arg('--warning', '-W', help='Warning logging only', action='store_true'),
         ),
+        Arg('--colour', '--color', dest='colour', choices=['auto', 'always', 'never'],
+            default='auto',
+            help='Colourise output: auto (TTY only, the default), always, or '
+                 'never. NO_COLOR/FORCE_COLOR env vars are honoured under auto.'),
     ]
     sub_cmds = {
         'run': {
@@ -479,6 +489,8 @@ class RemakeCLI:
             print(json.dumps(data, indent=1))
             return
 
+        paint = Painter(args.colour)
+
         header = ('rule', 'tasks', 'success', 'failed', 'pending', 'to run')
         rows = [
             (r['rule'], '?', '?', '?', '?', 'deferred')
@@ -494,9 +506,30 @@ class RemakeCLI:
             max(len(str(r[i])) for r in rows + [header, totals_row])
             for i in range(len(header))
         ]
-        for row in [header] + rows:
-            print('  '.join(f'{str(v):<{w}}' for v, w in zip(row, widths)))
-        print('  '.join(f'{str(v):<{w}}' for v, w in zip(totals_row, widths)))
+
+        # Per-column styling for the count columns (rule name + tasks count are
+        # left plain). A zero count is dimmed so non-zero cells stand out.
+        col_style = (None, None, ('green',), ('red', 'bold'), ('yellow',), ('cyan',))
+
+        def render_row(row, *, emphasise=False):
+            cells = []
+            for i, (v, w) in enumerate(zip(row, widths)):
+                cell = f'{str(v):<{w}}'  # pad on raw text, colour after
+                style = col_style[i]
+                if style is not None and str(v) not in ('0', '?'):
+                    cell = paint(cell, *style)
+                elif style is not None and str(v) == '0':
+                    cell = paint(cell, 'dim')
+                if emphasise and i == 0:
+                    cell = paint(cell, 'bold')
+                cells.append(cell)
+            return '  '.join(cells)
+
+        # Header row stays uncoloured (it labels the colours below it).
+        print('  '.join(f'{str(v):<{w}}' for v, w in zip(header, widths)))
+        for row in rows:
+            print(render_row(row))
+        print(render_row(totals_row, emphasise=True))
         if args.reasons:
             for r in rule_rows:
                 rsn = r.get('reasons')
@@ -504,16 +537,18 @@ class RemakeCLI:
                     tally = ', '.join(f'{n} {cat}' for cat, n in sorted(rsn.items()))
                     print(f'  {r["rule"]}: {tally}')
         for task_row in task_rows:
-            print(f'{task_row["status"]:<8} {task_row["task"]}')
+            status = task_row['status']
+            print(f'{paint.status(status, f"{status:<8}")} {task_row["task"]}')
         if args.all_failures:
             for failure in failures:
-                print(f'\n=== {failure["task"]} (failed at {failure["timestamp"]}) ===')
+                print(paint(f'\n=== {failure["task"]} (failed at '
+                            f'{failure["timestamp"]}) ===', 'red', 'bold'))
                 print(f'log: {failure["log"]}')
                 print(failure['exception'].rstrip() or '(no stored exception)')
         elif show_failures:
             for grp in grouped:
-                print(f'\n=== {grp["exc_type"]} at {grp["location"]}  '
-                      f'×{grp["count"]} ===')
+                print(paint(f'\n=== {grp["exc_type"]} at {grp["location"]}  '
+                            f'×{grp["count"]} ===', 'red', 'bold'))
                 rep = grp['example']
                 print(f'example: {rep["task"]} (failed at {rep["timestamp"]})')
                 print(f'log: {rep["log"]}')
@@ -532,6 +567,7 @@ class RemakeCLI:
         rmk = self._load(args)
         rmk.finalize()
         predicate = make_predicate(args.query) if args.query else None
+        paint = Painter(args.colour)
 
         def input_files(task):
             for name, value in task.inputs.items():
@@ -564,12 +600,14 @@ class RemakeCLI:
                     if args.inputs:
                         for f in input_files(task):
                             mark = '' if not args.check else (
-                                ' [exists]' if f['exists'] else ' [MISSING]')
+                                paint(' [exists]', 'green') if f['exists']
+                                else paint(' [missing]', 'red', 'bold'))
                             print(f'  in  {f["name"]}: {f["path"]}{mark}')
                     if args.outputs:
                         for f in output_files(task):
                             mark = '' if not args.check else (
-                                ' [complete]' if f['complete'] else ' [missing]')
+                                paint(' [complete]', 'green') if f['complete']
+                                else paint(' [missing]', 'red', 'bold'))
                             print(f'  out {f["name"]}: {f["path"]}{mark}')
             except Defer:
                 logger.warning(f'{rule.name}: deferred (matrix not ready), tasks unknown')
@@ -647,24 +685,27 @@ class RemakeCLI:
             print(json.dumps(data, indent=1))
             return
 
+        paint = Painter(args.colour)
         print(f'{task}  {task.key}')
         when = f' at {data["timestamp"]}' if data['timestamp'] else ''
-        print(f'status:   {data["status"]}{when}')
+        print(f'status:   {paint.status(data["status"])}{when}')
         for name, path_info in data['inputs'].items():
-            mark = 'exists' if path_info['exists'] else 'MISSING'
+            mark = (paint('exists', 'green') if path_info['exists']
+                    else paint('missing', 'red', 'bold'))
             print(f'input:    {path_info["path"]}  [{mark}]  ({name})')
         for name, path_info in data['outputs'].items():
-            mark = 'complete' if path_info['complete'] else 'missing'
+            mark = (paint('complete', 'green') if path_info['complete']
+                    else paint('missing', 'red', 'bold'))
             print(f'output:   {path_info["path"]}  [{mark}]  ({name})')
         log = data['log']
-        mark = '' if log['exists'] else '  [no log yet]'
+        mark = '' if log['exists'] else paint('  [no log yet]', 'dim')
         print(f'log:      {log["path"]}{mark}')
         jobids, array_index = data['slurm']['jobids'], data['slurm']['array_index']
         if jobids is not None:
             index = f', array index {array_index}' if array_index is not None else ''
             print(f'slurm:    job {",".join(jobids)} (last submission{index})')
         if data['exception']:
-            print(f'\n{data["exception"].rstrip()}')
+            print(f'\n{paint(data["exception"].rstrip(), "red")}')
 
     def remake_task_log(self, args):
         rmk = self._load(args)
@@ -687,15 +728,19 @@ class RemakeCLI:
             print('nothing would run: all tasks are up to date')
             return
 
+        paint = Painter(args.colour)
         n_run = 0
         for task, will_run, reasons in results:
             n_run += will_run
             print(f'{task}  {task.key}')
-            print(f'will run: {"yes" if will_run else "no"}')
+            verdict = (paint('yes', 'cyan', 'bold') if will_run
+                       else paint('no', 'green'))
+            print(f'will run: {verdict}')
             if not reasons:
-                print('up to date: recorded success, code and uses unchanged, no upstream reruns')
+                print(paint('up to date: recorded success, code and uses '
+                            'unchanged, no upstream reruns', 'dim'))
             for reason in reasons:
-                print(f'- {reason.message}')
+                print(paint(f'- {reason.message}', 'yellow'))
             print()
         if len(results) > 1:
             print(f'{len(results)} task(s): {n_run} would run, '

@@ -215,6 +215,64 @@ def test_info_failures_grouped_by_signature(pipeline_dir, capsys):
     assert failures[0]['count'] == 2 and len(failures[0]['members']) == 2
 
 
+ESC = '\x1b['  # start of any ANSI colour escape
+
+
+def test_colour_only_when_requested(pipeline_dir, capsys):
+    # capsys makes stdout a non-TTY, so the default (auto) must stay plain;
+    # --colour always opts in; --colour never is explicit plain. The flag is
+    # top-level, so it goes before the subcommand.
+    cli('run', 'pipeline.py')
+    capsys.readouterr()
+
+    cli('info', 'pipeline.py', '--tasks')  # auto + non-TTY
+    assert ESC not in capsys.readouterr().out
+
+    cli('--colour', 'never', 'info', 'pipeline.py', '--tasks')
+    assert ESC not in capsys.readouterr().out
+
+    cli('--colour', 'always', 'info', 'pipeline.py', '--tasks')
+    out = capsys.readouterr().out
+    assert ESC in out
+    # The status token is coloured but its text survives intact.
+    assert 'success' in out and 'generate[n=1]' in out
+
+
+def test_colour_never_leaks_into_json(pipeline_dir, capsys):
+    # Machine-readable output must stay clean even with --colour always: the
+    # painter is built after every --json early-return.
+    cli('run', 'pipeline.py')
+    capsys.readouterr()
+    for cmd in (
+        ('--colour', 'always', 'info', 'pipeline.py', '--json'),
+        ('--colour', 'always', 'ls-tasks', 'pipeline.py', '--json'),
+    ):
+        cli(*cmd)
+        out = capsys.readouterr().out
+        assert ESC not in out
+        json.loads(out)  # still valid JSON
+
+
+def test_colour_applies_across_commands(pipeline_dir, capsys):
+    # ls-tasks (--check marks), task-info (status + marks) and why (verdict)
+    # all honour --colour always.
+    cli('run', 'pipeline.py')
+    capsys.readouterr()
+
+    cli('--colour', 'always', 'ls-tasks', 'pipeline.py', '-o', '--check')
+    assert ESC in capsys.readouterr().out
+
+    cli('--colour', 'always', 'task-info', 'pipeline.py',
+        '-Q', 'rule == "generate" and n == 1')
+    out = capsys.readouterr().out
+    assert ESC in out and 'success' in out
+
+    cli('--colour', 'always', 'why', 'pipeline.py',
+        '-Q', 'rule == "generate" and n == 1')
+    out = capsys.readouterr().out
+    assert ESC in out and ('yes' in out or 'no' in out)
+
+
 def test_info_reasons_tally(pipeline_dir, capsys):
     Path('bug.py').write_text(SAME_BUG)
     cli('run', 'bug.py')  # i=0,2 fail; i=1,3 succeed
