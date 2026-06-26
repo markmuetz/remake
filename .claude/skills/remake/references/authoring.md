@@ -53,12 +53,53 @@ def fn([inputs,] [outputs,] <matrix keys...>):
   ```
 - `rule_b.inputs = rule_a.outputs` is the chaining idiom (plus
   `depends_on=[rule_a]` — wiring is NOT inferred from paths).
+- `depends_on` entries may be **rule objects OR rule-name strings**:
+  `depends_on=['extract']`. String names are resolved against all
+  registered rules at DAG-build time (`build_rule_dag`), raising
+  `ValueError` on an unknown name. The trade-off vs an object reference is
+  *when* a typo bites: import time (NameError) → DAG-build time.
 - Output parent directories are created by remake before the task runs —
   never `mkdir` in rule code.
 - Outputs are wrapped in tokens: strings become `FileToken`
   (transparent: pass straight to `open()`/xarray). Use `ZarrStore(path)`
   / `S3Object(...)` explicitly, or subclass `OutputToken` for custom
   completion semantics (e.g. a DB row).
+
+## Splitting a pipeline across modules (extracting a mid-pipeline rule)
+
+Rules can live in any module and be registered together
+(`rmk.rules_from_modules(...)`, or imported into the remakefile so the
+namespace scan finds them). Extracting a *leaf* rule is trivial. A
+*mid-pipeline* rule (B in `A → B → C`, where A and C stay behind) looks
+circular: the new module seems to need A, and the old module seems to
+need B.
+
+The escape is to keep **all cross-module references function/value-level
+and one-directional**, never crossing `Rule` objects:
+
+- Wire `depends_on` with **name strings**, not objects, so neither module
+  imports the other's `Rule` (`depends_on=['find_candidate']` in the new
+  module; `depends_on=['compare']` back in the old one). Resolved at
+  DAG-build time.
+- Move B's path-builders (`inputs`/`outputs`/`matrix` callables) into the
+  new module alongside it. If they call an upstream rule's `outputs`
+  function (a plain path-builder, not the rule), move that too, or keep
+  the dependency pointing one way (new module imports nothing from the
+  old).
+- The old remakefile then does a single one-way `from newmod import
+  compare` — enough for the namespace scan to register it, with no import
+  back from `newmod`.
+
+Result: `newmod` imports only the shared library package + stdlib; the
+remakefile imports *from* `newmod`. No cycle. Without string `depends_on`
+this isn't cleanly possible — the bidirectional `Rule`-object imports
+force a fragile import-ordering hack instead.
+
+Caveat: this works for the DAG wiring. Pure helpers a rule uses move out
+freely (declare them in `uses=`); genuinely upstream-coupled path logic
+(e.g. an `inputs` builder that enumerates another rule's batch outputs)
+still ties the modules together — extract the science, not necessarily
+the orchestration.
 
 ## matrix
 
