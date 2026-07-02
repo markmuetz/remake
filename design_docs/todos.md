@@ -108,11 +108,17 @@ assessment (2026-06-11). Ordered roughly by severity.
   the plan result). Independent of — and worth doing regardless of — the
   storage rework above; on an all-settled pipeline every rule pays the
   double query.
-- [ ] **Status-query regression micro-benchmark** (logs_analysis §4.5). Replay
-  a large DAG's plan against a populated DB and assert status-query time stays
-  ~O(distinct code), not O(tasks × source size) — the field logs only revealed
-  the 256× amplification after the fact. Natural home: alongside
-  `tests/benchmarks/bench_million_tasks.py` and the CI-benchmark todo above.
+- [x] **Status-query regression micro-benchmark** (logs_analysis §4.5). Done
+  2026-07-02: `test_status_query_time_independent_of_uses_size`
+  (test_metadata.py) — pytest, so CI-load-bearing now, not a manual bench
+  script. Asserts the scaling *ratio* rather than a wall clock (CI-noise
+  robust): 2000 tasks with a wescon-sized (~150 KB rendered) `uses` must
+  query and plan within 5× of the same DAG with a tiny `uses` (healthy ≈ 1×;
+  the pre-rework JOIN was ~100×), with a 0.05 s timer floor. Plus a
+  timer-free structural canary (records carry int ids, never text) and a
+  semantic guard (nothing planned as a rerun). Validated by simulating the
+  regression (re-adding a per-task text fetch): fails with a pointed message.
+  Runs in ~0.5 s.
 
 ## Correctness (cont.)
 

@@ -1,9 +1,11 @@
 import sqlite3
 from pathlib import Path
+from time import perf_counter
 
 from loguru import logger
 
 from remake import Remake, Sqlite3Backend, rule
+from remake.metadata import TASK_STATUS_SUCCESS
 
 
 def _capture_warnings(fn):
@@ -162,6 +164,79 @@ def test_uses_change_after_migration_reruns(tmp_path):
     rmk = Remake(rules=[r], metadata=Sqlite3Backend(dbloc))
     runnable, _ = rmk.plan()
     assert len(runnable) == 2  # both tasks: uses= changed
+
+
+# --- status-query scaling regression (design_docs/logs_analysis §1.1/1.2) ---
+#
+# The field failure this guards against: get_tasks_status once returned the
+# full run source per task (a JOIN on code.code) and task rows stored the
+# full normalised uses text inline — so a rule with a large `uses=` made a
+# 1465-task status query scan ~213 MB (2.2 s) and a 3341-task DB weigh
+# 272 MB. Post-rework, rows carry integer FKs and text is fetched once per
+# *distinct* id, so per-task cost must be independent of source size. Wall
+# clocks are too noisy for CI, so assert the scaling *ratio*: same task
+# count, tiny uses vs a wescon-sized (~150 KB rendered) uses — pre-rework
+# the ratio was ~100×, correct behaviour is ~1×.
+
+N_SCALING_TASKS = 2000
+SCALING_RATIO_LIMIT = 5.0  # generous headroom over ~1× for CI noise
+TIMER_FLOOR = 0.05  # seconds; below this, ratios are timer noise
+
+
+def _populated_pipeline(tmp_path, uses):
+    @rule(outputs={'o': str(tmp_path / '{n}.txt')},
+          matrix={'n': list(range(N_SCALING_TASKS))}, uses=uses)
+    def process(outputs, n):
+        Path(outputs['o']).write_text(str(n))
+
+    rmk = Remake(rules=[process], metadata=Sqlite3Backend(':memory:'))
+    rmk.finalize()
+    tasks = rmk.tasks()
+    rmk.metadata.update_tasks(tasks, TASK_STATUS_SUCCESS)
+    return rmk, tasks
+
+
+def _best_of(fn, n=3):
+    best = None
+    for _ in range(n):
+        start = perf_counter()
+        fn()
+        elapsed = perf_counter() - start
+        if best is None or elapsed < best:
+            best = elapsed
+    return best
+
+
+def test_status_query_time_independent_of_uses_size(tmp_path):
+    from remake.core.scope import uses_hash
+
+    big_uses = {'table': list(range(30000))}  # repr ~ a wescon-sized blob
+    assert len(uses_hash(big_uses)) > 150_000
+    rmk_small, tasks_small = _populated_pipeline(tmp_path / 's', {'k': 1})
+    rmk_big, tasks_big = _populated_pipeline(tmp_path / 'b', big_uses)
+
+    # Structural canary, timer-free: records carry ids, never text.
+    rec = next(iter(rmk_big.metadata.get_tasks_status(tasks_big[:1]).values()))
+    assert isinstance(rec.uses_code_id, int) and isinstance(rec.run_code_id, int)
+
+    t_small = _best_of(lambda: rmk_small.metadata.get_tasks_status(tasks_small))
+    t_big = _best_of(lambda: rmk_big.metadata.get_tasks_status(tasks_big))
+    assert t_big <= max(SCALING_RATIO_LIMIT * t_small, TIMER_FLOOR), (
+        f'status query scales with uses size again: '
+        f'{t_big:.3f}s (big uses) vs {t_small:.3f}s (small uses) '
+        f'for {N_SCALING_TASKS} tasks — is per-task text back in the SELECT?')
+
+    # plan() sits on top of the status query (fetches each distinct code id
+    # once, compares once per rule): must show the same independence.
+    t_plan_small = _best_of(lambda: rmk_small.plan())
+    t_plan_big = _best_of(lambda: rmk_big.plan())
+    assert t_plan_big <= max(SCALING_RATIO_LIMIT * t_plan_small, 2 * TIMER_FLOOR), (
+        f'plan() scales with uses size again: '
+        f'{t_plan_big:.3f}s (big uses) vs {t_plan_small:.3f}s (small uses)')
+
+    # And nothing should have been planned as a rerun (guards against the
+    # timing comparison passing while the semantics silently broke).
+    assert not rmk_big.plan()[0] and not rmk_small.plan()[0]
 
 
 def test_uses_manifest_records_raw_source_per_version(tmp_path):
