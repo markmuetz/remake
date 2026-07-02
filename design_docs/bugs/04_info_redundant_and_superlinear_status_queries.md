@@ -165,3 +165,55 @@ Reproducer: any large pipeline; this one is
 `wescon_tools/ctrl/remakefiles/wescon_radar_dev.py` with a populated
 `.remake/` (3031 recorded tasks). Run `remake -D info -F <file>` and read
 the paired `get_tasks_status` / `plan` lines from the `-D` log.
+
+## Field verification of the migration (2026-07-02)
+
+Ran the in-place migration (4407d34) against the same wescon-tools
+`.remake/remake.db` that produced the measurements above (3341 tasks, all
+`success`), by invoking `remake info` under the migration-carrying build.
+Backed the DB up first, then checked the result against that backup.
+
+- **Size: 272,154,624 → 987,136 bytes** (260 MiB → 964 KiB) — ~275×,
+  99.6% reclaimed. The migration fired exactly once (INFO `Migrating
+  task.uses_hash/io_hash to code-table FKs` → `Vacuuming`), and is
+  idempotent: a second `remake info` logged no migration and left the
+  size unchanged.
+- **Schema:** `uses_hash`/`io_hash` dropped; `uses_code_id`/`io_code_id`
+  FK columns present.
+- **No data loss:** 3341 tasks before and after, all `success`;
+  `PRAGMA integrity_check` = `ok`; `PRAGMA foreign_key_check` empty.
+- **FKs populated & interned correctly:** 0 NULL `uses_code_id`/
+  `io_code_id`; `code` grew 74 → 97 (= the 11 distinct `uses` + 12
+  distinct `io` strings folded in, none pre-existing); per-rule
+  `distinct uses_code_id = 1`, matching the pre-migration
+  `distinct uses_hash = 1`.
+- **Content check vs backup (strongest):** joining migrated ⋈ backup by
+  task key, `code.code[uses_code_id]` equals the original `uses_hash` and
+  `code.code[io_code_id]` the original `io_hash` for **all 3341 tasks — 0
+  mismatches**. The FKs resolve to the exact original strings.
+- **No mass rerun:** post-migration `remake info` shows **0 to run**
+  across all 12 rules (3341/3341 `success`). The FK-by-id design
+  preserves unchanged-ness — `_ensure_rule` re-interns the current
+  `uses`/`io` strings, which content-match the migrated `code` rows, so
+  identity holds and nothing is judged stale. (Verified with the pipeline
+  already settled against unrelated edits, so the 0-to-run is attributable
+  to the migration alone.)
+
+**Speed (Issue 2 fix confirmed).** `remake -D info` on the same DB, before
+the migration vs after (the pre-migration figures are the `-D` timings at
+the top of this doc):
+
+| metric | before | after | speedup |
+| --- | --- | --- | --- |
+| status query, 1465-task rule (planning pass) | 2.218 s | ~0.020 s | ~110× |
+| status query, 774-task rule (planning pass) | 0.550 s | ~0.014 s | ~39× |
+| `plan()` total | 3.751 s | ~0.70–0.82 s | ~5× |
+| **end-to-end wall** | **~10.2 s** | **~4.3 s** (4.32/4.14/4.49) | **~2.4×** |
+
+The per-query cost is now ~0.1 s total across all rules (down from
+~6.7 s), and the >1000× run-to-run variance is gone — the tiny DB stays
+warm. The residual ~4.3 s wall is now dominated by Python startup +
+remakefile import (~2.1 s) and the planner's non-query work, **not** the
+DB. Issue 1 (the duplicate `get_tasks_status` pass) is still present in
+the log but now costs ~0.05 s, so it is no longer worth chasing on
+performance grounds alone.
