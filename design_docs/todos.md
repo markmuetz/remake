@@ -170,10 +170,16 @@ assessment (2026-06-11). Ordered roughly by severity.
   otherwise (`planner.upstream_failed`, mirroring rerun propagation).
   Skipped tasks stay unrecorded (pending), so fixing the upstream makes
   the next run pick them up. SLURM gets this from aftercorr/afterok.
-- [ ] rule plumbing errors should be treated differently from individual task 
-  errors. If e.g. an inputs fn doesn't have the correct args for the var matrix,
-  this should be raised immediately with a helpful error message, as it will 
-  apply to all tasks.
+- [x] rule plumbing errors should be treated differently from individual task
+  errors. **Done 2026-07-02:** `rule.check_io_spec` validates inputs/outputs
+  specs against the matrix keys — a callable spec's required parameters must
+  all be matrix keys (it's called with the kwargs it names), and a dict
+  spec's template fields (`'{n}'`, incl. format specs / attribute access)
+  must be matrix keys. Raises `SignatureError` once, naming the rule/part/
+  missing names and saying it would fail every task identically — at
+  decoration for static matrices, at first expansion for callable ones
+  (same split as the run-fn check). Surfaces as a clean one-line `error:`
+  via the CLI. Tests in test_rule_signature.py.
 - [x] Just as there is a `remake task-info`, there should be a `remake rule-info`.
   **Done 2026-07-02.** Docstring at top (cleandoc'd), depends-on/dependents,
   matrix (keys/values/task count; dynamic matrices report "not resolvable
@@ -247,12 +253,16 @@ assessment (2026-06-11). Ordered roughly by severity.
   comparisons/boolean ops (the pyquerylist approach), which also yields better
   error messages than a bare `NameError`/`SyntaxError`. Pre-1.0 fix; revisit
   at CLI work.
-- [ ] **`planner.plan` records only the first rerun trigger** (MM comment,
-  `core/planner.py:354`). `reason` is overwritten, so code-changed shadows
-  uses-changed shadows io-changed when several are true at once. The dry-run
-  "why" view therefore shows one cause when there may be several. To give full
-  fidelity, collect a list of reasons instead of overwriting (then surface them
-  in `why`/`info --reasons`). Minor, but a real fidelity gap.
+- [x] **`planner.plan` records only the first rerun trigger** (MM comment).
+  **Done 2026-07-02**, with a finding: `why`/`info --reasons` were *already*
+  full-fidelity — they use `explain_task`, whose checks are independent
+  `if`s that report every applicable reason. The single-reason gap was only
+  plan()'s own per-task reason (the TRACE line). Now the cheap trio
+  (run-code/uses/io — three int set-memberships) is checked jointly and
+  joined ("uses= changed + inputs/outputs spec changed"); the expensive
+  checks (check_outputs stat calls, upstream scan) stay deliberately
+  short-circuited — explain_task remains the full view. Tests in
+  test_planner.py.
 - [x] **`planner.plan` does redundant work when `force` is set** (MM comment).
   **Done 2026-07-02.** `if force:` is now the first branch of the task loop
   (skips freshness checks and check_outputs stat calls), and the per-rule

@@ -423,16 +423,23 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
                 else:
                     rerun, reason = True, 'never run (no DB record)'
             else:
-                # MM: multiple of these could be true, and this is not recorded.
                 rerun = rec.status != TASK_STATUS_SUCCESS
                 reason = 'last run not successful' if rerun else 'up to date'
                 if not rerun and not ignore_code_changes:
+                    # All three are cheap int set-memberships, so record every
+                    # trigger rather than the first (several can be true at
+                    # once). The later checks (stat calls, upstream scan) stay
+                    # short-circuited on purpose — they cost real work, and
+                    # explain_task is the full-fidelity view.
+                    changed = []
                     if rec.run_code_id not in run_unchanged:
-                        rerun, reason = True, 'run code changed'
-                    elif rec.uses_code_id not in uses_unchanged:
-                        rerun, reason = True, 'uses= changed'
-                    elif rec.io_code_id not in io_unchanged:
-                        rerun, reason = True, 'inputs/outputs spec changed'
+                        changed.append('run code changed')
+                    if rec.uses_code_id not in uses_unchanged:
+                        changed.append('uses= changed')
+                    if rec.io_code_id not in io_unchanged:
+                        changed.append('inputs/outputs spec changed')
+                    if changed:
+                        rerun, reason = True, ' + '.join(changed)
                 if not rerun and check_outputs == 'always' and task.outputs:
                     if not _outputs_complete(task):
                         rerun, reason = True, 'outputs missing (check_outputs=always)'

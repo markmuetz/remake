@@ -88,6 +88,61 @@ def _matrix_keys(matrix):
     raise SignatureError(f'matrix must be dict, list[dict] or callable, not {type(matrix)}')
 
 
+def _template_fields(value):
+    """Base names of the format fields in a template (e.g. 'a/{n:03d}/{m}.nc'
+    -> {'n', 'm'}; attribute/index access reduces to the base name)."""
+    import string
+
+    fields = set()
+    for _, field_name, _, _ in string.Formatter().parse(str(value)):
+        if field_name is not None:
+            fields.add(field_name.split('.')[0].split('[')[0])
+    return fields
+
+
+def check_io_spec(rule_name, part_name, spec, matrix_keys):
+    """Validate an inputs/outputs spec against the matrix keys.
+
+    A mismatch here is rule *plumbing*, not a task problem: resolution is
+    per-task and lazy, so without this check an inputs function whose
+    signature doesn't match the matrix (or a template naming a non-existent
+    kwarg) fails identically for every task, N times, at run time. Raise
+    once, early, naming the rule instead. Called at decoration for static
+    matrices and at first expansion for callable ones (the same split as the
+    run-function signature check).
+    """
+    if spec is None:
+        return
+    if callable(spec) and not isinstance(spec, dict):
+        params = inspect.signature(spec).parameters
+        required = [p.name for p in params.values()
+                    if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD,
+                                  p.KEYWORD_ONLY)
+                    and p.default is p.empty]
+        missing = sorted(n for n in required if n not in matrix_keys)
+        if missing:
+            fname = getattr(spec, '__name__', repr(spec))
+            raise SignatureError(
+                f'{rule_name}: {part_name} function {fname!r} requires '
+                f'parameter(s) {missing} not provided by the matrix '
+                f'(keys: {sorted(matrix_keys)}). It is called with the matrix '
+                f'kwargs it names, so every task of this rule would fail '
+                f'identically — fix the function signature or the matrix.'
+            )
+    else:
+        for key, value in spec.items():
+            missing = sorted(f for f in _template_fields(value)
+                             if not f or f not in matrix_keys)
+            if missing:
+                raise SignatureError(
+                    f'{rule_name}: {part_name} template {key}={str(value)!r} '
+                    f'references field(s) {missing} not provided by the matrix '
+                    f'(keys: {sorted(matrix_keys)}). Every task of this rule '
+                    f'would fail identically at resolution — fix the template '
+                    f'or the matrix.'
+                )
+
+
 def _validate_signature(fn, inputs, outputs, matrix):
     """The signature contract: def fn([inputs,] [outputs,] <matrix keys>)."""
     if isinstance(inputs, dict) and not inputs:
@@ -120,14 +175,17 @@ def _validate_signature(fn, inputs, outputs, matrix):
     rest = set(names[len(expected_head):])
     matrix_keys = _matrix_keys(matrix)
     if matrix_keys is None:
-        # Callable matrix: parameter names unknown until planning; checked
-        # at expansion time instead.
+        # Callable matrix: parameter names unknown until planning; the run
+        # signature and the inputs/outputs specs are checked at expansion
+        # time instead (dag._check_expanded_kwargs).
         return
     if rest != matrix_keys:
         raise SignatureError(
             f'{fn.__name__}: parameters {sorted(rest)} do not match matrix keys '
             f'{sorted(matrix_keys)}'
         )
+    check_io_spec(fn.__name__, 'inputs', inputs, matrix_keys)
+    check_io_spec(fn.__name__, 'outputs', outputs, matrix_keys)
 
 
 def rule(

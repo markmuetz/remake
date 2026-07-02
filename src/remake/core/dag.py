@@ -129,6 +129,8 @@ def iter_expand_rule(rule, predicate=None):
 def _check_expanded_kwargs(rule, kwargs):
     import inspect
 
+    from .rule import check_io_spec
+
     names = list(inspect.signature(rule.fn).parameters)
     expected = [n for n in names if n not in ('inputs', 'outputs')]
     if set(expected) != set(kwargs):
@@ -136,3 +138,5 @@ def _check_expanded_kwargs(rule, kwargs):
             f'{rule.name}: parameters {sorted(expected)} do not match resolved '
             f'matrix keys {sorted(kwargs)}'
         )
+    check_io_spec(rule.name, 'inputs', rule.inputs, set(kwargs))
+    check_io_spec(rule.name, 'outputs', rule.outputs, set(kwargs))

@@ -116,3 +116,67 @@ def test_unmarked_matrix_defer_is_error():
 
     with pytest.raises(SignatureError, match='not marked @deferrable'):
         expand_rule(r)
+
+
+# --- rule plumbing: inputs/outputs specs vs matrix (fail once, early) ---
+
+
+def test_inputs_fn_param_not_in_matrix_rejected_at_decoration():
+    # Rule plumbing, not a task error: the inputs fn is called with the
+    # matrix kwargs it names, so a mismatched signature would fail every
+    # task identically at run time. Caught once, at decoration.
+    def bad_inputs(case):
+        return {'i': f'in/{case}.txt'}
+
+    with pytest.raises(SignatureError, match=r"inputs function.*\['case'\].*matrix"):
+
+        @rule(inputs=bad_inputs, outputs={'o': 'out/{n}.txt'}, matrix={'n': [1, 2]})
+        def r(inputs, outputs, n):
+            pass
+
+
+def test_inputs_fn_defaults_and_subset_params_accepted():
+    # Params with defaults and zero-arg fan-ins are fine; so is naming only
+    # a subset of the matrix keys.
+    def fan_in():
+        return {'i': 'all.txt'}
+
+    def subset(n, scale=2):
+        return {'i': f'in/{n}_{scale}.txt'}
+
+    @rule(inputs=fan_in, outputs={'o': 'out/{n}.txt'}, matrix={'n': [1]})
+    def r1(inputs, outputs, n):
+        pass
+
+    @rule(inputs=subset, outputs={'o': 'out/{n}_{m}.txt'},
+          matrix={'n': [1], 'm': [2]})
+    def r2(inputs, outputs, n, m):
+        pass
+
+
+def test_template_field_not_in_matrix_rejected_at_decoration():
+    with pytest.raises(SignatureError, match=r"outputs template.*\['typo'\].*matrix"):
+
+        @rule(outputs={'o': 'out/{typo}.txt'}, matrix={'n': [1, 2]})
+        def r(outputs, n):
+            pass
+
+
+def test_template_format_spec_and_access_allowed():
+    # '{n:03d}' is still just the field 'n'; matching fields pass.
+    @rule(outputs={'o': 'out/{n:03d}.txt'}, matrix={'n': [1]})
+    def r(outputs, n):
+        pass
+
+
+def test_callable_matrix_io_spec_checked_at_expansion():
+    def bad_inputs(case):
+        return {'i': f'in/{case}.txt'}
+
+    @rule(inputs=bad_inputs, outputs={'o': 'out/{n}.txt'},
+          matrix=lambda: [{'n': 1}])
+    def r(inputs, outputs, n):
+        pass
+
+    with pytest.raises(SignatureError, match="inputs function"):
+        expand_rule(r)

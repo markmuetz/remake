@@ -247,7 +247,25 @@ def test_io_change_triggers_rerun(tmp_path):
     assert len([t for t in runnable if t.rule is rule_b]) == 2
 
 
-def test_io_change_explain_names_segment(tmp_path):
+def test_plan_reason_records_all_cheap_triggers(tmp_path):
+    # Several triggers true at once: the planner's per-task reason joins the
+    # cheap (int-membership) trio instead of stopping at the first — the
+    # dry-run/trace view no longer hides uses/io changes behind code-changed.
+    from loguru import logger
+
+    rmk, rule_a, rule_b, rule_c = make_pipeline(tmp_path)
+    rmk.run()
+    rule_b.uses = {'mode': 'changed'}
+    rule_b.outputs = {'o': str(tmp_path / 'b_moved_{n}.txt')}  # io change too
+
+    msgs = []
+    sink = logger.add(msgs.append, level='TRACE', format='{message}')
+    try:
+        rmk.plan()
+    finally:
+        logger.remove(sink)
+    joint = [m for m in msgs if 'uses= changed + inputs/outputs spec changed' in m]
+    assert len(joint) == 2  # both rule_b tasks report both triggers
     # `why` names *which* segment (inputs/outputs) differs — previously it
     # said only "spec changed" and diagnosing meant DB spelunking (todos.md).
     from remake.core.planner import explain_task
@@ -259,6 +277,21 @@ def test_io_change_explain_names_segment(tmp_path):
     _, reasons = explain_task(rmk.rules, rmk.dag, rmk.metadata, task)
     (msg,) = [r.message for r in reasons if r.category == 'io-changed']
     assert 'outputs segment(s) differ' in msg and 'inputs and' not in msg
+
+
+def test_io_change_explain_names_segment_appears_after_plan_reason(tmp_path):
+    # explain_task is the full-fidelity multi-reason view: with uses AND io
+    # changed it reports both categories independently.
+    from remake.core.planner import explain_task
+
+    rmk, rule_a, rule_b, rule_c = make_pipeline(tmp_path)
+    rmk.run()
+    rule_b.uses = {'mode': 'changed'}
+    rule_b.outputs = {'o': str(tmp_path / 'b_moved_{n}.txt')}
+    task = next(t for t in rmk.tasks() if t.rule is rule_b and t.kwargs == {'n': 1})
+    _, reasons = explain_task(rmk.rules, rmk.dag, rmk.metadata, task)
+    categories = {r.category for r in reasons}
+    assert {'uses-changed', 'io-changed'} <= categories
 
 
 def test_ignore_code_changes(tmp_path):
