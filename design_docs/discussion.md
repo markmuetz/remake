@@ -947,6 +947,15 @@ design discussion before any work starts.
   interns a full new joined string rather than sharing the unchanged
   helpers, and diffs remain normalised-AST-derived.
 
+  *Field-verified 2026-07-02.* Ran the migration against the wescon-tools
+  `.remake/remake.db` (3341 tasks): **272 MB → 964 KB** (~275×), content
+  of every FK checked against a pre-migration backup (0 mismatches), no
+  data loss, no mass rerun (`info` still 0-to-run), and `remake -D info`
+  wall dropped ~10.2 s → ~4.3 s with the 1465-task status query down
+  ~110× (2.2 s → 0.02 s). Details in
+  [bugs/04](bugs/04_info_redundant_and_superlinear_status_queries.md)
+  (*Field verification*).
+
   *Stage B implemented 2026-07-02, with a second key revision.* The
   per-helper table is `uses_manifest(uses_code_id, name, code_id, kind)` —
   keyed by the **uses version** (the joined-string id tasks store), not by
