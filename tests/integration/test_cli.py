@@ -565,6 +565,86 @@ def test_task_info_text_and_json(pipeline_dir, capsys):
     assert data['slurm'] == {'jobids': None, 'array_index': None}  # never submitted
 
 
+RULE_INFO_PIPELINE = '''
+from pathlib import Path
+from remake import Remake, rule
+
+THRESHOLD = 5
+
+def normalise(x):
+    return x / THRESHOLD
+
+@rule(outputs={'raw': 'data/raw_{n}.txt'}, matrix={'n': [1, 2]},
+      uses={'threshold': THRESHOLD, 'normalise': normalise})
+def generate(outputs, n):
+    """Generate one element.
+
+    Values are normalised for cross-run comparability.
+    """
+    Path(outputs['raw']).write_text(str(normalise(n * threshold)))
+
+def fan_in_inputs(case):
+    return {str(n): f'data/raw_{n}.txt' for n in [1, 2]}
+
+def bad_inputs(n):
+    return {'i': f'data/raw_{n * 2}.txt'}  # computes with the kwarg
+
+@rule(inputs=fan_in_inputs, outputs={'out': 'data/{case}.txt'},
+      matrix={'case': ['x']}, depends_on=[generate],
+      config={'slurm': {'mem': 4000}})
+def combine(inputs, outputs, case):
+    Path(outputs['out']).write_text(
+        ''.join(Path(p).read_text() for p in inputs.values()))
+
+@rule(inputs=bad_inputs, outputs={'o': 'data/b_{n}.txt'}, matrix={'n': [1, 2]},
+      depends_on=[generate])
+def tricky(inputs, outputs, n):
+    Path(outputs['o']).write_text('x')
+
+rmk = Remake()
+rmk.rules_from_current_module()
+'''
+
+
+def test_rule_info_text_json_and_errors(tmp_path, monkeypatch, capsys):
+    import json
+
+    monkeypatch.chdir(tmp_path)
+    Path('pipeline.py').write_text(RULE_INFO_PIPELINE)
+
+    cli('rule-info', 'pipeline.py', 'generate')
+    out = capsys.readouterr().out
+    assert 'Generate one element.' in out  # docstring, cleandoc'd
+    assert '(n) — 2 task(s)' in out
+    assert 'data/raw_{n}.txt  (raw)' in out
+    assert 'threshold = 5' in out  # uses value
+    assert 'return x / THRESHOLD' in out  # uses helper source
+    assert 'dependents:  combine, tricky' in out
+
+    # Callable inputs: templates derived by placeholder call.
+    cli('rule-info', 'pipeline.py', 'combine')
+    out = capsys.readouterr().out
+    assert 'depends on:  generate' in out
+    assert 'data/raw_1.txt  (1)' in out
+    assert "config:      {'slurm': {'mem': 4000}}" in out
+
+    # A callable that computes with its kwarg must say "not derivable",
+    # never emit a silently-wrong template.
+    cli('rule-info', 'pipeline.py', 'tricky')
+    out = capsys.readouterr().out
+    assert 'not derivable' in out and '{n}{n}' not in out
+
+    cli('rule-info', 'pipeline.py', 'generate', '--json')
+    data = json.loads(capsys.readouterr().out)
+    assert data['matrix'] == {'kind': 'dict', 'deferrable': False, 'keys': ['n'],
+                              'n_tasks': 2, 'values': {'n': [1, 2]}}
+    assert data['outputs']['templates'] == {'raw': 'data/raw_{n}.txt'}
+    assert {u['name']: u['kind'] for u in data['uses']} == {
+        'normalise': 'source', 'threshold': 'value'}
+
+    cli_error(capsys, 'rule-info', 'pipeline.py', 'nope', match="No rule named 'nope'")
+
+
 def test_task_select_ambiguous_query_errors(pipeline_dir, capsys):
     cli('run', 'pipeline.py')
     capsys.readouterr()

@@ -165,11 +165,18 @@ assessment (2026-06-11). Ordered roughly by severity.
   errors. If e.g. an inputs fn doesn't have the correct args for the var matrix,
   this should be raised immediately with a helpful error message, as it will 
   apply to all tasks.
-- [ ] Just as there is a `remake task-info`, there should be a `remake rule-info`.
-  It should display the rule's docstring at the top. And it should give useful info
-  about the rule, including its matrix, input and output *templates*. These can
-  be defined even if they are set by functions: just pass in e.g. case='{case}'.
-  
+- [x] Just as there is a `remake task-info`, there should be a `remake rule-info`.
+  **Done 2026-07-02.** Docstring at top (cleandoc'd), depends-on/dependents,
+  matrix (keys/values/task count; dynamic matrices report "not resolvable
+  yet"), input/output *templates*, uses (helper source shown in full, values
+  as `name = repr`, sourceless as "source unavailable"), config; `--json`.
+  Templates from callables use exactly the suggested trick (call with
+  `case='{case}'`) but via a placeholder *object* that only supports
+  rendering — a plain string silently produced a wrong template when the
+  callable computed with the kwarg (`n * 2` → 'in/{n}{n}.txt'), so any
+  non-formatting use now reports "templates not derivable" instead.
+  `Remake.rule_info()` is static introspection only (fresh DAG, no metadata).
+  Tests in test_cli.py.
 
 ## Packaging
 

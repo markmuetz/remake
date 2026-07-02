@@ -28,6 +28,7 @@ remake set-state <remakefile> -Q query (--success [--check-outputs] [--no-cascad
 remake info <remakefile> [-Q query] [-t|--tasks] [-F|--show-failures] [--json]
 remake ls-tasks <remakefile> [-Q query] [--json]   # enumerate tasks/keys (no DB reads)
 remake lint <remakefile> [--json]                  # check input/output wiring between rules
+remake rule-info <remakefile> <rule> [--json]      # one rule: docstring, matrix, io templates, uses
 remake task-info <remakefile> <selector> [--json]  # one task: status, paths, log, SLURM job
 remake task-log <remakefile> <selector> [--path]   # print a task's log (or its path)
 remake why <remakefile> <selector>                 # explain rerun decision for one task

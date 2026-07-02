@@ -20,6 +20,29 @@ from .scope import check_scope, exec_function
 from .task import Task
 
 
+class _TemplatePlaceholder:
+    """Stands in for a matrix kwarg while deriving path templates
+    (`Remake._part_templates`). Renders as '{name}' via str()/f-string
+    interpolation and nothing else: it is deliberately not a str and defines
+    no arithmetic/comparison, so a callable that *computes* with the value
+    (rather than formatting it into a path) raises and the template is
+    reported as not derivable — instead of silently wrong. A format spec
+    ('{n:03d}') also raises: it would render differently for real values."""
+
+    def __init__(self, name):
+        self.name = name
+
+    def __str__(self):
+        return '{' + self.name + '}'
+
+    def __format__(self, spec):
+        if spec:
+            raise ValueError(
+                f'format spec {spec!r} on {{{self.name}}} renders '
+                f'value-dependently')
+        return str(self)
+
+
 class Remake:
     def __init__(
         self,
@@ -340,6 +363,87 @@ class Remake:
             'outputs': outputs,
             'log': {'path': str(log_path), 'exists': log_path.exists()},
             'slurm': {'jobids': jobids, 'array_index': array_index},
+        }
+
+    def rule_from_name(self, name):
+        for rule in self.rules:
+            if rule.name == name:
+                return rule
+        raise RemakeError(
+            f'No rule named {name!r} (rules: {", ".join(r.name for r in self.rules)})')
+
+    @staticmethod
+    def _part_templates(part):
+        """Input/output path templates for a rule part, without expanding any
+        tasks. A dict part *is* its templates; a callable part is called with
+        each kwarg bound to a placeholder that renders as '{case}' but
+        supports *only* rendering — any other use of the value (arithmetic,
+        format specs, dict lookups) raises, because it would produce a
+        template that silently disagrees with the real paths (a plain '{n}'
+        string here turned `n * 2` into 'in/{n}{n}.txt'). Returns
+        {'templates': {...}}, or {'error': <why>} when not derivable."""
+        if part is None:
+            return None
+        if isinstance(part, dict):
+            return {'templates': {k: str(v) for k, v in part.items()}}
+        placeholders = {
+            p: _TemplatePlaceholder(p) for p in inspect.signature(part).parameters}
+        try:
+            result = part(**placeholders)
+            return {'templates': {k: str(v) for k, v in result.items()}}
+        except Exception as e:
+            return {'error': f'{type(e).__name__}: {e}'}
+
+    def rule_info(self, rule):
+        """Detail view of one rule as a dict — the data behind `remake
+        rule-info`: docstring, dependencies (both directions), matrix
+        (keys/values/task count, or deferred), input/output path templates
+        (derived for callables by passing '{kwarg}' placeholders), uses
+        entries (name/kind/rendering, see scope.raw_uses_parts) and config.
+        Static introspection only: builds a fresh DAG, touches no metadata."""
+        from .dag import resolve_matrix
+        from .rule import is_deferrable
+        from .scope import raw_uses_parts
+
+        dag = build_rule_dag(self.rules)
+        matrix = {
+            'kind': ('none' if rule.matrix is None
+                     else 'callable' if callable(rule.matrix)
+                     else 'list' if isinstance(rule.matrix, list)
+                     else 'dict'),
+            'deferrable': is_deferrable(rule.matrix),
+            'keys': None,
+            'n_tasks': None,
+            'values': None,
+        }
+        try:
+            rows = resolve_matrix(rule.matrix)
+            matrix['n_tasks'] = len(rows)
+            keys = []
+            for row in rows:
+                keys.extend(k for k in row if k not in keys)
+            matrix['keys'] = keys
+            if isinstance(rule.matrix, dict):
+                matrix['values'] = {
+                    (k if isinstance(k, str) else '(' + ', '.join(k) + ')'): v
+                    for k, v in rule.matrix.items()
+                }
+        except Defer:
+            pass  # dynamic matrix not resolvable yet: keys/n_tasks stay None
+
+        return {
+            'rule': rule.name,
+            'docstring': inspect.cleandoc(rule.__doc__) if rule.__doc__ else None,
+            'depends_on': [dep.name for dep in rule.depends_on],
+            'dependents': sorted(s.name for s in dag.successors(rule)),
+            'matrix': matrix,
+            'inputs': self._part_templates(rule.inputs),
+            'outputs': self._part_templates(rule.outputs),
+            'uses': [
+                {'name': name, 'kind': kind, 'rendering': raw}
+                for name, (raw, kind) in raw_uses_parts(rule.uses).items()
+            ],
+            'config': rule.config,
         }
 
     def lint(self):

@@ -280,6 +280,15 @@ class RemakeCLI:
                 Arg('--json', help='Machine-readable output', action='store_true'),
             ],
         },
+        'rule-info': {
+            'help': 'Detail view of one rule: docstring, matrix, input/output '
+                    'templates, uses',
+            'args': [
+                Arg('remakefile'),
+                Arg('rule_name'),
+                Arg('--json', help='Machine-readable output', action='store_true'),
+            ],
+        },
         'task-info': {
             'help': 'Detail view of one task: status, paths, log, SLURM job',
             'args': [
@@ -676,6 +685,65 @@ class RemakeCLI:
             if edges[name]:
                 line += ' -> ' + ', '.join(edges[name])
             print(line)
+
+    def remake_rule_info(self, args):
+        rmk = load_remake(args.remakefile)
+        rule = rmk.rule_from_name(args.rule_name)
+        data = rmk.rule_info(rule)
+        if args.json:
+            print(json.dumps(data, indent=1))
+            return
+
+        paint = Painter(args.colour)
+        print(paint(data['rule'], 'cyan', 'bold'))
+        if data['docstring']:
+            for line in data['docstring'].splitlines():
+                print(f'  {line}')
+        print()
+        if data['depends_on']:
+            print(f'depends on:  {", ".join(data["depends_on"])}')
+        if data['dependents']:
+            print(f'dependents:  {", ".join(data["dependents"])}')
+
+        m = data['matrix']
+        if m['kind'] == 'none':
+            print('matrix:      (none: one task)')
+        elif m['n_tasks'] is None:
+            mark = ' (@deferrable)' if m['deferrable'] else ''
+            print(f'matrix:      dynamic{mark} — not resolvable yet '
+                  f'(upstream outputs missing)')
+        else:
+            keys = ', '.join(m['keys'])
+            print(f'matrix:      ({keys}) — {m["n_tasks"]} task(s)')
+            for key, values in (m['values'] or {}).items():
+                print(f'  {key}: {values!r}')
+
+        for part in ('inputs', 'outputs'):
+            part_info = data[part]
+            if part_info is None:
+                continue
+            if 'error' in part_info:
+                print(f'{part + ":":<12} '
+                      + paint(f'templates not derivable ({part_info["error"]})', 'dim'))
+                continue
+            print(f'{part}:')
+            for name, template in part_info['templates'].items():
+                print(f'  {template}  ({name})')
+
+        if data['uses']:
+            print('uses:')
+            for entry in data['uses']:
+                if entry['kind'] == 'value':
+                    print(f'  {entry["name"]} = {entry["rendering"]}')
+                elif entry['kind'] == 'source':
+                    print(f'  {entry["name"]}:')
+                    for line in entry['rendering'].rstrip().splitlines():
+                        print(f'    {line}')
+                else:
+                    print(f'  {entry["name"]}: '
+                          + paint(f'{entry["rendering"]} (source unavailable)', 'dim'))
+        if data['config']:
+            print(f'config:      {data["config"]!r}')
 
     def remake_task_info(self, args):
         rmk = self._load(args)

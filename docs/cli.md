@@ -15,6 +15,7 @@ remake <command> pipeline.py [options]
 | `set-state` | Set tasks' recorded state by query, without running them |
 | `info` | Per-rule summary of task statuses |
 | `ls-tasks` | List tasks (key prefix + name), materialising matrices |
+| `rule-info` | Detail view of one rule: docstring, matrix, input/output templates, uses |
 | `task-info` | Detail view of one task: status, paths, log, SLURM job |
 | `task-log` | Print a task's per-task log |
 | `why` | Explain why a task would (or would not) rerun |
