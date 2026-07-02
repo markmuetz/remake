@@ -78,6 +78,34 @@ expansion, and SLURM support.
 
 ---
 
+## Scale target
+
+The design scale (MM, 2026-07-02, from a real remakefile developed against
+remake2) is **~1e4 tasks × ~1e2 files per task = ~1e6 files**, not 1e6
+tasks. Field remake3 pipelines to date are 1e3–2e4 tasks; SLURM's
+`MaxArraySize` (typically a few thousand to ~10k) makes a 1e6-element
+submission impossible as one array anyway. The long-standing 1e6-*task*
+figure (bench_million_tasks.py and the todos written around it) is a
+**stress-headroom ceiling, not a requirement** — worth keeping green, but
+not worth engineering effort on its own.
+
+Consequences for prioritisation:
+
+- **Per-task costs** (DB row writes/commits, planner per-task loop, Task
+  object memory) need to be comfortable at 1e4 — which, post the 2026-07
+  storage/query rework, they are with orders-of-magnitude headroom. Items
+  framed as "matters at 1e6 tasks" (e.g. batching the per-completion
+  EXCLUSIVE transaction) are correctness-of-shape improvements, not
+  urgent.
+- **Per-file costs are the real scaling frontier**: input/output
+  resolution builds ~1e2 token objects per task touch; `check_outputs`
+  and `lint`-style paths stat or materialise up to 1e6 paths — minutes on
+  a parallel cluster filesystem (Lustre/NFS) even when local ext4 looks
+  fine. New work should be benchmarked against this shape
+  (`tests/benchmarks/bench_field_scale.py`: 1e4 tasks × 100 outputs).
+
+---
+
 ## API overview
 
 ### Defining a pipeline

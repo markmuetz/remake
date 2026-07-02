@@ -5,6 +5,25 @@ assessment (2026-06-11). Ordered roughly by severity.
 
 ## Performance / scaling
 
+> **Scale target (MM, 2026-07-02; see remake3_design.md "Scale target"):
+> ~1e4 tasks × ~1e2 files/task = ~1e6 FILES — not 1e6 tasks.** The 1e6-task
+> figure in older items below is stress headroom (and impossible as one
+> SLURM array anyway), not the requirement. Per-task costs are trivial at
+> 1e4 post the 2026-07 rework; the scaling frontier is per-FILE work
+> (token resolution, stat sweeps). Benchmark new work against
+> `tests/benchmarks/bench_field_scale.py` (1e4 tasks × 100 outputs;
+> baseline 2026-07-02: resolve 1e6 tokens 2.1 s / 0.63 GB, fallback stat
+> sweep 2.3 s on local ext4 — the stat number is the best case, Lustre/NFS
+> is 10–100× that).
+
+- [ ] **File-side scaling frontier: 1e6-path stat sweeps on parallel
+  filesystems.** `check_outputs` (`fallback`/`always`) and `--check`-style
+  paths stat every declared output — fine locally (2.3 s), minutes on
+  Lustre/NFS where each stat is a round trip. When this bites in the field:
+  consider directory-listing instead of per-file stat (one `scandir` per
+  output dir covers all files in it), batching/parallelising the sweep, or
+  a per-rule completion sentinel. Needs a real cluster measurement first —
+  don't engineer ahead of data.
 - [x] `Remake.task_from_key` materialised every task of every rule to find
   one key. Now: `task_from_spec(rule_name, kwargs)` constructs directly
   (0.04 ms at 1e6 tasks — the SLURM job-spec path), and `task_from_key`
@@ -13,8 +32,12 @@ assessment (2026-06-11). Ordered roughly by severity.
 - [x] `Sqlite3Backend.get_tasks_status` was an N+1 query loop. Now batched
   `WHERE key IN (...)` in chunks of 900. plan() against a fully-populated
   1e6-row DB: 13.9 s (dominated by per-task rerun logic, not queries).
-- [ ] Make the 1e6-task benchmark a load-bearing part of CI (script:
-  `tests/benchmarks/bench_million_tasks.py`). Baseline measured 2026-06-11
+- [ ] Make the scale benchmarks load-bearing in CI. **Reframed 2026-07-02:**
+  the one that should gate is `bench_field_scale.py` (the design shape,
+  ~5 s total — cheap enough to run as a test with generous thresholds);
+  `bench_million_tasks.py` stays as the manual stress-headroom check.
+  Original 1e6-task item below.
+  Baseline measured 2026-06-11
   (in-memory DB, local ext4): load+finalize 0.001s (lazy goal achieved);
   expand+keys 4s / 0.5 GB; full materialisation 8.5s / 2.1 GB;
   plan(never) 7.5s — mostly the N+1 SELECT loop; plan(fallback, empty DB)
@@ -23,7 +46,11 @@ assessment (2026-06-11). Ordered roughly by severity.
   first plan of a restored pipeline does exactly that.
 - [ ] Recording completions is one EXCLUSIVE transaction per task (1e6
   transactions over a big run) — batch or relax when addressing the bulk
-  query.
+  query. **Deprioritised 2026-07-02 per the scale target:** at the design
+  scale (1e4 tasks) this is seconds over a whole run, and bulk paths
+  (set-state, ingest) already batch into one transaction
+  (bench_field_scale: 1e4 completions in 0.08 s). Only worth revisiting
+  if per-task commit latency shows up on NFS in the field.
 - [x] **Hash-first code-change detection: stop hauling full source per task;
   move `uses`/`io` source into the content-addressed `code` table.** Done
   2026-07-02, with one design change from the plan below: instead of a sha1
