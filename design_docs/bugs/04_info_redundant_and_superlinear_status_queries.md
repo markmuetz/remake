@@ -1,8 +1,16 @@
 # Bug 04 — `remake info` re-queries task status a second time, and the per-rule status query scales superlinearly
 
-**Status:** Issues 2 & 3 **fixed** 2026-07-02 (commit 4407d34,
-`perf(metadata): task rows carry code-table FKs, not inline text`);
-Issue 1 (duplicate status query) still **open**. Reported 2026-07-02.
+**Status:** **all fixed** 2026-07-02. Issues 2 & 3: commit 4407d34
+(`perf(metadata): task rows carry code-table FKs, not inline text`).
+Issue 1: a per-invocation `RecordCache` (metadata_manager.py) shared by
+the plan pass and the renderer/explainers, so each task's record is
+fetched from the backend at most once per read-only command (`info`,
+`why`); verified by spy tests (each key fetched exactly once) and via
+`-D` (one `get_tasks_status` per rule, was two). The audit found `why -Q`
+had a worse variant — the durable-propagation check re-queried each
+upstream rule's full record set once per explained task (N×M) — fixed by
+the same cache. `run`/`set-state` deliberately keep uncached reads
+(records change under them). Reported 2026-07-02.
 **Affects:** `remake info` (and any command that plans then also renders
 per-rule status); the SQLite metadata backend's `get_tasks_status`.
 Local and SLURM. Correctness is **not** affected — results are right,

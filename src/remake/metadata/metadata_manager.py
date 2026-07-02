@@ -36,6 +36,41 @@ class TaskRecord:
     run_seq: Optional[int] = None  # None for pre-upgrade/never-stamped records
 
 
+class RecordCache:
+    """Read-through task-record cache wrapping a MetadataManager for one
+    *read-only* invocation (info/why): the planner and the renderer/explainers
+    ask for overlapping record sets — the plan pass queries every rule, then
+    the info table re-queried the identical sets and `why`'s durable-
+    propagation check re-queried each upstream rule's records once per
+    explained task (bug 04). Caching per task key (misses too — no record
+    means pending, and re-asking won't change that) makes every repeat a pure
+    dict hit: each record is fetched from the backend at most once per
+    invocation.
+
+    Never carry one across a write (run/set-state): records go stale. The
+    read-only commands create a fresh cache per call. Everything except
+    get_tasks_status passes through to the wrapped backend.
+    """
+
+    def __init__(self, metadata):
+        self._metadata = metadata
+        self._records = {}  # task key -> TaskRecord, or None (no record)
+
+    def __getattr__(self, name):
+        return getattr(self._metadata, name)
+
+    def get_tasks_status(self, tasks):
+        missing = [t for t in tasks if t.key not in self._records]
+        if missing:
+            found = self._metadata.get_tasks_status(missing)
+            for t in missing:
+                self._records[t.key] = found.get(t.key)
+        return {
+            t.key: rec for t in tasks
+            if (rec := self._records[t.key]) is not None
+        }
+
+
 class MetadataManager(abc.ABC):
     @abc.abstractmethod
     def ensure_rules(self, rules, remakefile=None):

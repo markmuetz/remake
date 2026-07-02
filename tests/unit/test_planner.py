@@ -185,6 +185,55 @@ def test_uses_change_message_without_manifest_falls_back(tmp_path):
     assert 'scale (body)' in msg and 'return x * 2' not in msg
 
 
+def _spy_record_fetches(monkeypatch):
+    """Count task keys actually fetched from the backend (not from a
+    RecordCache) — the redundancy metric behind bug 04."""
+    from remake.metadata.sqlite3_backend import Sqlite3Backend
+
+    fetched = []
+    orig = Sqlite3Backend.get_tasks_status
+
+    def spy(self, tasks):
+        tasks = list(tasks)
+        fetched.extend(t.key for t in tasks)
+        return orig(self, tasks)
+
+    monkeypatch.setattr(Sqlite3Backend, 'get_tasks_status', spy)
+    return fetched
+
+
+def test_info_fetches_each_record_once(tmp_path, monkeypatch):
+    # bug 04 Issue 1: `remake info` planned (querying every rule) then
+    # re-queried the identical sets to render the table. The RecordCache
+    # must hold backend fetches to at most one per task per invocation.
+    rmk, *_ = make_pipeline(tmp_path)
+    rmk.run()
+    n_tasks = len(rmk.tasks())
+
+    fetched = _spy_record_fetches(monkeypatch)
+    rmk.status_summary()
+    assert len(fetched) == len(set(fetched)) == n_tasks
+
+    fetched.clear()
+    rmk.status_summary(reasons=True, list_tasks=True, list_failures=True)
+    assert len(fetched) == len(set(fetched))  # never the same key twice
+
+
+def test_why_fetches_scale_linearly(tmp_path, monkeypatch):
+    # The worst pattern from the bug 04 audit: explaining N tasks re-queried
+    # each upstream rule's full record set once per task (N×M fetches via
+    # the durable-propagation check). With the shared cache: each record at
+    # most once, however many tasks are explained.
+    rmk, rule_a, rule_b, rule_c = make_pipeline(tmp_path)
+    rmk.run()
+    n_tasks = len(rmk.tasks())
+
+    fetched = _spy_record_fetches(monkeypatch)
+    results = list(rmk.why(query='rule == "rule_b"'))
+    assert len(results) == 2
+    assert len(fetched) == len(set(fetched)) <= n_tasks
+
+
 def test_io_change_triggers_rerun(tmp_path):
     # Editing the outputs spec (here via the attribute, so the run function
     # source is untouched) must rerun the task and its downstream — the gap

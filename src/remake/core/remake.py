@@ -10,6 +10,7 @@ from ..metadata.metadata_manager import (
     STATUS_NAMES,
     TASK_STATUS_FAILED,
     TASK_STATUS_SUCCESS,
+    RecordCache,
 )
 from ..util import task_log_path
 from .dag import build_rule_dag, expand_rule, iter_expand_rule
@@ -124,8 +125,11 @@ class Remake:
         if not self._finalized:
             self.finalize()
         self.metadata.ingest_sidecars(self.rules)
+        # Read-only: the internal plan() and the explanation ask for
+        # overlapping records — fetch each from the DB at most once.
+        cache = RecordCache(self.metadata)
         return explain_task(
-            self.rules, self.dag, self.metadata, task, check_outputs=self.check_outputs
+            self.rules, self.dag, cache, task, check_outputs=self.check_outputs
         )
 
     def explain_tasks(self, tasks=None):
@@ -136,12 +140,19 @@ class Remake:
         if not self._finalized:
             self.finalize()
         self.metadata.ingest_sidecars(self.rules)
+        # Read-only: one record cache shared by the plan and every per-task
+        # explanation. Without it, the durable-propagation check re-queried
+        # each upstream rule's full record set once per explained task —
+        # N tasks × M upstream records, the worst redundancy found in the
+        # bug 04 audit. With it, plan() warms the cache and the per-task
+        # checks are dict hits.
+        cache = RecordCache(self.metadata)
         runnable, _ = plan(
-            self.rules, self.dag, self.metadata, check_outputs=self.check_outputs
+            self.rules, self.dag, cache, check_outputs=self.check_outputs
         )
         for task in runnable if tasks is None else tasks:
             will_run, reasons = explain_task(
-                self.rules, self.dag, self.metadata, task,
+                self.rules, self.dag, cache, task,
                 check_outputs=self.check_outputs, runnable=runnable,
             )
             yield task, will_run, reasons
@@ -253,7 +264,15 @@ class Remake:
 
         if not self._finalized:
             self.finalize()
-        runnable, deferred = self.plan(query=query)
+        # Read-only: the plan and the per-rule status table below ask for the
+        # identical record sets — without the cache each rule was queried
+        # twice per `remake info` (bug 04 Issue 1).
+        self.metadata.ingest_sidecars(self.rules)
+        cache = RecordCache(self.metadata)
+        runnable, deferred = plan(
+            self.rules, self.dag, cache, query=query,
+            check_outputs=self.check_outputs,
+        )
         remaining = Counter(task.rule.name for task in runnable)
         deferred_names = {rule.name for rule in deferred}
         predicate = make_predicate(query) if query else None
@@ -266,7 +285,7 @@ class Remake:
         if reasons:
             for task in runnable:
                 _, rs = explain_task(
-                    self.rules, self.dag, self.metadata, task,
+                    self.rules, self.dag, cache, task,
                     check_outputs=self.check_outputs, runnable=runnable,
                 )
                 bucket = reasons_by_rule.setdefault(task.rule.name, Counter())
@@ -279,7 +298,7 @@ class Remake:
                 rule_rows.append({'rule': rule.name, 'deferred': True})
                 continue
             tasks = expand_rule(rule, predicate)
-            records = self.metadata.get_tasks_status(tasks)
+            records = cache.get_tasks_status(tasks)
             statuses = {
                 t.key: STATUS_NAMES.get(records[t.key].status, 'pending')
                 if t.key in records

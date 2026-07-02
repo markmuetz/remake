@@ -98,16 +98,19 @@ assessment (2026-06-11). Ordered roughly by severity.
   migration above: `_migrate_inline_hashes_to_code_ids` VACUUMs after
   dropping the inline columns, so existing bloated DBs (272 MB wescon-tools)
   recover the space on first contact with the new code.
-- [ ] **`remake info` queries every rule's status twice**
+- [x] **`remake info` queries every rule's status twice**
   ([bug 04](bugs/04_info_redundant_and_superlinear_status_queries.md)
-  Issue 1). The planner fetches per-rule task status to compute the plan,
-  then the info renderer re-runs the identical `get_tasks_status` queries to
-  build the table — pure duplication within one read-only invocation
-  (~2.7 s of the measured ~10 s on a 3k-task pipeline). Thread the
-  planner's already-fetched status through to the renderer (or render from
-  the plan result). Independent of — and worth doing regardless of — the
-  storage rework above; on an all-settled pipeline every rule pays the
-  double query.
+  Issue 1). **Done 2026-07-02** via `RecordCache` (metadata_manager.py): a
+  per-invocation read-through cache (per task key, misses cached too)
+  wrapped around the backend for the read-only commands, so the plan pass
+  warms it and the renderer/explainers hit it — each record fetched at most
+  once per invocation. The audit found `why -Q` had a worse variant (the
+  durable-propagation check re-queried each upstream rule's full record set
+  once per explained task, N×M) — same cache fixes it; `info --reasons`
+  likewise. `run`'s wave loop and `set-state` stay uncached on purpose
+  (their records change mid-invocation). Spy tests assert each key is
+  fetched exactly once (test_planner.py); both fail against the pre-fix
+  code.
 - [x] **Status-query regression micro-benchmark** (logs_analysis §4.5). Done
   2026-07-02: `test_status_query_time_independent_of_uses_size`
   (test_metadata.py) — pytest, so CI-load-bearing now, not a manual bench
