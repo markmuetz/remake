@@ -364,7 +364,10 @@ class Sqlite3Backend(MetadataManager):
             inserted, changed = self._ensure_rule(rule, remakefile)
             ninserted += inserted
             nchanged += changed
-        logger.debug(
+        logger.bind(
+            event='ensure_rules', nrules=len(rules), nnew=ninserted,
+            nchanged=nchanged,
+        ).debug(
             'ensured {} rule(s): {} new, {} with changed code',
             len(rules), ninserted, nchanged,
         )
@@ -402,9 +405,18 @@ class Sqlite3Backend(MetadataManager):
                     io_code_id=io_code_id,  # None for pre-upgrade records
                     run_seq=run_seq,  # None for pre-upgrade/never-stamped records
                 )
-        logger.debug(
+        elapsed = perf_counter() - start
+        # ~1857 of these dominated a field DEBUG log (logs_analysis §3.3):
+        # only slow outliers earn DEBUG; the rest are TRACE. Fields are bound
+        # (not just interpolated) so the JSONL sink carries them as data.
+        log = logger.bind(
+            event='status_query', ntasks=len(keys), nchunks=nchunks,
+            nfound=len(records), seconds=round(elapsed, 6),
+        )
+        log_at = log.debug if elapsed > 0.1 else log.trace
+        log_at(
             'queried status of {} task(s) in {} chunk(s), {} found, in {:.3f}s',
-            len(keys), nchunks, len(records), perf_counter() - start,
+            len(keys), nchunks, len(records), elapsed,
         )
         return records
 
@@ -450,10 +462,10 @@ class Sqlite3Backend(MetadataManager):
         # sidecar that survives a crash here is harmless (upsert).
         for *_, path in pending:
             path.unlink(missing_ok=True)
-        logger.debug(
-            f'Ingested {len(pending)} sidecar result(s) in '
-            f'{perf_counter() - start:.3f}s'
-        )
+        elapsed = perf_counter() - start
+        logger.bind(
+            event='ingest', ningested=len(pending), seconds=round(elapsed, 6),
+        ).debug(f'Ingested {len(pending)} sidecar result(s) in {elapsed:.3f}s')
         return len(pending)
 
     @retry_lock_commit

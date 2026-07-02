@@ -447,18 +447,20 @@ assessment (2026-06-11). Ordered roughly by severity.
   `(cached)` variant). Bonus: the old lines built their strings by `+`-concat
   before loguru's lazy check, so the dump cost was paid even with no TRACE
   sink attached — the gated form uses lazy `{}` args.
-- [ ] **Split the file log into human + debug streams; threshold the timing
-  lines** (logs_analysis §3.2/3.3). Keep `remake.log` readable (INFO+ run
-  narrative) and route the DEBUG/TRACE firehose to a separate rotated
-  `remake.debug.log` (on by default at DEBUG) so the two don't compete for
-  the 5 MB window. Demote the per-query `get_tasks_status ... in Xs` line to
-  TRACE or emit it only above a threshold (e.g. >100 ms) — ~1857 of them
-  dominate the DEBUG stream today.
-- [ ] **Structured logging for mineability** (logs_analysis §4). The field
-  analysis needed fragile regex over prose lines. Add a JSONL sink
-  (`logger.add(..., serialize=True)`), bind metrics as `extra` fields rather
-  than interpolating into messages, tag events with a stable `event=` key,
-  and stamp a per-invocation run id so one `remake run`'s lines group
-  together. Lower priority than the fixes above — infrastructure, not a
-  perf win.
+- [x] **Split the file log into human + debug streams; threshold the timing
+  lines** (logs_analysis §3.2/3.3). **Done 2026-07-02.** `remake.log` is now
+  the INFO+ narrative; the DEBUG (TRACE under `-T`) firehose goes to a
+  separate rotated `remake.debug.log` (each 5 MB × 3, so the streams no
+  longer compete for one window). The `get_tasks_status ... in Xs` line
+  reaches DEBUG only when >100 ms; fast queries are TRACE. All three shared
+  sinks stay off in per-task processes (NFS concurrent-append rule).
+- [x] **Structured logging for mineability** (logs_analysis §4). **Done
+  2026-07-02.** `.remake/remake.jsonl` (rotated, serialize=True) mirrors the
+  debug stream as one JSON object per record; metrics are bound `extra`
+  fields with stable `event=` tags (`invocation`, `ensure_rules`, `plan`,
+  `status_query`, `ingest`, `wave`, `task_failed`), and every record from
+  one invocation shares a `run_id` (bound via logger.configure per CLI
+  call) — mining is `jq` on `.record.extra`, not regex. Example in
+  docs/guide/debugging.md. Not done from §4: the in-tree timings CSV
+  (superseded by the scaling regression test above).
 - [ ] Can we make uses accept a list instead of a dict?

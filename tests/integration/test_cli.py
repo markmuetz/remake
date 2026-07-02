@@ -327,10 +327,34 @@ rmk.rules_from_current_module()
     assert sys.excepthook is sentinel
 
 
-def test_log_file_written(pipeline_dir):
+def test_log_streams_split_and_structured(pipeline_dir):
     cli('run', 'pipeline.py')
+    # Human-facing narrative: INFO+ only — the DEBUG firehose (argv line,
+    # timings) must not land here (logs_analysis §3.2).
     log = (pipeline_dir / '.remake/remake.log').read_text()
-    assert 'argv' in log and 'pipeline.py' in log
+    assert '| INFO ' in log
+    assert 'argv' not in log and '| DEBUG ' not in log
+    # Debug stream: the firehose, including the argv line.
+    debug_log = (pipeline_dir / '.remake/remake.debug.log').read_text()
+    assert 'argv' in debug_log and 'pipeline.py' in debug_log
+    # Structured mirror: one JSON object per record, every record stamped
+    # with this invocation's run_id, bound metrics as real fields.
+    records = [json.loads(line)['record']
+               for line in (pipeline_dir / '.remake/remake.jsonl')
+               .read_text().splitlines()]
+    assert len({r['extra']['run_id'] for r in records}) == 1
+    plans = [r for r in records if r['extra'].get('event') == 'plan']
+    assert plans and all(
+        isinstance(r['extra']['nrunnable'], int) and 'seconds' in r['extra']
+        for r in plans)
+    assert any(r['extra'].get('event') == 'invocation' for r in records)
+
+    # A second invocation gets a fresh run_id.
+    cli('info', 'pipeline.py')
+    records = [json.loads(line)['record']
+               for line in (pipeline_dir / '.remake/remake.jsonl')
+               .read_text().splitlines()]
+    assert len({r['extra']['run_id'] for r in records}) == 2
 
 
 def test_run_task_writes_per_task_log(pipeline_dir, capsys):

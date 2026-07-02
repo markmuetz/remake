@@ -692,7 +692,8 @@ class Remake:
                     logger.warning(f'Blocked rules (matrix not ready): {names}')
                 break
             wave += 1
-            logger.debug('wave {}: running {} task(s)', wave, len(runnable))
+            logger.bind(event='wave', wave=wave, ntasks=len(runnable)).debug(
+                'wave {}: running {} task(s)', wave, len(runnable))
             attempted |= {t.key for t in runnable}
             nfailed += executor.run_tasks(runnable) or 0
         return nfailed
@@ -713,7 +714,8 @@ class Remake:
         try:
             fn(*args, **task.kwargs)
         except Exception:
-            logger.error(f'failed: {task}')
+            logger.bind(event='task_failed', task=str(task), rule=task.rule.name,
+                        key=task.key).error(f'failed: {task}')
             self.metadata.update_task(
                 task, TASK_STATUS_FAILED, exception=traceback.format_exc()
             )

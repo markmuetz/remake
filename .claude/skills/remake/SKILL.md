@@ -57,7 +57,9 @@ debugger on exception.
 
 ```
 .remake/remake.db                          SQLite metadata (never touch directly)
-.remake/remake.log                         shared DEBUG log (run/info/resubmit)
+.remake/remake.log                         human narrative log (INFO+)
+.remake/remake.debug.log                   DEBUG/TRACE firehose (timings, argv)
+.remake/remake.jsonl                       structured mirror (jq-able: .record.extra.event/run_id)
 .remake/tasks/log/<rule>/<k:2>/<k2:>.log   per-task log, named by 40-hex task key
 .remake/jobs/<rule>.json                   SLURM specs: [{task_key, rule, kwargs}]; array index = position
 .remake/jobs/<rule>.jobids.json            last submitted SLURM job id(s)

@@ -86,7 +86,24 @@ Or restrict to the failed rule with a query:
 remake run pipeline.py -Q "rule == 'process'"
 ```
 
-## The remake log
+## The remake logs
 
-Every remakefile subcommand writes a rotated DEBUG log at
-`.remake/remake.log` for the local (non-array) paths.
+Every remakefile subcommand (on the local, non-array paths) writes three
+rotated logs next to the metadata DB:
+
+- `.remake/remake.log` — the human-facing run narrative (INFO and above).
+- `.remake/remake.debug.log` — the DEBUG firehose (TRACE under `-T`):
+  timings, per-rule planning detail, the invocation's argv.
+- `.remake/remake.jsonl` — a structured mirror of the debug stream, one
+  JSON object per record. Metrics are real fields under `record.extra`
+  (e.g. `event: "plan"`, `nrunnable`, `seconds`), and every record from
+  one invocation shares a `run_id` — so mining is `jq`, not regex:
+
+```bash
+jq -r 'select(.record.extra.event == "status_query") | .record.extra.seconds' \
+    .remake/remake.jsonl
+```
+
+Status-query timing lines only reach DEBUG when the query is slow
+(>100 ms); the rest are TRACE, so the debug stream stays focused on
+outliers.

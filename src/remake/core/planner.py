@@ -442,8 +442,12 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
         }
         logger.debug('{}: {} task(s), {} to rerun', rule.name, len(tasks), len(rule_rerun))
 
-    logger.debug(
+    elapsed = perf_counter() - start
+    logger.bind(
+        event='plan', nrunnable=len(runnable), ndeferred=len(deferred),
+        seconds=round(elapsed, 6),
+    ).debug(
         'plan: {} runnable, {} deferred in {:.3f}s',
-        len(runnable), len(deferred), perf_counter() - start,
+        len(runnable), len(deferred), elapsed,
     )
     return runnable, deferred

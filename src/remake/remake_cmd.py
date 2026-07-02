@@ -901,18 +901,38 @@ def remake_cmd(argv=None):
         args.remakefile = rf.name
 
     # Per-task-process subcommands (SLURM array elements) get a per-task log
-    # sink instead — concurrent appends to the shared log corrupt it on
+    # sink instead — concurrent appends to the shared logs corrupt them on
     # NFS-class filesystems (see design_docs/per_task_logging.md).
     per_task = args.subcmd_name in ('run-task', 'run-array-task')
     if hasattr(args, 'remakefile') and not per_task:
-        # Always-on file log next to the metadata DB (DEBUG, or TRACE under -T).
-        logfile = Path('.remake/remake.log')
-        logfile.parent.mkdir(parents=True, exist_ok=True)
+        import uuid
+
+        # Every record from this invocation shares one run_id (surfaced in the
+        # structured sink), so a miner can group an invocation's lines and
+        # correlate e.g. a plan total with its constituent status queries.
+        logger.configure(extra={'run_id': uuid.uuid4().hex[:12]})
+        Path('.remake').mkdir(parents=True, exist_ok=True)
+        debug_level = 'TRACE' if args.trace else 'DEBUG'
+        # Three always-on file sinks next to the metadata DB, split so the
+        # streams don't compete for one rotation window (logs_analysis §3.2):
+        #  - remake.log: the human-facing run narrative (INFO+).
+        #  - remake.debug.log: the DEBUG (TRACE under -T) firehose.
+        #  - remake.jsonl: structured mirror of the firehose — one JSON object
+        #    per record, with bound fields (event=..., ntasks=..., seconds=...)
+        #    under record.extra, so mining is jq, not regex (logs_analysis §4).
         logger.add(
-            logfile, level='TRACE' if args.trace else 'DEBUG',
+            '.remake/remake.log', level='INFO',
             rotation='5 MB', retention=3,
         )
-        logger.debug(f'argv: {argv}')
+        logger.add(
+            '.remake/remake.debug.log', level=debug_level,
+            rotation='5 MB', retention=3,
+        )
+        logger.add(
+            '.remake/remake.jsonl', level=debug_level, serialize=True,
+            rotation='5 MB', retention=3,
+        )
+        logger.bind(event='invocation').debug(f'argv: {argv}')
 
     if getattr(args, 'debug_exception', False):
         # Handle top level exceptions with a debugger (run -X only).
