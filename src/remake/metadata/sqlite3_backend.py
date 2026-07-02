@@ -1,8 +1,12 @@
 """SQLite metadata backend.
 
-Schema carried over from remake2 with one addition: a uses_hash column on
-task. No migration support pre-release: if the schema changes, delete
-.remake/remake.db and rerun.
+Schema carried over from remake2, with the task table reworked so that all
+code-derived state (run source, the normalised uses/io strings) lives in the
+content-addressed `code` table and task rows carry only integer FKs. Storing
+the uses/io text inline per task made real DBs enormous (272 MB for 3341
+tasks, 99.8% of it duplicated uses text) and made status queries scale with
+task count (design_docs/logs_analysis/README.md). Older DBs are migrated in
+place by `_add_missing_columns`.
 """
 import json
 import random
@@ -42,20 +46,27 @@ CREATE TABLE rule (
     FOREIGN KEY(run_code_id) REFERENCES code (id)
 );
 
+-- uses_code_id/io_code_id point at the *normalised* uses/io strings interned
+-- in code (find-or-insert by exact content, so equal content means equal id
+-- and the planner compares ints, never text). run_code_id points at raw
+-- source, deduped only against the rule's latest version, so ids there are
+-- not canonical across history — the planner AST-compares the distinct few.
 CREATE TABLE task (
     id INTEGER NOT NULL,
     key VARCHAR(40) NOT NULL,
     rule_id INTEGER NOT NULL,
     run_code_id INTEGER,
-    uses_hash TEXT,
-    io_hash TEXT,
+    uses_code_id INTEGER,
+    io_code_id INTEGER,
     run_seq INTEGER,
     last_run_timestamp TIMESTAMP,
     last_run_status INTEGER,
     exception TEXT,
     PRIMARY KEY (id),
     FOREIGN KEY(rule_id) REFERENCES rule (id),
-    FOREIGN KEY(run_code_id) REFERENCES code (id)
+    FOREIGN KEY(run_code_id) REFERENCES code (id),
+    FOREIGN KEY(uses_code_id) REFERENCES code (id),
+    FOREIGN KEY(io_code_id) REFERENCES code (id)
 );
 
 CREATE UNIQUE INDEX task_key_index ON task(key);
@@ -111,7 +122,9 @@ class Sqlite3Backend(MetadataManager):
         else:
             self._add_missing_columns()
         self.conn.isolation_level = 'EXCLUSIVE'
-        self.rule_ids = {}  # rule name -> (rule_id, run_code_id)
+        # rule name -> (rule_id, run_code_id, uses_code_id, io_code_id):
+        # the rule's row plus this invocation's current interned code ids.
+        self.rule_ids = {}
         # Lazily allocated once per process (= per invocation); shared by every
         # task this invocation commits. See the `meta` table comment.
         self._run_seq = None
@@ -119,15 +132,15 @@ class Sqlite3Backend(MetadataManager):
     def _add_missing_columns(self):
         """Lightweight forward-compat for columns added after a DB was first
         created (still no general migration support — see the module docstring).
-        A pre-existing record left with io_hash/run_seq NULL is treated as 'not
-        yet tracked' by the planner, so upgrading does not force a mass rerun."""
+        A pre-existing record left with io_code_id/run_seq NULL is treated as
+        'not yet tracked' by the planner, so upgrading does not force a mass
+        rerun."""
         cols = {row[1] for row in self.conn.execute('PRAGMA table_info(task)')}
-        if 'io_hash' not in cols:
-            logger.info('Adding task.io_hash column to existing DB')
-            self.conn.execute('ALTER TABLE task ADD COLUMN io_hash TEXT')
         if 'run_seq' not in cols:
             logger.info('Adding task.run_seq column to existing DB')
             self.conn.execute('ALTER TABLE task ADD COLUMN run_seq INTEGER')
+        if 'uses_code_id' not in cols:
+            self._migrate_inline_hashes_to_code_ids(cols)
         rule_cols = {row[1] for row in self.conn.execute('PRAGMA table_info(rule)')}
         if 'remakefile' not in rule_cols:
             logger.info('Adding rule.remakefile column to existing DB')
@@ -140,6 +153,49 @@ class Sqlite3Backend(MetadataManager):
                 'CREATE TABLE meta (key TEXT NOT NULL PRIMARY KEY, value INTEGER NOT NULL)')
             self.conn.execute("INSERT INTO meta(key, value) VALUES ('run_seq', 0)")
             self.conn.commit()
+
+    def _migrate_inline_hashes_to_code_ids(self, cols):
+        """One-time in-place migration: the old task.uses_hash/io_hash columns
+        stored the full normalised uses/io strings inline per row — duplicated
+        across every task of a rule (measured at 99.8% of a 272 MB field DB).
+        Intern each distinct value into `code` once, point integer FKs at it,
+        drop the text columns, and VACUUM to return the space."""
+        logger.info('Migrating task.uses_hash/io_hash to code-table FKs')
+        self.conn.execute('ALTER TABLE task ADD COLUMN uses_code_id INTEGER')
+        self.conn.execute('ALTER TABLE task ADD COLUMN io_code_id INTEGER')
+        if 'uses_hash' in cols:
+            # Backfill uses: NULL and '' both mean "empty uses" — intern ''.
+            self.conn.execute(
+                "INSERT INTO code(code) "
+                "SELECT DISTINCT COALESCE(uses_hash, '') FROM task "
+                "WHERE COALESCE(uses_hash, '') NOT IN (SELECT code FROM code)")
+            self.conn.execute(
+                'UPDATE task SET uses_code_id = ('
+                "    SELECT min(id) FROM code WHERE code = COALESCE(task.uses_hash, ''))")
+        if 'io_hash' in cols:
+            # Backfill io: NULL means pre-upgrade/not-tracked and must stay
+            # NULL (the planner skips the io comparison for those records).
+            self.conn.execute(
+                'INSERT INTO code(code) '
+                'SELECT DISTINCT io_hash FROM task '
+                'WHERE io_hash IS NOT NULL AND io_hash NOT IN (SELECT code FROM code)')
+            self.conn.execute(
+                'UPDATE task SET io_code_id = ('
+                '    SELECT min(id) FROM code WHERE code = task.io_hash) '
+                'WHERE io_hash IS NOT NULL')
+        for col in ('uses_hash', 'io_hash'):
+            if col not in cols:
+                continue
+            try:
+                self.conn.execute(f'ALTER TABLE task DROP COLUMN {col}')
+            except sqlite3.OperationalError:
+                # DROP COLUMN needs SQLite >= 3.35; NULLing the column still
+                # frees the space (after the VACUUM below) and nothing reads
+                # it any more.
+                self.conn.execute(f'UPDATE task SET {col} = NULL')
+        self.conn.commit()
+        logger.info('Vacuuming (one-time; reclaims the inline-hash space)')
+        self.conn.execute('VACUUM')
 
     @retry_lock_commit
     def _allocate_run_seq(self):
@@ -168,6 +224,17 @@ class Sqlite3Backend(MetadataManager):
         cur = self.conn.execute('INSERT INTO code(code) VALUES (?)', (code,))
         return cur.lastrowid
 
+    def _intern_code(self, code):
+        """Find-or-insert: the id of the row whose content is exactly `code`.
+        Content-addressing makes ids canonical — the same string always
+        resolves to the same id, so unchanged-ness is id equality. (min(id)
+        because historic inserts may have left duplicate content.)"""
+        (existing,) = self.conn.execute(
+            'SELECT min(id) FROM code WHERE code = ?', (code,)).fetchone()
+        if existing is not None:
+            return existing
+        return self._insert_code(code)
+
     @retry_lock_commit
     def _ensure_rule(self, rule, remakefile=None):
         row = self.conn.execute(
@@ -176,15 +243,21 @@ class Sqlite3Backend(MetadataManager):
             (rule.name,),
         ).fetchone()
         source = rule.source
+        # Current uses/io state, interned once per rule per invocation: tasks
+        # committed this invocation point at these ids, and the planner
+        # detects change by comparing a record's stored ids against them.
+        uses_code_id = self._intern_code(compute_uses_hash(rule.uses))
+        io_code_id = self._intern_code(compute_io_hash(rule))
         if row is None:
-            code_ids = {part: self._insert_code(source[part]) for part in source}
+            code_ids = {part: self._intern_code(source[part]) for part in source}
             cur = self.conn.execute(
                 'INSERT INTO rule(name, inputs_code_id, outputs_code_id, run_code_id, '
                 '                 remakefile) VALUES (?, ?, ?, ?, ?)',
                 (rule.name, code_ids['inputs'], code_ids['outputs'], code_ids['run'],
                  remakefile),
             )
-            self.rule_ids[rule.name] = (cur.lastrowid, code_ids['run'])
+            self.rule_ids[rule.name] = (
+                cur.lastrowid, code_ids['run'], uses_code_id, io_code_id)
             return True, False
 
         rule_id, *code_id_list, stored_remakefile = row
@@ -195,7 +268,9 @@ class Sqlite3Backend(MetadataManager):
                 'SELECT code FROM code WHERE id = ?', (code_ids[part],)
             ).fetchone()
             if not self.code_comparer(stored, source[part]):
-                code_ids[part] = self._insert_code(source[part])
+                # Intern rather than blind-insert: reverting an edit maps back
+                # to the original row, so old task records compare equal again.
+                code_ids[part] = self._intern_code(source[part])
                 changed = True
         # Duplicate-rule-name guard: in a shared .remake/ store, a same-named
         # rule whose code differs and was last written by a *different* known
@@ -228,7 +303,7 @@ class Sqlite3Backend(MetadataManager):
             # code is unchanged: record the new owner without a spurious rerun.
             self.conn.execute(
                 'UPDATE rule SET remakefile = ? WHERE id = ?', (remakefile, rule_id))
-        self.rule_ids[rule.name] = (rule_id, code_ids['run'])
+        self.rule_ids[rule.name] = (rule_id, code_ids['run'], uses_code_id, io_code_id)
         return row is None, changed
 
     def ensure_rules(self, rules, remakefile=None):
@@ -246,6 +321,10 @@ class Sqlite3Backend(MetadataManager):
     SELECT_CHUNK = 900
 
     def get_tasks_status(self, tasks):
+        # Deliberately no JOIN on code: hauling the full source text per task
+        # made this query scale with task count × source size (256× the
+        # distinct bytes in the field — logs_analysis §1.2). Rows carry only
+        # ids; callers resolve the few distinct ones via get_codes.
         start = perf_counter()
         records = {}
         keys = [task.key for task in tasks]
@@ -254,22 +333,21 @@ class Sqlite3Backend(MetadataManager):
             chunk = keys[i:i + self.SELECT_CHUNK]
             placeholders = ','.join('?' * len(chunk))
             rows = self.conn.execute(
-                'SELECT task.key, task.last_run_status, task.last_run_timestamp, '
-                '       task.uses_hash, task.io_hash, task.run_seq, task.exception, code.code '
-                'FROM task LEFT JOIN code ON task.run_code_id = code.id '
-                f'WHERE task.key IN ({placeholders})',
+                'SELECT key, last_run_status, last_run_timestamp, '
+                '       run_code_id, uses_code_id, io_code_id, run_seq, exception '
+                f'FROM task WHERE key IN ({placeholders})',
                 chunk,
             ).fetchall()
-            for (key, status, timestamp, stored_uses_hash, stored_io_hash,
-                 run_seq, exception, run_code) in rows:
+            for (key, status, timestamp, run_code_id, uses_code_id,
+                 io_code_id, run_seq, exception) in rows:
                 records[key] = TaskRecord(
                     key=key,
                     status=status,
                     timestamp=timestamp,
-                    run_code=run_code or '',
-                    uses_hash=stored_uses_hash or '',
+                    run_code_id=run_code_id,
+                    uses_code_id=uses_code_id,
                     exception=exception or '',
-                    io_hash=stored_io_hash,  # None for pre-upgrade records
+                    io_code_id=io_code_id,  # None for pre-upgrade records
                     run_seq=run_seq,  # None for pre-upgrade/never-stamped records
                 )
         logger.debug(
@@ -277,6 +355,17 @@ class Sqlite3Backend(MetadataManager):
             len(keys), nchunks, len(records), perf_counter() - start,
         )
         return records
+
+    def get_codes(self, code_ids):
+        ids = sorted({cid for cid in code_ids if cid is not None})
+        codes = {}
+        for i in range(0, len(ids), self.SELECT_CHUNK):
+            chunk = ids[i:i + self.SELECT_CHUNK]
+            placeholders = ','.join('?' * len(chunk))
+            rows = self.conn.execute(
+                f'SELECT id, code FROM code WHERE id IN ({placeholders})', chunk)
+            codes.update(dict(rows))
+        return codes
 
     def ingest_sidecars(self, rules):
         """Absorb pending sidecar results (written by run-array-task) into
@@ -317,16 +406,27 @@ class Sqlite3Backend(MetadataManager):
 
     @retry_lock_commit
     def _ingest_records(self, pending):
+        # Sidecars carry the uses/io strings as text (the compute node has no
+        # DB to intern into); intern here, memoised — a batch's payloads are
+        # near-always identical within a rule.
+        intern_memo = {}
+
+        def intern(text):
+            if text not in intern_memo:
+                intern_memo[text] = self._intern_code(text)
+            return intern_memo[text]
+
         for rule, key, payload, _ in pending:
-            rule_id, run_code_id = self.rule_ids[rule.name]
+            rule_id, run_code_id, _, cur_io_code_id = self.rule_ids[rule.name]
+            io_text = payload.get('io_hash')
             self.conn.execute(
-                'INSERT INTO task(key, rule_id, run_code_id, uses_hash, io_hash, '
+                'INSERT INTO task(key, rule_id, run_code_id, uses_code_id, io_code_id, '
                 '                 run_seq, last_run_timestamp, last_run_status, exception) '
                 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) '
                 'ON CONFLICT(key) DO UPDATE SET '
                 '    run_code_id = excluded.run_code_id, '
-                '    uses_hash = excluded.uses_hash, '
-                '    io_hash = excluded.io_hash, '
+                '    uses_code_id = excluded.uses_code_id, '
+                '    io_code_id = excluded.io_code_id, '
                 '    run_seq = excluded.run_seq, '
                 '    last_run_timestamp = excluded.last_run_timestamp, '
                 '    last_run_status = excluded.last_run_status, '
@@ -335,8 +435,10 @@ class Sqlite3Backend(MetadataManager):
                     key,
                     rule_id,
                     run_code_id,
-                    payload.get('uses_hash', ''),
-                    payload.get('io_hash') or compute_io_hash(rule),
+                    intern(payload.get('uses_hash', '')),
+                    # Pre-io_hash sidecar: fall back to the rule's current io
+                    # state (was compute_io_hash(rule), interned at ensure).
+                    intern(io_text) if io_text else cur_io_code_id,
                     # run_seq is allocated on the submit node and threaded
                     # through the job spec into the sidecar, so all array
                     # elements of one submission share it regardless of node.
@@ -370,15 +472,18 @@ class Sqlite3Backend(MetadataManager):
             self.conn.execute(f'DELETE FROM task WHERE key IN ({placeholders})', chunk)
 
     def _upsert_task(self, task, status, exception='', run_seq=None):
-        rule_id, run_code_id = self.rule_ids[task.rule.name]
+        # The uses/io ids were computed and interned once per rule at
+        # ensure_rules time — no per-task hashing or text writes (the old
+        # per-task compute_uses_hash was 1e6 AST renders on a big run).
+        rule_id, run_code_id, uses_code_id, io_code_id = self.rule_ids[task.rule.name]
         self.conn.execute(
-            'INSERT INTO task(key, rule_id, run_code_id, uses_hash, io_hash, '
+            'INSERT INTO task(key, rule_id, run_code_id, uses_code_id, io_code_id, '
             '                 run_seq, last_run_timestamp, last_run_status, exception) '
             "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?, ?) "
             'ON CONFLICT(key) DO UPDATE SET '
             '    run_code_id = excluded.run_code_id, '
-            '    uses_hash = excluded.uses_hash, '
-            '    io_hash = excluded.io_hash, '
+            '    uses_code_id = excluded.uses_code_id, '
+            '    io_code_id = excluded.io_code_id, '
             '    run_seq = excluded.run_seq, '
             "    last_run_timestamp = datetime('now'), "
             '    last_run_status = excluded.last_run_status, '
@@ -387,8 +492,8 @@ class Sqlite3Backend(MetadataManager):
                 task.key,
                 rule_id,
                 run_code_id,
-                compute_uses_hash(task.rule.uses),
-                compute_io_hash(task.rule),
+                uses_code_id,
+                io_code_id,
                 run_seq,
                 status,
                 exception,

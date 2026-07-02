@@ -916,6 +916,31 @@ design discussion before any work starts.
   fixed-length digest (this item's design) should shrink the DB by ~50× *and*
   remove that read cost — the two items are one fix.
 
+  *Implemented 2026-07-02 (stage A), with one revision to the chosen design.*
+  The per-task column became an **integer FK** (`task.uses_code_id`/
+  `io_code_id` → `code`), not a sha1 digest: the whole joined normalised
+  string is interned by find-or-insert (content-addressed, so equal content
+  ⇒ equal id, and unchanged-ness is int equality against the id
+  `_ensure_rule` interns once per rule per invocation). Smaller than a
+  40-char digest, *and* the old rendering stays recoverable by id — a digest
+  would have degraded `why`'s before→after uses messages, since the prior
+  rendering is unrecoverable from a hash. MM's probe ("wouldn't storing a
+  hash somewhere be faster?") settled the trade-off: once per-task state is
+  an int and content comparisons happen once per rule, a hash adds nothing
+  measurable — its only win is the intern lookup itself, once per rule
+  against a ~100-row table (an indexed `code.code_hash` remains a cheap
+  follow-up if that table ever grows large). Alongside: `get_tasks_status`
+  returns ids only (the code JOIN is gone; the planner resolves the distinct
+  few ids per rule via the new `get_codes` and does set-membership per task);
+  `_upsert_task` no longer computes `uses_hash` per task; rule code inserts
+  intern too, so an edit-and-revert maps back to the original row instead of
+  mass-rerunning; and the in-place migration backfills FKs from the inline
+  columns, drops them and VACUUMs (the 272 MB recovers on first contact).
+  Still open (stage B): the `rule_uses` per-helper raw-source table for
+  readable source diffs and `rule-info` — until then a one-helper edit
+  interns a full new joined string rather than sharing the unchanged
+  helpers, and diffs remain normalised-AST-derived.
+
 ## Graduated (designed and implemented; kept for the record)
 
 - **Single `.remake/` per directory: rule provenance + duplicate-rule-name

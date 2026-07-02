@@ -24,22 +24,86 @@ assessment (2026-06-11). Ordered roughly by severity.
 - [ ] Recording completions is one EXCLUSIVE transaction per task (1e6
   transactions over a big run) — batch or relax when addressing the bulk
   query.
-- [ ] **Move `uses`/`io` source into the content-addressed `code` table; make
-  the per-task column a real hash.** Today `task.uses_hash`/`io_hash` store the
-  full AST-normalised source string *inline on every task row* (misnomer: it's
-  a serialised AST, not a digest), so a verbose blob is duplicated across every
-  task of a rule — feeding the per-task write-cost problem above. `run`/`inputs`
-  /`outputs` already do this right: raw source deduped in `code` and referenced
-  by FK from `rule`. Do the same for `uses` (needs a `rule_uses(rule_id, name,
-  code_id, kind)` join table — `uses` is a dict of N helpers, one row each; the
-  `kind` marker distinguishes sourceable functions from plain values / sourceless
-  callables, since only the first is diffable) and `io`, and demote the per-task
-  columns to an actual `sha1` of the name-sorted normalised AST. Keeps
-  change detection exact, shrinks task rows, and stores raw source once per rule
-  — which unlocks the human-readable `uses` code-change diff and `rule-info`
-  source display. Design:
-  [discussion.md](discussion.md) ("Display code changes in `uses` functions").
-  Schema migration required (alpha 0.8.0a0, acceptable).
+- [x] **Hash-first code-change detection: stop hauling full source per task;
+  move `uses`/`io` source into the content-addressed `code` table.** Done
+  2026-07-02, with one design change from the plan below: instead of a sha1
+  digest per task, `task.uses_hash`/`io_hash` became **integer FKs**
+  (`uses_code_id`/`io_code_id`) to the normalised strings interned
+  (find-or-insert by exact content) in `code` — smaller than a digest, and
+  the old rendering stays recoverable by id, so `why` keeps its before→after
+  uses messages. `get_tasks_status` no longer JOINs `code.code` (rows carry
+  only ints); the planner resolves the distinct few ids per rule via the new
+  `get_codes` and compares once per id, set-membership per task. Current
+  uses/io ids are interned once per rule in `_ensure_rule` (also kills the
+  per-task `compute_uses_hash` — was 1e6 AST renders on a big run), and rule
+  run/inputs/outputs inserts now intern too (an edit-and-revert maps back to
+  the original row instead of rerunning everything). In-place migration
+  `_migrate_inline_hashes_to_code_ids` backfills FKs from the old inline
+  columns (io_hash NULL survives as not-tracked), drops them (NULLs on
+  SQLite <3.35) and VACUUMs. Tests: migration round-trip incl. no-mass-rerun
+  and uses-change rerun (test_metadata.py); verified end-to-end via CLI
+  (run/info/why incl. `threshold: 5 → 7` message, and a hand-built old-schema
+  DB migrated by `remake info` with zero reruns). Bug 04 Issue 2's
+  hypothesis confirmed: the status SELECT did pull `uses_hash` per row.
+  Remaining stage B below. Original plan:
+  - *Query side (logs_analysis §1.1/1.2/5).* `get_tasks_status`
+    (`sqlite3_backend.py:248`) JOINs `code.code` and returns the **full run
+    source for every task**, which the planner feeds to `CodeComparer` — so
+    status-query cost scales with previously-run tasks. Field measurement
+    (wescon-tools, 3341 tasks): 38.4 MB fetched per query vs 149 KB distinct
+    code — **256× amplification**; p99 3.6 s, max 10.2 s per call; 363 s total
+    across the mined logs; planner runs up to 20 s to conclude "0 runnable".
+    Fix: store/compare a `code_hash` (of the normalised AST) and fetch full
+    source lazily by `run_code_id` only when the hash differs and a diff is
+    rendered.
+  - *Storage side ("Display code changes in `uses` functions",
+    [discussion.md](discussion.md)).* Today `task.uses_hash`/`io_hash` store
+    the full AST-normalised source string *inline on every task row* (misnomer:
+    it's a serialised AST, not a digest) — a verbose blob duplicated across
+    every task of a rule. Measured in the wild: 272 MB DB for 3341 tasks,
+    99.8% of it `task.uses_hash` (~79 KB/row, distinct=1 per rule). `run`/
+    `inputs`/`outputs` already do this right: raw source deduped in `code`,
+    FK from `rule`. Do the same for `uses` (needs a `rule_uses(rule_id, name,
+    code_id, kind)` join table — `uses` is a dict of N helpers, one row each;
+    `kind` distinguishes sourceable functions from plain values / sourceless
+    callables, since only the first is diffable) and `io`, and demote the
+    per-task columns to an actual `sha1` of the name-sorted normalised AST.
+  Keeps change detection exact, shrinks task rows and query payloads, and
+  stores raw source once per rule — unlocking the human-readable `uses`
+  code-change diff and `rule-info` source display. Schema migration required
+  (alpha 0.8.0a0, acceptable). Likely also resolves
+  [bug 04](bugs/04_info_redundant_and_superlinear_status_queries.md) Issue 2
+  (superlinear `get_tasks_status`: the slowest rule's `uses_hash` is
+  ~145 KB/row × 1465 tasks ≈ 213 MB scanned per status query) — confirm
+  whether the status SELECT pulls `uses_hash` before profiling further.
+- [ ] **Stage B of the storage rework: `rule_uses(rule_id, name, code_id,
+  kind)` raw-source table.** The per-task FK above points at the *joined*
+  normalised uses string (one row per version, all helpers concatenated);
+  this adds one row per helper holding **raw** source with a `kind` marker
+  (source/value/bytecode), enabling readable per-helper source diffs in
+  `why` (today: normalised-AST-derived messages, `(body)` for callables),
+  per-helper storage sharing when one of N helpers changes, and the
+  `rule-info` source display. Design: [discussion.md](discussion.md)
+  ("Display code changes in `uses` functions").
+- [x] **`VACUUM` the field DBs** (logs_analysis §1.5) — folded into the
+  migration above: `_migrate_inline_hashes_to_code_ids` VACUUMs after
+  dropping the inline columns, so existing bloated DBs (272 MB wescon-tools)
+  recover the space on first contact with the new code.
+- [ ] **`remake info` queries every rule's status twice**
+  ([bug 04](bugs/04_info_redundant_and_superlinear_status_queries.md)
+  Issue 1). The planner fetches per-rule task status to compute the plan,
+  then the info renderer re-runs the identical `get_tasks_status` queries to
+  build the table — pure duplication within one read-only invocation
+  (~2.7 s of the measured ~10 s on a 3k-task pipeline). Thread the
+  planner's already-fetched status through to the renderer (or render from
+  the plan result). Independent of — and worth doing regardless of — the
+  storage rework above; on an all-settled pipeline every rule pays the
+  double query.
+- [ ] **Status-query regression micro-benchmark** (logs_analysis §4.5). Replay
+  a large DAG's plan against a populated DB and assert status-query time stays
+  ~O(distinct code), not O(tasks × source size) — the field logs only revealed
+  the 256× amplification after the fact. Natural home: alongside
+  `tests/benchmarks/bench_million_tasks.py` and the CI-benchmark todo above.
 
 ## Correctness (cont.)
 
@@ -350,4 +414,24 @@ assessment (2026-06-11). Ordered roughly by severity.
   - Lesser: log the chosen executor/nproc/config at run start (debug); the
     direct-DB-write-vs-sidecar decision and per-task `update_task` are unlogged
     (trace would suffice).
+- [ ] **Don't TRACE-log full function bodies in `code_compare`**
+  (logs_analysis §3.1). The TRACE dump prints the entire source of both
+  versions on every comparison — ~55k of the 56.8k lines in the worst field
+  log, crowding real history out of the 5 MB rotation window. Log a one-line
+  summary (`code_compare: <rule> unchanged` / `changed (N lines differ)`) and
+  gate the full-body dump behind an explicit opt-in (e.g. `REMAKE_LOG_CODE=1`).
+- [ ] **Split the file log into human + debug streams; threshold the timing
+  lines** (logs_analysis §3.2/3.3). Keep `remake.log` readable (INFO+ run
+  narrative) and route the DEBUG/TRACE firehose to a separate rotated
+  `remake.debug.log` (on by default at DEBUG) so the two don't compete for
+  the 5 MB window. Demote the per-query `get_tasks_status ... in Xs` line to
+  TRACE or emit it only above a threshold (e.g. >100 ms) — ~1857 of them
+  dominate the DEBUG stream today.
+- [ ] **Structured logging for mineability** (logs_analysis §4). The field
+  analysis needed fragile regex over prose lines. Add a JSONL sink
+  (`logger.add(..., serialize=True)`), bind metrics as `extra` fields rather
+  than interpolating into messages, tag events with a stable `event=` key,
+  and stamp a per-invocation run id so one `remake run`'s lines group
+  together. Lower priority than the fixes above — infrastructure, not a
+  perf win.
 - [ ] Can we make uses accept a list instead of a dict?

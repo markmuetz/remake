@@ -197,19 +197,25 @@ def explain_task(rules, dag, metadata, task, *, check_outputs='never', runnable=
         if rec.status != TASK_STATUS_SUCCESS:
             state = 'failed' if rec.status == TASK_STATUS_FAILED else 'pending'
             reasons.append(Reason(f'last-run-{state}', f'last run {state} at {rec.timestamp}'))
+        # Records carry code ids; resolve this one task's stored texts (the
+        # lazy fetch — only `why` pays for the full source, never the planner).
+        codes = metadata.get_codes(
+            {rec.run_code_id, rec.uses_code_id, rec.io_code_id})
         run_src = task.rule.source['run']
-        if not CodeComparer()(rec.run_code, run_src):
+        stored_run = codes.get(rec.run_code_id) or ''
+        if not CodeComparer()(stored_run, run_src):
             diff = '\n'.join(
                 difflib.unified_diff(
-                    rec.run_code.splitlines(), run_src.splitlines(),
+                    stored_run.splitlines(), run_src.splitlines(),
                     'last run', 'current', lineterm='',
                 )
             )
             reasons.append(Reason('code-changed', f'run code changed since last run:\n{diff}'))
-        if rec.uses_hash != uses_hash(task.rule.uses):
+        stored_uses = codes.get(rec.uses_code_id) or ''
+        if stored_uses != uses_hash(task.rule.uses):
             reasons.append(Reason('uses-changed',
-                _uses_change_message(rec.uses_hash, task.rule.uses)))
-        if rec.io_hash is not None and rec.io_hash != io_hash(task.rule):
+                _uses_change_message(stored_uses, task.rule.uses)))
+        if rec.io_code_id is not None and codes.get(rec.io_code_id) != io_hash(task.rule):
             reasons.append(Reason('io-changed',
                 'inputs/outputs spec changed since last run'))
         if check_outputs == 'always' and task.outputs and not _outputs_complete(task):
@@ -327,6 +333,24 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
         current_io_hash = io_hash(rule)
         rule_rerun = set()
 
+        # Records carry code *ids*, not text; resolve the distinct few (per
+        # rule, typically 1 of each — more only when tasks last ran under
+        # different code versions) and compare each against the current state
+        # once. The per-task check below is then set membership on ints —
+        # this is what keeps status+plan cost from scaling with task count
+        # (logs_analysis §1.1/1.2).
+        run_ids = {rec.run_code_id for rec in records.values()}
+        uses_ids = {rec.uses_code_id for rec in records.values()}
+        io_ids = {rec.io_code_id for rec in records.values()}
+        codes = metadata.get_codes(run_ids | uses_ids | io_ids)
+        run_unchanged = {cid for cid in run_ids
+                         if code_comparer(codes.get(cid) or '', run_src)}
+        uses_unchanged = {cid for cid in uses_ids
+                          if (codes.get(cid) or '') == current_uses_hash}
+        # io id None = pre-upgrade record, not tracked: never a rerun cause.
+        io_unchanged = {cid for cid in io_ids
+                        if cid is None or codes.get(cid) == current_io_hash}
+
         # MM: what does this block do?
         upstream_all = any(rerun_kwargs.get(dep) == 'all' for dep in rule.depends_on)
         elementwise_deps = []
@@ -355,13 +379,11 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
                 rerun = rec.status != TASK_STATUS_SUCCESS
                 reason = 'last run not successful' if rerun else 'up to date'
                 if not rerun and not ignore_code_changes:
-                    if not code_comparer(rec.run_code, run_src):
+                    if rec.run_code_id not in run_unchanged:
                         rerun, reason = True, 'run code changed'
-                    elif rec.uses_hash != current_uses_hash:
+                    elif rec.uses_code_id not in uses_unchanged:
                         rerun, reason = True, 'uses= changed'
-                    # io_hash is None for pre-upgrade records — don't rerun on
-                    # that alone (treat as not-yet-tracked, not as changed).
-                    elif rec.io_hash is not None and rec.io_hash != current_io_hash:
+                    elif rec.io_code_id not in io_unchanged:
                         rerun, reason = True, 'inputs/outputs spec changed'
                 if not rerun and check_outputs == 'always' and task.outputs:
                     if not _outputs_complete(task):

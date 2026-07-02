@@ -18,15 +18,21 @@ STATUS_NAMES = {
 @dataclass(frozen=True)
 class TaskRecord:
     """A task's stored execution state. The planner consumes these; Task
-    objects themselves stay pure value objects."""
+    objects themselves stay pure value objects.
+
+    Code/uses/io are carried as integer ids into the content-addressed `code`
+    table, not as text — fetching the text per task is what made status
+    queries scale with task count (design_docs/logs_analysis/README.md §1.2).
+    Consumers resolve ids to text via `MetadataManager.get_codes`, once per
+    distinct id rather than once per task."""
 
     key: str
     status: int
     timestamp: Optional[str]
-    run_code: str
-    uses_hash: str
+    run_code_id: Optional[int]
+    uses_code_id: Optional[int]
     exception: str
-    io_hash: Optional[str] = None
+    io_code_id: Optional[int] = None  # None = pre-upgrade record (not tracked)
     run_seq: Optional[int] = None  # None for pre-upgrade/never-stamped records
 
 
@@ -40,6 +46,12 @@ class MetadataManager(abc.ABC):
     @abc.abstractmethod
     def get_tasks_status(self, tasks) -> dict:
         """{task.key: TaskRecord} for tasks that have a stored record."""
+
+    def get_codes(self, code_ids) -> dict:
+        """{code_id: text} for the given ids (a TaskRecord's
+        run_code_id/uses_code_id/io_code_id). Backends without a code store
+        have nothing to resolve; None ids are ignored."""
+        return {}
 
     def begin_invocation(self):
         """Start a new logical invocation: allocate a fresh run_seq so tasks
