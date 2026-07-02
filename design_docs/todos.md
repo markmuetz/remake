@@ -24,6 +24,22 @@ assessment (2026-06-11). Ordered roughly by severity.
 - [ ] Recording completions is one EXCLUSIVE transaction per task (1e6
   transactions over a big run) — batch or relax when addressing the bulk
   query.
+- [ ] **Move `uses`/`io` source into the content-addressed `code` table; make
+  the per-task column a real hash.** Today `task.uses_hash`/`io_hash` store the
+  full AST-normalised source string *inline on every task row* (misnomer: it's
+  a serialised AST, not a digest), so a verbose blob is duplicated across every
+  task of a rule — feeding the per-task write-cost problem above. `run`/`inputs`
+  /`outputs` already do this right: raw source deduped in `code` and referenced
+  by FK from `rule`. Do the same for `uses` (needs a `rule_uses(rule_id, name,
+  code_id, kind)` join table — `uses` is a dict of N helpers, one row each; the
+  `kind` marker distinguishes sourceable functions from plain values / sourceless
+  callables, since only the first is diffable) and `io`, and demote the per-task
+  columns to an actual `sha1` of the name-sorted normalised AST. Keeps
+  change detection exact, shrinks task rows, and stores raw source once per rule
+  — which unlocks the human-readable `uses` code-change diff and `rule-info`
+  source display. Design:
+  [discussion.md](discussion.md) ("Display code changes in `uses` functions").
+  Schema migration required (alpha 0.8.0a0, acceptable).
 
 ## Correctness (cont.)
 
@@ -72,6 +88,15 @@ assessment (2026-06-11). Ordered roughly by severity.
   otherwise (`planner.upstream_failed`, mirroring rerun propagation).
   Skipped tasks stay unrecorded (pending), so fixing the upstream makes
   the next run pick them up. SLURM gets this from aftercorr/afterok.
+- [ ] rule plumbing errors should be treated differently from individual task 
+  errors. If e.g. an inputs fn doesn't have the correct args for the var matrix,
+  this should be raised immediately with a helpful error message, as it will 
+  apply to all tasks.
+- [ ] Just as there is a `remake task-info`, there should be a `remake rule-info`.
+  It should display the rule's docstring at the top. And it should give useful info
+  about the rule, including its matrix, input and output *templates*. These can
+  be defined even if they are set by functions: just pass in e.g. case='{case}'.
+  
 
 ## Packaging
 
@@ -248,6 +273,9 @@ assessment (2026-06-11). Ordered roughly by severity.
   each job with a run id + its spec path so a queue snapshot maps back to the
   exact remake task. Also fixes the latent resubmit-all bug where a *failed*
   squeue is read as an empty queue. Design: [slurm_already_running.md](slurm_already_running.md).
+- [ ] Check behaviour of deferrable rules under SLURM. When running, I think 
+  that the downstream tasks rerunning should have triggered a rerun of the 
+  deferrable jobs but did not. Worth checking. 
 
 ## UX
 
@@ -322,3 +350,4 @@ assessment (2026-06-11). Ordered roughly by severity.
   - Lesser: log the chosen executor/nproc/config at run start (debug); the
     direct-DB-write-vs-sidecar decision and per-task `update_task` are unlogged
     (trace would suffice).
+- [ ] Can we make uses accept a list instead of a dict?

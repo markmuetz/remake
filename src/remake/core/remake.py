@@ -216,6 +216,7 @@ class Remake:
 
     # --- reporting ---
 
+    # MM: got to here so far.
     def status_summary(self, query=None, *, reasons=False, list_tasks=False,
                        list_failures=False):
         """Per-rule task-status summary — the data behind `remake info`.

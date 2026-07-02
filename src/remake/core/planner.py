@@ -275,6 +275,8 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
     *succeeded* (failed counts as not run) or an upstream task reruns
     this wave (a fan-in must still pick up newly-run elements).
     """
+    # MM: this is a core piece of logic, but I find it hard to understand end-to-end.
+    # MM: also quite a long func.
     start = perf_counter()
     predicate = make_predicate(query) if query else None
     code_comparer = CodeComparer()
@@ -325,6 +327,7 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
         current_io_hash = io_hash(rule)
         rule_rerun = set()
 
+        # MM: what does this block do?
         upstream_all = any(rerun_kwargs.get(dep) == 'all' for dep in rule.depends_on)
         elementwise_deps = []
         for dep in rule.depends_on:
@@ -348,6 +351,7 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
                 else:
                     rerun, reason = True, 'never run (no DB record)'
             else:
+                # MM: multiple of these could be true, and this is not recorded.
                 rerun = rec.status != TASK_STATUS_SUCCESS
                 reason = 'last run not successful' if rerun else 'up to date'
                 if not rerun and not ignore_code_changes:
@@ -362,6 +366,7 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
                 if not rerun and check_outputs == 'always' and task.outputs:
                     if not _outputs_complete(task):
                         rerun, reason = True, 'outputs missing (check_outputs=always)'
+            # MM: Can we not skip the above logic if forced?
             if force:
                 rerun, reason = True, 'forced'
 
@@ -372,6 +377,7 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
             # invocation than this task (e.g. an upstream rerun via `run -Q`,
             # or after a crash) without rerunning it in the same pass. run_seq
             # None = not-yet-tracked (pre-upgrade): don't rerun on that alone.
+            # MM: Can't quite see how task_run_seq works here.
             if not rerun and rec is not None and rec.run_seq is not None:
                 up_seq = _max_upstream_run_seq(rule, task_kwargs, task_run_seq)
                 if up_seq is not None and up_seq > rec.run_seq:
@@ -383,6 +389,7 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
                 runnable.append(task)
 
         rerun_kwargs[rule] = rule_rerun
+        # MM: oh, it's a dict of all currently know tasks grouped by rule I think.
         task_run_seq[rule] = {
             frozenset(task.kwargs.items()):
                 (records[task.key].run_seq if task.key in records else None)

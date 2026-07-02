@@ -70,6 +70,17 @@ originated with him, reconstructed from the session transcripts in
 - **remake-daemon** orchestration concept (discussed and parked).
 - **Opt-in stats/run-history record** — proposed recording run statistics, kept
   deliberately opt-in.
+- **`uses`/`io` code storage rework.** Directed the design (recorded in
+  `discussion.md`) that moves `uses`/`io` source out of the verbose per-task
+  `uses_hash`/`io_hash` columns and into the content-addressed `code` table at
+  rule granularity, demoting the per-task column to a genuine digest — unlocking
+  human-readable `uses` code-change diffs and `rule-info` source display while
+  shrinking per-task rows at scale. Critically, **caught the design gap** that
+  `uses` is N heterogeneous helpers (some sourceable functions, some plain
+  values, some sourceless callables) that cannot map to a single FK the way
+  run/inputs/outputs do — forcing the `rule_uses(rule_id, name, code_id, kind)`
+  join table with a per-entry `kind` marker so only diffable source is rendered
+  as such.
 - **Rule provenance + duplicate-rule-name guard.** From discussing the single
   `.remake/` store shared by co-located remakefiles, identified the silent
   collision when two remakefiles define a different rule under the same name

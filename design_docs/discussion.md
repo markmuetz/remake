@@ -321,6 +321,40 @@ design discussion before any work starts.
   scalars) that could be documented alongside the callable-matrix
   examples.
 
+- **Rule+`Defer` as a cross-invocation filesystem cache — plausible pattern,
+  one real gotcha.** Raised against wescon_radar_dev.py's `CasePathsMap`: a
+  hand-rolled class that globs raw CAMRa/Kepler directories and memoizes
+  the (batched) path list per `(case, radar)` key. The memoization only
+  lives for one Python process, so the glob reruns on *every* `remake`
+  invocation — `info`, `lint`, `why`, `run -n`, not just `run` — because
+  matrix callables are plain Python, unmanaged by remake's own caching.
+  The proposed fix: a rule that globs once and writes the path list to
+  disk, with downstream matrices `@deferrable`/`Defer`-gated on that
+  output — same idiom `gather_delta_z_stats_matrix`/`compare_delta_z_matrix`
+  already use in that file. Decouple further by storing only the raw
+  sorted paths (not the batches), so a batch-size constant can change
+  without rerunning the glob rule at all.
+  - *The asymmetry that makes this different from existing `Defer` uses.*
+    Every current `Defer` use gates on output from an upstream *remake*
+    rule — the planner genuinely waits for data that doesn't exist yet.
+    Here there's no upstream rule; the raw files exist on disk from day
+    one. Using a rule purely as a persistent filesystem-glob cache is a
+    legitimate but inverted use of the mechanism, and it trades away a
+    property the current unmanaged glob has for free: because the glob is
+    unconditional every invocation, newly-arrived raw files (backfill,
+    late data) are picked up on the very next `remake` run with zero
+    action. Once it's a rule, success is sticky — remake doesn't watch
+    arbitrary directories for content changes, so new files sit unnoticed
+    until someone explicitly `--force`s the glob rule. For a pipeline
+    where raw IOP data was still arriving/being backfilled, that's a real
+    silent-staleness risk, not just a style question.
+  - *Where this might point for remake itself.* If this pattern shows up
+    again, it suggests matrix callables might benefit from an opt-in,
+    remake-managed cache (invalidated by an explicit TTL/`--force`, not by
+    rule-success semantics) rather than users reaching for the rule+`Defer`
+    machinery to fake one. No action taken yet — parked pending a second
+    real-world case.
+
 - **Fragile `remake` on PATH in SLURM jobs.** The generated sbatch payload
   invokes a bare `remake run-array-task ...`. The jobs only find it because
   `submit.sh` runs inside the `uv` venv and sbatch inherits that PATH via
@@ -752,6 +786,78 @@ design discussion before any work starts.
   Moved to a tracked bug doc: see
   [design_docs/bugs/01_durable_rerun_propagation.md](bugs/01_durable_rerun_propagation.md)
   (crash + partial-target scenarios, fix = run-sequence id).
+
+- **Display code changes in `uses` functions (via a storage rework).**
+  Just as code changes can be displayed for rules, we want to display them for
+  `uses` functions. The naive framing ("save the code for each `uses` function
+  and diff current vs stored") turns out to be entangled with a storage-shape
+  problem worth fixing at the same time.
+
+  *What exists today.* `uses` **is** already tracked for change detection, but
+  awkwardly. `scope.uses_hash` renders each `uses` entry as its AST-normalised
+  source (`ast.dump(ast.parse(...))`; plain values by `repr`; sourceless
+  callables fall back to a bytecode `sha1`) and joins it into one string, which
+  is stored **inline as TEXT on every `task` row** (`task.uses_hash`, alongside
+  the equivalent `task.io_hash`). So the name is a misnomer — it's not a digest,
+  it's a serialised AST — and the value is duplicated across every task of a
+  rule. At 1e6 tasks that verbose blob is stored a million times, feeding
+  straight into the per-task write-cost problem the perf section already flags.
+  The stored form is also *normalised AST*, not raw source, so it diffs for
+  equality but not into anything human-readable without `ast.unparse`.
+
+  Meanwhile `run`/`inputs`/`outputs` code is stored the right way already: a
+  content-addressed `code` table (`code(id, code TEXT)`) holding **raw source**
+  (`inspect.getsource` via `Rule.source`), referenced once per rule by FK
+  (`rule.inputs_code_id`/`outputs_code_id`/`run_code_id`). That is exactly the
+  shape `uses`/`io` should adopt.
+
+  *Chosen design.* Route `uses` (and `io`) source through the existing `code`
+  table at **rule granularity**, and demote the per-task column to a genuine
+  hash:
+    - `uses` is a *dict* of N helpers, so it cannot be a single FK column on
+      `rule` the way `run`/`inputs`/`outputs` are (one blob each). It needs a
+      join table with **one row per helper**:
+      `rule_uses(rule_id, name, code_id, kind)`, name-sorted. Ten `uses`
+      entries → ten rows, each with its own `code_id`. `io` stays a single blob
+      and can reuse the existing single-FK pattern.
+    - **Heterogeneity is the crux.** `uses` entries are not all sourceable, but
+      `code.code` is just `TEXT`, so all three cases store uniformly and only
+      the *display* layer distinguishes them (via `kind`):
+        - normal function (`inspect.getsource` works) → raw source, `kind =
+          'source'`, real per-helper diff;
+        - plain value (int/path/config) → `repr(value)`, `kind = 'value'`,
+          trivial diff;
+        - sourceless callable (REPL/`exec`, C func) → `<bytecode:sha1…>` label,
+          `kind = 'bytecode'`, **not** diffable — display shows "source
+          unavailable".
+      Dedup still holds (content-addressed `code`, shared across rules); the
+      `kind` marker lets the diff view decide what to render without
+      re-inspecting the live object.
+    - **Raw vs normalised split.** `code` stores *raw* source (for readable
+      diffs), but change detection compares *normalised* AST. These are
+      different strings — the same split `run` code already lives with. So the
+      per-task `uses_hash`/`io_hash` columns become an **actual short digest**:
+      `sha1` of the name-sorted *normalised*-AST string. Change detection stays
+      exact, per-task rows shrink from a verbose AST dump to a fixed-length
+      hash (a direct 1e6-task write/size win), and `code` independently holds
+      the raw source for display.
+    - Note the naming resolution: in this design the per-task column really is a
+      hash, so `uses_hash` becomes the *correct* name and stays; the raw source
+      lives in `code`. (If we ever ship the inline-storage form instead, the
+      honest rename would be `uses_ast`/`io_ast` — but this design avoids that.)
+
+  *What this unlocks.* Three things fall out of the same change: (1) the
+  human-readable `uses` diff this item asked for — diff raw source in `code`,
+  current vs stored, per helper name; (2) source available for `remake
+  rule-info` (see todos) for free; (3) smaller/faster per-task records. Reuses
+  `code` interning, `_ensure_rule` provenance, and `parse_uses_hash`'s per-name
+  split.
+
+  *Cost / sharp edges.* Schema migration on existing `.remake/` DBs (there's an
+  established `ALTER TABLE ADD COLUMN` migration hook to follow, plus a new
+  `rule_uses` table; alpha 0.8.0a0 so acceptable). Sourceless-callable fallback
+  (REPL/`exec`) still can't show a source diff — store the bytecode-digest label
+  as today and display "source unavailable".
 
 ## Graduated (designed and implemented; kept for the record)
 
