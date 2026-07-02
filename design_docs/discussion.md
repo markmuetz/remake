@@ -348,12 +348,37 @@ design discussion before any work starts.
     until someone explicitly `--force`s the glob rule. For a pipeline
     where raw IOP data was still arriving/being backfilled, that's a real
     silent-staleness risk, not just a style question.
-  - *Where this might point for remake itself.* If this pattern shows up
-    again, it suggests matrix callables might benefit from an opt-in,
-    remake-managed cache (invalidated by an explicit TTL/`--force`, not by
-    rule-success semantics) rather than users reaching for the rule+`Defer`
-    machinery to fake one. No action taken yet — parked pending a second
-    real-world case.
+  - *Where this might point for remake itself — a generic disk-cache
+    decorator, not a matrix-specific one.* `CasePathsMap.__call__(case,
+    radar)` is actually called from three separate callables (`matrix`,
+    `inputs`, `outputs`), each invoked per-task during expansion — so
+    caching just the `matrix=` callable's return value wouldn't cover
+    `inputs`/`outputs` re-globbing. The right shape targets the expensive
+    *helper* directly, usable from all three:
+    `@disk_cache` wrapping e.g. `find_case_paths(case, radar)`. Storage
+    would follow the existing `.remake/jobs/<rule>.jobids.json` sidecar
+    convention — `.remake/cache/<qualname>/<hash-of-args>.json`, one small
+    inspectable/`rm`-able file per call — with args restricted to the same
+    JSON-round-trip-stable scalars already enforced on matrix kwargs
+    (`_check_scalar_kwargs`, dag.py), for the same reason (a tuple
+    silently becoming a list would corrupt the cache key).
+    Invalidation is the hard part and is exactly the risk above:
+    never-expiring needs a manual bust (`rm -rf .remake/cache` or a
+    `remake cache clear` verb) and reintroduces silent staleness; a TTL
+    bounds the staleness window but the number is arbitrary; a cheap
+    re-validation (dir mtime/file count) before paying for the full glob
+    is best-of-both but NFS mtime semantics on JASMIN's GWS are already
+    flagged elsewhere in this doc as unreliable, so it's not a safe sole
+    signal there. Also worth asking whether this needs to be a remake
+    feature at all — hash-keyed disk caching is a solved problem
+    (`joblib.Memory`, `diskcache`); remake's only distinctive value-add
+    would be living under `.remake/` by convention and CLI visibility
+    (`remake info` showing cache age/staleness), which may not earn its
+    keep as core plumbing.
+  - **Decision (2026-07-02): not doing this unless a pressing need shows
+    up.** Parked, not scheduled — wescon_radar_dev.py keeps `CasePathsMap`
+    as-is. Revisit only if the per-invocation glob cost (or a second,
+    independent case of the same shape) actually starts to hurt.
 
 - **Fragile `remake` on PATH in SLURM jobs.** The generated sbatch payload
   invokes a bare `remake run-array-task ...`. The jobs only find it because
