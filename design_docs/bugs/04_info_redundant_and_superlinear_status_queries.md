@@ -83,6 +83,22 @@ per-rule status fetch that is ~0.5 s at 774 tasks should not be ~2.2 s at
 coverage on the task-key lookup, chunk size vs SQLite's variable limit,
 and any per-row object construction).
 
+**Likely root cause — the `uses_hash` storage shape.** The slowest rule
+here (`compare_delta_z_candidates`, 1465 tasks) is also the one whose
+`task.uses_hash` column is largest: ~145 KB/row, ~213 MB for that rule
+alone (measured; see the *Measured in the wild* note under "Display code
+changes in `uses` functions" in
+[discussion.md](../discussion.md)). `uses_hash` is not a digest — it
+stores the full serialised-AST of the rule's `uses=` members inline on
+every task row, byte-identical across the rule's tasks. If
+`get_tasks_status` selects that column, the 1465-task query is scanning
+~213 MB of TEXT, which would explain the superlinear jump directly. That
+item's chosen fix (demote `uses_hash` to a real fixed-length hash, move
+raw source to the `code` table at rule granularity) shrinks the DB ~50×
+and removes this read cost — so Issue 2 is likely resolved by that
+storage rework rather than by query-side tuning alone. Worth confirming
+whether the status query pulls `uses_hash` before profiling further.
+
 ## Why file this
 
 Neither is a logic bug — `info` prints the right numbers. But a

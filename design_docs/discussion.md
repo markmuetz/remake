@@ -859,6 +859,38 @@ design discussion before any work starts.
   (REPL/`exec`) still can't show a source diff — store the bytecode-digest label
   as today and display "source unavailable".
 
+  *Measured in the wild (2026-07-02, Mark Muetzelfeldt).* Reached from the
+  opposite direction — a `remake info` that felt slow (see
+  [bugs/04](bugs/04_info_redundant_and_superlinear_status_queries.md)) — and the
+  numbers make the "worth fixing now" case concrete. On the
+  `wescon_radar_dev.py` pipeline's `.remake/remake.db`: **272 MB total for just
+  3341 task + 74 code + 12 rule rows**, and it is *not* free-page bloat
+  (freelist ~0%; `VACUUM` reclaims nothing). Per-table (`dbstat`): the `task`
+  table is **271.75 MB (99.8%)**, and within it the `uses_hash` column alone
+  averages **~79 KB/row (max 142 KB)** — i.e. the entire database is the
+  serialised-AST `uses` blob. Per-rule `COUNT(DISTINCT uses_hash)` is **1** for
+  every rule (2 for one mid-refactor rule), confirming the value is byte-identical
+  across a rule's tasks — pure duplication:
+
+  | rule | tasks | distinct | avg len | total |
+  |---|---|---|---|---|
+  | compare_delta_z_candidates | 1465 | 1 | 145,668 | 213.4 MB |
+  | regrid_camra_kepler_l1 | 774 | 1 | 47,354 | 36.7 MB |
+  | plot_regridded_camra_kepler_l1 | 774 | 1 | 8,948 | 6.9 MB |
+  | match_rhis_to_storms | 216 | 1 | 19,997 | 4.3 MB |
+  | *(all rules)* | 3341 | — | — | **262.9 MB** |
+
+  So the "1e6 tasks" hypothetical is not needed to feel this — a rule with a
+  large `uses=` (here `compare_delta_z_candidates`, ~14 helpers) stores a 145 KB
+  AST dump 1465 times = 213 MB from **one rule at ~1.5k tasks**; at 1e6 tasks the
+  same rule would be ~140 GB. (`io_hash` is the same inline-TEXT shape but small
+  here: avg ~2.4 KB, max ~4 KB.) This also plausibly *is* the mechanism behind
+  bug 04's superlinear `get_tasks_status`: the slowest query was exactly this
+  rule (1465 tasks, ~2.2 s), and if status selection pulls `uses_hash` it is
+  scanning ~213 MB of TEXT for that one rule. Demoting the column to a real
+  fixed-length digest (this item's design) should shrink the DB by ~50× *and*
+  remove that read cost — the two items are one fix.
+
 ## Graduated (designed and implemented; kept for the record)
 
 - **Single `.remake/` per directory: rule provenance + duplicate-rule-name
