@@ -17,6 +17,7 @@ from time import perf_counter, sleep
 from loguru import logger
 
 from ..core.scope import io_hash as compute_io_hash
+from ..core.scope import raw_uses_parts
 from ..core.scope import uses_hash as compute_uses_hash
 from ..util.code_compare import CodeComparer
 from .metadata_manager import MetadataManager, TaskRecord
@@ -70,6 +71,23 @@ CREATE TABLE task (
 );
 
 CREATE UNIQUE INDEX task_key_index ON task(key);
+
+-- Per-helper raw source for a `uses` version, for display (readable diffs in
+-- `why`; change detection never reads this — it compares task.uses_code_id).
+-- Keyed by the *joined-normalised-string* id rather than the rule: manifests
+-- are then immutable per version, so a task's stored uses_code_id always
+-- resolves to the helpers it actually ran with, however many edits later.
+-- kind: 'source' (raw source, diffable) / 'value' (repr) / 'bytecode'
+-- (sourceless callable — label only, display "source unavailable").
+CREATE TABLE uses_manifest (
+    uses_code_id INTEGER NOT NULL,
+    name VARCHAR(200) NOT NULL,
+    code_id INTEGER NOT NULL,
+    kind VARCHAR(10) NOT NULL,
+    PRIMARY KEY (uses_code_id, name),
+    FOREIGN KEY(uses_code_id) REFERENCES code (id),
+    FOREIGN KEY(code_id) REFERENCES code (id)
+);
 
 -- Key/value store. run_seq: a monotonic counter, one value allocated per
 -- `remake run`/`set-state` invocation, stamped onto every task that
@@ -147,6 +165,15 @@ class Sqlite3Backend(MetadataManager):
             self.conn.execute('ALTER TABLE rule ADD COLUMN remakefile TEXT')
         tables = {row[0] for row in self.conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
+        if 'uses_manifest' not in tables:
+            # No backfill possible (historical raw sources are gone); records
+            # predating the table degrade to the manifest-less `why` message.
+            logger.info('Adding uses_manifest table to existing DB')
+            self.conn.execute(
+                'CREATE TABLE uses_manifest ('
+                '    uses_code_id INTEGER NOT NULL, name VARCHAR(200) NOT NULL, '
+                '    code_id INTEGER NOT NULL, kind VARCHAR(10) NOT NULL, '
+                '    PRIMARY KEY (uses_code_id, name))')
         if 'meta' not in tables:
             logger.info('Adding meta table to existing DB')
             self.conn.execute(
@@ -235,6 +262,30 @@ class Sqlite3Backend(MetadataManager):
             return existing
         return self._insert_code(code)
 
+    def _ensure_uses_manifest(self, uses_code_id, uses):
+        """Record the per-helper raw sources behind a uses version, once.
+        Write-once per uses_code_id: the id is derived from the normalised
+        content, so an existing manifest for it is already correct (at worst
+        it holds a cosmetic raw variant with the same structure). Helpers are
+        interned individually, so editing one of N shares the other N-1."""
+        (n,) = self.conn.execute(
+            'SELECT count(*) FROM uses_manifest WHERE uses_code_id = ?',
+            (uses_code_id,)).fetchone()
+        if n or not uses:
+            return
+        for name, (raw, kind) in raw_uses_parts(uses).items():
+            self.conn.execute(
+                'INSERT OR IGNORE INTO uses_manifest(uses_code_id, name, code_id, kind) '
+                'VALUES (?, ?, ?, ?)',
+                (uses_code_id, name, self._intern_code(raw), kind))
+
+    def get_uses_manifest(self, uses_code_id):
+        rows = self.conn.execute(
+            'SELECT m.name, c.code, m.kind '
+            'FROM uses_manifest m JOIN code c ON m.code_id = c.id '
+            'WHERE m.uses_code_id = ?', (uses_code_id,))
+        return {name: (raw, kind) for name, raw, kind in rows}
+
     @retry_lock_commit
     def _ensure_rule(self, rule, remakefile=None):
         row = self.conn.execute(
@@ -248,6 +299,7 @@ class Sqlite3Backend(MetadataManager):
         # detects change by comparing a record's stored ids against them.
         uses_code_id = self._intern_code(compute_uses_hash(rule.uses))
         io_code_id = self._intern_code(compute_io_hash(rule))
+        self._ensure_uses_manifest(uses_code_id, rule.uses)
         if row is None:
             code_ids = {part: self._intern_code(source[part]) for part in source}
             cur = self.conn.execute(

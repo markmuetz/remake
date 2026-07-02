@@ -202,6 +202,31 @@ def uses_parts(uses):
     return parts
 
 
+def raw_uses_parts(uses):
+    """{name: (raw-rendering, kind)} for a `uses` dict, name-sorted — the
+    display-side counterpart of `uses_parts` (which renders normalised AST
+    for change detection). Raw source diffs readably; the `kind` marker
+    tells the display layer what it is looking at:
+
+    - 'source': a callable whose raw source is available — diffable.
+    - 'value': a plain value, rendered by repr — trivially diffable.
+    - 'bytecode': a callable with no retrievable source (REPL/exec, C
+      function) — the digest/type label from `function_source`; not
+      diffable, display as "source unavailable".
+    """
+    parts = {}
+    for name in sorted(uses):
+        value = uses[name]
+        if callable(value):
+            try:
+                parts[name] = (inspect.getsource(value), 'source')
+            except (OSError, TypeError):
+                parts[name] = (function_source(value), 'bytecode')
+        else:
+            parts[name] = (repr(value), 'value')
+    return parts
+
+
 def uses_hash(uses):
     """Stable string representing the current state of a `uses` dict: one
     `name=<rendered>` line per key (see `uses_parts`)."""

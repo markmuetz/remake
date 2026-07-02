@@ -947,6 +947,25 @@ design discussion before any work starts.
   interns a full new joined string rather than sharing the unchanged
   helpers, and diffs remain normalised-AST-derived.
 
+  *Stage B implemented 2026-07-02, with a second key revision.* The
+  per-helper table is `uses_manifest(uses_code_id, name, code_id, kind)` —
+  keyed by the **uses version** (the joined-string id tasks store), not by
+  `rule_id` as sketched above. Rule-keyed rows would be overwritten to the
+  current version at ensure time, destroying the old side of the diff before
+  the planner ever compares; version-keyed manifests are write-once and
+  immutable, so any task's stored `uses_code_id` resolves to the raw helper
+  sources it actually ran with, however many edits later. One row per
+  helper, raw rendering interned individually in `code`
+  (`scope.raw_uses_parts`; kind = source/value/bytecode), giving the
+  per-helper sharing this section wanted: editing one of N helpers stores
+  one new code row, the other N-1 are shared by FK. `why` now renders a
+  real unified diff of helper source, before→after for values, "source
+  unavailable" for bytecode-tracked callables, and degrades gracefully
+  (bare "(body)") for records predating the table — no backfill is
+  possible, the old raw sources were never stored. The joined normalised
+  string still exists per version (it *is* change detection: one int per
+  task); the manifest is display-only and change detection never reads it.
+
 ## Graduated (designed and implemented; kept for the record)
 
 - **Single `.remake/` per directory: rule provenance + duplicate-rule-name

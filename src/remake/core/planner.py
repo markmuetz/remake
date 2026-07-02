@@ -17,7 +17,7 @@ from ..util.code_compare import CodeComparer
 from .dag import expand_rule
 from .exceptions import Defer
 from .rule import is_deferrable
-from .scope import io_hash, parse_uses_hash, uses_hash, uses_parts
+from .scope import io_hash, parse_uses_hash, raw_uses_parts, uses_hash, uses_parts
 
 
 def make_predicate(query):
@@ -152,12 +152,18 @@ def _plain_rendering(rendered):
     return '\n' not in rendered and not rendered.startswith('Module(')
 
 
-def _uses_change_message(stored_hash, uses):
+def _uses_change_message(stored_hash, uses, old_manifest=None):
     """Human description of which `uses` keys changed between the stored hash
     and the current `uses` dict. Names the keys; for plain (repr) values it
-    shows before → after, for callables it says (body)."""
+    shows before → after. For callables: a raw-source unified diff when the
+    old version's source is on record (`old_manifest`, from
+    `metadata.get_uses_manifest` — {name: (raw, kind)}); "source unavailable"
+    for sourceless (bytecode-tracked) callables; bare "(body)" when the old
+    raw source is unknown (records predating the manifest table)."""
     old = parse_uses_hash(stored_hash)
     new = uses_parts(uses)
+    old_manifest = old_manifest or {}
+    new_raw = raw_uses_parts(uses) if old_manifest else {}
     bits = []
     for name in sorted(set(old) | set(new)):
         if name not in new:
@@ -167,8 +173,23 @@ def _uses_change_message(stored_hash, uses):
         elif old[name] != new[name]:
             if _plain_rendering(old[name]) and _plain_rendering(new[name]):
                 bits.append(f'{name}: {old[name]} → {new[name]}')
+                continue
+            old_raw, old_kind = old_manifest.get(name, (None, None))
+            cur_raw, cur_kind = new_raw.get(name, (None, None))
+            if old_kind == 'source' and cur_kind == 'source':
+                diff = '\n'.join(difflib.unified_diff(
+                    old_raw.splitlines(), cur_raw.splitlines(),
+                    'last run', 'current', lineterm=''))
+                bits.append(f'{name} (body):\n{diff}')
+            elif old_kind == 'value' and cur_kind == 'value':
+                # A multi-line repr (single-line ones took the branch above).
+                bits.append(f'{name}: {old_raw} → {cur_raw}')
+            elif 'bytecode' in (old_kind, cur_kind):
+                bits.append(f'{name} (body; source unavailable)')
             else:
                 bits.append(f'{name} (body)')
+    if any('\n' in bit for bit in bits):
+        return 'uses= changed since last run:\n' + '\n'.join(bits)
     return 'uses= changed since last run: ' + ', '.join(bits)
 
 
@@ -213,8 +234,10 @@ def explain_task(rules, dag, metadata, task, *, check_outputs='never', runnable=
             reasons.append(Reason('code-changed', f'run code changed since last run:\n{diff}'))
         stored_uses = codes.get(rec.uses_code_id) or ''
         if stored_uses != uses_hash(task.rule.uses):
+            old_manifest = (metadata.get_uses_manifest(rec.uses_code_id)
+                            if rec.uses_code_id is not None else {})
             reasons.append(Reason('uses-changed',
-                _uses_change_message(stored_uses, task.rule.uses)))
+                _uses_change_message(stored_uses, task.rule.uses, old_manifest)))
         if rec.io_code_id is not None and codes.get(rec.io_code_id) != io_hash(task.rule):
             reasons.append(Reason('io-changed',
                 'inputs/outputs spec changed since last run'))

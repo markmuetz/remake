@@ -53,6 +53,13 @@ class MetadataManager(abc.ABC):
         have nothing to resolve; None ids are ignored."""
         return {}
 
+    def get_uses_manifest(self, uses_code_id) -> dict:
+        """{name: (raw-rendering, kind)} for the helpers behind a stored uses
+        version (a TaskRecord's uses_code_id) — see scope.raw_uses_parts for
+        the kinds. Display only; empty when unknown (backends without a store,
+        or records predating the manifest table)."""
+        return {}
+
     def begin_invocation(self):
         """Start a new logical invocation: allocate a fresh run_seq so tasks
         committed from here share one stamp, distinct from earlier invocations.

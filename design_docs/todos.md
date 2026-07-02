@@ -76,15 +76,24 @@ assessment (2026-06-11). Ordered roughly by severity.
   (superlinear `get_tasks_status`: the slowest rule's `uses_hash` is
   ~145 KB/row × 1465 tasks ≈ 213 MB scanned per status query) — confirm
   whether the status SELECT pulls `uses_hash` before profiling further.
-- [ ] **Stage B of the storage rework: `rule_uses(rule_id, name, code_id,
-  kind)` raw-source table.** The per-task FK above points at the *joined*
-  normalised uses string (one row per version, all helpers concatenated);
-  this adds one row per helper holding **raw** source with a `kind` marker
-  (source/value/bytecode), enabling readable per-helper source diffs in
-  `why` (today: normalised-AST-derived messages, `(body)` for callables),
-  per-helper storage sharing when one of N helpers changes, and the
-  `rule-info` source display. Design: [discussion.md](discussion.md)
-  ("Display code changes in `uses` functions").
+- [x] **Stage B of the storage rework: per-helper raw-source table.** Done
+  2026-07-02, keyed differently from the sketched design: `uses_manifest(
+  uses_code_id, name, code_id, kind)` hangs off the *uses version* (the
+  joined-string code id tasks point at), not `rule_id` — rule-keyed rows
+  would be overwritten to current at ensure time, so `why` could never
+  diff against what a task actually ran with; version-keyed manifests are
+  write-once/immutable and any stored `uses_code_id` resolves to its
+  helpers forever. One row per helper, raw rendering interned in `code`
+  (kind: source/value/bytecode via `scope.raw_uses_parts`), so editing one
+  of N helpers shares the other N-1's rows. `why`'s uses-changed message
+  now shows a real unified diff of helper source (`(body):` + diff),
+  before→after for values (incl. multi-line reprs), "(body; source
+  unavailable)" for sourceless callables, and degrades to bare "(body)"
+  for records predating the table (no backfill possible — old raw sources
+  are gone). Migration: CREATE TABLE on existing DBs. `rule-info` source
+  display (the remaining consumer) can read the manifest or live objects
+  when that command lands. Verified via CLI: body edit → diff, combined
+  body+value change, manifest sharing across versions.
 - [x] **`VACUUM` the field DBs** (logs_analysis §1.5) — folded into the
   migration above: `_migrate_inline_hashes_to_code_ids` VACUUMs after
   dropping the inline columns, so existing bloated DBs (272 MB wescon-tools)

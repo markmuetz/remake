@@ -164,6 +164,36 @@ def test_uses_change_after_migration_reruns(tmp_path):
     assert len(runnable) == 2  # both tasks: uses= changed
 
 
+def test_uses_manifest_records_raw_source_per_version(tmp_path):
+    # ensure_rules writes one uses_manifest row per helper, keyed by the uses
+    # version (uses_code_id) — so old versions' raw sources stay resolvable
+    # after the rule moves on, and shared helpers intern to one code row.
+    def helper(x):
+        return x + 1
+
+    @rule(outputs={'o': str(tmp_path / 'o.txt')},
+          uses={'helper': helper, 'K': 3})
+    def process(outputs):
+        Path(outputs['o']).write_text(str(helper(K)))  # noqa: F821 — injected
+
+    meta = Sqlite3Backend(':memory:')
+    meta.ensure_rules([process], remakefile='rf.py')
+    _, _, uses_code_id, _ = meta.rule_ids['process']
+
+    manifest = meta.get_uses_manifest(uses_code_id)
+    assert set(manifest) == {'helper', 'K'}
+    raw, kind = manifest['helper']
+    assert kind == 'source' and 'return x + 1' in raw
+    assert manifest['K'] == ('3', 'value')
+
+    # Write-once: re-ensuring doesn't duplicate rows.
+    meta.ensure_rules([process], remakefile='rf.py')
+    (n,) = meta.conn.execute(
+        'SELECT count(*) FROM uses_manifest WHERE uses_code_id = ?',
+        (uses_code_id,)).fetchone()
+    assert n == 2
+
+
 def test_identical_shared_rule_does_not_warn(tmp_path):
     # The same rule object registered from two remakefiles (identical source) is
     # legitimate sharing — provenance moves, but no collision warning.

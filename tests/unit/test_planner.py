@@ -120,6 +120,71 @@ def test_uses_change_explain_reason(tmp_path):
     assert uses_reasons and 'THRESHOLD (added)' in uses_reasons[0].message
 
 
+def _scale_v1(x):
+    return x * 1
+
+
+def _scale_v2(x):
+    return x * 2
+
+
+def _uses_pipeline(tmp_path, helper):
+    @rule(outputs={'o': str(tmp_path / '{n}.txt')}, matrix={'n': [1]},
+          uses={'scale': helper})
+    def proc(outputs, n):
+        Path(outputs['o']).write_text(str(scale(n)))  # noqa: F821 — injected
+
+    return proc
+
+
+def test_uses_helper_edit_shows_raw_source_diff(tmp_path):
+    # The uses_manifest records each helper's *raw* source per uses version,
+    # so `why` can show a real unified diff of the helper body — not just
+    # "(body)".
+    from remake import Remake, Sqlite3Backend
+    from remake.core.planner import explain_task
+
+    proc = _uses_pipeline(tmp_path, _scale_v1)
+    rmk = Remake(rules=[proc], metadata=Sqlite3Backend(':memory:'))
+    rmk.run()
+    proc.uses = {'scale': _scale_v2}
+    task = next(iter(rmk.tasks()))
+    _, reasons = explain_task([proc], rmk.dag, rmk.metadata, task)
+    (msg,) = [r.message for r in reasons if r.category == 'uses-changed']
+    assert 'scale (body):' in msg
+    assert '-    return x * 1' in msg and '+    return x * 2' in msg
+
+
+def test_uses_sourceless_helper_says_source_unavailable(tmp_path):
+    from remake import Remake, Sqlite3Backend
+    from remake.core.planner import explain_task
+
+    # exec/REPL-style: no retrievable source. NB the bodies must differ in
+    # *opcodes*, not just constants — sourceless tracking hashes co_code,
+    # which doesn't cover co_consts (so `x * 1` vs `x * 2` reads unchanged).
+    v1 = eval('lambda x: x + x')
+    v2 = eval('lambda x: x * 2')
+    proc = _uses_pipeline(tmp_path, v1)
+    rmk = Remake(rules=[proc], metadata=Sqlite3Backend(':memory:'))
+    rmk.run()
+    proc.uses = {'scale': v2}
+    task = next(iter(rmk.tasks()))
+    _, reasons = explain_task([proc], rmk.dag, rmk.metadata, task)
+    (msg,) = [r.message for r in reasons if r.category == 'uses-changed']
+    assert 'scale (body; source unavailable)' in msg
+
+
+def test_uses_change_message_without_manifest_falls_back(tmp_path):
+    # Records written before the uses_manifest table existed have no raw
+    # sources on record: the message degrades to the bare "(body)" form.
+    from remake.core.planner import _uses_change_message
+    from remake.core.scope import uses_hash
+
+    old_hash = uses_hash({'scale': _scale_v1})
+    msg = _uses_change_message(old_hash, {'scale': _scale_v2}, old_manifest={})
+    assert 'scale (body)' in msg and 'return x * 2' not in msg
+
+
 def test_io_change_triggers_rerun(tmp_path):
     # Editing the outputs spec (here via the attribute, so the run function
     # source is untouched) must rerun the task and its downstream — the gap
