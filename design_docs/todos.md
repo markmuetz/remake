@@ -463,4 +463,18 @@ assessment (2026-06-11). Ordered roughly by severity.
   call) — mining is `jq` on `.record.extra`, not regex. Example in
   docs/guide/debugging.md. Not done from §4: the in-tree timings CSV
   (superseded by the scaling regression test above).
-- [ ] Can we make uses accept a list instead of a dict?
+- [x] Can we make uses accept a list instead of a dict? **Decided against,
+  2026-07-02 (parked, revisit on field feedback).** Technically easy — a
+  decoration-time shim normalising `['THRESHOLD', normalise]` (strings name
+  module globals; functions/classes key on `__name__`) to the dict. A list
+  of *actual variables* (`uses=[THRESHOLD]`) is not possible: the name is
+  gone by call time, equality reverse-lookup is ambiguous and identity
+  fails on interned small ints; the AST-of-the-decorator-call trick works
+  but only for literal names and was rejected as spelling-dependent magic.
+  Decision: the saving is one repetition per entry, while the cost is a
+  second spelling of a core concept in every doc/example plus new failure
+  modes (typo'd strings, `__name__` keying) — and the dict is needed anyway
+  for renaming/pinning and closures, so the list can never replace it. The
+  duplication's real hazard (silent shadowing) is now caught by
+  `check_shadowing`. Add later if migration feedback shows real errors,
+  not just aesthetics — adding is cheap, removing needs a deprecation.
