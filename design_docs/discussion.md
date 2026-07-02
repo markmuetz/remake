@@ -909,12 +909,18 @@ design discussion before any work starts.
   large `uses=` (here `compare_delta_z_candidates`, ~14 helpers) stores a 145 KB
   AST dump 1465 times = 213 MB from **one rule at ~1.5k tasks**; at 1e6 tasks the
   same rule would be ~140 GB. (`io_hash` is the same inline-TEXT shape but small
-  here: avg ~2.4 KB, max ~4 KB.) This also plausibly *is* the mechanism behind
-  bug 04's superlinear `get_tasks_status`: the slowest query was exactly this
-  rule (1465 tasks, ~2.2 s), and if status selection pulls `uses_hash` it is
-  scanning ~213 MB of TEXT for that one rule. Demoting the column to a real
-  fixed-length digest (this item's design) should shrink the DB by ~50× *and*
-  remove that read cost — the two items are one fix.
+  here: avg ~2.4 KB, max ~4 KB.) *Correction:* an earlier version of this note
+  guessed the `uses_hash` blob was also the mechanism behind bug 04's superlinear
+  `get_tasks_status`. It is **not** — the log analysis
+  ([logs_analysis/README.md](logs_analysis/README.md) §1.1–1.2, verified against
+  `sqlite3_backend.py:248`) shows the status query never selects `uses_hash`; it
+  `LEFT JOIN`s `code` and hauls back the full `code.code` run-source per task
+  (256× amplification) for the planner's `CodeComparer`. So `uses_hash` drives DB
+  *size* (this 272 MB), and the `code.code` JOIN drives query *time* — two
+  separate problems with the same *shape* of fix (store a digest, fetch source
+  lazily on a real diff). The DB bloat still matters: a smaller file warms in the
+  page cache faster, damping the >1000× run-to-run variance the log analysis
+  measured for the identical 1465-task query.
 
   *Implemented 2026-07-02 (stage A), with one revision to the chosen design.*
   The per-task column became an **integer FK** (`task.uses_code_id`/

@@ -83,30 +83,55 @@ per-rule status fetch that is ~0.5 s at 774 tasks should not be ~2.2 s at
 coverage on the task-key lookup, chunk size vs SQLite's variable limit,
 and any per-row object construction).
 
-**Likely root cause — the `uses_hash` storage shape.** The slowest rule
-here (`compare_delta_z_candidates`, 1465 tasks) is also the one whose
-`task.uses_hash` column is largest: ~145 KB/row, ~213 MB for that rule
-alone (measured; see the *Measured in the wild* note under "Display code
-changes in `uses` functions" in
-[discussion.md](../discussion.md)). `uses_hash` is not a digest — it
-stores the full serialised-AST of the rule's `uses=` members inline on
-every task row, byte-identical across the rule's tasks. If
-`get_tasks_status` selects that column, the 1465-task query is scanning
-~213 MB of TEXT, which would explain the superlinear jump directly. That
-item's chosen fix (demote `uses_hash` to a real fixed-length hash, move
-raw source to the `code` table at rule granularity) shrinks the DB ~50×
-and removes this read cost — so Issue 2 is likely resolved by that
-storage rework rather than by query-side tuning alone. Worth confirming
-whether the status query pulls `uses_hash` before profiling further.
+**Root cause — the `code.code` JOIN in `get_tasks_status`.** Confirmed
+against source by the field-log analysis in
+[logs_analysis/README.md](../logs_analysis/README.md) §1.1–1.2. The query
+is `SELECT ... FROM task LEFT JOIN code ON task.run_code_id = code.id`
+(`sqlite3_backend.py:248`), which pulls back the **full stored run source
+(`code.code`) for every task**, so the planner can feed it into
+`CodeComparer()(rec.run_code, run_src)` (`planner.py:201`/`:358`) to
+decide whether each task's code changed. The `code` table is
+content-addressed and tiny (wescon-tools: 74 distinct rows, 149 KB), but
+the JOIN re-materialises a full ~2 KB source copy per task — **38.4 MB
+fetched for 3341 tasks, a 256× amplification**. That is the mechanism
+behind the superlinear scaling: cost tracks the number of previously-run
+tasks (those with stored code to fetch and compare), and bigger DAGs
+touch bigger rules, so ms/task roughly doubles 774 → 1465. (My earlier
+draft of this paragraph guessed `uses_hash` was the culprit — wrong
+column: `get_tasks_status` does not select `uses_hash`. That column is a
+separate problem, driving DB *size* not query *time* — see Issue 3
+below.)
+
+**Fix:** stop selecting `code.code` in `get_tasks_status`; store and
+compare a `code_hash` (as `run`/`uses` do), and fetch the full source
+lazily by `run_code_id` only when the hash differs and a diff is actually
+rendered. That collapses the amplification and should flatten the
+scaling — query-side, independent of any `uses_hash` rework.
+
+## Issue 3 — `task.uses_hash` inflates the DB (size, not query time)
+
+A distinct problem surfaced from the same investigation: `task.uses_hash`
+stores the full serialised-AST of a rule's `uses=` members inline on
+every task row, byte-identical across the rule's tasks (~145 KB/row for
+`compare_delta_z_candidates`; the wescon-tools DB is **272 MB** for 3341
+tasks and 149 KB of distinct code). This bloats the DB and the page-cache
+footprint — which amplifies Issue 2's run-to-run *variance* (a bigger
+file is slower to warm) — but it is **not** what the status query reads.
+Tracked in full under "Display code changes in `uses` functions" in
+[discussion.md](../discussion.md) (*Measured in the wild*), whose chosen
+fix (demote `uses_hash` to a real digest, move raw source to `code` at
+rule granularity) is the `uses` counterpart of the Issue 2 fix above.
 
 ## Why file this
 
-Neither is a logic bug — `info` prints the right numbers. But a
+None is a logic bug — `info` prints the right numbers. But a
 read-only status command on a 3k-task pipeline spending ~6.7 s in the DB,
 half of it re-fetching data it just fetched, is a real UX cost on a
 command run constantly during development. Issue 1 is a straightforward
-plumbing fix (~2.7 s); Issue 2 is a backend scaling question that will
-bite harder as pipelines grow.
+plumbing fix (~2.7 s); Issue 2 is the `code.code` JOIN (256× byte
+amplification) and has a concrete fix; Issue 3 (`uses_hash` bloat) is a
+storage-shape fix tracked in `discussion.md` — all three worsen as
+pipelines grow.
 
 ## Suggested fix
 
@@ -114,11 +139,16 @@ bite harder as pipelines grow.
    the planning pass (or, if `info` intentionally skips planning, don't
    also run the planner) — one `get_tasks_status` per rule per
    invocation, not two.
-2. **Profile `get_tasks_status` at ~1.5k+ tasks.** Confirm the task-key
-   lookup is index-covered, check whether the "2 chunks" path adds
-   superlinear overhead (chunk size, re-merge, per-row `TaskRecord`
-   construction), and bring the 1465-task case back toward the
-   linear-from-774 expectation (~1 s, not ~2.2 s).
+2. **Stop selecting `code.code` in `get_tasks_status`.** Store and
+   compare a `code_hash` (as `run`/`uses` do), fetching the full source
+   lazily by `run_code_id` only when the hash differs and a diff is
+   actually rendered. Collapses the 256× amplification and should flatten
+   the 774 → 1465 scaling.
+3. **Demote `task.uses_hash` to a real digest** (and move raw `uses`
+   source to the `code` table at rule granularity) to shrink the DB and
+   its page-cache footprint — the storage rework tracked under "Display
+   code changes in `uses` functions" in
+   [discussion.md](../discussion.md).
 
 Reproducer: any large pipeline; this one is
 `wescon_tools/ctrl/remakefiles/wescon_radar_dev.py` with a populated
