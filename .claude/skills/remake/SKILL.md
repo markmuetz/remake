@@ -28,6 +28,7 @@ remake set-state <remakefile> -Q query (--success [--check-outputs] [--no-cascad
 remake info <remakefile> [-Q query] [-t|--tasks] [-F|--show-failures] [--json]
 remake ls-tasks <remakefile> [-Q query] [--json]   # enumerate tasks/keys (no DB reads)
 remake lint <remakefile> [--json]                  # check input/output wiring between rules
+remake rule-dag <remakefile> [-N] [-M] [--json]    # rule dependency DAG, topological (-N task counts, -M matrix keys)
 remake rule-info <remakefile> <rule> [--json]      # one rule: docstring, matrix, io templates, uses
 remake task-info <remakefile> <selector> [--json]  # one task: status, paths, log, SLURM job
 remake task-log <remakefile> <selector> [--path]   # print a task's log (or its path)
@@ -135,9 +136,12 @@ work anywhere a key is accepted (like git).
 ## Why did/didn't a task rerun?
 
 **`remake why <file> <selector>`** answers this directly: will-run
-yes/no plus the applicable reasons (never run / failed / code changed
-with diff / uses changed / outputs incomplete / upstream propagation,
-in-pass or durable `upstream-newer`).
+yes/no plus ALL applicable reasons (several can hold at once): never run /
+failed / run code changed (unified source diff) / uses= changed (per-helper:
+a real source diff for changed helper functions, before→after for values,
+"source unavailable" for REPL/exec callables) / inputs/outputs spec changed
+(names which segment differs) / outputs incomplete / upstream propagation,
+in-pass or durable `upstream-newer`.
 
 Background for interpreting its output — the planner's checks, in order:
 

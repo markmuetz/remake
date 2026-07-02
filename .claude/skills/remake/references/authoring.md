@@ -39,6 +39,11 @@ def fn([inputs,] [outputs,] <matrix keys...>):
   `*args`/`**kwargs`.
 - Violations raise `SignatureError` at import — by design (fail at
   import, not 3 hours into a SLURM job).
+- The same check covers **inputs/outputs plumbing**: a callable spec's
+  required parameters must all be matrix keys, and a dict spec's template
+  fields (`'{n}'`) must be matrix keys. A mismatch would fail every task
+  identically at run time, so it raises `SignatureError` once instead —
+  at import for static matrices, at first expansion for callable ones.
 
 ## inputs / outputs
 
@@ -146,6 +151,13 @@ one level deep: a `uses` function calling *another* module-level helper
 won't see changes to that helper — declare it too. Same for classes:
 inherited methods live in the base class, so declare the base in `uses`
 as well if its changes should trigger reruns.
+
+**A `uses` key that matches a module global bound to a *different* object
+warns at decoration** (`ScopeWarning`): injection makes the `uses` value
+win inside the rule, so the reader would see one definition while another
+runs (e.g. `uses={'normalise': normalise_v1}` in a module that also
+defines `normalise`). The standard idiom `uses={'helper': helper}` —
+declaring the same module global — is identity-equal and never warns.
 
 **Do not put stateful / IO objects in `uses` (loggers especially).**
 A non-callable `uses` value is hashed by `repr()`, so any object whose
