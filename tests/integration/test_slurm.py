@@ -191,6 +191,21 @@ def test_already_queued_rule_is_skipped(slurm_dir):
     assert not any('gen.sbatch' in call for call in calls[nsubmitted:])
 
 
+def test_dry_run_does_not_overwrite_queued_rule_specs(slurm_dir):
+    # todos.md filed --dry-run as bypassing the already-queued guard and
+    # overwriting .remake/jobs/<rule>.json while array elements still read
+    # it. The guard runs before spec-writing on both paths (dry_run only
+    # skips submit()), so a dry run must leave a queued rule's specs alone.
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    specs_before = Path('.remake/jobs/gen.json').read_text()
+    (slurm_dir / 'shim/squeue.out').write_text('1001_3 PD\n1001_4 R\n')
+
+    cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run', '--force')
+    assert Path('.remake/jobs/gen.json').read_text() == specs_before
+    # Non-queued downstream rules still get fresh specs written.
+    assert '--dependency=afterok:1001' in Path('.remake/submit.sh').read_text()
+
+
 def test_resubmit_reexecutes_submit_sh(slurm_dir):
     cli('run', 'pipeline.py', '-E', 'slurm')
     nsubmitted = len(sbatch_calls(slurm_dir))

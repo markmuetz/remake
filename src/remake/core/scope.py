@@ -125,6 +125,39 @@ def check_scope(fn, uses, strict):
     warnings.warn(msg, ScopeWarning, stacklevel=3)
 
 
+def check_shadowing(fn, uses):
+    """Warn when a `uses` key shadows a module global bound to a *different*
+    object. Injection (`exec_function`) makes the uses value win for that
+    name inside the rule, so the reader sees one definition while another
+    runs — e.g. `uses={'normalise': normalise_v1}` in a module that also
+    defines `normalise`, or a uses key that collides with an unrelated
+    global. The standard idiom `uses={'normalise': normalise}` (declaring
+    the same module global for tracking) binds the identical object and
+    stays silent; equal-but-distinct values (a re-typed literal) are also
+    tolerated — only a genuinely different value is worth a warning."""
+    shadowed = []
+    for name, value in uses.items():
+        if name not in fn.__globals__:
+            continue
+        current = fn.__globals__[name]
+        if current is value:
+            continue
+        try:
+            if bool(current == value):
+                continue
+        except Exception:
+            pass  # incomparable (e.g. array truthiness): treat as different
+        shadowed.append(name)
+    if shadowed:
+        warnings.warn(
+            f'{fn.__name__}: uses= name(s) shadow module globals bound to '
+            f'different values: {", ".join(shadowed)}. Inside the rule the '
+            f'uses= value wins — rename the uses key or update the module '
+            f'global if this is unintended.',
+            ScopeWarning, stacklevel=4,
+        )
+
+
 def function_source(fn):
     """Source of fn, for change detection. Callables defined where source is
     unavailable (REPL, exec) fall back to a bytecode digest — kept as a
@@ -182,6 +215,18 @@ def io_hash(rule):
         f"inputs={_normalised_src(src['inputs'])}\n"
         f"outputs={_normalised_src(src['outputs'])}"
     )
+
+
+def parse_io_hash(stored):
+    """Inverse of `io_hash`: recover the {'inputs': ..., 'outputs': ...}
+    normalised segments from a stored string. Split on the first
+    '\\noutputs=' — normalised segments are single-line (ast.dump), and even
+    the raw-source fallback cannot realistically contain that marker."""
+    inputs_part, _, outputs_part = stored.partition('\noutputs=')
+    return {
+        'inputs': inputs_part.removeprefix('inputs='),
+        'outputs': outputs_part,
+    }
 
 
 def uses_parts(uses):

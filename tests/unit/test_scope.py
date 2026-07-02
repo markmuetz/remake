@@ -68,6 +68,40 @@ def test_decoration_warns():
             return CONSTANT
 
 
+def _helper_v1(x):
+    return x + 1
+
+
+def test_uses_shadowing_different_object_warns():
+    # uses={'helper': <other fn>} in a module that defines `helper`: inside
+    # the rule the uses value wins, silently shadowing what the reader sees.
+    with pytest.warns(ScopeWarning, match='shadow.*helper'):
+
+        @rule(outputs={'o': 'o.txt'}, uses={'helper': _helper_v1})
+        def r(outputs):
+            return helper(1)
+
+
+def test_uses_shadowing_same_object_is_silent():
+    # The standard tracking idiom: declaring the module global itself.
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', ScopeWarning)
+
+        @rule(outputs={'o': 'o.txt'}, uses={'helper': helper, 'CONSTANT': CONSTANT})
+        def r(outputs):
+            return helper(CONSTANT)
+
+
+def test_uses_shadowing_equal_value_is_silent():
+    # A re-typed literal equal to the module global: harmless, no warning.
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', ScopeWarning)
+
+        @rule(outputs={'o': 'o.txt'}, uses={'CONSTANT': 42})
+        def r(outputs):
+            return CONSTANT
+
+
 def test_rule_level_strict_raises_at_decoration():
     with pytest.raises(ScopeError, match='CONSTANT'):
 

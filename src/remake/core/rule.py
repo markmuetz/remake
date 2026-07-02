@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional, Union
 
 from .exceptions import SignatureError
-from .scope import check_scope, function_source
+from .scope import check_scope, check_shadowing, function_source
 
 
 @dataclass(eq=False)
@@ -152,6 +152,7 @@ def rule(
         # Rule-level strict_scope=True errors now; None defers strictness to
         # registration (warnings are still emitted now).
         check_scope(fn, uses_, strict=bool(strict_scope))
+        check_shadowing(fn, uses_)
         rule_obj = Rule(
             fn=fn,
             inputs=inputs,

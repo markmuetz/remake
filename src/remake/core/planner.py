@@ -17,7 +17,14 @@ from ..util.code_compare import CodeComparer
 from .dag import expand_rule
 from .exceptions import Defer
 from .rule import is_deferrable
-from .scope import io_hash, parse_uses_hash, raw_uses_parts, uses_hash, uses_parts
+from .scope import (
+    io_hash,
+    parse_io_hash,
+    parse_uses_hash,
+    raw_uses_parts,
+    uses_hash,
+    uses_parts,
+)
 
 
 def make_predicate(query):
@@ -238,9 +245,18 @@ def explain_task(rules, dag, metadata, task, *, check_outputs='never', runnable=
                             if rec.uses_code_id is not None else {})
             reasons.append(Reason('uses-changed',
                 _uses_change_message(stored_uses, task.rule.uses, old_manifest)))
-        if rec.io_code_id is not None and codes.get(rec.io_code_id) != io_hash(task.rule):
+        stored_io = codes.get(rec.io_code_id)
+        current_io = io_hash(task.rule)
+        if rec.io_code_id is not None and stored_io != current_io:
+            # Name which segment differs — diagnosing an io-changed rerun
+            # previously meant pulling the stored string from the DB and
+            # diffing its segments by hand (todos.md, wescon 2026-06-17).
+            old_segs, new_segs = parse_io_hash(stored_io or ''), parse_io_hash(current_io)
+            changed = [part for part in ('inputs', 'outputs')
+                       if old_segs[part] != new_segs[part]] or ['inputs', 'outputs']
             reasons.append(Reason('io-changed',
-                'inputs/outputs spec changed since last run'))
+                f'inputs/outputs spec changed since last run: '
+                f'{" and ".join(changed)} segment(s) differ'))
         if check_outputs == 'always' and task.outputs and not _outputs_complete(task):
             reasons.append(Reason('outputs-missing',
                 'outputs missing/incomplete (check_outputs=always)'))
@@ -351,9 +367,6 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
             continue
 
         records = metadata.get_tasks_status(tasks)
-        run_src = rule.source['run']
-        current_uses_hash = uses_hash(rule.uses)
-        current_io_hash = io_hash(rule)
         rule_rerun = set()
 
         # Records carry code *ids*, not text; resolve the distinct few (per
@@ -361,18 +374,26 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
         # different code versions) and compare each against the current state
         # once. The per-task check below is then set membership on ints —
         # this is what keeps status+plan cost from scaling with task count
-        # (logs_analysis §1.1/1.2).
-        run_ids = {rec.run_code_id for rec in records.values()}
-        uses_ids = {rec.uses_code_id for rec in records.values()}
-        io_ids = {rec.io_code_id for rec in records.values()}
-        codes = metadata.get_codes(run_ids | uses_ids | io_ids)
-        run_unchanged = {cid for cid in run_ids
-                         if code_comparer(codes.get(cid) or '', run_src)}
-        uses_unchanged = {cid for cid in uses_ids
-                          if (codes.get(cid) or '') == current_uses_hash}
-        # io id None = pre-upgrade record, not tracked: never a rerun cause.
-        io_unchanged = {cid for cid in io_ids
-                        if cid is None or codes.get(cid) == current_io_hash}
+        # (logs_analysis §1.1/1.2). Skipped entirely when nothing will read
+        # the sets: force reruns unconditionally, ignore_code_changes skips
+        # the freshness checks — either way the source rendering and compares
+        # would be pure waste (uses_hash alone can render ~100 KB per rule).
+        run_unchanged = uses_unchanged = io_unchanged = frozenset()
+        if not force and not ignore_code_changes:
+            run_src = rule.source['run']
+            current_uses_hash = uses_hash(rule.uses)
+            current_io_hash = io_hash(rule)
+            run_ids = {rec.run_code_id for rec in records.values()}
+            uses_ids = {rec.uses_code_id for rec in records.values()}
+            io_ids = {rec.io_code_id for rec in records.values()}
+            codes = metadata.get_codes(run_ids | uses_ids | io_ids)
+            run_unchanged = {cid for cid in run_ids
+                             if code_comparer(codes.get(cid) or '', run_src)}
+            uses_unchanged = {cid for cid in uses_ids
+                              if (codes.get(cid) or '') == current_uses_hash}
+            # io id None = pre-upgrade record, not tracked: never a rerun cause.
+            io_unchanged = {cid for cid in io_ids
+                            if cid is None or codes.get(cid) == current_io_hash}
 
         # MM: what does this block do?
         upstream_all = any(rerun_kwargs.get(dep) == 'all' for dep in rule.depends_on)
@@ -392,7 +413,11 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
             task_kwargs = frozenset(task.kwargs.items())
             # `reason` is a short literal (cheap to assign every iteration);
             # only formatted into a log line when a TRACE sink is attached.
-            if rec is None:
+            if force:
+                # Unconditional: skip the freshness checks (and their stat
+                # calls under check_outputs) rather than compute-then-discard.
+                rerun, reason = True, 'forced'
+            elif rec is None:
                 if check_outputs in ('fallback', 'always') and _outputs_complete(task):
                     rerun, reason = False, 'outputs complete (no DB record)'
                 else:
@@ -411,9 +436,6 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
                 if not rerun and check_outputs == 'always' and task.outputs:
                     if not _outputs_complete(task):
                         rerun, reason = True, 'outputs missing (check_outputs=always)'
-            # MM: Can we not skip the above logic if forced?
-            if force:
-                rerun, reason = True, 'forced'
 
             if not rerun:
                 if upstream_all or any(task_kwargs in dep_rerun for dep_rerun in elementwise_deps):

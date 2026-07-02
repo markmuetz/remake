@@ -253,13 +253,13 @@ assessment (2026-06-11). Ordered roughly by severity.
   "why" view therefore shows one cause when there may be several. To give full
   fidelity, collect a list of reasons instead of overwriting (then surface them
   in `why`/`info --reasons`). Minor, but a real fidelity gap.
-- [ ] **`planner.plan` does redundant work when `force` is set** (MM comment,
-  `core/planner.py:369`). The per-task loop computes `rec`, runs the code
-  compare, the `uses`/`io` hash compares and `_outputs_complete`, then
-  unconditionally overwrites the verdict with `'forced'`. Hoist `if force:` to
-  the top of the task loop and skip straight to appending — saves the
-  hash/compare/stat calls per task, which matter at 1e6 tasks. Behaviour-
-  preserving; covered by existing force tests.
+- [x] **`planner.plan` does redundant work when `force` is set** (MM comment).
+  **Done 2026-07-02.** `if force:` is now the first branch of the task loop
+  (skips freshness checks and check_outputs stat calls), and the per-rule
+  comparison prep (source rendering — `uses_hash` alone can be ~100 KB —
+  plus `get_codes` and the CodeComparer set-building) is skipped entirely
+  under `force` *or* `ignore_code_changes`, since nothing reads the sets.
+  Behaviour-preserving; covered by existing force/-I tests.
 - [ ] **`planner.plan` is long and interleaves three concerns** (MM comments,
   `core/planner.py:278-279`): matrix-deferral, per-task freshness, and rerun
   propagation (the same-pass `rerun_kwargs` path *and* the durable `run_seq`
@@ -267,8 +267,12 @@ assessment (2026-06-11). Ordered roughly by severity.
   into a `_task_rerun(task, rec, ...) -> (rerun, reason)` helper so `plan` reads
   as orchestration. Behaviour-preserving readability refactor; well covered by
   the planner tests.
-- [ ] `uses` injection silently shadows module globals on name collision —
-  warn at decoration time.
+- [x] `uses` injection silently shadows module globals on name collision —
+  warn at decoration time. **Done 2026-07-02:** `scope.check_shadowing`,
+  called by the `@rule` decorator — warns (`ScopeWarning`) when a uses key
+  matches a module global bound to a *different* object (identity first,
+  then equality, so the standard `uses={'helper': helper}` tracking idiom
+  and re-typed equal literals stay silent). Tests in test_scope.py.
 - [x] File logging was dropped in the CLI rewrite; restored: always-on DEBUG
   log at `.remake/remake.log` (rotated) for any remakefile subcommand.
 - [x] `.remake/remake.log` is a single shared file; under a wide SLURM array
@@ -346,16 +350,18 @@ assessment (2026-06-11). Ordered roughly by severity.
   orchestrator-daemon entry in discussion.md.
 ## SLURM
 
-- [ ] `--dry-run` overwrites `.remake/jobs/<rule>.json` without checking
-  `squeue` for in-flight jobs. A real `run` guards against this (per-rule
-  `_queued_jobids` check skips the rule if any element is still PD/R), but
-  `--dry-run` bypasses that guard because it never enters the submit path.
-  Consequence: if a user modifies the remakefile (changing the matrix) and
-  does a `--dry-run` while array jobs from a previous submission are still
-  running, the spec files are overwritten with the new task mapping and
-  `run-array-task` looks up the wrong task for a given
-  `SLURM_ARRAY_TASK_ID`. Fix: apply the same `_queued_jobids` skip (or at
-  least don't overwrite the spec file) during `--dry-run`.
+- [x] `--dry-run` overwrites `.remake/jobs/<rule>.json` without checking
+  `squeue` for in-flight jobs. **Stale — already guarded** (verified
+  2026-07-02): the `_queued_jobids` skip runs at the top of
+  `SlurmExecutor.run_tasks`, *before* spec-writing, and `--dry-run` goes
+  through the same path (`dry_run` only short-circuits the final
+  `submit()`), so a queued rule's specs are never rewritten by a dry run.
+  Locked in with a regression test
+  (`test_dry_run_does_not_overwrite_queued_rule_specs`). Original report
+  below.
+  - (was) A real `run` guards against this but `--dry-run` was thought to
+    bypass the guard; consequence would have been spec files overwritten
+    with a new task mapping while `run-array-task` elements still read them.
 - [ ] Per-task "already running?" detection. Rule-level skipping exists
   (`squeue_snapshot`/`_active_jobids`/`_queued_jobids` skip a whole rule whose
   last submission is still PD/R); make it per-task and replan-proof by stamping
@@ -383,19 +389,20 @@ assessment (2026-06-11). Ordered roughly by severity.
   count and kind (e.g. "extract: submitting 1234 task(s) (array)"). Still the
   natural home for the "skipped N already-queued tasks" message once the
   per-task SLURM guard (see SLURM section) lands.
-- [ ] Surface `io_hash` (and `uses_hash`/run-code) recorded-vs-current on the
+- [x] Surface `io_hash` (and `uses_hash`/run-code) recorded-vs-current on the
   "inputs/outputs spec changed" / "uses= changed" / "run code changed" verdicts.
-  `why` names the category but not *what* differs, and `task-info` doesn't expose
-  the stored hashes at all — so diagnosing a spec-change rerun means reading
-  `.remake/remake.db` directly and diffing the AST-normalised segments by hand.
-  Motivating case (wescon-tools, 2026-06-17): 5 of 1465 `compare` tasks reran on
-  "inputs/outputs spec changed"; the only way to find out why was to pull the
-  recorded `io_hash` from the DB and diff its `inputs=`/`outputs=` segments
-  against `scope.io_hash(rule)` — which revealed the 5 carried a malformed
-  `io_hash` (the `inputs` segment held the `outputs` AST) recorded by an earlier
-  build. Proposal: `why`/`task-info` (esp. `--json`) should show recorded vs
-  current for the relevant hash, and ideally a segment-level diff for io_hash
-  (`inputs=`/`outputs=`), so this needs no DB spelunking.
+  **Done across 2026-07-02:** `why` now shows a unified source diff for
+  run-code changes (pre-existing), per-helper raw-source/value diffs for
+  uses changes (stage B manifest), and — closing this item — names which
+  `io_hash` segment differs ("inputs and outputs segment(s) differ") via
+  `scope.parse_io_hash`, which is exactly the diagnostic the wescon
+  malformed-io_hash case needed (its `inputs` segment held the `outputs`
+  AST). Not done: exposing raw stored-vs-current hashes in `task-info
+  --json` — revisit if a case needs more than `why` now gives. Original
+  motivating case below.
+  - (was, wescon-tools 2026-06-17) 5 of 1465 `compare` tasks reran on
+    "inputs/outputs spec changed"; finding out why meant pulling the
+    recorded `io_hash` from the DB and diffing its segments by hand.
 - [x] Calling e.g. `remake run path/to/remakefile.py` should cd into the
   remakefile's directory first, so that you don't create a new .remake directory
   in cwd. **Done 2026-06-22.** `remake_cmd` cds into the remakefile's parent for
@@ -415,30 +422,23 @@ assessment (2026-06-11). Ordered roughly by severity.
   since last run"); the remaining "AST" mentions are internal only
   (`core/scope.py`, `util/code_compare.py`, `core/planner.py` docstrings/
   comments) and are fine to keep.
-- [ ] Execution observability: per-task timing + a run summary. Logging is
-  well-structured (debug-summarises / trace-per-element, followed consistently)
-  and planning/metadata are well covered with counts and timings, but there is
-  **no timing in execution** — `perf_counter` appears only in the planner and
-  metadata, nowhere in the executors or `run_task` (verified by grep). For a
-  tool built for long SLURM pipelines this is the biggest logging gap. Concrete
-  asks, in priority order:
-  1. **Per-task duration.** Executors log a task's *start* (`3/100: process[n=3]`)
-     but never its completion or elapsed time. Add timing in the `Executor`
-     base / `run_task` so all four executors (singleproc/multiproc/dask/slurm)
-     get it uniformly — completion + duration at `debug` (per the "summarise
-     loops" convention; avoid per-task `info` spam). This is the raw material
-     for the MaxRSS/wallclock resource-advice idea and the parked stats /
-     run-history store (discussion.md) — a lightweight logging precursor.
-  2. **Run-level summary at `info`.** `run()` returns `nfailed` and only logs on
-     failure; add a one-line success summary, e.g. "ran 100 task(s), 0 failed
-     in 42.3s".
-  3. **`run_task` debug line with resolved I/O paths.** It currently logs only
-     on failure; a `debug`/`trace` "running {task}" with the resolved
-     input/output paths would show what a task actually read/wrote — the logging
-     side of the `io_hash` recorded-vs-current item above.
-  - Lesser: log the chosen executor/nproc/config at run start (debug); the
-    direct-DB-write-vs-sidecar decision and per-task `update_task` are unlogged
-    (trace would suffice).
+- [x] Execution observability: per-task timing + a run summary. **Main asks
+  done 2026-07-02**, all in `run_task`/`run()` so every executor gets them
+  uniformly:
+  1. **Per-task duration** — `run_task` times execution; completion at DEBUG
+     ("completed proc[n=3] in 1.24s") and failure now carries elapsed too.
+     Both are structured events (`task_complete`/`task_failed` with
+     `seconds`/`rule`/`key` in remake.jsonl) — the raw material for the
+     resource-advice / stats-store ideas is now being collected.
+  2. **Run summary at INFO** — "ran 100 task(s), 0 failed in 42.3s"
+     (`run_summary` event); the in-process path also says "Nothing to do"
+     instead of ending silently.
+  3. **`run_task` I/O-path line** — TRACE "running {task}: inputs [...] ->
+     outputs [...]", `opt(lazy=True)` so the path lists cost nothing without
+     a TRACE sink.
+  - Remaining (lesser): log chosen executor/nproc/config at run start; the
+    direct-DB-write-vs-sidecar decision and per-task `update_task` are
+    unlogged (trace would suffice).
 - [x] **Don't TRACE-log full function bodies in `code_compare`**
   (logs_analysis §3.1). Done 2026-07-02: the full-body dump (was ~55k of the
   56.8k lines in the worst field log) is now gated behind `REMAKE_LOG_CODE=1`;

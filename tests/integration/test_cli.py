@@ -357,6 +357,28 @@ def test_log_streams_split_and_structured(pipeline_dir):
     assert len({r['extra']['run_id'] for r in records}) == 2
 
 
+def test_run_logs_task_durations_and_summary(pipeline_dir):
+    cli('run', 'pipeline.py')
+    # Run narrative (INFO): one summary line with counts and elapsed time.
+    log = (pipeline_dir / '.remake/remake.log').read_text()
+    assert 'ran 4 task(s), 0 failed in' in log
+    # Structured stream: a task_complete event per task, with duration.
+    records = [json.loads(line)['record']
+               for line in (pipeline_dir / '.remake/remake.jsonl')
+               .read_text().splitlines()]
+    completes = [r['extra'] for r in records
+                 if r['extra'].get('event') == 'task_complete']
+    assert len(completes) == 4
+    assert all('seconds' in e and 'rule' in e and 'key' in e for e in completes)
+    (summary,) = [r['extra'] for r in records
+                  if r['extra'].get('event') == 'run_summary']
+    assert summary['ntasks'] == 4 and summary['nfailed'] == 0
+
+    # Up-to-date rerun: narrative says so instead of ending silently.
+    cli('run', 'pipeline.py')
+    assert 'Nothing to do' in (pipeline_dir / '.remake/remake.log').read_text()
+
+
 def test_run_task_writes_per_task_log(pipeline_dir, capsys):
     cli('run', 'pipeline.py')
     capsys.readouterr()

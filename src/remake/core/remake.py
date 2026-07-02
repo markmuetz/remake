@@ -3,6 +3,7 @@ import inspect
 import traceback
 from collections import Counter
 from pathlib import Path
+from time import perf_counter
 
 from loguru import logger
 
@@ -682,6 +683,7 @@ class Remake:
         nfailed = 0
         attempted = set()
         wave = 0
+        start = perf_counter()
         while True:
             runnable, deferred = _plan()
             force = False  # only force the first wave
@@ -696,11 +698,30 @@ class Remake:
                 'wave {}: running {} task(s)', wave, len(runnable))
             attempted |= {t.key for t in runnable}
             nfailed += executor.run_tasks(runnable) or 0
+        if attempted:
+            elapsed = perf_counter() - start
+            logger.bind(event='run_summary', ntasks=len(attempted),
+                        nfailed=nfailed, nwaves=wave,
+                        seconds=round(elapsed, 6)).info(
+                'ran {} task(s), {} failed in {:.1f}s',
+                len(attempted), nfailed, elapsed)
+        else:
+            logger.info('Nothing to do')
         return nfailed
 
     def run_task(self, task):
         """Execute one task and record the result. The single execution
-        entry point — used by all executors and `remake run-task`."""
+        entry point — used by all executors and `remake run-task`. Timing and
+        completion are logged here so every executor gets them uniformly
+        (per-element detail at TRACE, per-task duration at DEBUG — the
+        summarise-loops convention, per_task_logging.md)."""
+        # opt(lazy=True): the path lists are only built when a TRACE sink is
+        # attached (they'd cost real time at 1e6 tasks otherwise).
+        logger.opt(lazy=True).trace(
+            'running {}: inputs {} -> outputs {}', lambda: task,
+            lambda: [str(p) for p in task.inputs.values()],
+            lambda: [str(p) for p in task.outputs.values()],
+        )
         for token in task.outputs.values():
             if hasattr(token, '__fspath__'):
                 Path(token).parent.mkdir(parents=True, exist_ok=True)
@@ -711,13 +732,20 @@ class Remake:
             args.append(task.inputs)
         if task.rule.outputs is not None:
             args.append(task.outputs)
+        start = perf_counter()
         try:
             fn(*args, **task.kwargs)
         except Exception:
+            elapsed = perf_counter() - start
             logger.bind(event='task_failed', task=str(task), rule=task.rule.name,
-                        key=task.key).error(f'failed: {task}')
+                        key=task.key, seconds=round(elapsed, 6),
+                        ).error(f'failed: {task} after {elapsed:.2f}s')
             self.metadata.update_task(
                 task, TASK_STATUS_FAILED, exception=traceback.format_exc()
             )
             raise
+        elapsed = perf_counter() - start
+        logger.bind(event='task_complete', task=str(task), rule=task.rule.name,
+                    key=task.key, seconds=round(elapsed, 6),
+                    ).debug('completed {} in {:.2f}s', task, elapsed)
         self.metadata.update_task(task, TASK_STATUS_SUCCESS)
