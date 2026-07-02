@@ -140,9 +140,12 @@ Background for interpreting its output — the planner's checks, in order:
 
 1. `--force` → reruns.
 2. No DB record for the key → reruns, UNLESS check_outputs mode is
-   `fallback` (default) or `always` and all declared outputs exist
-   complete on disk (this is how a fresh `.remake/` adopts existing
-   outputs without rerunning).
+   `fallback` or `always` and all declared outputs exist complete on disk
+   (this is how a fresh `.remake/` adopts existing outputs without
+   rerunning). The default mode is `never`, so by default a no-record task
+   DOES rerun — to adopt an existing output tree into a fresh `.remake/`,
+   run `set-state <file> -Q True --success --check-outputs` (or a one-off
+   `run --check-outputs`); a plain `run` will recompute everything.
 3. DB status is failed/pending → reruns.
 4. The rule function's source changed *meaningfully* (AST-normalised
    compare: comments/formatting do NOT count) → reruns.
@@ -203,9 +206,10 @@ ignored; failed tasks rerun; upstream reruns still propagate, so
 fan-ins stay correct) — the gap-filler after editing a pipeline.
 `set-state -Q ... --success [--check-outputs]` records success without
 running anything (migration adoption: `set-state file -Q True --success
---check-outputs`); `--pending` deletes records — but note complete
-outputs are re-adopted by the default check_outputs mode, so to force a
-rerun use `run --force` instead.
+--check-outputs`); `--pending` deletes records — under the default
+`never` mode that is enough to force a rerun (no adoption). Only under
+`fallback`/`always` would complete outputs be re-adopted on the next
+plan, so there use `run --force` instead.
 
 `--success` stamps the current `run_seq` (see rerun reason 8), so a
 settled task becomes the newest in the graph and no upstream out-ranks
@@ -250,5 +254,6 @@ Translate by hand (LLM), don't script it. Read
 for the full difference guide and workflow. Core moves: Rule classes →
 `@rule`-decorated functions; implicit registration →
 `rmk.rules_from_current_module()`; free module globals → `uses=`;
-path-matching task DAG → explicit `depends_on`; fresh `.remake/` (the
-default check_outputs mode adopts existing on-disk outputs).
+path-matching task DAG → explicit `depends_on`; fresh `.remake/` (adopt
+existing on-disk outputs with `set-state -Q True --success
+--check-outputs` — the default `never` mode does NOT adopt).
