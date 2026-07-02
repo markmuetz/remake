@@ -1,6 +1,8 @@
 # Bug 04 — `remake info` re-queries task status a second time, and the per-rule status query scales superlinearly
 
-**Status:** open (performance) — reported 2026-07-02.
+**Status:** Issues 2 & 3 **fixed** 2026-07-02 (commit 4407d34,
+`perf(metadata): task rows carry code-table FKs, not inline text`);
+Issue 1 (duplicate status query) still **open**. Reported 2026-07-02.
 **Affects:** `remake info` (and any command that plans then also renders
 per-rule status); the SQLite metadata backend's `get_tasks_status`.
 Local and SLURM. Correctness is **not** affected — results are right,
@@ -102,11 +104,15 @@ column: `get_tasks_status` does not select `uses_hash`. That column is a
 separate problem, driving DB *size* not query *time* — see Issue 3
 below.)
 
-**Fix:** stop selecting `code.code` in `get_tasks_status`; store and
-compare a `code_hash` (as `run`/`uses` do), and fetch the full source
-lazily by `run_code_id` only when the hash differs and a diff is actually
-rendered. That collapses the amplification and should flatten the
-scaling — query-side, independent of any `uses_hash` rework.
+**Fix (implemented 2026-07-02, commit 4407d34).** `get_tasks_status` no
+longer JOINs `code.code`; it returns integer ids only, and the planner
+resolves the handful of distinct ids per rule once via the new
+`get_codes`, doing set-membership per task instead of a per-task source
+compare. This collapses the 256× amplification. (The implementation chose
+FK-by-id over the `code_hash` digest sketched here — same effect on the
+JOIN, and it keeps the old source recoverable by id so `why` retains its
+before→after messages; see the *Implemented* note in
+[discussion.md](../discussion.md).)
 
 ## Issue 3 — `task.uses_hash` inflates the DB (size, not query time)
 
@@ -118,37 +124,42 @@ tasks and 149 KB of distinct code). This bloats the DB and the page-cache
 footprint — which amplifies Issue 2's run-to-run *variance* (a bigger
 file is slower to warm) — but it is **not** what the status query reads.
 Tracked in full under "Display code changes in `uses` functions" in
-[discussion.md](../discussion.md) (*Measured in the wild*), whose chosen
-fix (demote `uses_hash` to a real digest, move raw source to `code` at
-rule granularity) is the `uses` counterpart of the Issue 2 fix above.
+[discussion.md](../discussion.md) (*Measured in the wild*).
+
+**Fix (implemented 2026-07-02, commit 4407d34).** `task.uses_hash`/
+`io_hash` inline strings became `uses_code_id`/`io_code_id` FKs into the
+content-addressed `code` table (interned find-or-insert), so the planner
+compares ints per task and each distinct string is stored once, not once
+per task. The in-place migration backfills the FKs, drops the old
+columns, and `VACUUM`s — the 272 MB recovers on first contact. (Stage B,
+a `rule_uses` per-helper raw-source table for readable diffs, is a staged
+follow-up in `todos.md`.)
 
 ## Why file this
 
 None is a logic bug — `info` prints the right numbers. But a
 read-only status command on a 3k-task pipeline spending ~6.7 s in the DB,
 half of it re-fetching data it just fetched, is a real UX cost on a
-command run constantly during development. Issue 1 is a straightforward
-plumbing fix (~2.7 s); Issue 2 is the `code.code` JOIN (256× byte
-amplification) and has a concrete fix; Issue 3 (`uses_hash` bloat) is a
-storage-shape fix tracked in `discussion.md` — all three worsen as
-pipelines grow.
+command run constantly during development. Issue 2 (the `code.code` JOIN,
+256× byte amplification) and Issue 3 (`uses_hash` bloat) were both fixed
+in commit 4407d34; Issue 1 (the duplicate `get_tasks_status` per
+invocation) remains the open plumbing item (~2.7 s).
 
-## Suggested fix
+## Fixes
 
-1. **De-duplicate.** Have `info` consume the status already computed by
-   the planning pass (or, if `info` intentionally skips planning, don't
-   also run the planner) — one `get_tasks_status` per rule per
-   invocation, not two.
-2. **Stop selecting `code.code` in `get_tasks_status`.** Store and
-   compare a `code_hash` (as `run`/`uses` do), fetching the full source
-   lazily by `run_code_id` only when the hash differs and a diff is
-   actually rendered. Collapses the 256× amplification and should flatten
-   the 774 → 1465 scaling.
-3. **Demote `task.uses_hash` to a real digest** (and move raw `uses`
-   source to the `code` table at rule granularity) to shrink the DB and
-   its page-cache footprint — the storage rework tracked under "Display
-   code changes in `uses` functions" in
-   [discussion.md](../discussion.md).
+1. **De-duplicate** *(open).* Have `info` consume the status already
+   computed by the planning pass (or, if `info` intentionally skips
+   planning, don't also run the planner) — one `get_tasks_status` per
+   rule per invocation, not two. Cheaper now that each query no longer
+   drags `code.code`, but still redundant work.
+2. **Drop the `code.code` JOIN** *(done — 4407d34).* `get_tasks_status`
+   returns ids only; the planner resolves the few distinct ids per rule
+   via `get_codes` and compares by id. Collapsed the 256× amplification.
+3. **Move inline `uses_hash`/`io_hash` off task rows** *(done —
+   4407d34).* Now `uses_code_id`/`io_code_id` FKs into the interned
+   `code` table; migration backfills, drops the old columns, and
+   `VACUUM`s. Stage B (`rule_uses` per-helper raw source for readable
+   diffs) is a follow-up in `todos.md`.
 
 Reproducer: any large pipeline; this one is
 `wescon_tools/ctrl/remakefiles/wescon_radar_dev.py` with a populated

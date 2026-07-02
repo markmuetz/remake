@@ -174,8 +174,15 @@ analysis included). To make the timing/telemetry first-class:
 
 ## 5. Suggested code follow-ups (beyond logging)
 
-- **Stop selecting `code.code` in `get_tasks_status`.** Store and compare a
-  `code_hash` (like `uses_hash`); fetch the full source lazily by
-  `run_code_id` only when the hash differs and a diff is actually rendered.
-  This collapses the §1.2 amplification and should flatten the §1.1 scaling.
-- **`VACUUM`** the large DBs and audit `uses_hash`/`io_hash` storage (§1.5).
+> **Both done 2026-07-02, commit 4407d34** (`perf(metadata): task rows carry
+> code-table FKs, not inline text`). Kept below for the record; see bug 04 and
+> the *Implemented* note in `discussion.md`.
+
+- **Stop selecting `code.code` in `get_tasks_status`.** ✅ Done — the query now
+  returns integer ids only; the planner resolves the few distinct ids per rule
+  via `get_codes` and compares by id, collapsing the §1.2 amplification.
+  (Implemented as an FK-by-id rather than the `code_hash` digest sketched here.)
+- **`VACUUM`** the large DBs and audit `uses_hash`/`io_hash` storage (§1.5). ✅
+  Done — `uses_hash`/`io_hash` became `uses_code_id`/`io_code_id` FKs into the
+  interned `code` table; the migration backfills, drops the old columns and
+  `VACUUM`s (the §1.5 272 MB recovers on first contact).
