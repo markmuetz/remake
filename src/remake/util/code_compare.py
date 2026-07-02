@@ -1,9 +1,16 @@
 import ast
+import os
 import textwrap
 from itertools import zip_longest
 from typing import Union
 
 from loguru import logger
+
+# Full-body code dumps at TRACE are opt-in: they print both versions of every
+# compared function, which in the field crowded everything else out of the
+# rotated log (~55k of 56.8k lines in one project's remake.log — see
+# design_docs/logs_analysis/README.md §3). The one-line summaries below stay.
+_LOG_CODE = os.environ.get('REMAKE_LOG_CODE') == '1'
 
 
 def dedent(s):
@@ -36,14 +43,16 @@ class CodeComparer:
         self.compare_cache = {}
 
     def __call__(self, code1, code2):
-        logger.trace('code1:\n' + code1)
-        logger.trace('code2:\n' + code2)
+        if _LOG_CODE:
+            logger.trace('code1:\n{}', code1)
+            logger.trace('code2:\n{}', code2)
         if code1 == code2:
-            logger.trace('code1 == code2')
+            logger.trace('code_compare: identical')
             return True
         key = tuple(sorted([code1, code2]))
         if key in self.compare_cache:
-            logger.trace('already compared')
+            logger.trace('code_compare: {} (cached)',
+                         'unchanged' if self.compare_cache[key] else 'changed')
             return self.compare_cache[key]
         try:
             res = _compare_ast(ast.parse(dedent(code1)), ast.parse(dedent(code2)))
@@ -70,4 +79,6 @@ class CodeComparer:
             # / SystemExit still propagate (unlike remake2's bare except).
             res = False
         self.compare_cache[key] = res
+        logger.trace('code_compare: {}',
+                     'unchanged (AST-equal)' if res else 'changed')
         return res

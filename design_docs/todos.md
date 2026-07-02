@@ -423,12 +423,14 @@ assessment (2026-06-11). Ordered roughly by severity.
   - Lesser: log the chosen executor/nproc/config at run start (debug); the
     direct-DB-write-vs-sidecar decision and per-task `update_task` are unlogged
     (trace would suffice).
-- [ ] **Don't TRACE-log full function bodies in `code_compare`**
-  (logs_analysis §3.1). The TRACE dump prints the entire source of both
-  versions on every comparison — ~55k of the 56.8k lines in the worst field
-  log, crowding real history out of the 5 MB rotation window. Log a one-line
-  summary (`code_compare: <rule> unchanged` / `changed (N lines differ)`) and
-  gate the full-body dump behind an explicit opt-in (e.g. `REMAKE_LOG_CODE=1`).
+- [x] **Don't TRACE-log full function bodies in `code_compare`**
+  (logs_analysis §3.1). Done 2026-07-02: the full-body dump (was ~55k of the
+  56.8k lines in the worst field log) is now gated behind `REMAKE_LOG_CODE=1`;
+  by default TRACE gets a one-line verdict per comparison
+  (`code_compare: identical` / `unchanged (AST-equal)` / `changed`, with a
+  `(cached)` variant). Bonus: the old lines built their strings by `+`-concat
+  before loguru's lazy check, so the dump cost was paid even with no TRACE
+  sink attached — the gated form uses lazy `{}` args.
 - [ ] **Split the file log into human + debug streams; threshold the timing
   lines** (logs_analysis §3.2/3.3). Keep `remake.log` readable (INFO+ run
   narrative) and route the DEBUG/TRACE firehose to a separate rotated
