@@ -77,8 +77,11 @@ options if it bites, in escalating order:
 
 Verbosity is selected by a mutually-exclusive flag: `-W`/`--warning`,
 `-I`/`--info` (default), `-D`/`--debug`, `-T`/`--trace`. loguru has a `TRACE`
-level (no=5) below `DEBUG` (no=10); `-T` enables it on both the stderr sink and
-the always-on `.remake/remake.log` file (which is `DEBUG` otherwise). A
+level (no=5) below `DEBUG` (no=10); `-T` enables it on the stderr sink and the
+always-on debug file sinks. (Since 2026-07-02 the shared file log is split:
+`.remake/remake.log` is the INFO+ narrative, `.remake/remake.debug.log` the
+DEBUG — TRACE under `-T` — firehose, and `.remake/remake.jsonl` a structured
+mirror of the debug stream; see docs/guide/debugging.md.) A
 `logger.trace(...)` call is a no-op — its message is never even formatted —
 unless a sink is accepting `TRACE`, so trace statements are free at the default
 verbosity and safe to leave in hot paths.

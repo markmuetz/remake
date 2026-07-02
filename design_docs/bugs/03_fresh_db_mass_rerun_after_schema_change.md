@@ -1,6 +1,15 @@
 # Bug 03 — schema change forces a fresh `.remake/`, and the `never` default then wants to rerun everything
 
-**Status:** open (UX / docs) — reported 2026-06-30.
+**Status:** open (UX / docs) — reported 2026-06-30. **Premise partly
+overtaken 2026-07-02:** schema changes now ship in-place migrations
+(`_add_missing_columns`, incl. the inline-hash→FK backfill + VACUUM,
+field-verified on a 272 MB DB with zero reruns), so "schema change ⇒ delete
+`.remake/` ⇒ mass rerun" should not recur for additive changes — the
+compatibility.md on-disk carve-out is now practice, not just policy. The
+residual, still-open point is the second half: any *other* route to a fresh
+`.remake/` (corruption, accidental delete, a genuinely breaking schema
+change) still lands in the `never`-default adoption trap below, and the
+adoption idiom remains under-signposted at the moment the user needs it.
 **Affects:** anyone upgrading remake3 across a schema change with an
 existing output tree. Local and SLURM.
 **Reported by:** Mark Muetzelfeldt — hit on

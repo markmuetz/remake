@@ -427,7 +427,9 @@ class Task:
 
     @cached_property
     def key(self) -> str:
-        return sha1(f'{self.rule.fn.__name__}:{self.kwargs!r}'.encode()).hexdigest()
+        # rule.name (honours the name= override), kwargs sorted for stability.
+        kwargs_repr = repr(dict(sorted(self.kwargs.items())))
+        return sha1(f'{self.rule.name}:{kwargs_repr}'.encode()).hexdigest()
 
     @cached_property
     def inputs(self) -> dict:
@@ -556,44 +558,76 @@ executor; deferred rules are retried after the current wave completes.
 
 ## SQLite backend
 
-The schema is largely carried over from remake2, with one addition: a `uses_hash`
-column on `task` to track the serialised state of the `uses` dict.
+The core of the schema (the content-addressed `code` table, `rule` and `task`)
+is carried over from remake2; the 2026-07 storage rework reshaped `task` so
+that **all code-derived state is an integer FK into `code`** — storing the
+uses/io text inline per task row made real DBs enormous (272 MB for 3341
+tasks, 99.8% duplicated text) and made status queries scale with task count
+(design_docs/logs_analysis/README.md).
 
 ```sql
-CREATE TABLE code (
+CREATE TABLE code (            -- content-addressed; interned by exact content
     id   INTEGER PRIMARY KEY,
     code TEXT NOT NULL
 );
 
 CREATE TABLE rule (
-    id             INTEGER PRIMARY KEY,
-    name           VARCHAR(200) NOT NULL,
+    id              INTEGER PRIMARY KEY,
+    name            VARCHAR(200) NOT NULL,
     inputs_code_id  INTEGER REFERENCES code(id),
     outputs_code_id INTEGER REFERENCES code(id),
-    run_code_id     INTEGER REFERENCES code(id)
+    run_code_id     INTEGER REFERENCES code(id),
+    remakefile      TEXT     -- provenance + duplicate-rule-name guard
 );
 
 CREATE TABLE task (
     id                 INTEGER PRIMARY KEY,
-    key                VARCHAR(40) NOT NULL,   -- sha1 of (rule_name, kwargs)
+    key                VARCHAR(40) NOT NULL,   -- sha1 of (rule.name, sorted kwargs)
     rule_id            INTEGER REFERENCES rule(id),
-    run_code_id        INTEGER REFERENCES code(id),
-    uses_hash          TEXT,                   -- repr/hash of uses values
+    run_code_id        INTEGER REFERENCES code(id),  -- raw run source
+    uses_code_id       INTEGER REFERENCES code(id),  -- normalised uses string
+    io_code_id         INTEGER REFERENCES code(id),  -- normalised inputs/outputs
+    run_seq            INTEGER,   -- durable rerun propagation (bugs/01)
     last_run_timestamp TIMESTAMP,
     last_run_status    INTEGER,                -- 0=pending, 1=ok, 2=failed
     exception          TEXT
 );
 
 CREATE UNIQUE INDEX task_key_index ON task(key);
+
+-- Per-helper raw source per uses *version*, display-only (`why` diffs,
+-- rule-info); change detection never reads it.
+CREATE TABLE uses_manifest (
+    uses_code_id INTEGER REFERENCES code(id),  -- the version tasks point at
+    name         VARCHAR(200) NOT NULL,
+    code_id      INTEGER REFERENCES code(id),  -- raw rendering, interned
+    kind         VARCHAR(10) NOT NULL,         -- source / value / bytecode
+    PRIMARY KEY (uses_code_id, name)
+);
+
+-- Key/value store; holds the monotonic run_seq counter.
+CREATE TABLE meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
 ```
 
-**Change detection** at `finalize()` time:
+Older DBs are migrated in place (`_add_missing_columns`, incl. the
+inline-text→FK backfill + VACUUM) — the on-disk carve-out in
+[compatibility.md](compatibility.md) in action.
 
-1. Load current `run_code_id` and `uses_hash` for each task from the DB.
-2. AST-compare the stored `rule_run` source against the current source.
-3. Compare stored `uses_hash` against `repr(uses)` (or custom hash).
-4. If either differs → `requires_rerun = True`.
-5. Propagate: if any upstream task `requires_rerun`, so does this one.
+**Change detection** at plan time, per rule then per task:
+
+1. `ensure_rules` (at `finalize()`) interns the current run/inputs/outputs
+   source and the normalised uses/io strings into `code` — find-or-insert by
+   exact content, so equal content always resolves to the same id.
+2. `plan()` fetches each task's stored ids (`get_tasks_status` returns ids
+   only, never text), resolves the *distinct* few per rule via `get_codes`,
+   and compares each against the current state once (AST-compare for run
+   source; string equality for the already-normalised uses/io).
+3. The per-task check is then integer set-membership: a task whose stored id
+   is not in the unchanged set reruns. This is what keeps plan cost from
+   scaling with task count × source size.
+4. Propagate: if any relevant upstream task reruns, so does this one
+   (element-wise when matrices are shared, conservative otherwise) — plus the
+   durable cross-pass `run_seq` backstop (bugs/01).
 
 The metadata manager is always injected:
 

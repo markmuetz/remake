@@ -1,5 +1,11 @@
 # remake3 — Implementation Plan
 
+> **Status: execution record.** The plan is complete bar the noted stragglers;
+> counts and "remaining" notes below are point-in-time (mostly 2026-06-15) and
+> are not maintained. Live state: [todos.md](todos.md) for open work,
+> [remake3_0.8.0_release.md](remake3_0.8.0_release.md) for the release
+> checklist, the test suite for current counts.
+
 High-level progress tracking for implementing
 [remake3_design.md](remake3_design.md). Each item will get its own design/plan
 doc in `design_docs/` when work on it starts.

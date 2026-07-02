@@ -84,7 +84,7 @@ assessment (2026-06-11). Ordered roughly by severity.
     source lazily by `run_code_id` only when the hash differs and a diff is
     rendered.
   - *Storage side ("Display code changes in `uses` functions",
-    [discussion.md](discussion.md)).* Today `task.uses_hash`/`io_hash` store
+    [graduated_discussion.md](graduated_discussion.md)).* Today `task.uses_hash`/`io_hash` store
     the full AST-normalised source string *inline on every task row* (misnomer:
     it's a serialised AST, not a digest) — a verbose blob duplicated across
     every task of a rule. Measured in the wild: 272 MB DB for 3341 tasks,

@@ -79,10 +79,13 @@ deprecation ramps, automatic on-disk migrations.
 ## Cross-cutting (continuous, not a milestone)
 
 Scale-debt from [todos.md](todos.md) that must keep pace with the feature
-work: batch the per-task `EXCLUSIVE` commit (one txn/task is a real 1e6
-problem), make the 1e6-task benchmark load-bearing in CI, the
-`retry_lock_commit` livelock cliff, zarr v3 `is_complete()`, and the
-long-promised Hypothesis property tests.
+work — recalibrated 2026-07-02 against the stated scale target (~1e4 tasks ×
+~1e2 files/task = 1e6 *files*; see remake3_design.md "Scale target"): the
+file-side stat/resolution frontier (1e6-path sweeps on Lustre/NFS), making
+`bench_field_scale.py` load-bearing in CI (the 1e6-task bench stays as manual
+stress headroom), bounding `retry_lock_commit`, zarr v3 `is_complete()`, and
+the long-promised Hypothesis property tests. (Batching the per-task
+`EXCLUSIVE` commit was deprioritised — seconds at the design scale.)
 
 ## Explicitly *not* doing
 

@@ -58,10 +58,10 @@ version bump.
 
 ## B. Should-do (strongly wanted, not strictly blocking)
 
-- **CLI UX nit found on JASMIN:** a `why -Q <query>` matching >1 task
+- ~~**CLI UX nit found on JASMIN:** a `why -Q <query>` matching >1 task
   raises `RemakeError` as an uncaught traceback instead of a clean
-  message. Fix as part of a small CLI-polish pass (logged in the plan's
-  "What's left").
+  message.~~ **Done 2026-06-19** — subsumed by the top-level `RemakeError`
+  handler (§E.1 / DoD).
 - ~~**CHANGELOG / release notes** for 0.8.0~~ **Done 2026-06-19.**
   `CHANGELOG.md` at the repo root (Keep a Changelog format): a clean-break
   "remake3 is a ground-up rewrite from the remake2 0.6.x line" summary
@@ -80,10 +80,12 @@ version bump.
 
 - Beta/RC pre-releases (`0.8.0b0`, `0.8.0rc0`) if the JASMIN dogfood
   surfaces enough to warrant a staged ramp rather than alpha → final.
-- Backlog in [todos.md](todos.md) (benchmark-in-CI as a load-bearing job,
-  batched completion transactions, eval-query parser, uses-shadowing
-  warning, Hypothesis tests, zarr v3 tokens, per-task log file-count
-  budget) and [discussion.md](discussion.md) ideas. None block 0.8.0.
+- Backlog in [todos.md](todos.md) (that file is the live list; of the
+  items originally named here, the uses-shadowing warning shipped
+  2026-07-02 and batched completion transactions were deprioritised by the
+  scale-target decision — remaining: benchmark-in-CI, eval-query parser,
+  Hypothesis tests, zarr v3 tokens, per-task log file-count budget) and
+  [discussion.md](discussion.md) ideas. None block 0.8.0.
 - The Node 20 action deprecation is self-resolving (GitHub forces Node 24
   from 2026-06-16); no action needed.
 

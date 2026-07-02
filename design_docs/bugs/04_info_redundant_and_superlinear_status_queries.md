@@ -120,7 +120,7 @@ compare. This collapses the 256× amplification. (The implementation chose
 FK-by-id over the `code_hash` digest sketched here — same effect on the
 JOIN, and it keeps the old source recoverable by id so `why` retains its
 before→after messages; see the *Implemented* note in
-[discussion.md](../discussion.md).)
+[graduated_discussion.md](../graduated_discussion.md).)
 
 ## Issue 3 — `task.uses_hash` inflates the DB (size, not query time)
 
@@ -132,7 +132,7 @@ tasks and 149 KB of distinct code). This bloats the DB and the page-cache
 footprint — which amplifies Issue 2's run-to-run *variance* (a bigger
 file is slower to warm) — but it is **not** what the status query reads.
 Tracked in full under "Display code changes in `uses` functions" in
-[discussion.md](../discussion.md) (*Measured in the wild*).
+[graduated_discussion.md](../graduated_discussion.md) (*Measured in the wild*).
 
 **Fix (implemented 2026-07-02, commit 4407d34).** `task.uses_hash`/
 `io_hash` inline strings became `uses_code_id`/`io_code_id` FKs into the

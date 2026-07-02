@@ -10,6 +10,8 @@ level so progress is visible without grepping the tree.
 | File | Date | Status | Outcome |
 | --- | --- | --- | --- |
 | `src/remake/remake_cmd.py` | 2026-06-23 | Reviewed | Refactor done — commits `933b5f0`, `4281192`. Two `# MM:` notes left intentionally (see below). |
+| `src/remake/core/planner.py` | 2026-07-02 | Reviewed (`plan()` + helpers) | `# MM:` comments actioned same-day: force hoisted to the top of the task loop (`768f812`); multi-trigger reasons recorded for the cheap trio (`fad3a72` — `why`/`info --reasons` were already full-fidelity via `explain_task`). Still open: extract the per-task decision from `plan()` (readability, todos.md "Smaller debts") and the `make_predicate` eval question (todos.md). |
+| `src/remake/core/remake.py` | 2026-07-02 | In progress | Read to `status_summary` (`# MM: got to here so far`). |
 
 ## Outcomes from `remake_cmd.py`
 
