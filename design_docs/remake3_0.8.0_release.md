@@ -325,8 +325,15 @@ the JASMIN beta — see §A.1.)
       and the still-open "bound retry_lock_commit" robustness item promoted
       into the live list). *Reclassifying this doc to a Record lands with
       the tag commit — it still tracks the open DoD items below.*
-- [ ] `main` fast-forwarded to remake3; branch refs in workflows/mkdocs
-      updated; Pages branch policy trimmed.
+- [x] `main` fast-forwarded to remake3; branch refs in workflows/mkdocs
+      updated; Pages branch policy trimmed. **Done 2026-07-03** — refs
+      switched first (docs.yml/ci.yml/mkdocs.yml/docs links, commit
+      5673e90), then `main` moved to that tip via force-with-lease
+      (protection's force-push block toggled off/on around it; `e8b7c75`
+      discarded as planned), `origin/HEAD` → main, the `remake3` Pages
+      deployment-branch policy deleted. Verified on main: Docs build +
+      Pages deploy green. The `remake3` branch is kept as a temporary
+      safety net — delete after 0.8.0 ships.
 - [ ] Version bumped to `0.8.0`; tagged `v0.8.0`; release workflow
       published to PyPI (approve the `pypi` environment gate).
 - [ ] `pip install remake` (no `--pre`) resolves to `0.8.0`.
