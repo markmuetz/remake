@@ -6,8 +6,7 @@ Remake is a smart Python build tool, similar to `make`. It makes it easy to buil
 
 ## Status
 
-remake 0.8.0 is a ground-up rewrite (currently published as the `0.8.0a0`
-pre-release). See the
+remake 0.8.0 is a ground-up rewrite. See the
 [changelog](https://markmuetz.github.io/remake/changelog/) for what's new and
 [getting started](https://markmuetz.github.io/remake/getting-started/) for a
 walkthrough.
@@ -15,5 +14,5 @@ walkthrough.
 ## Installation
 
 ```bash
-pip install --pre remake
+pip install remake
 ```

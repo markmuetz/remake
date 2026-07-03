@@ -43,11 +43,11 @@ maintained. When adding a doc, say which class it is.
   upcoming milestones (v0.9.0.md).
 - [MM_review.md](MM_review.md) — running log of Mark's source reviews
   (`# MM:` comments) and their outcomes.
-- [remake3_0.8.0_release.md](remake3_0.8.0_release.md) — the road to the
-  full 0.8.0 release: blocking items, DoD checklist, branch migration
-  plan. Becomes a Record once 0.8.0 ships.
-
 ## Records
+
+- [remake3_0.8.0_release.md](remake3_0.8.0_release.md) — the road to the
+  0.8.0 release (blocking items, DoD checklist, branch migration), frozen
+  at the v0.8.0 tag as the release's execution record.
 
 - [graduated_discussion.md](graduated_discussion.md) — discussion items
   that shipped, kept with their full design reasoning and implementation

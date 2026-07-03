@@ -1,5 +1,11 @@
 # Road to the 0.8.0 release
 
+> **Record** (2026-07-03): 0.8.0 tagged and released; this doc is frozen as
+> the execution record of the release. The one item completed post-tag is
+> the final DoD check (`pip install remake` resolving to 0.8.0, verifiable
+> only after the PyPI publish). Follow-ups (delete the `remake3` branch,
+> should-do leftovers in §B/§E) live in todos.md / discussion.md.
+
 What stands between the current state (0.8.0a0 alpha on PyPI, all
 infrastructure shipped) and a full `0.8.0` release, plus the one-time
 branch migration that folds the `remake3` working branch into `main`.
@@ -334,6 +340,10 @@ the JASMIN beta — see §A.1.)
       deployment-branch policy deleted. Verified on main: Docs build +
       Pages deploy green. The `remake3` branch is kept as a temporary
       safety net — delete after 0.8.0 ships.
-- [ ] Version bumped to `0.8.0`; tagged `v0.8.0`; release workflow
+- [x] Version bumped to `0.8.0`; tagged `v0.8.0`; release workflow
       published to PyPI (approve the `pypi` environment gate).
-- [ ] `pip install remake` (no `--pre`) resolves to `0.8.0`.
+      **Done 2026-07-03** — bump commit also set the CHANGELOG date,
+      dropped `--pre` from README/installation docs, and froze this doc
+      as a Record.
+- [ ] `pip install remake` (no `--pre`) resolves to `0.8.0` — check after
+      approving the `pypi` gate.

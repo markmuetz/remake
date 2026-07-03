@@ -4,7 +4,7 @@ All notable changes to remake are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.8.0] — unreleased
+## [0.8.0] — 2026-07-03
 
 **remake 0.8.0 is a ground-up rewrite.** It shares the name and the core idea
 of the remake2 `0.6.x` line — declarative, code-aware, make-style incremental
