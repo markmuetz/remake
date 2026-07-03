@@ -27,8 +27,9 @@ maintained. When adding a doc, say which class it is.
 ## Working
 
 - [todos.md](todos.md) — concrete known problems and debts, checkbox state.
-  At a release, prune `[x]` entries to an archive so the live list stays
-  readable.
+  At a release, prune `[x]` entries to
+  [todos_archive.md](todos_archive.md) so the live list stays readable
+  (last prune: 2026-07-03, at 0.8.0).
 - [discussion.md](discussion.md) — ideas to return to; not commitments.
   Implemented items graduate to
   [graduated_discussion.md](graduated_discussion.md); confirmed bugs move
@@ -36,7 +37,8 @@ maintained. When adding a doc, say which class it is.
 - [bugs/](bugs/) — one numbered file per confirmed bug, status in the
   header (01 durable propagation — fixed; 02 task-info non-path input —
   open; 03 fresh-DB adoption trap — open, premise partly overtaken;
-  04 info double-query/superlinear status — fixed).
+  04 info double-query/superlinear status — fixed; 05 SLURM sidecar
+  run-code stamping — fixed).
 - [future_releases/](future_releases/) — scoped feature slices for
   upcoming milestones (v0.9.0.md).
 - [MM_review.md](MM_review.md) — running log of Mark's source reviews
@@ -49,7 +51,10 @@ maintained. When adding a doc, say which class it is.
 
 - [graduated_discussion.md](graduated_discussion.md) — discussion items
   that shipped, kept with their full design reasoning and implementation
-  postscripts (incl. the 2026-07 `uses`/`io` storage rework).
+  postscripts (incl. the 2026-07 `uses`/`io` storage rework), plus settled
+  design decisions (rule syntax: decorator over class).
+- [todos_archive.md](todos_archive.md) — completed todos pruned from the
+  live list at each release, verbatim.
 - [remake3_implementation_plan.md](remake3_implementation_plan.md) — the
   build-out progress tracker (complete; counts are point-in-time).
 - [detailed_code_implementation.md](detailed_code_implementation.md) — the

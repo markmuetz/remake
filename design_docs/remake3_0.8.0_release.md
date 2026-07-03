@@ -318,8 +318,13 @@ the JASMIN beta — see §A.1.)
       original 06-19 write-up), the colourised CLI/`--colour` flag, `why`'s
       diff rendering, and two Fixed entries: the bug 05 sidecar run-source
       fix and the parse-error-degrades-to-changed comparer behaviour.
-- [ ] At-tag housekeeping: prune `todos.md` `[x]` entries to an archive;
+- [x] At-tag housekeeping: prune `todos.md` `[x]` entries to an archive;
       reclassify this doc as a Record in `design_docs/README.md`.
+      **Prune done 2026-07-03** (`todos_archive.md`; two stale checkboxes
+      corrected — RemakeError handler and the retry_lock_commit livelock —
+      and the still-open "bound retry_lock_commit" robustness item promoted
+      into the live list). *Reclassifying this doc to a Record lands with
+      the tag commit — it still tracks the open DoD items below.*
 - [ ] `main` fast-forwarded to remake3; branch refs in workflows/mkdocs
       updated; Pages branch policy trimmed.
 - [ ] Version bumped to `0.8.0`; tagged `v0.8.0`; release workflow
