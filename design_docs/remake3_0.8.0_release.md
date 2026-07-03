@@ -345,5 +345,7 @@ the JASMIN beta — see §A.1.)
       **Done 2026-07-03** — bump commit also set the CHANGELOG date,
       dropped `--pre` from README/installation docs, and froze this doc
       as a Record.
-- [ ] `pip install remake` (no `--pre`) resolves to `0.8.0` — check after
-      approving the `pypi` gate.
+- [x] `pip install remake` (no `--pre`) resolves to `0.8.0`. **Verified
+      2026-07-03** post-publish: PyPI reports 0.8.0 and a fresh-venv
+      install runs `remake version` → 0.8.0. **All DoD items complete —
+      0.8.0 is released.**
