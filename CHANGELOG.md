@@ -53,17 +53,24 @@ first stable release of the rewrite.)
   resubmission.
 - **Per-task log files** under SLURM arrays (`.remake/tasks/log/...`), avoiding
   the interleaved-write corruption of a single shared log.
-- **CLI**: `run`, `info`, `why`, `lint`, `set-state`, `ls-tasks`, `task-info`,
-  `task-log`, `rule-dag`, `slurm-status`, `resubmit`, `version`, plus the
-  internal `run-task`/`run-array-task` entry points.
+- **CLI**: `run`, `info`, `why`, `lint`, `set-state`, `ls-tasks`, `rule-info`,
+  `task-info`, `task-log`, `rule-dag`, `slurm-status`, `resubmit`, `version`,
+  plus the internal `run-task`/`run-array-task` entry points.
   - `why` explains why any task (or a `-Q` query set, or the runnable set)
-    will or won't rerun.
+    will or won't rerun — showing the *substance* of each change: a unified
+    diff of the rule body, per-helper source diffs and `old → new` values for
+    `uses=` changes (raw helper sources are kept in a per-rule manifest so old
+    versions can be diffed), and which `inputs`/`outputs` segment differs.
+  - `rule-info` shows one rule's docstring, matrix, input/output templates
+    and `uses` (the rule's docstring is surfaced on the `Rule` object too).
   - `info --reasons` gives a per-rule tally of rerun-reason categories;
     `info -F` groups failed tasks by traceback signature; `info` prints a
     totals row in dependency order.
   - `run -Q` to scope a run; `run --dry-run`; `run --force`;
     `run --ignore-code-changes` (rerun only never-succeeded tasks);
-    `run -X/--debug-exception` to drop into pdb on the first failure.
+    `run -X/--debug-exception` to drop into pdb on the first failure;
+    `run --raise` to re-raise the first failure with its traceback (no
+    debugger — for CI and scripts).
   - `set-state --success`/`--pending` (with `-Q`) to record state without
     running; `--success --check-outputs` adopts an existing output tree;
     `--success` cascades to downstream complete tasks by default (guarded),
@@ -80,10 +87,22 @@ first stable release of the rewrite.)
   define a *different* rule under the same name — which would otherwise silently
   clobber each other's state, logs and SLURM job specs — `ensure_rules` warns,
   distinguishing a collision from an ordinary same-file edit.
-- **`-T`/`-D`/`-I`/`-W` logging levels** (trace/debug/info/warning) and an
-  always-on rotating file log at `.remake/remake.log`.
+- **`-T`/`-D`/`-I`/`-W` logging levels** (trace/debug/info/warning), a
+  `--colour {auto,always,never}` flag (`NO_COLOR`/`FORCE_COLOR` honoured;
+  info/ls-tasks/task-info/why output is colourised on TTYs), and **three
+  rotating file logs** next to the metadata DB: `.remake/remake.log` (the
+  human-facing run narrative, INFO+), `.remake/remake.debug.log` (the DEBUG
+  firehose), and `.remake/remake.jsonl` (a structured mirror — real fields
+  per event plus a per-invocation `run_id`, minable with `jq`). Runs end with
+  a summary line (`ran N task(s), M failed in X.Xs`) and per-task durations
+  are logged on completion/failure. Set `REMAKE_LOG_CODE=1` to dump full
+  code-comparison bodies at TRACE (off by default — they crowd out the log).
 - **SQLite metadata backend** (`.remake/remake.db`) with a defensive
   `ALTER TABLE` migration path; pluggable via the `MetadataManager` interface.
+  Task rows reference shared rows in a `code` table (FKs, not inline text), so
+  the DB stays compact and status queries stay flat as task counts grow; an
+  invocation-scoped record cache means `info`/`why` fetch each task record at
+  most once.
 - **Documentation site** (MkDocs), **CI** across Python 3.10–3.14 with
   coverage, and a Trusted-Publishing release workflow.
 
@@ -101,6 +120,21 @@ first stable release of the rewrite.)
 - **`run --ignore-code-changes` is long-form only** — its former `-I` short
   flag collided with the global `--info`/`-I`, so `-I` now unambiguously means
   info-logging.
+- **Rule plumbing mistakes fail once, at definition.** A rule whose signature
+  doesn't match its declared specs and matrix keys, whose `inputs`/`outputs`
+  template references a `{placeholder}` the matrix doesn't provide, or whose
+  callable spec requires a parameter the matrix lacks now raises
+  `SignatureError` at decoration (at first expansion for callable matrices) —
+  naming the rule and the offending field — instead of every task failing
+  identically at run time.
+- **A `uses=` key that shadows a module global bound to a *different* value
+  warns at decoration** (`ScopeWarning`). Inside the rule the `uses=` value
+  wins, so the reader sees one definition while another runs; the standard
+  tracking idiom `uses={'helper': helper}` (same object) stays silent.
+- **One-time in-place DB migration.** The first remake command that touches a
+  `.remake/remake.db` created by an earlier `0.8.0` alpha migrates it to the
+  code-table layout and VACUUMs — a one-off pause (longer for big DBs) after
+  which the DB is substantially smaller. No action needed; don't interrupt it.
 - **Commands run from the remakefile's directory.** `remake <cmd> sub/pipeline.py`
   now changes into `sub/` first, so `.remake/`, the log, and the pipeline's
   relative input/output paths anchor to the remakefile rather than the
@@ -134,6 +168,15 @@ first stable release of the rewrite.)
 - **`inputs=`/`outputs=` changes now invalidate a task** (`io_hash`) — editing
   an output path no longer leaves orphaned outputs while downstream looks
   elsewhere.
+- **SLURM sidecar results now record the code that actually ran.** Editing a
+  rule between a SLURM run and the next remake invocation previously stamped
+  the completed task with the *edited* source at sidecar ingest, so the change
+  was reported as "code unchanged" and the stale output never regenerated.
+  The sidecar now carries the run source from the compute node, symmetric
+  with `uses`/`io` (see `design_docs/bugs/05_...`).
+- **Code comparison degrades safely.** Any parse error in the code comparer
+  now counts as "changed" (forcing a rerun) rather than raising — a
+  comparison failure can cost a redundant rerun, never a stale skip.
 - **SLURM exit-code masking.** The per-rule wrapper no longer masks a task's
   real exit code with a trailing `echo`, so `aftercorr`/`afterok` correctly
   block dependants of failed elements (`--kill-on-invalid-dep=yes`).

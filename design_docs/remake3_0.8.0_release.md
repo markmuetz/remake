@@ -311,9 +311,13 @@ the JASMIN beta — see §A.1.)
       2026-06-19.**
 - [x] CHANGELOG / release notes written. **Done 2026-06-19** (`CHANGELOG.md`
       + docs-site `changelog.md` include).
-- [ ] `CHANGELOG.md` refreshed for the post-2026-06-19 work (§A.3): storage
+- [x] `CHANGELOG.md` refreshed for the post-2026-06-19 work (§A.3): storage
       rework + one-time in-place migration callout, RecordCache, rule-info,
       logging split, per-task durations; behaviour changes under **Changed**.
+      **Done 2026-07-03** — also picked up `run --raise` (missed by the
+      original 06-19 write-up), the colourised CLI/`--colour` flag, `why`'s
+      diff rendering, and two Fixed entries: the bug 05 sidecar run-source
+      fix and the parse-error-degrades-to-changed comparer behaviour.
 - [ ] At-tag housekeeping: prune `todos.md` `[x]` entries to an archive;
       reclassify this doc as a Record in `design_docs/README.md`.
 - [ ] `main` fast-forwarded to remake3; branch refs in workflows/mkdocs
