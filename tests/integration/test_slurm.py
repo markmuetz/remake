@@ -277,6 +277,31 @@ def test_run_array_task_writes_sidecar_not_db(slurm_dir):
     assert {'n': 3} not in [spec['kwargs'] for spec in specs]
 
 
+def test_ingest_after_edit_detects_code_change(slurm_dir):
+    # Bug 05: the sidecar must carry the run source that executed, so that
+    # ingesting under *edited* source (run overnight, tweak in the morning)
+    # still detects the code change and replans the task.
+    cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')
+    cli('run-array-task', 'pipeline.py', 'gen', '3')
+    key = json.loads(Path('.remake/jobs/gen.json').read_text())[3]['task_key']
+    sidecar = Path(f'.remake/tasks/results/gen/{key[:2]}/{key[2:]}.json')
+    payload = json.loads(sidecar.read_text())
+    assert payload['run_hash']  # what actually ran travels in the sidecar
+
+    # Edit the rule body before anything ingests the sidecar.
+    Path('pipeline.py').write_text(PIPELINE.replace(
+        "Path(outputs['o']).write_text(str(n))",
+        "Path(outputs['o']).write_text(str(n) + '!')",
+    ))
+
+    # This invocation ingests the sidecar, then plans: gen[n=3] completed
+    # under the old code, so the edit must put it back in the plan.
+    cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')
+    assert not sidecar.exists()
+    specs = json.loads(Path('.remake/jobs/gen.json').read_text())
+    assert {'n': 3} in [spec['kwargs'] for spec in specs]
+
+
 def test_failed_sidecar_traceback_reaches_info(slurm_dir, capsys):
     Path('failing.py').write_text('''
 from pathlib import Path

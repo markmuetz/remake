@@ -54,6 +54,10 @@ class SidecarWriter(MetadataManager):
             'exception': exception,
             'uses_hash': compute_uses_hash(task.rule.uses),
             'io_hash': compute_io_hash(task.rule),
+            # Run source as it exists on the compute node: ingest must record
+            # what actually ran, not what the ingesting process has on disk
+            # (design_docs/bugs/05_slurm_sidecar_run_code_not_recorded.md).
+            'run_hash': task.rule.source['run'],
             'run_seq': self.run_seq,
             # Matches the format sqlite's datetime('now') stores (UTC).
             'timestamp': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),

@@ -483,6 +483,7 @@ class Sqlite3Backend(MetadataManager):
         for rule, key, payload, _ in pending:
             rule_id, run_code_id, _, cur_io_code_id = self.rule_ids[rule.name]
             io_text = payload.get('io_hash')
+            run_text = payload.get('run_hash')
             self.conn.execute(
                 'INSERT INTO task(key, rule_id, run_code_id, uses_code_id, io_code_id, '
                 '                 run_seq, last_run_timestamp, last_run_status, exception) '
@@ -498,7 +499,11 @@ class Sqlite3Backend(MetadataManager):
                 (
                     key,
                     rule_id,
-                    run_code_id,
+                    # Pre-run_hash sidecar: fall back to the rule's current
+                    # run state (mis-attributes the run source if the rule was
+                    # edited between run and ingest — the bug the run_hash
+                    # field exists to fix).
+                    intern(run_text) if run_text else run_code_id,
                     intern(payload.get('uses_hash', '')),
                     # Pre-io_hash sidecar: fall back to the rule's current io
                     # state (was compute_io_hash(rule), interned at ensure).

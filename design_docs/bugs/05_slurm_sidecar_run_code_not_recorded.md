@@ -1,6 +1,9 @@
 # Bug 05 — SLURM sidecar ingestion stamps the *current* run-code, not the code that ran
 
-**Status:** open — reported 2026-07-03.
+**Status:** fixed 2026-07-03 — sidecar carries `run_hash`, ingest interns it
+(fallback to current id only for pre-fix sidecars); regression test
+`test_ingest_after_edit_detects_code_change` in tests/integration/test_slurm.py.
+Reported 2026-07-03.
 **Affects:** SLURM executor only (the sidecar → DB ingest path). Silently
 produces **stale outputs with no rerun**: a completed task is recorded as
 having run source it did not run, so a genuine code change is missed and
