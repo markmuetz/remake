@@ -45,14 +45,35 @@ version bump.
      `docs/guide/debugging.md`.
    - The tuple-key and dynamic matrix forms are documented; re-verify
      every CLI flag and example against the shipped behaviour.
+   - *Added 2026-07-02 — the drift since this item was written:*
+     `rule-info` (new command); the three-log split + `remake.jsonl`
+     (debugging.md has the layout, but other pages may still say "the
+     remake.log"); `why`'s richer output (per-helper uses source diffs,
+     before→after values, io-changed segment naming, multi-reason);
+     the new decoration-time errors (io-spec plumbing check, uses-shadow
+     warning) — these belong on the authoring/rules pages; per-task
+     durations + run summary in the logs.
    - Action: read each docs page against the current CLI/API; `mkdocs
      build --strict` already guards links, not correctness.
 
-3. **Branch migration into `main`** (see §D). Do this once the above are
+3. **Refresh `CHANGELOG.md`.** Written 2026-06-19 (§B below, struck);
+   substantial user-visible work has shipped since and must be added:
+   the storage rework + **in-place migration** (users see a one-time
+   migrate+VACUUM pause on first contact with each existing DB — call
+   this out explicitly), `RecordCache` (info/why speedups), `remake
+   rule-info`, the logging split (`remake.log` INFO+ / `remake.debug.log`
+   / `remake.jsonl` + `REMAKE_LOG_CODE`), per-task durations + run
+   summary, and — behaviour changes to flag under **Changed**: rule
+   plumbing errors (mismatched inputs/outputs specs) now raise
+   `SignatureError` at import/expansion instead of failing per task at
+   run time, and a `uses` key shadowing a different-valued module global
+   now warns at decoration.
+
+4. **Branch migration into `main`** (see §D). Do this once the above are
    stable, so `main` becomes the release branch and the version bump /
    tag happen there.
 
-4. **Version bump `0.8.0a0` → `0.8.0`** in `src/remake/version.py`, as the
+5. **Version bump `0.8.0a0` → `0.8.0`** in `src/remake/version.py`, as the
    final commit before tagging. The release workflow's build job asserts
    the `v*` tag matches the package version, so tag `v0.8.0`.
 
@@ -104,6 +125,9 @@ version bump.
   the *intent* (robust error handling in the code comparer) may matter —
   **before migrating, confirm the equivalent is present in remake3's
   `src/remake/util/code_compare.py`**; port if not.
+  *Confirmed 2026-07-02:* remake3's `CodeComparer.__call__` catches broad
+  `Exception` and degrades to "changed" (safe direction — a comparison
+  failure triggers a rerun, never a stale skip). Nothing to port.
 - `remake3` — the real trunk: all current code, docs, CI, the `0.8.0a0`
   tag history. This is what `main` should become.
 
@@ -277,6 +301,11 @@ the JASMIN beta — see §A.1.)
       2026-06-19.**
 - [x] CHANGELOG / release notes written. **Done 2026-06-19** (`CHANGELOG.md`
       + docs-site `changelog.md` include).
+- [ ] `CHANGELOG.md` refreshed for the post-2026-06-19 work (§A.3): storage
+      rework + one-time in-place migration callout, RecordCache, rule-info,
+      logging split, per-task durations; behaviour changes under **Changed**.
+- [ ] At-tag housekeeping: prune `todos.md` `[x]` entries to an archive;
+      reclassify this doc as a Record in `design_docs/README.md`.
 - [ ] `main` fast-forwarded to remake3; branch refs in workflows/mkdocs
       updated; Pages branch policy trimmed.
 - [ ] Version bumped to `0.8.0`; tagged `v0.8.0`; release workflow
