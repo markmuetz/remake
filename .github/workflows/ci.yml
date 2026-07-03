@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [remake3, remake2, main]
+    branches: [main, remake2]
   pull_request:
 
 concurrency:

@@ -3,7 +3,7 @@ site_description: A smart Python build tool for reproducible scientific pipeline
 site_url: https://markmuetz.github.io/remake
 repo_url: https://github.com/markmuetz/remake
 repo_name: markmuetz/remake
-edit_uri: edit/remake3/docs/
+edit_uri: edit/main/docs/
 
 theme:
   name: material

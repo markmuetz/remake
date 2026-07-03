@@ -2,7 +2,7 @@
 
 This walkthrough builds a small two-rule pipeline and shows remake's smart
 rerunning. The complete examples live in
-[`examples/`](https://github.com/markmuetz/remake/tree/remake3/examples).
+[`examples/`](https://github.com/markmuetz/remake/tree/main/examples).
 
 ## 1. Write a remakefile
 

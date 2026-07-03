@@ -2,7 +2,7 @@ name: Docs
 
 on:
   push:
-    branches: [remake3]
+    branches: [main]
     paths:
       - docs/**
       - mkdocs.yml
@@ -52,7 +52,7 @@ jobs:
   deploy:
     name: Deploy to GitHub Pages
     needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/remake3'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       pages: write

@@ -37,7 +37,7 @@ Reach for remake when most of these hold:
 The scaling is a direct consequence of the design: remake builds the
 dependency graph at the *rule* level and materialises tasks lazily, so planning
 even a million-task pipeline stays cheap in time and memory (see the
-[design notes](https://github.com/markmuetz/remake/tree/remake3/design_docs)).
+[design notes](https://github.com/markmuetz/remake/tree/main/design_docs)).
 
 remake is deliberately *less* suited to some jobs other tools specialise in:
 wrapping many external command-line tools with per-rule conda/container
@@ -78,5 +78,5 @@ Head to [Getting started](getting-started.md) to build a real pipeline, or
 
 !!! note "Status"
     remake3 is a clean-break redesign (`0.8.0a0`, alpha). The
-    [design notes](https://github.com/markmuetz/remake/tree/remake3/design_docs)
+    [design notes](https://github.com/markmuetz/remake/tree/main/design_docs)
     record the rationale behind the current implementation.
