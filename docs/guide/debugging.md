@@ -27,6 +27,17 @@ outputs missing, or an upstream rerunning (remake never consults file mtimes).
 `<task>` is a task-key prefix; or pass `-Q "<query>"` to explain every matching
 task, or omit both to explain the whole runnable set.
 
+A task can have several reasons at once; `why` lists them all, and shows the
+*substance* of each change, not just its category:
+
+- **run code changed** — a unified diff of the rule body, last run vs current.
+- **`uses=` changed** — names each changed key: plain values as
+  `name: old → new`, a changed helper function as a per-helper source diff
+  (when the old source is on record; records predating the manifest table
+  show `(body)`), added/removed keys as `(added)`/`(removed)`.
+- **inputs/outputs spec changed** — names which segment(s) differ
+  (`inputs`, `outputs`, or both).
+
 One reason worth knowing is **upstream-newer**: an upstream was rebuilt in a
 later invocation than this task without rerunning it in the same pass — for
 example you ran the upstream alone with `run -Q`, or a crash killed the
@@ -107,3 +118,13 @@ jq -r 'select(.record.extra.event == "status_query") | .record.extra.seconds' \
 Status-query timing lines only reach DEBUG when the query is slow
 (>100 ms); the rest are TRACE, so the debug stream stays focused on
 outliers.
+
+Each run ends with a summary at INFO (`ran N task(s), M failed in X.Xs`);
+per-task durations are logged at DEBUG on completion (`event:
+"task_complete"`) and at ERROR on failure, so slow tasks can be mined from
+`remake.jsonl` by their `seconds` field.
+
+When a rerun is caused by a code change, the logs record a one-line summary
+of the comparison. Set `REMAKE_LOG_CODE=1` to also dump both full versions
+of every compared function at TRACE — off by default because it can crowd
+everything else out of the log.

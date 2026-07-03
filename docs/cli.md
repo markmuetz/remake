@@ -7,6 +7,15 @@ command output only, so `--json` output is clean for piping.
 remake <command> pipeline.py [options]
 ```
 
+## Global options
+
+These go *before* the command name (`remake -D run pipeline.py`):
+
+| Option | Meaning |
+|---|---|
+| `-T, --trace` / `-D, --debug` / `-I, --info` / `-W, --warning` | console log level (default: info) |
+| `--colour {auto,always,never}` | colourise output; `auto` (the default) colours TTYs only and honours `NO_COLOR`/`FORCE_COLOR` |
+
 ## Commands
 
 | Command | Purpose |
@@ -18,7 +27,7 @@ remake <command> pipeline.py [options]
 | `rule-info` | Detail view of one rule: docstring, matrix, input/output templates, uses |
 | `task-info` | Detail view of one task: status, paths, log, SLURM job |
 | `task-log` | Print a task's per-task log |
-| `why` | Explain why a task would (or would not) rerun |
+| `why` | Explain why task(s) would (or would not) rerun |
 | `lint` | Check input/output wiring between rules |
 | `rule-dag` | Print the rule dependency DAG in topological order |
 | `slurm-status` | Live SLURM queue state of the last submission, per rule |
@@ -68,15 +77,29 @@ remake run pipeline.py [options]
 | `--reasons` | per-rule tally of *why* the to-run tasks would rerun |
 | `--json` | machine-readable output |
 
-## Selecting a single task
+## Inspecting rules and tasks
 
-`task-info`, `task-log` and `why` take either a task key (a prefix is enough)
-or `-Q` to select by kwargs query:
+| Option | Meaning |
+|---|---|
+| `ls-tasks -i, --inputs` / `-o, --outputs` | show each task's input/output files, indented under it |
+| `ls-tasks --check` | with `-i`/`-o`, stat each file and mark exists/complete (one stat per file — slow for large selections) |
+| `rule-dag -N, --number-of-tasks` | annotate each rule with its task count as `rule[N]` (`?` when a dynamic matrix isn't resolvable yet) |
+| `rule-dag -M, --matrix-keys` | annotate each rule with its matrix keys as `rule(m1, m2)` |
+| `task-log --path` | print the log path only |
+
+## Selecting tasks for `task-info`, `task-log` and `why`
+
+All three take either a task key (a prefix is enough) or `-Q` to select by
+kwargs query:
 
 ```bash
 remake why pipeline.py <key-prefix>
 remake task-log pipeline.py -Q "site == 'oxford' and year == 2015"
 ```
+
+`task-info` and `task-log` need the selection to match exactly one task.
+`why` explains *every* match, and with no key and no query it explains the
+whole runnable set.
 
 ## Queries
 

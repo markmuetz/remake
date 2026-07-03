@@ -24,6 +24,21 @@ def clean(inputs, outputs, site, year):
 - The function signature takes `inputs`, `outputs`, and one argument per matrix
   dimension.
 
+### Plumbing is checked up front
+
+Wiring mistakes raise `SignatureError` once, early — at decoration for static
+matrices, at first expansion for callable ones — rather than failing every
+task identically at run time:
+
+- the signature must start with `(inputs, outputs, ...)` matching the declared
+  specs, and its remaining parameters must equal the matrix keys;
+- an inputs/outputs *template* may only reference `{placeholders}` that the
+  matrix provides (`'data/{stie}/{year}.csv'` against a `site` matrix is
+  caught at import, naming the offending field);
+- a callable `inputs`/`outputs` may only require parameters the matrix
+  provides;
+- `*args`/`**kwargs` and empty `inputs={}`/`outputs={}` are rejected.
+
 ## Matrix forms
 
 The `matrix` can be written four ways:
@@ -172,6 +187,16 @@ def filter_rows(inputs, outputs):
 
 See `examples/ex3_uses_scope.py` for the full semantics (one level deep;
 classes are supported — the whole class body is hashed).
+
+!!! warning "A `uses` key that shadows a different module global warns"
+    Inside the rule, the `uses=` value wins for that name. If a `uses` key
+    matches a module global bound to a *different* value —
+    `uses={'normalise': normalise_v1}` in a module that also defines
+    `normalise` — the reader sees one definition while another runs, so
+    remake warns at decoration (`ScopeWarning`). The standard idiom
+    `uses={'normalise': normalise}` (declaring the same object for tracking)
+    stays silent. If the warning fires after an intentional edit, rename the
+    uses key or update the global.
 
 ## Registering rules
 

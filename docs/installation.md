@@ -5,11 +5,13 @@ remake requires **Python 3.10+**.
 ## From PyPI
 
 ```bash
-pip install remake
+pip install --pre remake
 ```
 
 !!! note
-    A PyPI alpha (`0.8.0a0`) is planned. Until it lands, install from source.
+    remake3 is on PyPI as a pre-release (`0.8.0a0`), so the `--pre` flag is
+    required — a plain `pip install remake` currently resolves to the old
+    remake2 (`0.6.x`) line.
 
 ## From source
 

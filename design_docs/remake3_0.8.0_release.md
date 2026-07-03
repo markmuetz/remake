@@ -56,6 +56,8 @@ version bump.
    - Action: read each docs page against the current CLI/API; `mkdocs
      build --strict` already guards links, not correctness.
 
+   **DONE 2026-07-03** — see the DoD entry for the per-page fix list.
+
 3. **Refresh `CHANGELOG.md`.** Written 2026-06-19 (§B below, struck);
    substantial user-visible work has shipped since and must be added:
    the storage rework + **in-place migration** (users see a one-time
@@ -290,7 +292,15 @@ the JASMIN beta — see §A.1.)
 
 - [x] A real pipeline migrated and run end-to-end on JASMIN under remake3
       (mcs_prime equivalence PASS 2026-06-17/18 — see §A.1).
-- [ ] Docs reconciled with shipped CLI/API; `mkdocs build --strict` green.
+- [x] Docs reconciled with shipped CLI/API; `mkdocs build --strict` green.
+      **Done 2026-07-03** — every page checked against live `--help` output,
+      package exports and a real walkthrough run; drift fixed in cli.md
+      (global options, why's three modes, ls-tasks/rule-dag/task-log flags),
+      debugging.md (why's diff-rendering, run summary + per-task durations,
+      `REMAKE_LOG_CODE`), rules-and-tasks.md (decoration-time SignatureError
+      checks, uses-shadow warning), slurm.md (full `.remake/` layout,
+      sharded log paths), installation.md (alpha is live: `pip install
+      --pre remake`).
 - [x] Top-level `except RemakeError` handler in the CLI (§E.1), with a test
       asserting clean `error:` output + exit 2. **Done 2026-06-19.**
 - [x] `-I` flag collision resolved (§E.2) — dropped the `-I` short form from

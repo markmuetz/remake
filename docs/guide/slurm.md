@@ -31,10 +31,12 @@ On submission remake writes, under `.remake/`:
 
 | Path | Contents |
 |---|---|
+| `jobs/<rule>.json` | per-rule job spec (one entry per task) |
 | `slurm/<rule>.sbatch` | per-rule array script |
 | `slurm/output/<rule>/` | per-element stdout/stderr |
-| `jobs/<rule>.jobids.json` | submitted job ids (sidecar) |
-| `tasks/results/...` | per-task result **sidecars** |
+| `submit.sh` | master submission script (re-run it with `remake resubmit`) |
+| `jobs/<rule>.jobids.json` | submitted job ids (written at submission) |
+| `tasks/results/...` | per-task result **sidecars**, absorbed into the DB by the next remake invocation |
 
 ## Monitoring
 
@@ -48,7 +50,7 @@ reasons.
 
 ## Logs
 
-Each task writes a per-task log at
-`.remake/tasks/log/<rule>/<key>.log` (not a shared file — that interleaves and
-corrupts under a wide array). Retrieve one with
-[`remake task-log`](../cli.md).
+Each task writes a per-task log under
+`.remake/tasks/log/<rule>/` (sharded by key; not a shared file — that
+interleaves and corrupts under a wide array). Retrieve one with
+[`remake task-log`](../cli.md) — or `task-log --path` to get its location.
