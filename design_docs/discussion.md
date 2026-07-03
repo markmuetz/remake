@@ -812,6 +812,37 @@ design discussion before any work starts.
   [design_docs/bugs/01_durable_rerun_propagation.md](bugs/01_durable_rerun_propagation.md)
   (crash + partial-target scenarios, fix = run-sequence id).
 
+- **Lambda source recovery for inline callable specs — parked 2026-07-03.**
+  Investigated during the rule-syntax discussion (see the settled-decision
+  record in [graduated_discussion.md](graduated_discussion.md)): could
+  `inputs=lambda site: {...}` become first-class, so a rule's callable specs
+  live *inside* the decorator block instead of as named module-level
+  functions? Today lambdas get raw-line-text capture (`function_source` →
+  `inspect.getsource` returns the whole enclosing statement — for a decorator
+  arg, the unparseable `@rule(...)` block), so cosmetic edits rerun tasks and
+  same-line twins are indistinguishable; the docs steer to named `def`s.
+  - *Technique (proof-of-concept validated, ~30 lines, stdlib only).* The
+    lambda's `__code__.co_firstlineno` locates it in the parsed AST of its
+    source file; among `ast.Lambda` candidates on that line, disambiguate by
+    argument names, then (3.11+) by whether the code object's instruction
+    columns (`co_positions()`, dropping the col-0 RESUME entry) fall inside
+    the candidate's span. `ast.unparse(node)` then yields *canonical* source:
+    exact recovery from inside multi-line decorator calls, two different
+    same-line lambdas separated (3.11+), reformatting never changes the
+    hash (strictly better than today's line-text capture). Multi-*line*
+    expressions work; multi-*statement* lambdas are impossible at the
+    language level — statement-shaped specs (wescon's `Defer`-raising
+    matrices) keep named `def`s regardless. On 3.10 (current floor),
+    same-line twins with identical argnames fall back to line text. Prior
+    art: the `executing` library uses the same node-location trick.
+  - *Why parked.* Inline dicts and comprehensions already cover most
+    "spec next to the rule" needs without any new machinery; lambdas would
+    add only the per-kwarg single-expression tier, judged not worth a new
+    supported form + docs surface. Revisit if the named-function ceremony
+    for callable specs grates in field use — the technique is proven and
+    slots into `function_source` with a graceful fallback, leaving the
+    comparer/manifest/`why` pipeline untouched.
+
 ## Graduated (designed and implemented)
 
 Moved to [graduated_discussion.md](graduated_discussion.md) — full design

@@ -5,7 +5,9 @@ implemented** — kept verbatim for the record (design reasoning, decisions and
 their revisions, field measurements). The live ideas list stays in
 discussion.md; when an item ships, it moves here with its implementation
 postscripts. Parked sub-questions noted inline under an item remain open even
-though the item itself shipped.
+though the item itself shipped. A final section records **settled design
+decisions** that produced no code — kept so they aren't relitigated without
+new evidence.
 
 ## Graduated with full design records
 
@@ -223,3 +225,56 @@ though the item itself shipped.
   see design_docs/per_task_logging.md.
 - **Task inspection/validation** — `remake lint` (near-miss input wiring,
   missing depends_on).
+
+## Settled design decisions (no code change)
+
+- **Rule syntax: the `@rule` decorator, not a `class Rule` — settled
+  2026-07-03.** Challenged pre-0.8.0: the decorator is neat for simple cases
+  but doesn't *visibly* group a rule's parts, and every callable spec
+  (inputs/outputs/matrix function) must be a *named* module-level function,
+  scattering single-use `agg_inputs`/`event_matrix`-style defs around the
+  file. The counterproposal was a modernised class — not remake2's: each slot
+  an explicit `@staticmethod` (honest Python, no missing-`self` lie), helpers
+  still declared via `uses=`, and each slot hashed *per-part* by the existing
+  AST-normalised machinery (each staticmethod is a plain function, so
+  `function_source` applies unchanged — no whole-class-body hashing, no
+  invisible helpers). That version genuinely fixes most of what was wrong
+  with remake2's classes, and it gives every rule function a canonical home.
+
+  *Why the decorator still wins:*
+  - **The costs land asymmetrically.** Only *callable* specs need names, and
+    they are the minority in real pipelines (wescon: 2 deferrable matrices in
+    8 rules; mcs_prime is dominated by dict specs + `inputs=gen.outputs`
+    chaining). The class taxes *every* rule with `class X(Rule):` +
+    `@staticmethod` boilerplate and an indent level to relieve pain felt by
+    the tail. Syntax should optimise the common case.
+  - **Two dialects is the disqualifying outcome.** remake2 itself ended with
+    two class styles, and the migration guide's first section is "Recognising
+    the source dialect". Offering class *alongside* decorator recreates that
+    in docs/examples/skill; *replacing* the decorator would discard a
+    field-validated API (two production JASMIN migrations, 32 rules, outputs
+    identical) days before tagging. Replace-or-reject, never both.
+  - **The function is the unit remake reasons about** — change detection,
+    scope analysis, decoration-time `SignatureError` checks, `why`'s diffs
+    all operate on plain functions; the decorator keeps the user-visible unit
+    and the engine's unit the same thing. Chaining (`inputs=gen.outputs`)
+    already gives "rule as object" without inheritance temptation. Ecosystem
+    direction agrees (Luigi's class-Tasks → boilerplate reputation; Airflow
+    added `@task` on top of class operators; pytest/click/Flask).
+
+  *The named-function ceremony*, the strongest remaining objection, was
+  probed separately via lambda source recovery (AST node location +
+  `ast.unparse`) — proven feasible but **parked**: inline dicts and
+  comprehensions already put most specs inside the rule block, and
+  statement-shaped specs (e.g. `Defer`-raising matrices) can never be
+  lambdas anyway. Full record under "Lambda source recovery" in
+  [discussion.md](discussion.md).
+
+  *Reopen bar:* a post-0.8.0 side-by-side prototype (the class front-end is
+  ~50 lines compiling to the same `Rule` dataclass) rewritten against the
+  *worst* real file (wescon's compare/gather chain), judged across the whole
+  rule distribution — the class form must read better on the common case
+  too, not just the callable-heavy tail, and would *replace* the decorator
+  if adopted. Mitigation meanwhile: house style of a stacked, aligned
+  decorator block; `<rule>_inputs`-style names placed directly above their
+  rule; `remake rule-info` as the assembled one-rule view.
