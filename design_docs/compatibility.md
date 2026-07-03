@@ -36,6 +36,16 @@ ships a defensive `ALTER TABLE` migration path, so "the DB gets ramps even in
   misread it.
 - No formal deprecation cycle is owed pre-1.0, but prefer one when it is cheap
   (an alias, a warning) — especially for the remakefile DSL.
+- **Patch releases (0.x.y, decided 2026-07-03 at 0.8.0):** bug fixes and safe
+  robustness only — no API/CLI/DSL changes, no schema changes beyond additive
+  migrations, and, critically, **no new rerun triggers**: upgrading to a patch
+  must never cause an existing pipeline to mass-rerun. (A fix that
+  *corrects* change detection — e.g. bug 05's sidecar run-source recording —
+  is allowed to rerun what was *wrongly recorded as fresh*; that is the bug
+  being fixed, not a new trigger. The line is: no rerun whose cause is the
+  upgrade itself rather than a defect in what was recorded.) Cut patches
+  from `main` while it is still fix-only; branch from the release tag only
+  if a fix becomes urgent after feature work has landed.
 
 ## The 1.0 contract
 

@@ -30,6 +30,14 @@ web control plane in 0.12.x — see below.)
 
 ## Milestones
 
+### 0.8.x — maintenance lane (parallel, not a milestone)
+Non-breaking bug fixes and safe robustness shipped as patches while 0.9.0 is
+in development — e.g. bounding `retry_lock_commit`, the zarr-v3 token check,
+coverage corners (todos.md). Patch rules (no API/DSL/schema breaks, no new
+rerun triggers) in [compatibility.md](compatibility.md). Cut from `main`
+until feature work lands there; branch from the `v0.8.0` tag only if needed
+after that.
+
 ### 0.9.x — observability & correctness
 The scoped slice in [future_releases/v0.9.0.md](future_releases/v0.9.0.md):
 output validation (`ensure`-style on the token ABC), per-task resource capture
