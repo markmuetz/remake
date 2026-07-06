@@ -45,6 +45,31 @@ design discussion before any work starts.
       over the distribution, weighs headroom against OOM risk, and proposes
       concrete config edits to the remakefile. Sits naturally alongside the
       existing `remake` skill (operate/debug/author pipelines).
+- **Pending/running split — a distinct in-flight task status (2026-07-06).**
+  Came out of the `info` four-state partition work (up-to-date / stale /
+  failed / pending, commit `2846bf2`): the `pending` bucket conflates two
+  states — *never run* (no DB record) and *in flight / interrupted* (a
+  record exists but isn't terminal). Mid-run on SLURM that's a routine
+  ambiguity: hundreds of tasks sit in `pending` while `squeue` shows them
+  RUNNING. A rename of the column (e.g. "never run") was considered and
+  rejected — it would be actively wrong for the in-flight case and would
+  split the status vocabulary (`info --tasks`, `set-state --pending`,
+  `why`'s "last run pending" all say `pending`). The real fix is a new
+  `running` status stamped when a task starts, leaving `pending` to mean
+  strictly "no record".
+  - *Cheap part:* `status_summary` can already distinguish the two (record
+    absent vs record non-terminal) — the summary-side split is a few lines.
+  - *Real cost:* it's a user-facing status, so it touches the DB status
+    semantics, every executor's record-writing (local, multiproc, dask,
+    SLURM — including sidecar ingestion timing), and every renderer of
+    statuses (`info`, `--tasks`, `--json`, `task-info`, colours in
+    `STATUS_STYLE`). Crash-handling needs care: a task that died without
+    writing a terminal record would show `running` forever unless something
+    (next plan? `slurm-status` cross-check against squeue?) demotes it.
+  - *Payoff:* `info` reads like a progress bar for live runs
+    (pending → running → success/failed), and pairs naturally with the
+    **SLURM monitor** / **Terminal output** ideas above — the same state is
+    what a live view would poll.
 - **Web interface** — *being actively reconsidered (2026-06-23); scheduled
   as a 0.12.x exploration in [roadmap.md](roadmap.md).* The original design
   doc rules a GUI/dashboard out of scope, and a *passive read-only viewer*
