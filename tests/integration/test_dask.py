@@ -54,7 +54,7 @@ def test_dask_end_to_end(pipeline_dir, capsys):
     capsys.readouterr()
     cli('info', 'pipeline.py', '--json')
     data = json.loads(capsys.readouterr().out)
-    assert all(r['success'] == r['tasks'] and r['to_run'] == 0 for r in data['rules'])
+    assert all(r['up_to_date'] == r['tasks'] and r['to_run'] == 0 for r in data['rules'])
     # Workers' sidecars were ingested, and they wrote per-task logs.
     assert not list(Path('.remake/tasks/results').rglob('*.json'))
     assert len(list(Path('.remake/tasks/log').rglob('*.log'))) == 7

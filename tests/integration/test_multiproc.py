@@ -51,7 +51,7 @@ def test_multiproc_end_to_end(pipeline_dir, capsys):
     capsys.readouterr()
     cli('info', 'pipeline.py', '--json')
     data = json.loads(capsys.readouterr().out)
-    assert all(r['success'] == r['tasks'] and r['to_run'] == 0 for r in data['rules'])
+    assert all(r['up_to_date'] == r['tasks'] and r['to_run'] == 0 for r in data['rules'])
     # Workers' sidecars were ingested, and they wrote per-task logs.
     assert not list(Path('.remake/tasks/results').rglob('*.json'))
     assert len(list(Path('.remake/tasks/log').rglob('*.log'))) == 7
@@ -89,7 +89,7 @@ rmk.rules_from_current_module()
     by_rule = {r['rule']: r for r in data['rules']}
     assert by_rule['g'] == {
         'rule': 'g', 'deferred': False, 'tasks': 2,
-        'success': 1, 'failed': 0, 'pending': 1, 'to_run': 1,
+        'up_to_date': 1, 'stale': 0, 'failed': 0, 'pending': 1, 'to_run': 1,
     }
     # -F --json now groups failures; the traceback is on the representative.
     assert 'boom from n=2' in data['failures'][0]['example']['exception']

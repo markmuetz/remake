@@ -92,10 +92,11 @@ def test_run_and_info(pipeline_dir, capsys):
     out = capsys.readouterr().out
     lines = [line.split() for line in out.splitlines() if line.strip()]
     header_idx = next(i for i, line in enumerate(lines) if line[0] == 'rule')
-    assert lines[header_idx][:3] == ['rule', 'tasks', 'success']
+    assert lines[header_idx][:3] == ['rule', 'tasks', 'up-to-date']
     by_rule = {line[0]: line[1:] for line in lines[header_idx + 1:]}
-    assert by_rule['generate'] == ['2', '2', '0', '0', '0']
-    assert by_rule['process'] == ['2', '2', '0', '0', '0']
+    # tasks, up-to-date, stale, failed, pending, to run
+    assert by_rule['generate'] == ['2', '2', '0', '0', '0', '0']
+    assert by_rule['process'] == ['2', '2', '0', '0', '0', '0']
 
 
 def test_info_query_and_tasks(pipeline_dir, capsys):
@@ -437,10 +438,10 @@ def test_set_state_success_adopts_outputs(pipeline_dir, capsys):
 
     cli('info', 'pipeline.py', '--json')
     by_rule = {r['rule']: r for r in json.loads(capsys.readouterr().out)['rules']}
-    assert by_rule['generate']['success'] == 2
+    assert by_rule['generate']['up_to_date'] == 2
     assert by_rule['process'] == {
         'rule': 'process', 'deferred': False, 'tasks': 2,
-        'success': 1, 'failed': 0, 'pending': 1, 'to_run': 1,
+        'up_to_date': 1, 'stale': 0, 'failed': 0, 'pending': 1, 'to_run': 1,
     }
 
 
@@ -526,7 +527,7 @@ def test_info_json(pipeline_dir, capsys):
     cli('info', 'pipeline.py', '--json', '--tasks')
     data = json.loads(capsys.readouterr().out)
     by_rule = {r['rule']: r for r in data['rules']}
-    assert by_rule['generate']['success'] == 2 and by_rule['generate']['to_run'] == 0
+    assert by_rule['generate']['up_to_date'] == 2 and by_rule['generate']['to_run'] == 0
     assert len(data['tasks']) == 4
     assert all(t['status'] == 'success' and len(t['key']) == 40 for t in data['tasks'])
 

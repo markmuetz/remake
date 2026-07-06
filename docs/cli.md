@@ -68,6 +68,18 @@ remake run pipeline.py [options]
 
 ## `info`
 
+The per-rule table is a four-state partition of each rule's tasks — the counts
+always satisfy `up-to-date + stale + failed + pending = tasks` and
+`up-to-date + to run = tasks`:
+
+| Column | Meaning |
+|---|---|
+| `up-to-date` | succeeded and the planner would not rerun it |
+| `stale` | succeeded, but would rerun (code/`uses=`/io changed, or an upstream reruns) |
+| `failed` | last run failed (will rerun) |
+| `pending` | never run, or a run is in flight |
+| `to run` | what `remake run` would do now = `stale + failed + pending` |
+
 | Option | Meaning |
 |---|---|
 | `-Q, --query` | filter tasks |

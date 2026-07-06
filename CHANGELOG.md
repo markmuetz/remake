@@ -4,6 +4,17 @@ All notable changes to remake are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **`remake info` columns are now a four-state partition**: `up-to-date`,
+  `stale`, `failed`, `pending` (replacing `success`, which silently included
+  successes the planner would rerun). The counts satisfy
+  `up-to-date + stale + failed + pending = tasks` and
+  `up-to-date + to run = tasks`. In `--json`, the per-rule/totals key
+  `success` is replaced by `up_to_date` and `stale` is added.
+
 ## [0.8.0] — 2026-07-03
 
 **remake 0.8.0 is a ground-up rewrite.** It shares the name and the core idea

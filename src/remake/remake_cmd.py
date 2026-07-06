@@ -500,16 +500,19 @@ class RemakeCLI:
 
         paint = Painter(args.colour)
 
-        header = ('rule', 'tasks', 'success', 'failed', 'pending', 'to run')
+        # Four-state partition + the plan's view: up-to-date + stale + failed
+        # + pending == tasks, and up-to-date + to-run == tasks.
+        header = ('rule', 'tasks', 'up-to-date', 'stale', 'failed', 'pending', 'to run')
         rows = [
-            (r['rule'], '?', '?', '?', '?', 'deferred')
+            (r['rule'], '?', '?', '?', '?', '?', 'deferred')
             if r['deferred']
-            else (r['rule'], r['tasks'], r['success'], r['failed'], r['pending'], r['to_run'])
+            else (r['rule'], r['tasks'], r['up_to_date'], r['stale'],
+                  r['failed'], r['pending'], r['to_run'])
             for r in rule_rows
         ]
         totals_row = (
-            'TOTAL', totals['tasks'], totals['success'], totals['failed'],
-            totals['pending'], totals['to_run'],
+            'TOTAL', totals['tasks'], totals['up_to_date'], totals['stale'],
+            totals['failed'], totals['pending'], totals['to_run'],
         )
         widths = [
             max(len(str(r[i])) for r in rows + [header, totals_row])
@@ -518,7 +521,8 @@ class RemakeCLI:
 
         # Per-column styling for the count columns (rule name + tasks count are
         # left plain). A zero count is dimmed so non-zero cells stand out.
-        col_style = (None, None, ('green',), ('red', 'bold'), ('yellow',), ('cyan',))
+        col_style = (None, None, ('green',), ('cyan',), ('red', 'bold'),
+                     ('yellow',), ('cyan',))
 
         def render_row(row, *, emphasise=False):
             cells = []

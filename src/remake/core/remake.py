@@ -260,7 +260,15 @@ class Remake:
         list_tasks) and 'failures' (when list_failures). Rendering, failure
         grouping and JSON serialisation are the caller's job; this method only
         gathers. Rules are in dependency (topological) order; deferred rules
-        appear as {'rule', 'deferred': True} with no counts."""
+        appear as {'rule', 'deferred': True} with no counts.
+
+        Counts are a four-state partition of each rule's tasks —
+        up_to_date + stale + failed + pending == tasks — where a *stale* task
+        succeeded last run but plan() would rerun it (code/uses/io changed or
+        an upstream reruns). to_run is the plan's view of the same tasks, so
+        up_to_date + to_run == tasks (a success the plan skips is up to date,
+        everything else is to run; an adopted-outputs task under
+        check_outputs='fallback'/'always' counts as up to date)."""
         import networkx as nx
 
         if not self._finalized:
@@ -275,6 +283,7 @@ class Remake:
             check_outputs=self.check_outputs,
         )
         remaining = Counter(task.rule.name for task in runnable)
+        runnable_keys = {task.key for task in runnable}
         deferred_names = {rule.name for rule in deferred}
         predicate = make_predicate(query) if query else None
 
@@ -306,14 +315,20 @@ class Remake:
                 else 'pending'
                 for t in tasks
             }
-            counts = Counter(statuses.values())
+            # Status (DB history) crossed with the plan: a success the plan
+            # reruns is stale, not up to date; a pending task the plan skips
+            # (adopted outputs) is up to date, not pending.
+            counts = Counter(
+                (statuses[t.key], t.key in runnable_keys) for t in tasks
+            )
             row = {
                 'rule': rule.name,
                 'deferred': False,
                 'tasks': len(tasks),
-                'success': counts['success'],
-                'failed': counts['failed'],
-                'pending': counts['pending'],
+                'up_to_date': counts[('success', False)] + counts[('pending', False)],
+                'stale': counts[('success', True)],
+                'failed': counts[('failed', True)] + counts[('failed', False)],
+                'pending': counts[('pending', True)],
                 'to_run': remaining.get(rule.name, 0),
             }
             if reasons:
@@ -340,7 +355,7 @@ class Remake:
         tallied = [r for r in rule_rows if not r['deferred']]
         totals = {
             field: sum(r[field] for r in tallied)
-            for field in ('tasks', 'success', 'failed', 'pending', 'to_run')
+            for field in ('tasks', 'up_to_date', 'stale', 'failed', 'pending', 'to_run')
         }
         out = {'rules': rule_rows, 'totals': totals}
         if list_tasks:

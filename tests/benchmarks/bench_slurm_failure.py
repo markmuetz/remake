@@ -242,11 +242,11 @@ def cmd_report(args):
     # (1) DB status counts: stage1 splits success/failed; stage2 runs the
     #     survivors and leaves the blocked ones pending (never failed).
     expect = {
-        'stage1': {'success': n - n_fail, 'failed': n_fail, 'pending': 0},
-        'stage2': {'success': n - n_fail, 'failed': 0,      'pending': n_fail},
+        'stage1': {'up_to_date': n - n_fail, 'failed': n_fail, 'pending': 0},
+        'stage2': {'up_to_date': n - n_fail, 'failed': 0,      'pending': n_fail},
     }
-    print(f'{"rule":<8} {"success":>8} {"failed":>7} {"pending":>8}   '
-          f'{"(expected success/failed/pending)"}')
+    print(f'{"rule":<8} {"up-to-date":>10} {"failed":>7} {"pending":>8}   '
+          f'{"(expected up-to-date/failed/pending)"}')
     for name in ('stage1', 'stage2'):
         r = rules.get(name)
         if r is None:
@@ -254,12 +254,12 @@ def cmd_report(args):
             ok = False
             continue
         e = expect[name]
-        got = (r['success'], r['failed'], r['pending'])
-        want = (e['success'], e['failed'], e['pending'])
+        got = (r['up_to_date'], r['failed'], r['pending'])
+        want = (e['up_to_date'], e['failed'], e['pending'])
         flag = '' if got == want else '  <-- MISMATCH'
         if got != want:
             ok = False
-        print(f'{name:<8} {r["success"]:>8} {r["failed"]:>7} {r["pending"]:>8}   '
+        print(f'{name:<8} {r["up_to_date"]:>10} {r["failed"]:>7} {r["pending"]:>8}   '
               f'(expected {want[0]}/{want[1]}/{want[2]}){flag}')
 
     # (2) The core invariant, checked element-wise on the filesystem: a stage2
