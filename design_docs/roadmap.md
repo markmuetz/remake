@@ -28,6 +28,19 @@ Discipline preserved: **no orchestrator daemon, no passive dashboard.** Static
 reports + a queryable DB. (The one deliberate revisit is the *interactive*
 web control plane in 0.12.x — see below.)
 
+## Pre-tag review gate
+
+Every release tag gets an **adversarial review** of the full diff since the
+previous tag, before tagging — a fresh reviewer context that sees only the
+diff, instructed to find flaws (the Bun-in-Rust lesson: the implementing
+context is biased toward approving its own work). Patch releases
+(`v0.8.0..v0.8.1`): a code-reviewer agent pass over the range, which also
+checks the patch rules in [compatibility.md](compatibility.md) held. Minor
+releases (`v0.8.x..v0.9.0`): `/code-review ultra` per feature branch/PR, or a
+per-subsystem agent fan-out over the tag range if work landed on `main`
+directly. Complements the per-commit hook in `.claude/hooks/` (blocks >200
+changed-line commits until reviewed).
+
 ## Milestones
 
 ### 0.8.x — maintenance lane (parallel, not a milestone)
