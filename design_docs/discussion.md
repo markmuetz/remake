@@ -45,6 +45,120 @@ design discussion before any work starts.
       over the distribution, weighs headroom against OOM risk, and proposes
       concrete config edits to the remakefile. Sits naturally alongside the
       existing `remake` skill (operate/debug/author pipelines).
+- **`slurm-status --verdict` — a pipeline-completion query for orchestration
+  (2026-07-09).** Motivating workflow (wescon-tools): run remakefiles on
+  JASMIN, then rsync figures to a local machine — wanted as *one* local
+  command. `remake run -E slurm` is fire-and-forget (queues everything,
+  exits), so the missing primitive is an authoritative "is the pipeline done,
+  and did it succeed?" that a wrapper can poll cheaply over ssh
+  (submit → poll `slurm-status --verdict` → rsync recipe on success).
+  Alternative considered and rejected: a sync task as the final DAG rule
+  (depends on everything, so always runs last — and the continuation handles
+  it correctly since it's a real rule). Elegant, but it interleaves
+  infrastructure with science: the remakefile stops being location-agnostic
+  (bakes in a destination, credentials, network egress — restricted on
+  compute nodes, so it'd need special SLURM placement), and a transfer
+  failure shows up as a *pipeline* failure in the status table. Keep the
+  remakefile science-only; "what happens when it's done" is the caller's
+  business.
+  - *Shape.* A `--verdict` flag on the existing `slurm-status`: print one
+    summary line, exit with a distinct code — **done-ok** (0) /
+    **done-with-failures** / **still-pending** / **cannot-tell** (map to
+    codes when implementing; only 0 = "safe to sync" is contractual).
+    Single-shot, not blocking: each ssh poll is a short-lived connection, the
+    loop lives in the caller. A `--wait --interval` convenience can layer on
+    later without changing the contract.
+  - *Semantics.* Done = none of the tracked jobids (rule sidecars **plus
+    continuation**, below) active in `squeue_snapshot()`. Success then comes
+    from the task DB, not the queue: result sidecars are ingested on any
+    DB-reading load, so by the time the command loads the remake the task
+    statuses are fresh — failed count > 0 ⇒ done-with-failures.
+  - *Gotcha 1 — the continuation job is untracked.* `run_tasks` submits
+    `continuation.sbatch` with `sbatch --parsable` but the id goes nowhere
+    (submit.sh stdout). Race: all tracked jobs finished, continuation about
+    to replan and submit deferred rules ⇒ naive verdict says done
+    prematurely. Fix at submission time: capture the id into a sidecar
+    (e.g. `.remake/jobs/_continuation.jobids.json`) and include it in the
+    tracked set. Chained continuations recurse: each continuation's own
+    submission rewrites the sidecar.
+  - *Gotcha 2 — `afterok` deadlock.* When an upstream job fails, its
+    dependents (and the continuation) sit PD forever with reason
+    `DependencyNeverSatisfied` — a naive poll never terminates.
+    `squeue_snapshot()` already captures the reason column; the verdict must
+    classify that reason as done-with-failures, not pending. (Alternative:
+    submit with `--kill-on-invalid-dep=yes` so SLURM cancels them — worth
+    considering independently, but the verdict shouldn't rely on it.)
+  - *Gotcha 3 — squeue failure looks like an empty queue.*
+    `squeue_snapshot()` degrades to `{}` on error (right for its
+    already-queued-detection caller; wrong here — a transient squeue failure
+    mid-poll would read as "done"). The verdict path needs to distinguish
+    "queue empty" from "queue unknown" ⇒ the cannot-tell exit code; pollers
+    treat it as pending.
+  - *Verdict edge cases to pin down in tests:* nothing ever submitted (no
+    sidecars) — done-ok or cannot-tell?; sidecars from a *previous*
+    submission whose tasks all succeeded (stale-but-consistent: done-ok is
+    correct and idempotent); tasks cancelled via `DependencyNeverSatisfied`
+    never write a result sidecar, so the DB says pending — the failure
+    verdict must come from the failed upstreams, not from expecting every
+    task to have a terminal status.
+  - *Relates to:* the **SLURM monitor** item above (same sidecar × squeue
+    wiring; `--verdict` is its scripting-facing sibling), the **sacct
+    resource audit** (a later `sacct` pass could firm up done-with-failures
+    attribution), and the **pending/running split** (on hold — the verdict
+    deliberately needs no new task status: queue for liveness, DB for
+    outcome). The local wrapper itself (ssh submit → poll → rsync) belongs in
+    the user's rsync_recipes repo, not remake.
+- **Output enumeration for transfer — `ls-tasks --paths` / `--dirs`
+  (2026-07-09).** Companion to the `slurm-status --verdict` item above: once
+  the pipeline is known-done, the sync step should get its file list *from
+  remake* rather than from per-project rsync recipes that hardcode directory
+  globs remake already knows. The primitive nearly exists — `ls-tasks -Q
+  <query> --outputs` lists per-task output files — what's missing is a
+  pipe-friendly form. Target composition (one command, local):
+  `ssh sci "remake ls-tasks f.py -Q '...' --paths" |
+  rsync -ar --files-from=- host:/ $LOCAL_MIRROR` — paths are absolute, the
+  source root is `/`, so the remote tree replicates verbatim into the
+  mirror. Replaces a whole family of hardcoded recipe scripts (wescon-tools'
+  `upflo-rsync-jasmin-*.sh`) with one generic one; remake becomes the sole
+  owner of "where outputs live".
+  - *`--paths`.* Bare output paths, one per line, no decoration (logs already
+    go to stderr, so stdout pipes clean). Cheap: a formatting mode on the
+    existing `ls-tasks` machinery.
+  - *`--dirs`.* The unique *parent dirs* of the selected outputs, for
+    "copy everything underneath". Motivated by the dummy-output pattern in
+    the field (wescon_radar_dev.py): rules declare one `fig_dummy` sentinel,
+    touch it, and write runtime-named figures as siblings — so `--paths`
+    would sync only sentinels and miss every real figure. Dir-level emit +
+    `rsync -r --files-from=-` grabs the lot, needs no remakefile changes,
+    and the dir list stays tiny even when the file list is thousands.
+    Accepted costs: over-copying (a dir may hold another rule's outputs or
+    stale files — harmless for figures, wrong for precision uses; document
+    it) and the sentinels themselves transfer (recipe-side `--exclude`).
+  - *rsync gotchas to document with the recipe:* `--files-from` disables
+    `-a`'s implied `-r`, so directory entries copy as empty shells unless
+    `-r` is explicit; `--ignore-missing-args` for enumerated-but-absent
+    outputs (failed/never-ran tasks) until query-by-status exists.
+  - *Where it runs.* Over ssh on the JASMIN side, always: static matrices
+    would enumerate fine locally, but dynamic matrices / `Defer` resolve by
+    globbing the data dirs, so only the machine with the data answers
+    correctly.
+  - *The deeper fix the dummy pattern points at: first-class directory
+    outputs.* The sentinel-touch idiom exists because a rule cannot declare
+    "my output is this *directory*, contents determined at runtime"
+    (Snakemake's `directory()` is prior art). With it, `--paths` emits the
+    dir and is correct again, `check_outputs` gets defined semantics for
+    such rules (today the sentinel is what's checked — i.e. nothing), and
+    the touch boilerplate dies. Real design questions (what does "complete"
+    mean for a dir output? does its mtime/content hash feed rerun
+    detection?), so: `--dirs` is the works-today bridge, directory outputs
+    the long-term replacement.
+  - *Relates to:* **`slurm-status --verdict`** (the wrapper becomes
+    submit → poll verdict → enumerate → rsync); **query-by-status** (the
+    killer upgrade: `-Q 'status == "success"'` scoped to the latest run ⇒
+    incremental sync of exactly what a run produced, and the clean fix for
+    enumerated-but-absent files); **RO-Crate export**
+    ([rocrate_export.md](rocrate_export.md)) and archiving/cleanup/du —
+    all sit on the same "enumerate a pipeline's files, filtered" verb.
 - **Pending/running split — a distinct in-flight task status (2026-07-06).**
   Came out of the `info` four-state partition work (up-to-date / stale /
   failed / pending, commit `2846bf2`): the `pending` bucket conflates two
