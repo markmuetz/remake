@@ -70,6 +70,10 @@ design discussion before any work starts.
     (pending → running → success/failed), and pairs naturally with the
     **SLURM monitor** / **Terminal output** ideas above — the same state is
     what a live view would poll.
+  - *Status: on hold (2026-07-09).* The crash-staleness problem above (a
+    `running` record whose task died silently, needing queue reconciliation
+    to demote) is too much scope for the payoff right now. Keep `info`
+    DB-only and `slurm-status` queue-only.
 - **Web interface** — *being actively reconsidered (2026-06-23); scheduled
   as a 0.12.x exploration in [roadmap.md](roadmap.md).* The original design
   doc rules a GUI/dashboard out of scope, and a *passive read-only viewer*
