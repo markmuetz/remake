@@ -6,6 +6,28 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.2] — 2026-07-10
+
+### Added
+
+- **`remake[examples]` extra**: `pip install "remake[examples]"` (or
+  `uv add "remake[examples]"`) installs everything the bundled examples need
+  beyond remake's minimal core — `xarray`, `netCDF4`, `h5netcdf`, `zarr<3`,
+  `dask`, `pyyaml`.
+
+### Fixed
+
+- **The bundled examples no longer clash with each other.** Six rule names
+  were duplicated across the example files, so working through the examples
+  in one directory tripped the duplicate-rule-name warning and clobbered
+  recorded state (rerunning an earlier example reran everything). Every rule
+  name is now unique across the set. `ex5_multifile` also ran from its own
+  directory against input data that `make_example_data.py` only wrote to the
+  parent directory — the generator now populates both.
+- The examples README described pre-0.8.0 path behaviour; rewritten for the
+  current rule (`.remake/` and data anchor to the remakefile's directory).
+  Stale example filenames in the docs fixed.
+
 ## [0.8.1] — 2026-07-10
 
 A SLURM-executor hardening release: the fixes from an adversarial review

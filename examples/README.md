@@ -45,9 +45,13 @@ clobber each other's recorded state (causing spurious reruns) — that's a
 prompt to rename one or split directories, and it's why every rule here has
 a distinct name.
 
-ex1, ex3, ex4, ex7, ex10, ex11 and ex12 need only the stdlib (+ pyyaml for
-ex4). ex2, ex5, ex6, ex8 and ex9 additionally need `xarray netCDF4 h5netcdf
-zarr dask` (zarr v2 for older xarray versions).
+ex1, ex3, ex6, ex7, ex10, ex11 and ex12 need only the stdlib. The rest need
+the scientific stack (`xarray netCDF4 h5netcdf zarr dask`, plus pyyaml for
+ex4) — install everything in one go with the `examples` extra:
+
+```bash
+pip install "remake[examples]"     # or: uv add "remake[examples]"
+```
 
 ## Why heavy imports live inside rule functions
 

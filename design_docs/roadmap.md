@@ -30,16 +30,20 @@ web control plane in 0.12.x — see below.)
 
 ## Pre-tag review gate
 
-Every release tag gets an **adversarial review** of the full diff since the
-previous tag, before tagging — a fresh reviewer context that sees only the
-diff, instructed to find flaws (the Bun-in-Rust lesson: the implementing
-context is biased toward approving its own work). Patch releases
-(`v0.8.0..v0.8.1`): a code-reviewer agent pass over the range, which also
-checks the patch rules in [compatibility.md](compatibility.md) held. Minor
-releases (`v0.8.x..v0.9.0`): `/code-review ultra` per feature branch/PR, or a
-per-subsystem agent fan-out over the tag range if work landed on `main`
-directly. Complements the per-commit hook in `.claude/hooks/` (blocks >200
-changed-line commits until reviewed).
+**Minor releases** (`v0.8.x..v0.9.0`) get an **adversarial review** of the
+full diff since the previous tag, before tagging — a fresh reviewer context
+that sees only the diff, instructed to find flaws (the Bun-in-Rust lesson:
+the implementing context is biased toward approving its own work):
+`/code-review ultra` per feature branch/PR, or a per-subsystem agent fan-out
+over the tag range if work landed on `main` directly.
+
+**Patch releases** need no pre-tag review (decided 2026-07-10 at 0.8.2 —
+mandatory review per point release is unsustainable). The per-commit hook in
+`.claude/hooks/` (blocks >200 changed-Python-line commits until reviewed)
+plus a manual check that the [compatibility.md](compatibility.md) patch rules
+held is enough; run a review only when the range warrants it. (The 0.8.1
+pre-tag review did catch two real bugs and a lane violation — for a large or
+executor-heavy range, still consider one.)
 
 ## Milestones
 

@@ -47,6 +47,16 @@ s3 = ["boto3"]
 dask = [
     "distributed>=2024.8.0",
 ]
+# Everything examples/ needs beyond the (deliberately minimal) core deps:
+# `pip install "remake[examples]"` / `uv add "remake[examples]"`.
+examples = [
+    "xarray>=2024.7.0",
+    "netcdf4>=1.7.2",
+    "h5netcdf",
+    "zarr<3",
+    "dask",
+    "pyyaml",
+]
 
 [dependency-groups]
 dev = [

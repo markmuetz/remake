@@ -1834,6 +1834,17 @@ dask = [
 debug = [
     { name = "ipdb" },
 ]
+examples = [
+    { name = "dask" },
+    { name = "h5netcdf" },
+    { name = "netcdf4", version = "1.7.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and platform_machine == 'ARM64' and sys_platform == 'win32'" },
+    { name = "netcdf4", version = "1.7.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or platform_machine != 'ARM64' or sys_platform != 'win32'" },
+    { name = "pyyaml" },
+    { name = "xarray", version = "2025.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "xarray", version = "2026.4.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "zarr", version = "2.18.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "zarr", version = "2.18.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
 s3 = [
     { name = "boto3" },
 ]
@@ -1864,12 +1875,18 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "boto3", marker = "extra == 's3'" },
+    { name = "dask", marker = "extra == 'examples'" },
     { name = "distributed", marker = "extra == 'dask'", specifier = ">=2024.8.0" },
+    { name = "h5netcdf", marker = "extra == 'examples'" },
     { name = "ipdb", marker = "extra == 'debug'" },
     { name = "loguru" },
+    { name = "netcdf4", marker = "extra == 'examples'", specifier = ">=1.7.2" },
     { name = "networkx" },
+    { name = "pyyaml", marker = "extra == 'examples'" },
+    { name = "xarray", marker = "extra == 'examples'", specifier = ">=2024.7.0" },
+    { name = "zarr", marker = "extra == 'examples'", specifier = "<3" },
 ]
-provides-extras = ["debug", "s3", "dask"]
+provides-extras = ["debug", "s3", "dask", "examples"]
 
 [package.metadata.requires-dev]
 dev = [
