@@ -139,12 +139,49 @@ not worth it given the above.
   rules have recorded submissions (proceeds with a warning on a fresh dir, so
   off-cluster dry runs keep working); `slurm-status` reports the failure and
   exits 2 instead of showing every job as "not in queue".
-- Stamp jobs with `--comment=remake:<runid>:<rule>:<specpath>`; persist the run
-  id with the submission (alongside `<rule>.jobids.json`).
-- Map queue elements → tasks via run id + spec path + index; share this with
-  `slurm-status`.
-- Submit path: per-task skip; log skipped-because-queued tasks; emit the
-  per-rule submit summary line (the UX todo).
+- ~~Stamp jobs with `--comment=remake:<runid>:<rule>:<specpath>`; persist the run
+  id with the submission (alongside `<rule>.jobids.json`).~~ *Parked 2026-07-10,
+  see below.*
+- ~~Map queue elements → tasks via run id + spec path + index; share this with
+  `slurm-status`.~~ *Parked with per-task skip.*
+- ~~Submit path: per-task skip; log skipped-because-queued tasks;~~ emit the
+  per-rule submit summary line (the UX todo — still worth doing on its own).
+
+## 2026-07-10 decisions: per-task skip and pruning parked; age-based prune instead
+
+**The shared substrate both parked features need — a submission ledger.** The
+jobids sidecar records only the *last* submission per rule (overwritten at
+each submit). Per-task skip inherently creates multiple live submissions per
+rule (the old array plus the fresh partial one), and provable spec pruning
+means "no live job references this spec" — both need a per-rule, append-only
+ledger of submissions (jobids, run_seq, spec path per entry). If either
+feature is ever revived, build the ledger first; `--comment` stamping then
+only adds defence against SLURM jobid recycling (finding 12, PLAUSIBLE) and
+cross-directory collisions, and stays optional.
+
+**Per-task skip: parked** (Mark): too complicated for minimal payback. The
+whole-rule skip is conservatively correct — its failure mode is deferral of
+work to a later run, never wrong data — and the stranded-new-tasks case
+(finding 4) needs a grown matrix *while* the old array is still queued.
+Revisit only if that deferral hurts in practice on JASMIN. Design notes if
+revived: skip belongs in the executor (planner stays queue-ignorant),
+filtering each rule's tasks against in-flight task_keys from ledger + squeue;
+partial arrays force `afterok` wiring (indices no longer correspond), which
+folds into finding 7's aftercorr narrowing — design them together.
+
+**Spec pruning: age-based, not provable** (Mark): at each `run_tasks`, delete
+spec files older than 7 days, **except each rule's sidecar-referenced
+(last-submitted) spec**, which is kept at any age. Rationale: cluster
+walltime limits are ~2 days, so no *running* job reads a week-old spec, and
+the rule is simple enough to reason about. The exception exists because
+walltime bounds run time, not queue-wait time — a job can pend past a week
+and then start; the sidecar exception protects the last real submission, the
+only case that plausibly pends that long. Accepted residual risk: an
+*orphaned older* submission (resubmitted-over while still queued) that then
+pends >7 days loses its spec — that requires stacking two rare events, and
+the failed element errors loudly (`--specs` path missing) rather than running
+wrong data. Most accumulation is dry-run plans, which mostly disappears if
+finding 10b (dry run staging real submit.sh/specs) is fixed.
 
 ## Open questions
 

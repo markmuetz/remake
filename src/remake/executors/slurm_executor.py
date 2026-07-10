@@ -12,7 +12,9 @@ File layout (all relative to the working directory, like the metadata DB):
                                      this exact path (--specs), so replans and
                                      dry runs (which write a new file under
                                      their own run_seq) can never corrupt the
-                                     indices a queued array reads.
+                                     indices a queued array reads. Pruned
+                                     after a week (each rule's last-submitted
+                                     spec is kept at any age).
     .remake/jobs/<rule>.jobids.json  sidecar written at submission; records
                                      the job id(s) and the submission's
                                      run_seq (pinning jobids to their spec
@@ -34,6 +36,7 @@ import json
 import re
 import shlex
 import subprocess as sp
+import time
 from pathlib import Path
 
 from loguru import logger
@@ -180,6 +183,36 @@ def latest_spec_path(rule_name):
     return legacy if legacy.exists() else None
 
 
+SPEC_MAX_AGE_DAYS = 7
+
+
+def prune_spec_files(max_age_days=SPEC_MAX_AGE_DAYS):
+    """Delete job-spec files older than max_age_days, keeping each rule's
+    sidecar-referenced (last-submitted) spec at any age. Age-based rather
+    than provably-unreferenced: walltime limits (~2 days) mean no running
+    job reads a week-old spec, and the sidecar exception covers the one
+    case that outlives the window — the last submission pending for a long
+    time. (Full design + accepted residual risk:
+    design_docs/slurm_already_running.md, 2026-07-10 decisions.)"""
+    if not JOBS_DIR.exists():
+        return
+    keep = set()
+    for sidecar in JOBS_DIR.glob('*.jobids.json'):
+        rule_name = sidecar.name.removesuffix('.jobids.json')
+        recorded = json.loads(sidecar.read_text())
+        keep.add(spec_path(rule_name, recorded.get('run_seq')))
+    cutoff = time.time() - max_age_days * 86400
+    npruned = 0
+    for path in JOBS_DIR.glob('*.json'):
+        if path.name.endswith('.jobids.json') or path in keep:
+            continue
+        if path.stat().st_mtime < cutoff:
+            path.unlink()
+            npruned += 1
+    if npruned:
+        logger.info(f'Pruned {npruned} job-spec file(s) older than {max_age_days} day(s)')
+
+
 def recorded_jobids(rule_name):
     """Job id(s) from the rule's last-submission sidecar, [] if never
     submitted (array submissions record one base id, individual submissions
@@ -313,6 +346,7 @@ class SlurmExecutor(Executor):
     # --- generation ---
 
     def run_tasks(self, tasks, deferred_rules=()):
+        prune_spec_files()
         rule_tasks = {}  # rule -> [task], in plan (topological) order
         for task in tasks:
             rule_tasks.setdefault(task.rule, []).append(task)

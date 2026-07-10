@@ -506,6 +506,27 @@ def test_task_info_array_index_survives_replan(slurm_dir, capsys):
     assert 'slurm:    job 1001' in out and 'array index 4' in out
 
 
+def test_week_old_spec_files_pruned_except_last_submitted(slurm_dir):
+    # Spec files accumulate one per rule per submission/dry-run; prune any
+    # older than a week — except each rule's sidecar-referenced spec, which
+    # a long-pending (walltime only bounds *run* time) last submission may
+    # still read. See slurm_already_running.md, 2026-07-10 decisions.
+    import time
+
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    submitted = specs_file('gen')
+    orphan = Path('.remake/jobs/gen.0.json')  # e.g. an ancient dry-run plan
+    orphan.write_text('[]')
+    week_plus = time.time() - 8 * 86400
+    os.utime(orphan, (week_plus, week_plus))
+    os.utime(submitted, (week_plus, week_plus))  # old but sidecar-referenced
+
+    cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')
+    assert not orphan.exists()
+    assert submitted.exists()
+    assert specs_file('proc').exists()  # recent + unreferenced: untouched
+
+
 def test_run_array_task_rejects_key_mismatch(slurm_dir, capsys):
     # Review finding 5's live half (matrix-sourced non-scalars are already
     # rejected at plan time, dag._check_scalar_kwargs): if a spec's kwargs

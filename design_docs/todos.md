@@ -99,10 +99,12 @@ entries are pruned to [todos_archive.md](todos_archive.md) at each release
   that cluster: ~~squeue-failure fail-safe~~ (landed 2026-07-10:
   `squeue_snapshot` raises `SqueueError`, run refuses to submit over an
   unknown queue when submissions are recorded, slurm-status errors cleanly),
-  per-task skip (finding 4), and pruning
-  accumulated `<rule>.<run_seq>.json` files (one per rule per submission/
-  dry-run; a prune is only safe when the sidecar's recorded submission has
-  left the queue). Small fixes batch landed 2026-07-10: squeue timeout →
+  ~~per-task skip (finding 4)~~ (**parked 2026-07-10**, Mark: too complicated
+  for minimal payback; design + revival notes in slurm_already_running.md),
+  and ~~pruning accumulated spec files~~ (landed 2026-07-10 as a pragmatic
+  age-based prune: >7 days old deleted at each run_tasks, each rule's
+  sidecar-referenced spec kept at any age; the provable ledger-based version
+  is parked alongside per-task skip). Small fixes batch landed 2026-07-10: squeue timeout →
   SqueueError, finding 3 (active = any non-terminal state, inverted filter),
   finding 5's live half (run-array-task asserts rebuilt key == submitted
   `spec['task_key']`; the matrix-sourced case was already blocked at plan
