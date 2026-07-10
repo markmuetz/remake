@@ -192,8 +192,9 @@ hashed by a stable token — but until then, import locally.)
 merged over `Remake(config={'slurm': {...}})` defaults
 (partition=standard, qos=standard, time=4:00:00, mem=4G; `account` is
 site-specific — set it in the Remake config). Any key becomes
-`#SBATCH --key=value`. Special keys: `array_threshold` (min tasks for an
-array job, default 10), `array_throttle` (`--array=0-N%T`).
+`#SBATCH --key=value`. Special key: `array_throttle` (`--array=0-N%T`).
+Every rule is submitted as one array job, even for a single task
+(`array_threshold` is obsolete and ignored).
 
 ## Checking your work
 

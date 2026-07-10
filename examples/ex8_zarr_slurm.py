@@ -82,8 +82,8 @@ def anomalies(inputs, outputs, model, year):
 
 
 # --- rule 3: aggregate across years for each model ---
-# Fan-in: N_years → 1 per model. Falls back to individual SLURM jobs
-# (not array) because the matrix collapses here.
+# Fan-in: N_years → 1 per model (a small array job; the matrix collapses
+# here, and the dependency is afterok on the whole upstream array).
 
 def agg_inputs(model):
     return {

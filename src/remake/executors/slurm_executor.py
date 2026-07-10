@@ -50,8 +50,10 @@ DEFAULT_SLURM_CONFIG = {
     'time': '4:00:00',
     'mem': '4G',
 }
-ARRAY_THRESHOLD = 10
 
+# Every rule is submitted as one array job, even for a single task
+# (--array=0-0): one submission mode means one sbatch template, one submit
+# line shape and one sidecar encoding (review finding C2).
 ARRAY_SBATCH_TPL = """#!/bin/bash
 #SBATCH --job-name={rule_name}
 #SBATCH --array=0-{max_index}{array_throttle}
@@ -63,19 +65,6 @@ echo "SLURM RUNNING {rule_name} $SLURM_ARRAY_TASK_ID"
 remake run-array-task {remakefile} {rule_name} $SLURM_ARRAY_TASK_ID --specs {specs}
 rc=$?
 echo "SLURM COMPLETED {rule_name} $SLURM_ARRAY_TASK_ID (rc=$rc)"
-exit $rc
-"""
-
-# Individual jobs share one script per rule; the task index is passed as a
-# script argument by submit.sh, and -o/-e are set per job on the sbatch line.
-INDIVIDUAL_SBATCH_TPL = """#!/bin/bash
-#SBATCH --job-name={rule_name}
-#SBATCH --kill-on-invalid-dep=yes
-{opts}
-echo "SLURM RUNNING {rule_name} $1"
-remake run-array-task {remakefile} {rule_name} $1 --specs {specs}
-rc=$?
-echo "SLURM COMPLETED {rule_name} $1 (rc=$rc)"
 exit $rc
 """
 
@@ -215,8 +204,9 @@ def prune_spec_files(max_age_days=SPEC_MAX_AGE_DAYS):
 
 def recorded_jobids(rule_name):
     """Job id(s) from the rule's last-submission sidecar, [] if never
-    submitted (array submissions record one base id, individual submissions
-    one id per task)."""
+    submitted. One base id per rule since arrays-everywhere; 'slurm_job_ids'
+    (one id per task) is read for sidecars written by pre-arrays-only
+    versions, whose jobs may still be queued."""
     sidecar = JOBS_DIR / f'{rule_name}.jobids.json'
     if not sidecar.exists():
         return []
@@ -299,9 +289,7 @@ def last_submission(rule_name, task_key=None):
     if not sidecar.exists():
         return None, None
     recorded = json.loads(sidecar.read_text())
-    jobids = recorded.get('slurm_job_ids', [])
-    if 'slurm_array_job_id' in recorded:
-        jobids = [recorded['slurm_array_job_id']]
+    jobids = recorded_jobids(rule_name)
     index = None
     specs_path = spec_path(rule_name, recorded.get('run_seq'))
     if task_key is not None and specs_path.exists():
@@ -310,14 +298,32 @@ def last_submission(rule_name, task_key=None):
     return jobids, index
 
 
+def _elementwise(upstream_tasks, tasks):
+    """True iff element i of `tasks` reads, among all the upstream outputs,
+    only those produced by upstream element i — the condition for SLURM's
+    aftercorr (element N starts when upstream element N finishes). Equal
+    kwargs lists are NOT sufficient: a stencil rule (task t reads upstream
+    t-1, t, t+1) has an identical matrix, yet aftercorr would start element
+    t while its neighbours' inputs are unwritten — silent partial data
+    (review finding 7). Derived from resolved task inputs/outputs, plain
+    paths available at generation time."""
+    if len(upstream_tasks) != len(tasks):
+        return False
+    up_outputs = [{str(p) for p in t.outputs.values()} for t in upstream_tasks]
+    all_up = set().union(*up_outputs)
+    return all(
+        {str(p) for p in task.inputs.values()} & all_up <= up_outputs[i]
+        for i, task in enumerate(tasks)
+    )
+
+
 class _SubmittedRule:
     """How submit.sh refers to one rule's job(s)."""
 
-    def __init__(self, rule, tasks, is_array, jobid_refs):
+    def __init__(self, rule, tasks, jobid_refs):
         self.rule = rule
         self.tasks = tasks
-        self.is_array = is_array
-        # Shell vars ('$JOB_extract') for rules submitted this run, or
+        # Shell var ('$JOB_extract') for rules submitted this run, or
         # literal job ids for already-queued rules.
         self.jobid_refs = jobid_refs
 
@@ -336,7 +342,9 @@ class SlurmExecutor(Executor):
                 'run via the remake CLI, or set rmk.remakefile'
             )
         config = {**DEFAULT_SLURM_CONFIG, **rmk.config.get('slurm', {})}
-        self.array_threshold = int(config.pop('array_threshold', ARRAY_THRESHOLD))
+        # Obsolete since arrays-everywhere; popped so it doesn't leak into
+        # #SBATCH opts for configs that still set it.
+        config.pop('array_threshold', None)
         self.slurm_config = config
         self.jobs_dir = JOBS_DIR
         self.slurm_dir = Path('.remake/slurm')
@@ -388,24 +396,18 @@ class SlurmExecutor(Executor):
             if queued_ids:
                 logger.info(f'{rule.name}: already queued (job {",".join(queued_ids)}), skipping')
                 # Downstream rules depend on the queued jobs by literal id.
-                submitted[rule] = _SubmittedRule(rule, None, False, queued_ids)
+                submitted[rule] = _SubmittedRule(rule, None, queued_ids)
                 continue
             self._write_job_specs(rule, tasks_for_rule, run_seq)
-            is_array = len(tasks_for_rule) >= self.array_threshold
-            kind = 'array' if is_array else 'individual'
-            logger.info(f'{rule.name}: submitting {len(tasks_for_rule)} task(s) ({kind})')
+            logger.info(f'{rule.name}: submitting {len(tasks_for_rule)} task(s)')
             for task in tasks_for_rule:
                 logger.trace('  {}: {} {}', rule.name, task.key, task.kwargs)
-            self._write_sbatch(rule, tasks_for_rule, is_array, run_seq)
-            dependency = self._dependency(rule, tasks_for_rule, is_array, submitted)
-            lines.extend(self._submit_lines(rule, tasks_for_rule, is_array, dependency, run_seq))
+            self._write_sbatch(rule, tasks_for_rule, run_seq)
+            dependency = self._dependency(rule, tasks_for_rule, submitted)
+            lines.extend(self._submit_lines(rule, dependency, run_seq))
             lines.append('')
             nsubmit += len(tasks_for_rule)
-            refs = (
-                [f'$JOB_{rule.name}'] if is_array
-                else [f'$JOB_{rule.name}_{i}' for i in range(len(tasks_for_rule))]
-            )
-            submitted[rule] = _SubmittedRule(rule, tasks_for_rule, is_array, refs)
+            submitted[rule] = _SubmittedRule(rule, tasks_for_rule, [f'$JOB_{rule.name}'])
 
         if deferred_rules:
             names = ', '.join(rule.name for rule in deferred_rules)
@@ -455,14 +457,13 @@ class SlurmExecutor(Executor):
             raise RemakeError(f'{path} already exists — job specs are write-once')
         path.write_text(json.dumps(specs, indent=1))
 
-    def _write_sbatch(self, rule, tasks, is_array, run_seq):
+    def _write_sbatch(self, rule, tasks, run_seq):
         config = {**self.slurm_config, **rule.config.get('slurm', {})}
         config.pop('array_threshold', None)
         throttle = config.pop('array_throttle', None)
         output_dir = self.output_dir / rule.name
         output_dir.mkdir(parents=True, exist_ok=True)
-        tpl = ARRAY_SBATCH_TPL if is_array else INDIVIDUAL_SBATCH_TPL
-        script = tpl.format(
+        script = ARRAY_SBATCH_TPL.format(
             rule_name=rule.name,
             max_index=len(tasks) - 1,
             array_throttle=f'%{throttle}' if throttle else '',
@@ -477,51 +478,32 @@ class SlurmExecutor(Executor):
         self.slurm_dir.mkdir(parents=True, exist_ok=True)
         (self.slurm_dir / f'{rule.name}.sbatch').write_text(script)
 
-    def _dependency(self, rule, tasks, is_array, submitted):
+    def _dependency(self, rule, tasks, submitted):
         """--dependency=... for this rule, or '' if no upstream jobs."""
         parts = []
         for dep in rule.depends_on:
             sub = submitted.get(dep)
             if sub is None:
                 continue  # upstream rule has no jobs this run (complete)
-            # aftercorr (element N waits on element N) is only valid when
-            # both are arrays whose task lists correspond element-wise.
-            if (
-                is_array
-                and sub.is_array
-                and sub.tasks is not None
-                and [t.kwargs for t in sub.tasks] == [t.kwargs for t in tasks]
-            ):
+            # aftercorr only when provably element-wise (see _elementwise);
+            # otherwise — including rules queued from a previous submission
+            # (sub.tasks is None), whose element order is unknowable here —
+            # wait for the whole upstream job.
+            if sub.tasks is not None and _elementwise(sub.tasks, tasks):
                 parts.append(f'aftercorr:{":".join(sub.jobid_refs)}')
             else:
                 parts.append(f'afterok:{":".join(sub.jobid_refs)}')
         return f'--dependency={",".join(parts)} ' if parts else ''
 
-    def _submit_lines(self, rule, tasks, is_array, dependency, run_seq):
+    def _submit_lines(self, rule, dependency, run_seq):
         sbatch_path = self.slurm_dir / f'{rule.name}.sbatch'
         sidecar = self.jobs_dir / f'{rule.name}.jobids.json'
-        if is_array:
-            var = f'JOB_{rule.name}'
-            return [
-                f'{var}=$(sbatch --parsable {dependency}{sbatch_path})',
-                f'echo "{{\\"slurm_array_job_id\\": \\"${var}\\", '
-                f'\\"run_seq\\": {run_seq}}}" > {sidecar}',
-            ]
-        lines = []
-        output_dir = self.output_dir / rule.name
-        for i in range(len(tasks)):
-            var = f'JOB_{rule.name}_{i}'
-            lines.append(
-                f'{var}=$(sbatch --parsable {dependency}'
-                f'-o {output_dir}/{i}.out -e {output_dir}/{i}.err '
-                f'{sbatch_path} {i})'
-            )
-        ids = ', '.join(f'\\"$JOB_{rule.name}_{i}\\"' for i in range(len(tasks)))
-        lines.append(
-            f'echo "{{\\"slurm_job_ids\\": [{ids}], '
-            f'\\"run_seq\\": {run_seq}}}" > {sidecar}'
-        )
-        return lines
+        var = f'JOB_{rule.name}'
+        return [
+            f'{var}=$(sbatch --parsable {dependency}{sbatch_path})',
+            f'echo "{{\\"slurm_array_job_id\\": \\"${var}\\", '
+            f'\\"run_seq\\": {run_seq}}}" > {sidecar}',
+        ]
 
     def _write_continuation(self):
         self.output_dir.mkdir(parents=True, exist_ok=True)

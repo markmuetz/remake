@@ -159,12 +159,15 @@ def test_dry_run_writes_sbatch_scripts(slurm_dir):
     assert 'exit $rc' in gen
 
     agg = Path('.remake/slurm/agg.sbatch').read_text()
-    assert '--array' not in agg  # below threshold: individual job
+    assert '#SBATCH --array=0-0' in agg  # single task: still an array job
     assert '#SBATCH --kill-on-invalid-dep=yes' in agg
     assert 'rc=$?' in agg and 'exit $rc' in agg
     assert '#SBATCH --mem=8G' in agg  # rule config overrides Remake config
     assert '#SBATCH --partition=test-par' in agg
-    assert f'remake run-array-task pipeline.py agg $1 --specs {specs_file("agg")}' in agg
+    assert (
+        'remake run-array-task pipeline.py agg $SLURM_ARRAY_TASK_ID '
+        f'--specs {specs_file("agg")}' in agg
+    )
 
 
 def test_dry_run_writes_submit_sh_wiring(slurm_dir):
@@ -176,12 +179,15 @@ def test_dry_run_writes_submit_sh_wiring(slurm_dir):
         'JOB_proc=$(sbatch --parsable --dependency=aftercorr:$JOB_gen '
         '.remake/slurm/proc.sbatch)' in submit
     )
-    # Fan-in: individual job, afterok on the whole upstream array.
-    assert '--dependency=afterok:$JOB_proc' in submit
-    assert '.remake/slurm/agg.sbatch 0' in submit
-    # Sidecar writes.
+    # Fan-in: afterok on the whole upstream array (not element-wise).
+    assert (
+        'JOB_agg=$(sbatch --parsable --dependency=afterok:$JOB_proc '
+        '.remake/slurm/agg.sbatch)' in submit
+    )
+    # Sidecar writes: one array-form sidecar per rule.
     assert '> .remake/jobs/gen.jobids.json' in submit
-    assert 'slurm_job_ids' in submit  # individual-job sidecar for agg
+    assert '> .remake/jobs/agg.jobids.json' in submit
+    assert 'slurm_array_job_id' in submit and 'slurm_job_ids' not in submit
     assert 'continuation' not in submit  # no dynamic rules
 
 
@@ -201,7 +207,7 @@ def test_submission_writes_jobid_sidecars(slurm_dir):
     agg_sidecar = json.loads(Path('.remake/jobs/agg.jobids.json').read_text())
     run_seq = read_specs('gen')[0]['run_seq']
     assert gen_sidecar == {'slurm_array_job_id': '1001', 'run_seq': run_seq}
-    assert agg_sidecar == {'slurm_job_ids': ['1003'], 'run_seq': run_seq}
+    assert agg_sidecar == {'slurm_array_job_id': '1003', 'run_seq': run_seq}
     assert specs_file('gen').name == f'gen.{run_seq}.json'
 
 
@@ -218,6 +224,38 @@ def test_already_queued_rule_is_skipped(slurm_dir):
     # (aftercorr is unsafe against a previous submission's array).
     assert '--dependency=afterok:1001' in Path('.remake/submit.sh').read_text()
     assert not any('gen.sbatch' in call for call in calls[nsubmitted:])
+
+
+def test_stencil_rule_gets_afterok_not_aftercorr(slurm_dir):
+    # Review finding 7: equal matrices do not imply element-wise dependence.
+    # A stencil rule (task n reads upstream n-1 and n) has the same matrix
+    # as its upstream, but aftercorr would start element n when upstream
+    # element n alone finishes — reading a not-yet-written n-1 output,
+    # silent partial data. Correspondence must be proved from task
+    # inputs/outputs, falling back to afterok.
+    Path('stencil.py').write_text('''
+from pathlib import Path
+from remake import Remake, rule
+
+@rule(outputs={'o': 'data/gen_{n}.txt'}, matrix={'n': list(range(12))})
+def gen(outputs, n):
+    Path(outputs['o']).write_text(str(n))
+
+def smooth_inputs(n):
+    return {'lo': f'data/gen_{max(n - 1, 0)}.txt', 'hi': f'data/gen_{n}.txt'}
+
+@rule(inputs=smooth_inputs, outputs={'o': 'data/smooth_{n}.txt'},
+      matrix={'n': list(range(12))}, depends_on=[gen])
+def smooth(inputs, outputs, n):
+    Path(outputs['o']).write_text('x')
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    cli('run', 'stencil.py', '-E', 'slurm', '--dry-run')
+    submit = Path('.remake/submit.sh').read_text()
+    assert '--dependency=afterok:$JOB_gen' in submit
+    assert 'aftercorr' not in submit
 
 
 def test_suspended_job_still_counts_as_queued(slurm_dir):
@@ -632,7 +670,7 @@ def test_deferred_rule_gets_continuation_job(slurm_dir):
     assert specs_file('dyn') is None  # deferred: no spec yet
     submit = Path('.remake/submit.sh').read_text()
     assert (
-        'sbatch --parsable --dependency=afterok:$JOB_discover_0 '
+        'sbatch --parsable --dependency=afterok:$JOB_discover '
         '.remake/slurm/continuation.sbatch' in submit
     )
     continuation = Path('.remake/slurm/continuation.sbatch').read_text()

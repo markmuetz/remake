@@ -82,54 +82,33 @@ entries are pruned to [todos_archive.md](todos_archive.md) at each release
 
 ## SLURM
 
-- [ ] **Fix the 2026-07-09 submission-logic review findings** — 12 correctness
-  issues (11 confirmed) + 5 cleanups:
-  [code_reviews/2026-07-09_review.md](code_reviews/2026-07-09_review.md).
-  Root theme: the "never rewrite a spec a queued array still reads" invariant
-  has a single guard (already-queued detection) that fails open three ways
-  (squeue error swallowed at debug, mid-rule sbatch failure under `set -e`
-  before the sidecar echo, suspended/held states not counted as active).
-  **Per-submission immutable spec files (`<rule>.<run_seq>.json`, referenced by
-  the sbatch script) fix findings 1–4 and 12 at the root** — spec rewrites can
-  never corrupt queued arrays, and the executor can then submit exactly the
-  not-yet-queued tasks instead of skipping whole rules. **Landed 2026-07-10**
-  (specs immutable per run_seq, sbatch pins via `--specs`, sidecar records
-  run_seq, task-info index pinned): findings 1–3 and 12 are downgraded from
-  index corruption to duplicate submission, finding 10a fixed. Still open from
-  that cluster: ~~squeue-failure fail-safe~~ (landed 2026-07-10:
-  `squeue_snapshot` raises `SqueueError`, run refuses to submit over an
-  unknown queue when submissions are recorded, slurm-status errors cleanly),
-  ~~per-task skip (finding 4)~~ (**parked 2026-07-10**, Mark: too complicated
-  for minimal payback; design + revival notes in slurm_already_running.md),
-  and ~~pruning accumulated spec files~~ (landed 2026-07-10 as a pragmatic
-  age-based prune: >7 days old deleted at each run_tasks, each rule's
-  sidecar-referenced spec kept at any age; the provable ledger-based version
-  is parked alongside per-task skip). Small fixes batch landed 2026-07-10: squeue timeout →
-  SqueueError, finding 3 (active = any non-terminal state, inverted filter),
-  finding 5's live half (run-array-task asserts rebuilt key == submitted
-  `spec['task_key']`; the matrix-sourced case was already blocked at plan
-  time by dag scalar check, e3d5183), finding 11 (remakefile/specs paths
-  shlex-quoted in all three templates). Also landed 2026-07-10: finding 6
-  (`check_resubmit_safe`: resubmit refuses when recorded jobs are still
-  queued, when squeue fails, or when baked literal dependency ids have left
-  the queue — replan instead), finding 8 (no dependency-less continuation:
-  when nothing was submitted or queued, warn instead of looping), finding 9
-  (continuation template gets `--kill-on-invalid-dep=yes`). Still open,
-  independent of that: aftercorr chosen
-  by kwargs equality not data dependence (finding 7), dry-run staging
-  submit.sh (10b). Overlaps
-  the per-task already-running item below (findings
-  1 and 4 are its motivating bugs; design in
-  [slurm_already_running.md](slurm_already_running.md)) — land them together.
-- [ ] Per-task "already running?" detection. Rule-level skipping exists
-  (`squeue_snapshot`/`_active_jobids`/`_queued_jobids` skip a whole rule whose
-  last submission is still PD/R); make it per-task and replan-proof by stamping
-  each job with a run id + its spec path so a queue snapshot maps back to the
-  exact remake task. (The latent resubmit-all bug — a *failed* squeue read as
-  an empty queue — was fixed separately 2026-07-10, `SqueueError` fail-safe.)
-  Design: [slurm_already_running.md](slurm_already_running.md).
-  (Once landed, `run -E slurm`'s per-rule submission line is the natural home
-  for a "skipped N already-queued tasks" message.)
+- [x] **2026-07-09 submission-logic review findings — CLOSED 2026-07-10**
+  (full report: [code_reviews/2026-07-09_review.md](code_reviews/2026-07-09_review.md)).
+  Landed, in order: per-submission immutable spec files (root fix — findings
+  1–4/10a/12 downgraded or fixed); squeue-failure fail-safe (`SqueueError`;
+  run/resubmit refuse over an unknown queue, slurm-status errors cleanly);
+  squeue timeout; finding 3 (active = any non-terminal state); finding 5's
+  live half (run-array-task asserts rebuilt key == `spec['task_key']`; matrix
+  case already blocked at plan time, e3d5183); finding 11 (paths
+  shlex-quoted); finding 6 (`check_resubmit_safe`: refuses on queued jobs,
+  squeue failure, or stale literal dependency ids); findings 8/9
+  (no dependency-less continuation; `--kill-on-invalid-dep=yes` on the
+  continuation); age-based spec pruning (>7 days, sidecar-referenced kept);
+  finding 7 (aftercorr only when element-wise correspondence is *proved*
+  from task inputs/outputs, else afterok); C2 (arrays-everywhere — individual
+  mode removed, which also removes C1's dual sidecar encoding; legacy
+  `slurm_job_ids` sidecars still read).
+  **Parked** (Mark; design + revival notes in
+  [slurm_already_running.md](slurm_already_running.md)): per-task skip,
+  `--comment` job stamping, and the per-rule submission ledger both it and
+  provable pruning would need — too complicated for minimal payback.
+  **Archived without action** (rationale): 10b (dry run stages submit.sh) —
+  the dangerous half (resubmit executing a dry plan blind) is covered by the
+  resubmit guard, and "generate everything, submit nothing" is exactly what
+  makes dry run useful for inspection; C3 (each array element parses the
+  whole spec file) — low MBs of JSON at target scale, negligible; C4/C5
+  (minor duplication) — fold in opportunistically when that code is next
+  touched.
 - [ ] Check behaviour of deferrable rules under SLURM. When running, I think
   that the downstream tasks rerunning should have triggered a rerun of the
   deferrable jobs but did not. Worth checking.
