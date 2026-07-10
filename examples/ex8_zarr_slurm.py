@@ -7,8 +7,8 @@
 #   - SLURM array jobs for the two largest rules (same matrix, 1-to-1)
 #   - Fan-in to per-model aggregation, then a single final task
 #
-# Run locally:   remake run ex4_zarr_slurm.py
-# Run on SLURM:  remake run ex4_zarr_slurm.py --executor slurm
+# Run locally:   remake run ex8_zarr_slurm.py
+# Run on SLURM:  remake run ex8_zarr_slurm.py --executor slurm
 
 from pathlib import Path
 from remake import Remake, ZarrStore, rule
@@ -37,7 +37,7 @@ def extract_inputs(model, year):
         return {v: f'data/archive/cmip6/{model}/{v}/{year}.nc' for v in VARS}
 
 
-# --- rule 1: extract and rechunk to zarr ---
+# --- rule 1: extract fields and rechunk to zarr ---
 # Heavy I/O — more memory, longer time.
 
 @rule(
@@ -47,7 +47,7 @@ def extract_inputs(model, year):
     uses    = {'VARS': VARS},
     config  = {'slurm': {'mem': '32G', 'time': '02:00:00'}},
 )
-def extract(inputs, outputs, model, year):
+def extract_fields(inputs, outputs, model, year):
     import xarray as xr
     for var in VARS:
         ds = xr.open_dataset(inputs[var])
@@ -57,15 +57,15 @@ def extract(inputs, outputs, model, year):
 
 
 # --- rule 2: compute anomalies relative to a reference period ---
-# Same matrix as extract → eligible for SLURM aftercorr array dependency.
+# Same matrix as extract_fields → eligible for SLURM aftercorr array dependency.
 
 REFERENCE_PERIOD = (1981, 2010)    # tracked via uses — change triggers reruns
 
 @rule(
     inputs     = {v: f'data/zarr/extracted/{{model}}/{{year}}/{v}.zarr' for v in VARS},
     outputs    = {v: ZarrStore(f'data/zarr/anomalies/{{model}}/{{year}}/{v}.zarr') for v in VARS},
-    matrix     = extract.matrix,
-    depends_on = [extract],
+    matrix     = extract_fields.matrix,
+    depends_on = [extract_fields],
     uses       = {'reference_period': REFERENCE_PERIOD, 'VARS': VARS},
     config     = {'slurm': {'mem': '16G', 'time': '01:00:00'}},
 )
@@ -101,7 +101,7 @@ def agg_inputs(model):
     uses       = {'VARS': VARS, 'YEARS': YEARS},
     config     = {'slurm': {'mem': '64G', 'time': '04:00:00'}},
 )
-def aggregate(inputs, outputs, model):
+def aggregate_years(inputs, outputs, model):
     import xarray as xr
     import zarr
     for var in VARS:
@@ -120,7 +120,7 @@ def aggregate(inputs, outputs, model):
         for var in VARS
     },
     outputs    = {'report': 'data/results/model_comparison.json'},
-    depends_on = [aggregate],
+    depends_on = [aggregate_years],
     uses       = {'MODELS': MODELS, 'VARS': VARS},
 )
 def final_report(inputs, outputs):

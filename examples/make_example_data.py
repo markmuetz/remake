@@ -44,18 +44,24 @@ def _temperature_nc_bytes(year, seed):
 
 
 def ex2():
-    """data/raw/{site}/{year}.tar.gz, each containing {year}.nc (also ex5)."""
+    """data/raw/{site}/{year}.tar.gz, each containing {year}.nc. Also written
+    under ex5_multifile/ — remake anchors paths to the remakefile's directory,
+    so ex5's pipeline reads its own copy there."""
     sites = ['oxford', 'cambridge', 'bristol']
     years = range(2010, 2021)
+    roots = [Path('.')]
+    if Path('ex5_multifile').is_dir():
+        roots.append(Path('ex5_multifile'))
     for i, site in enumerate(sites):
         for year in years:
-            path = Path(f'data/raw/{site}/{year}.tar.gz')
-            path.parent.mkdir(parents=True, exist_ok=True)
             nc_bytes = _temperature_nc_bytes(year, seed=i * 1000 + year)
-            with tarfile.open(path, 'w:gz') as tf:
-                info = tarfile.TarInfo(f'{year}.nc')
-                info.size = len(nc_bytes)
-                tf.addfile(info, io.BytesIO(nc_bytes))
+            for root in roots:
+                path = root / f'data/raw/{site}/{year}.tar.gz'
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with tarfile.open(path, 'w:gz') as tf:
+                    info = tarfile.TarInfo(f'{year}.nc')
+                    info.size = len(nc_bytes)
+                    tf.addfile(info, io.BytesIO(nc_bytes))
 
 
 def ex3():

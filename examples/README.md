@@ -20,22 +20,30 @@ API, in roughly increasing order of complexity:
 
 ## Running
 
-remake resolves all paths — a rule's inputs and outputs, *and* the `.remake/`
-metadata directory — relative to the **current working directory**, not to the
-remakefile's location. So `cd` into a scratch directory first, generate the
-synthetic inputs there, then point remake at the example file:
+remake anchors all paths — a rule's inputs and outputs, *and* the `.remake/`
+metadata directory — to the **remakefile's directory**: every command changes
+into it first, wherever you invoke from. So copy the examples somewhere
+writable, generate the synthetic inputs next to them, and run:
 
 ```bash
-cd /tmp/remake-examples                            # any empty working directory
-python /path/to/examples/make_example_data.py      # synthetic inputs (not ex9 — self-generating)
-remake run  /path/to/examples/ex1_simple.py        # creates ./.remake and ./data here
-remake info /path/to/examples/ex1_simple.py
+cp -r /path/to/examples /tmp/remake-examples
+cd /tmp/remake-examples
+python make_example_data.py      # synthetic inputs (not ex9 — self-generating)
+remake run  ex1_simple.py        # .remake/ and data/ live here, next to the file
+remake info ex1_simple.py
 ```
 
-The data and `.remake/` land in the directory you run from. (Running
-`remake run examples/ex1_simple.py` from the repo root would create
-`.remake/` *there*, not under `examples/` — choose your working directory
-deliberately.)
+`remake run /tmp/remake-examples/ex1_simple.py` from anywhere else does the
+same thing — `.remake/` and `data/` always land next to the remakefile.
+(`ex5_multifile/` is its own pipeline directory, so its state lands in there.)
+
+All the examples in this directory therefore share one `.remake/` store —
+which is fine: one store per directory is the model, and the rule names are
+unique across the whole set. If you define two *different* rules with the
+same name in remakefiles sharing a directory, remake warns that they will
+clobber each other's recorded state (causing spurious reruns) — that's a
+prompt to rename one or split directories, and it's why every rule here has
+a distinct name.
 
 ex1, ex3, ex4, ex7, ex10, ex11 and ex12 need only the stdlib (+ pyyaml for
 ex4). ex2, ex5, ex6, ex8 and ex9 additionally need `xarray netCDF4 h5netcdf
@@ -70,8 +78,8 @@ library at definition time (e.g. building a matrix from a `pandas` date range).
 Smart rerunning is the point of remake. After running ex3 once:
 
 ```bash
-remake run /path/to/examples/ex3_uses_scope.py     # runs everything once
-remake run /path/to/examples/ex3_uses_scope.py     # nothing to do
+remake run ex3_uses_scope.py     # runs everything once
+remake run ex3_uses_scope.py     # nothing to do
 ```
 
 now edit `THRESHOLD` (or the body of `normalise()`) in `ex3_uses_scope.py`

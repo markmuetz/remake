@@ -6,14 +6,14 @@
 # this module's namespace as well as ones defined here — that is the
 # multi-file composition mechanism. Alternatively, register modules
 # wholesale with rmk.rules_from_modules(rules_extract, rules_analysis),
-# or pass an explicit list: Remake(rules=[extract, process, aggregate]).
+# or pass an explicit list: Remake(rules=[extract_obs, process_obs, aggregate_obs]).
 #
 # Run: remake run pipeline.py
 
 from remake import Remake
 
-from rules_extract import extract
-from rules_analysis import process, aggregate
+from rules_extract import extract_obs
+from rules_analysis import process_obs, aggregate_obs
 
 rmk = Remake()
 

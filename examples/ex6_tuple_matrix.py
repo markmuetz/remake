@@ -12,10 +12,10 @@
 #   {('model', 'year'): [(m, y), ...]}   one task per listed pair
 #
 # Tuple and scalar keys mix freely: each dict entry is one product axis, so
-# `combine` below takes the cartesian product of the `region` scalar axis with
+# `combine_region` below takes the cartesian product of the `region` scalar axis with
 # the grouped (model, year) axis.
 #
-# DAG: process[model, year] --> combine[region, model, year]
+# DAG: simulate[model, year] --> combine_region[region, model, year]
 
 import json
 from pathlib import Path
@@ -46,7 +46,7 @@ MODEL_YEARS = [(m, y) for m in MODELS for y in YEARS if (m, y) in AVAILABLE]
     outputs = {'series': 'data/series/{model}_{year}.json'},
     matrix  = {('model', 'year'): MODEL_YEARS},   # 9 tasks, not 16
 )
-def process(outputs, model, year):
+def simulate(outputs, model, year):
     # Synthetic, deterministic "data" so the example is self-contained.
     value = (hash((model, year)) % 1000) / 10.0
     Path(outputs['series']).write_text(json.dumps({'model': model, 'year': year,
@@ -54,14 +54,14 @@ def process(outputs, model, year):
 
 
 @rule(
-    inputs     = process.outputs,
+    inputs     = simulate.outputs,
     outputs    = {'combined': 'data/combined/{region}_{model}_{year}.json'},
     # Mixed axes: cartesian product of the region scalar axis with the grouped
     # (model, year) axis -> 2 x 9 = 18 tasks.
     matrix     = {'region': REGIONS, ('model', 'year'): MODEL_YEARS},
-    depends_on = [process],
+    depends_on = [simulate],
 )
-def combine(inputs, outputs, region, model, year):
+def combine_region(inputs, outputs, region, model, year):
     series = json.loads(Path(inputs['series']).read_text())
     series['region'] = region
     Path(outputs['combined']).write_text(json.dumps(series))

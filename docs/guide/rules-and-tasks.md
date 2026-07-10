@@ -89,7 +89,7 @@ remake calls the matrix during planning. While the inputs it needs are missing
 it raises `Defer`, and remake **defers** the rule — running its upstream first,
 then retrying. A single `remake run` resolves the whole chain (locally via a
 replanning loop; on SLURM via a continuation job). See
-`examples/ex8_dynamic_matrix.py` for a complete dynamic matrix + dynamic fan-in.
+`examples/ex10_dynamic_matrix.py` for a complete dynamic matrix + dynamic fan-in.
 
 The `@deferrable` marker is required to raise `Defer`: it makes the dynamic
 contract explicit (raising `Defer` from an unmarked matrix is an error). It
@@ -139,7 +139,7 @@ This is fan-in: one `aggregate` task per site, each consuming every year.
 When the set of inputs can't be known at module load — it depends on the matrix
 value, or on upstream outputs that don't exist yet — pass a *callable* of the
 matrix keys instead, returning the dict per task. See
-`examples/ex5_callable_inputs_matrix.py`.
+`examples/ex4_callable_inputs.py`.
 
 The callable can be a named function or a `lambda`:
 
@@ -207,4 +207,4 @@ rmk.rules_from_current_module()
 ```
 
 This collects every `@rule` defined in the module onto the `Remake` object.
-For pipelines split across modules, see `examples/ex7_multifile/`.
+For pipelines split across modules, see `examples/ex5_multifile/`.

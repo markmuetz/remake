@@ -11,12 +11,12 @@
 #     detect_events is itself rerunning, so it never expands from a stale
 #     output). It returns list[dict] — the canonical matrix form, here NOT a
 #     cartesian product (each year has a different number of events).
-#   - summarise fans in over whatever was discovered.
+#   - summarise_events fans in over whatever was discovered.
 #
 # A single `remake run` handles the whole flow: detect_events runs first,
 # then the deferred rules resolve and run.
 #
-# DAG: detect_events[year] --> process_event[year, event_id] --> summarise
+# DAG: detect_events[year] --> process_event[year, event_id] --> summarise_events
 
 import json
 import random
@@ -79,7 +79,7 @@ def summarise_inputs():
     propagate a Defer. That's fine here: the @deferrable contract (raising
     Defer from an *unmarked matrix* is an error) governs matrix callables
     only, and this is an *input* callable. Input callables aren't evaluated
-    during planning anyway — only when the task runs — and summarise is
+    during planning anyway — only when the task runs — and summarise_events is
     deferred while its upstream process_event is (it depends_on it), so by
     the time this is called detect_events' outputs exist and event_matrix()
     returns normally rather than deferring.
@@ -96,7 +96,7 @@ def summarise_inputs():
     outputs    = {'summary': 'data/results/event_summary.json'},
     depends_on = [process_event],
 )
-def summarise(inputs, outputs):
+def summarise_events(inputs, outputs):
     stats = [json.loads(Path(p).read_text()) for p in inputs.values()]
     summary = {
         'n_events': len(stats),

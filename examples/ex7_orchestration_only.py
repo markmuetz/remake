@@ -13,7 +13,7 @@
 # with a config; remake only orchestrates the ordering.
 #
 # DAG:
-#   preprocess[domain]    (N tasks in parallel)
+#   preprocess_domain[domain]    (N tasks in parallel)
 #          |
 #   analyse[domain]       (N tasks in parallel)
 #          |
@@ -57,13 +57,13 @@ def _external_tool_postprocess(domains):
     matrix={'domain': DOMAINS},
     uses={'_external_tool_preprocess': _external_tool_preprocess},
 )
-def preprocess(domain):
+def preprocess_domain(domain):
     _external_tool_preprocess(domain)
 
 
 @rule(
     matrix={'domain': DOMAINS},
-    depends_on=[preprocess],
+    depends_on=[preprocess_domain],
     uses={'_external_tool_analyse': _external_tool_analyse},
 )
 def analyse(domain):

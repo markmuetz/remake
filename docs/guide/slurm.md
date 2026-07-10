@@ -22,7 +22,7 @@ rmk = Remake(config={
 })
 ```
 
-See `examples/ex4_zarr_slurm.py` for per-rule SLURM configuration alongside
+See `examples/ex8_zarr_slurm.py` for per-rule SLURM configuration alongside
 Zarr outputs.
 
 ## What gets written

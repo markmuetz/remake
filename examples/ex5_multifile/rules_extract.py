@@ -17,7 +17,7 @@ YEARS = list(range(2010, 2021))
     outputs = {'nc': 'data/extracted/{site}/{year}.nc'},
     matrix  = {'site': SITES, 'year': YEARS},
 )
-def extract(inputs, outputs, site, year):
+def extract_obs(inputs, outputs, site, year):
     import tarfile
     with tarfile.open(inputs['archive']) as tf:
         tf.extractall(Path(outputs['nc']).parent)
