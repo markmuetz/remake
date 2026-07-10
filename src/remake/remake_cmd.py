@@ -191,6 +191,9 @@ class RemakeCLI:
                 Arg('remakefile'),
                 Arg('rule'),
                 Arg('index', type=int),
+                Arg('--specs', default=None,
+                    help="Job-spec file to read (defaults to the rule's "
+                         'last submission)'),
             ],
         },
         'resubmit': {
@@ -411,6 +414,7 @@ class RemakeCLI:
         rmk.run_task(task)
 
     def remake_run_array_task(self, args):
+        from .executors.slurm_executor import submitted_spec_path
         from .metadata.sidecar import SidecarWriter
 
         # Hundreds of concurrent array elements must not touch the shared
@@ -418,7 +422,17 @@ class RemakeCLI:
         # finalizing (no ensure_rules, no DB connection) and record the
         # result as a sidecar file, ingested by the next plan/info.
         rmk = load_remake(args.remakefile, finalize=False)
-        specs = json.loads(Path(f'.remake/jobs/{args.rule}.json').read_text())
+        # Generated sbatch scripts pin their submission's spec file via
+        # --specs; the fallback (manual retries, in-flight jobs submitted by
+        # pre-0.9 scripts) must resolve the last SUBMITTED spec — a dry run
+        # writes a newer spec file that no job is running.
+        specs_path = Path(args.specs) if args.specs else submitted_spec_path(args.rule)
+        if specs_path is None or not specs_path.exists():
+            raise RemakeError(
+                f'No job specs for rule {args.rule} — generate them with: '
+                f'remake run {args.remakefile} --executor slurm'
+            )
+        specs = json.loads(specs_path.read_text())
         spec = specs[args.index]
         # run_seq was fixed at submission; carry it into the sidecar so its
         # stamp matches the rest of this submission's tasks (older job specs

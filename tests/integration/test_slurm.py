@@ -103,12 +103,24 @@ def sbatch_calls(slurm_dir):
     return log.read_text().splitlines() if log.exists() else []
 
 
+def specs_file(rule):
+    """The rule's most recent job-spec file (they are per-submission,
+    .remake/jobs/<rule>.<run_seq>.json)."""
+    from remake.executors.slurm_executor import latest_spec_path
+    return latest_spec_path(rule)
+
+
+def read_specs(rule):
+    return json.loads(specs_file(rule).read_text())
+
+
 # --- generation (dry run: writes everything, submits nothing) ---
 
 
 def test_dry_run_writes_job_specs(slurm_dir):
     cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')
-    specs = json.loads(Path('.remake/jobs/gen.json').read_text())
+    assert specs_file('gen').match('.remake/jobs/gen.*.json')
+    specs = read_specs('gen')
     assert len(specs) == 12
     assert specs[3]['rule'] == 'gen'
     assert specs[3]['kwargs'] == {'n': 3}
@@ -124,7 +136,12 @@ def test_dry_run_writes_sbatch_scripts(slurm_dir):
     assert '#SBATCH --mem=2G' in gen
     # Cancel (don't indefinitely park) elements whose upstream dependency fails.
     assert '#SBATCH --kill-on-invalid-dep=yes' in gen
-    assert 'remake run-array-task pipeline.py gen $SLURM_ARRAY_TASK_ID' in gen
+    # The script pins its own submission's (immutable) spec file, so later
+    # replans can't change what a queued array executes.
+    assert (
+        'remake run-array-task pipeline.py gen $SLURM_ARRAY_TASK_ID '
+        f'--specs {specs_file("gen")}' in gen
+    )
     # The wrapper must propagate the task's exit code, not mask it with the
     # trailing echo -- otherwise SLURM sees every element as exit 0 and
     # aftercorr/afterok never block dependants of a failed task.
@@ -137,7 +154,7 @@ def test_dry_run_writes_sbatch_scripts(slurm_dir):
     assert 'rc=$?' in agg and 'exit $rc' in agg
     assert '#SBATCH --mem=8G' in agg  # rule config overrides Remake config
     assert '#SBATCH --partition=test-par' in agg
-    assert 'remake run-array-task pipeline.py agg $1' in agg
+    assert f'remake run-array-task pipeline.py agg $1 --specs {specs_file("agg")}' in agg
 
 
 def test_dry_run_writes_submit_sh_wiring(slurm_dir):
@@ -168,12 +185,14 @@ def test_submission_writes_jobid_sidecars(slurm_dir):
     # Shell vars were expanded to the shim's job ids at submission time.
     assert '--dependency=aftercorr:1001' in calls[1]
     assert '--dependency=afterok:1002' in calls[2]
-    assert json.loads(Path('.remake/jobs/gen.jobids.json').read_text()) == {
-        'slurm_array_job_id': '1001'
-    }
-    assert json.loads(Path('.remake/jobs/agg.jobids.json').read_text()) == {
-        'slurm_job_ids': ['1003']
-    }
+    # Sidecars record run_seq, pinning the jobids to the spec file they
+    # were submitted with.
+    gen_sidecar = json.loads(Path('.remake/jobs/gen.jobids.json').read_text())
+    agg_sidecar = json.loads(Path('.remake/jobs/agg.jobids.json').read_text())
+    run_seq = read_specs('gen')[0]['run_seq']
+    assert gen_sidecar == {'slurm_array_job_id': '1001', 'run_seq': run_seq}
+    assert agg_sidecar == {'slurm_job_ids': ['1003'], 'run_seq': run_seq}
+    assert specs_file('gen').name == f'gen.{run_seq}.json'
 
 
 def test_already_queued_rule_is_skipped(slurm_dir):
@@ -193,17 +212,38 @@ def test_already_queued_rule_is_skipped(slurm_dir):
 
 def test_dry_run_does_not_overwrite_queued_rule_specs(slurm_dir):
     # todos.md filed --dry-run as bypassing the already-queued guard and
-    # overwriting .remake/jobs/<rule>.json while array elements still read
-    # it. The guard runs before spec-writing on both paths (dry_run only
+    # overwriting a queued rule's specs while array elements still read
+    # them. The guard runs before spec-writing on both paths (dry_run only
     # skips submit()), so a dry run must leave a queued rule's specs alone.
     cli('run', 'pipeline.py', '-E', 'slurm')
-    specs_before = Path('.remake/jobs/gen.json').read_text()
+    submitted = specs_file('gen')
+    specs_before = submitted.read_text()
     (slurm_dir / 'shim/squeue.out').write_text('1001_3 PD\n1001_4 R\n')
 
     cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run', '--force')
-    assert Path('.remake/jobs/gen.json').read_text() == specs_before
+    assert specs_file('gen') == submitted  # skipped: no new spec file either
+    assert submitted.read_text() == specs_before
     # Non-queued downstream rules still get fresh specs written.
     assert '--dependency=afterok:1001' in Path('.remake/submit.sh').read_text()
+
+
+def test_replan_writes_new_spec_file_leaving_old_intact(slurm_dir):
+    # The invariant per-submission spec files exist for: no code path ever
+    # rewrites an existing spec file — a replan (here with the previous jobs
+    # gone from the queue, the case the already-queued guard can't help
+    # with) writes a fresh file under its own run_seq, and each sbatch
+    # script pins its own submission's file via --specs. A previously
+    # queued array therefore executes the exact task list it was submitted
+    # with, no matter what happens afterwards.
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    first = specs_file('gen')
+    first_content = first.read_text()
+
+    cli('run', 'pipeline.py', '-E', 'slurm')  # queue empty: full resubmit
+    second = specs_file('gen')
+    assert second != first
+    assert first.read_text() == first_content
+    assert f'--specs {second}' in Path('.remake/slurm/gen.sbatch').read_text()
 
 
 def test_resubmit_reexecutes_submit_sh(slurm_dir):
@@ -229,7 +269,7 @@ def test_run_array_task_writes_per_task_log(slurm_dir):
                '.remake/remake.jsonl')}
 
     cli('run-array-task', 'pipeline.py', 'gen', '3')
-    key = json.loads(Path('.remake/jobs/gen.json').read_text())[3]['task_key']
+    key = read_specs('gen')[3]['task_key']
     task_log = Path(f'.remake/tasks/log/gen/{key[:2]}/{key[2:]}.log')
     assert 'gen[n=3]' in task_log.read_text()
     # The shared logs are untouched: per-task processes must not append to
@@ -248,7 +288,7 @@ def test_run_array_task_executes_spec(slurm_dir):
     assert Path('data/gen_3.txt').read_text() == '3'
     # And it is recorded: a replan no longer includes gen[n=3].
     cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')
-    specs = json.loads(Path('.remake/jobs/gen.json').read_text())
+    specs = read_specs('gen')
     assert {'n': 3} not in [spec['kwargs'] for spec in specs]
 
 
@@ -260,7 +300,7 @@ def test_run_array_task_writes_sidecar_not_db(slurm_dir):
     # The array process must not touch the shared DB (livelock on shared
     # filesystems); the result goes to a sidecar instead.
     assert Path('.remake/remake.db').read_bytes() == db_before
-    spec = json.loads(Path('.remake/jobs/gen.json').read_text())[3]
+    spec = read_specs('gen')[3]
     key = spec['task_key']
     sidecar = Path(f'.remake/tasks/results/gen/{key[:2]}/{key[2:]}.json')
     payload = json.loads(sidecar.read_text())
@@ -273,7 +313,7 @@ def test_run_array_task_writes_sidecar_not_db(slurm_dir):
     # The next planning invocation ingests: sidecar gone, task complete.
     cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')
     assert not sidecar.exists()
-    specs = json.loads(Path('.remake/jobs/gen.json').read_text())
+    specs = read_specs('gen')
     assert {'n': 3} not in [spec['kwargs'] for spec in specs]
 
 
@@ -283,7 +323,7 @@ def test_ingest_after_edit_detects_code_change(slurm_dir):
     # still detects the code change and replans the task.
     cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')
     cli('run-array-task', 'pipeline.py', 'gen', '3')
-    key = json.loads(Path('.remake/jobs/gen.json').read_text())[3]['task_key']
+    key = read_specs('gen')[3]['task_key']
     sidecar = Path(f'.remake/tasks/results/gen/{key[:2]}/{key[2:]}.json')
     payload = json.loads(sidecar.read_text())
     assert payload['run_hash']  # what actually ran travels in the sidecar
@@ -298,7 +338,7 @@ def test_ingest_after_edit_detects_code_change(slurm_dir):
     # under the old code, so the edit must put it back in the plan.
     cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')
     assert not sidecar.exists()
-    specs = json.loads(Path('.remake/jobs/gen.json').read_text())
+    specs = read_specs('gen')
     assert {'n': 3} in [spec['kwargs'] for spec in specs]
 
 
@@ -356,13 +396,47 @@ def test_task_info_shows_slurm_submission(slurm_dir, capsys):
     assert 'slurm:    job 1001' in out and 'array index 3' in out
 
 
+def test_run_array_task_default_specs_ignore_dry_run(slurm_dir):
+    # Without --specs, run-array-task must resolve the last SUBMITTED spec
+    # file (via the jobids sidecar's run_seq), not the newest on disk: a
+    # dry run writes a fresh spec file that no queued job is running, and a
+    # manual retry of a failed element must mean the element that failed.
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    cli('run-array-task', 'pipeline.py', 'gen', '3')  # completes gen[n=3]
+    cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')  # ingest + replan
+    assert {'n': 5} == read_specs('gen')[4]['kwargs']  # dry-run indices shifted
+
+    cli('run-array-task', 'pipeline.py', 'gen', '4')
+    # Element 4 of the submitted array is gen[n=4] — not the dry-run plan's
+    # index 4 (n=5).
+    assert Path('data/gen_4.txt').read_text() == '4'
+    assert not Path('data/gen_5.txt').exists()
+
+
+def test_task_info_array_index_survives_replan(slurm_dir, capsys):
+    # The jobids sidecar records its submission's run_seq, so task-info maps
+    # array indices against the spec file that was actually submitted — not
+    # whichever replan wrote specs last. Complete gen[n=3] and replan: the
+    # new spec file omits n=3 and shifts every later index down by one, but
+    # gen[n=4] must still be attributed to element 4 of job 1001.
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    cli('run-array-task', 'pipeline.py', 'gen', '3')  # completes gen[n=3]
+    cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')  # ingest + replan
+    assert {'n': 4} == read_specs('gen')[3]['kwargs']  # indices shifted
+
+    capsys.readouterr()
+    cli('task-info', 'pipeline.py', '-Q', 'rule == "gen" and n == 4')
+    out = capsys.readouterr().out
+    assert 'slurm:    job 1001' in out and 'array index 4' in out
+
+
 # --- dynamic matrices: continuation job ---
 
 
 def test_deferred_rule_gets_continuation_job(slurm_dir):
     Path('dynamic.py').write_text(DYNAMIC_PIPELINE)
     cli('run', 'dynamic.py', '-E', 'slurm', '--dry-run')
-    assert not Path('.remake/jobs/dyn.json').exists()  # deferred: no spec yet
+    assert specs_file('dyn') is None  # deferred: no spec yet
     submit = Path('.remake/submit.sh').read_text()
     assert (
         'sbatch --parsable --dependency=afterok:$JOB_discover_0 '

@@ -31,11 +31,11 @@ On submission remake writes, under `.remake/`:
 
 | Path | Contents |
 |---|---|
-| `jobs/<rule>.json` | per-rule job spec (one entry per task) |
+| `jobs/<rule>.<run_seq>.json` | per-submission job spec (one entry per task). Immutable: each submission writes its own file and the sbatch script pins it, so replans never disturb a queued array |
 | `slurm/<rule>.sbatch` | per-rule array script |
 | `slurm/output/<rule>/` | per-element stdout/stderr |
 | `submit.sh` | master submission script (re-run it with `remake resubmit`) |
-| `jobs/<rule>.jobids.json` | submitted job ids (written at submission) |
+| `jobs/<rule>.jobids.json` | submitted job ids + the submission's `run_seq` (written at submission) |
 | `tasks/results/...` | per-task result **sidecars**, absorbed into the DB by the next remake invocation |
 
 ## Monitoring

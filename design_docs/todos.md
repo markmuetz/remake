@@ -92,7 +92,15 @@ entries are pruned to [todos_archive.md](todos_archive.md) at each release
   **Per-submission immutable spec files (`<rule>.<run_seq>.json`, referenced by
   the sbatch script) fix findings 1–4 and 12 at the root** — spec rewrites can
   never corrupt queued arrays, and the executor can then submit exactly the
-  not-yet-queued tasks instead of skipping whole rules. Independent of that:
+  not-yet-queued tasks instead of skipping whole rules. **Landed 2026-07-10**
+  (specs immutable per run_seq, sbatch pins via `--specs`, sidecar records
+  run_seq, task-info index pinned): findings 1–3 and 12 are downgraded from
+  index corruption to duplicate submission, finding 10a fixed. Still open from
+  that cluster: squeue-failure fail-safe (finding 1's duplicate half; design in
+  slurm_already_running.md), per-task skip (finding 4), and pruning
+  accumulated `<rule>.<run_seq>.json` files (one per rule per submission/
+  dry-run; a prune is only safe when the sidecar's recorded submission has
+  left the queue). Independent of that:
   tuple kwargs → phantom task key (run-array-task ignores `spec['task_key']`),
   resubmit with no queue check + baked literal dependency ids, aftercorr chosen
   by kwargs equality not data dependence, continuation self-replication +

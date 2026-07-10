@@ -61,6 +61,13 @@ Two improvements, in order of value:
    the in-flight array is still reading — cheap, since specs are per
    submission.)
 
+   *Update 2026-07-10:* specs **are** per submission now
+   (`.remake/jobs/<rule>.<run_seq>.json`, immutable, pinned by the sbatch
+   script via `run-array-task --specs`; the jobids sidecar records the
+   run_seq). The spec-rewrite corruption this doc worried about is
+   structurally impossible, and the caveat above is satisfied — per-task skip
+   only needs the queue→task mapping (item 1) and the planner-side change.
+
 Job-id reuse (Slurm recycles ids past `MaxJobId`) and cross-run name
 collisions (same rule name, different working dir / previous run) are exactly
 why we match on **run id + spec path**, not on a bare job id or job name.

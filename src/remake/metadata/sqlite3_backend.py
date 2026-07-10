@@ -335,7 +335,7 @@ class Sqlite3Backend(MetadataManager):
                 "rule '{}' is defined in both '{}' and '{}', which share the "
                 "same .remake/ store in this directory. They will overwrite each "
                 "other's recorded state (causing spurious reruns) and clash on "
-                ".remake/jobs/{}.json and the per-task log/SLURM-output dirs. "
+                ".remake/jobs/{}.* and the per-task log/SLURM-output dirs. "
                 "Rename one rule, run them in separate directories, or — if it is "
                 "meant to be the same rule — import it from a shared module. "
                 "(If the rule is intentionally shared, this fires after an edit "

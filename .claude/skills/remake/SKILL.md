@@ -35,7 +35,7 @@ remake task-log <remakefile> <selector> [--path]   # print a task's log (or its 
 remake why <remakefile> <selector>                 # explain rerun decision for one task
 remake slurm-status <remakefile> [--json]          # live queue state per rule
 remake run-task <remakefile> <key-or-prefix>       # run one task by key
-remake run-array-task <remakefile> <rule> <idx>    # internal: SLURM payload
+remake run-array-task <remakefile> <rule> <idx> [--specs <file>]  # internal: SLURM payload (--specs pins the submission's spec file; defaults to the rule's last submission)
 remake resubmit <remakefile>                       # re-run .remake/submit.sh, no replanning
 remake version
 ```
@@ -62,8 +62,8 @@ debugger on exception.
 .remake/remake.debug.log                   DEBUG/TRACE firehose (timings, argv)
 .remake/remake.jsonl                       structured mirror (jq-able: .record.extra.event/run_id)
 .remake/tasks/log/<rule>/<k:2>/<k2:>.log   per-task log, named by 40-hex task key
-.remake/jobs/<rule>.json                   SLURM specs: [{task_key, rule, kwargs}]; array index = position
-.remake/jobs/<rule>.jobids.json            last submitted SLURM job id(s)
+.remake/jobs/<rule>.<run_seq>.json         SLURM specs: [{task_key, rule, kwargs, run_seq}]; array index = position. One immutable file per submission (sbatch pins it via --specs); older ones are dead history, safe to ignore
+.remake/jobs/<rule>.jobids.json            last submitted SLURM job id(s) + that submission's run_seq
 .remake/slurm/<rule>.sbatch, submit.sh     generated scripts
 .remake/slurm/output/<rule>/<idx>.out/.err scheduler stdout/stderr, index-named (NOT stable across runs)
 ```

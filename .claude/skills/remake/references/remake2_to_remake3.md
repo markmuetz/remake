@@ -119,7 +119,7 @@ they bite at different times:
    upstream-rerun tracking, so a `dict`/`list` value raises `TypeError:
    unhashable type: 'dict'` at plan time (`-n` is the first place it shows).
 2. **JSON-round-trip-stable** — under the SLURM executor, kwargs are
-   serialised to `.remake/jobs/<rule>.json` and **reloaded on the compute
+   serialised to `.remake/jobs/<rule>.<run_seq>.json` and **reloaded on the compute
    node**, and `Task.key = sha1(repr(sorted(kwargs)))`. JSON has no tuples,
    so a tuple (or nested tuple) value comes back as a **list** → the
    reload-time key differs from the plan-time key. Result: sidecar results

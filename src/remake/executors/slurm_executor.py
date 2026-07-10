@@ -5,10 +5,20 @@ Writes per-rule JSON job specs, per-rule sbatch scripts and a master
 design_docs/remake3_design.md (SLURM executor) for the full behaviour.
 
 File layout (all relative to the working directory, like the metadata DB):
-    .remake/jobs/<rule>.json         array of {task_key, rule, kwargs};
-                                     SLURM array index = position
-    .remake/jobs/<rule>.jobids.json  sidecar written at submission
-    .remake/slurm/<rule>.sbatch      per-rule script
+    .remake/jobs/<rule>.<run_seq>.json  array of {task_key, rule, kwargs,
+                                     run_seq}; SLURM array index = position.
+                                     Immutable: written once per submission,
+                                     never rewritten — the sbatch script pins
+                                     this exact path (--specs), so replans and
+                                     dry runs (which write a new file under
+                                     their own run_seq) can never corrupt the
+                                     indices a queued array reads.
+    .remake/jobs/<rule>.jobids.json  sidecar written at submission; records
+                                     the job id(s) and the submission's
+                                     run_seq (pinning jobids to their spec
+                                     file)
+    .remake/slurm/<rule>.sbatch      per-rule script (safe to rewrite: SLURM
+                                     copies it at submission)
     .remake/slurm/output/<rule>/     job stdout/stderr
     .remake/submit.sh                master script; `remake resubmit`
                                      re-executes it without replanning
@@ -16,8 +26,8 @@ File layout (all relative to the working directory, like the metadata DB):
 Task kwargs must be JSON-serialisable (they round-trip through the job
 specs). Already-queued detection is per rule: if any element of a rule's
 previous submission is still pending/running, the whole rule is skipped
-this run — rewriting its JSON spec would corrupt the array indices the
-queued jobs read. Skipped tasks are picked up by a later run.
+this run to avoid submitting duplicates of the in-flight tasks. Skipped
+tasks are picked up by a later run.
 """
 import getpass
 import json
@@ -45,7 +55,7 @@ ARRAY_SBATCH_TPL = """#!/bin/bash
 #SBATCH --kill-on-invalid-dep=yes
 {opts}
 echo "SLURM RUNNING {rule_name} $SLURM_ARRAY_TASK_ID"
-remake run-array-task {remakefile} {rule_name} $SLURM_ARRAY_TASK_ID
+remake run-array-task {remakefile} {rule_name} $SLURM_ARRAY_TASK_ID --specs {specs}
 rc=$?
 echo "SLURM COMPLETED {rule_name} $SLURM_ARRAY_TASK_ID (rc=$rc)"
 exit $rc
@@ -58,7 +68,7 @@ INDIVIDUAL_SBATCH_TPL = """#!/bin/bash
 #SBATCH --kill-on-invalid-dep=yes
 {opts}
 echo "SLURM RUNNING {rule_name} $1"
-remake run-array-task {remakefile} {rule_name} $1
+remake run-array-task {remakefile} {rule_name} $1 --specs {specs}
 rc=$?
 echo "SLURM COMPLETED {rule_name} $1 (rc=$rc)"
 exit $rc
@@ -99,11 +109,55 @@ def squeue_snapshot():
     return snapshot
 
 
+JOBS_DIR = Path('.remake/jobs')
+
+
+def spec_path(rule_name, run_seq=None):
+    """Path of a rule's job-spec file: the immutable per-submission file for
+    run_seq, or the legacy unversioned path when run_seq is None (pre-0.9
+    submissions, whose sidecars carry no run_seq)."""
+    if run_seq is None:
+        return JOBS_DIR / f'{rule_name}.json'
+    return JOBS_DIR / f'{rule_name}.{run_seq}.json'
+
+
+def submitted_spec_path(rule_name):
+    """The spec file the rule's last recorded submission actually ran
+    against: resolved through the jobids sidecar's run_seq (the legacy
+    unversioned path for pre-0.9 sidecars), so dry runs — which write spec
+    files but never sidecars — can't skew it. Falls back to the newest spec
+    file on disk when nothing was ever submitted (dry-run debugging), None
+    if there are no specs at all."""
+    sidecar = JOBS_DIR / f'{rule_name}.jobids.json'
+    if sidecar.exists():
+        recorded = json.loads(sidecar.read_text())
+        return spec_path(rule_name, recorded.get('run_seq'))
+    return latest_spec_path(rule_name)
+
+
+def latest_spec_path(rule_name):
+    """The rule's most recent job-spec file (highest run_seq, falling back to
+    the legacy unversioned file), or None if none exists. Newest-on-disk
+    includes unsubmitted dry-run plans — prefer submitted_spec_path for
+    anything that must match a real submission."""
+    versioned = []
+    for path in JOBS_DIR.glob(f'{rule_name}.*.json'):
+        seq = path.name.removeprefix(f'{rule_name}.').removesuffix('.json')
+        if seq.isdigit():
+            versioned.append((int(seq), path))
+    if versioned:
+        return max(versioned)[1]
+    legacy = spec_path(rule_name)
+    return legacy if legacy.exists() else None
+
+
 def last_submission(rule_name, task_key=None):
     """(jobids, array_index) from the last submission's sidecar/job spec,
     (None, None) if the rule was never submitted. `array_index` is the task's
-    position in the submitted job spec (None unless task_key is given)."""
-    sidecar = Path(f'.remake/jobs/{rule_name}.jobids.json')
+    position in the job spec of the submission the sidecar records (pinned by
+    its run_seq, so later replans don't skew it); None unless task_key is
+    given."""
+    sidecar = JOBS_DIR / f'{rule_name}.jobids.json'
     if not sidecar.exists():
         return None, None
     recorded = json.loads(sidecar.read_text())
@@ -111,7 +165,7 @@ def last_submission(rule_name, task_key=None):
     if 'slurm_array_job_id' in recorded:
         jobids = [recorded['slurm_array_job_id']]
     index = None
-    specs_path = Path(f'.remake/jobs/{rule_name}.json')
+    specs_path = spec_path(rule_name, recorded.get('run_seq'))
     if task_key is not None and specs_path.exists():
         specs = json.loads(specs_path.read_text())
         index = next((i for i, s in enumerate(specs) if s['task_key'] == task_key), None)
@@ -146,7 +200,7 @@ class SlurmExecutor(Executor):
         config = {**DEFAULT_SLURM_CONFIG, **rmk.config.get('slurm', {})}
         self.array_threshold = int(config.pop('array_threshold', ARRAY_THRESHOLD))
         self.slurm_config = config
-        self.jobs_dir = Path('.remake/jobs')
+        self.jobs_dir = JOBS_DIR
         self.slurm_dir = Path('.remake/slurm')
         self.output_dir = self.slurm_dir / 'output'
         self.submit_path = Path('.remake/submit.sh')
@@ -159,6 +213,11 @@ class SlurmExecutor(Executor):
             rule_tasks.setdefault(task.rule, []).append(task)
 
         active_jobids = self._active_jobids()
+        # One run_seq for this whole submission, allocated here on the submit
+        # node: it versions the immutable job-spec files and is stamped into
+        # each spec so downstream propagation survives the submit→compute
+        # boundary.
+        run_seq = self.rmk.metadata.current_run_seq()
         submitted = {}  # rule -> _SubmittedRule
         lines = ['#!/bin/bash', '# Generated by remake — re-run to resubmit without replanning.',
                  'set -e', '']
@@ -170,15 +229,15 @@ class SlurmExecutor(Executor):
                 # Downstream rules depend on the queued jobs by literal id.
                 submitted[rule] = _SubmittedRule(rule, None, False, queued_ids)
                 continue
-            self._write_job_specs(rule, tasks_for_rule)
+            self._write_job_specs(rule, tasks_for_rule, run_seq)
             is_array = len(tasks_for_rule) >= self.array_threshold
             kind = 'array' if is_array else 'individual'
             logger.info(f'{rule.name}: submitting {len(tasks_for_rule)} task(s) ({kind})')
             for task in tasks_for_rule:
                 logger.trace('  {}: {} {}', rule.name, task.key, task.kwargs)
-            self._write_sbatch(rule, tasks_for_rule, is_array)
+            self._write_sbatch(rule, tasks_for_rule, is_array, run_seq)
             dependency = self._dependency(rule, tasks_for_rule, is_array, submitted)
-            lines.extend(self._submit_lines(rule, tasks_for_rule, is_array, dependency))
+            lines.extend(self._submit_lines(rule, tasks_for_rule, is_array, dependency, run_seq))
             lines.append('')
             nsubmit += len(tasks_for_rule)
             refs = (
@@ -208,20 +267,23 @@ class SlurmExecutor(Executor):
             return
         self.submit()
 
-    def _write_job_specs(self, rule, tasks):
+    def _write_job_specs(self, rule, tasks, run_seq):
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
-        # One run_seq for this whole submission, allocated here on the submit
-        # node; the array elements stamp it into their sidecars so downstream
-        # propagation survives across the submit→compute boundary.
-        run_seq = self.rmk.metadata.current_run_seq()
         specs = [
             {'task_key': task.key, 'rule': rule.name, 'kwargs': task.kwargs,
              'run_seq': run_seq}
             for task in tasks
         ]
-        (self.jobs_dir / f'{rule.name}.json').write_text(json.dumps(specs, indent=1))
+        path = spec_path(rule.name, run_seq)
+        if path.exists():
+            # Queued arrays pin this exact file (--specs): rewriting it is
+            # the index corruption per-submission specs exist to prevent.
+            # Reaching this means run_seq was reused — run_tasks called
+            # twice without a new invocation (metadata.begin_invocation).
+            raise RemakeError(f'{path} already exists — job specs are write-once')
+        path.write_text(json.dumps(specs, indent=1))
 
-    def _write_sbatch(self, rule, tasks, is_array):
+    def _write_sbatch(self, rule, tasks, is_array, run_seq):
         config = {**self.slurm_config, **rule.config.get('slurm', {})}
         config.pop('array_threshold', None)
         throttle = config.pop('array_throttle', None)
@@ -235,6 +297,7 @@ class SlurmExecutor(Executor):
             output_dir=output_dir,
             opts=_sbatch_opts(config),
             remakefile=self.remakefile,
+            specs=spec_path(rule.name, run_seq),
         )
         self.slurm_dir.mkdir(parents=True, exist_ok=True)
         (self.slurm_dir / f'{rule.name}.sbatch').write_text(script)
@@ -259,14 +322,15 @@ class SlurmExecutor(Executor):
                 parts.append(f'afterok:{":".join(sub.jobid_refs)}')
         return f'--dependency={",".join(parts)} ' if parts else ''
 
-    def _submit_lines(self, rule, tasks, is_array, dependency):
+    def _submit_lines(self, rule, tasks, is_array, dependency, run_seq):
         sbatch_path = self.slurm_dir / f'{rule.name}.sbatch'
         sidecar = self.jobs_dir / f'{rule.name}.jobids.json'
         if is_array:
             var = f'JOB_{rule.name}'
             return [
                 f'{var}=$(sbatch --parsable {dependency}{sbatch_path})',
-                f'echo "{{\\"slurm_array_job_id\\": \\"${var}\\"}}" > {sidecar}',
+                f'echo "{{\\"slurm_array_job_id\\": \\"${var}\\", '
+                f'\\"run_seq\\": {run_seq}}}" > {sidecar}',
             ]
         lines = []
         output_dir = self.output_dir / rule.name
@@ -278,7 +342,10 @@ class SlurmExecutor(Executor):
                 f'{sbatch_path} {i})'
             )
         ids = ', '.join(f'\\"$JOB_{rule.name}_{i}\\"' for i in range(len(tasks)))
-        lines.append(f'echo "{{\\"slurm_job_ids\\": [{ids}]}}" > {sidecar}')
+        lines.append(
+            f'echo "{{\\"slurm_job_ids\\": [{ids}], '
+            f'\\"run_seq\\": {run_seq}}}" > {sidecar}'
+        )
         return lines
 
     def _write_continuation(self):
