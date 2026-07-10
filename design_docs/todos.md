@@ -107,10 +107,15 @@ entries are pruned to [todos_archive.md](todos_archive.md) at each release
   finding 5's live half (run-array-task asserts rebuilt key == submitted
   `spec['task_key']`; the matrix-sourced case was already blocked at plan
   time by dag scalar check, e3d5183), finding 11 (remakefile/specs paths
-  shlex-quoted in all three templates). Still open, independent of that:
-  resubmit with no queue check + baked literal dependency ids, aftercorr chosen
-  by kwargs equality not data dependence, continuation self-replication +
-  missing `--kill-on-invalid-dep`, dry-run staging submit.sh (10b). Overlaps
+  shlex-quoted in all three templates). Also landed 2026-07-10: finding 6
+  (`check_resubmit_safe`: resubmit refuses when recorded jobs are still
+  queued, when squeue fails, or when baked literal dependency ids have left
+  the queue — replan instead), finding 8 (no dependency-less continuation:
+  when nothing was submitted or queued, warn instead of looping), finding 9
+  (continuation template gets `--kill-on-invalid-dep=yes`). Still open,
+  independent of that: aftercorr chosen
+  by kwargs equality not data dependence (finding 7), dry-run staging
+  submit.sh (10b). Overlaps
   the per-task already-running item below (findings
   1 and 4 are its motivating bugs; design in
   [slurm_already_running.md](slurm_already_running.md)) — land them together.

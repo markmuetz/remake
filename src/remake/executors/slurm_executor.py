@@ -31,6 +31,7 @@ tasks are picked up by a later run.
 """
 import getpass
 import json
+import re
 import shlex
 import subprocess as sp
 from pathlib import Path
@@ -79,6 +80,7 @@ CONTINUATION_SBATCH_TPL = """#!/bin/bash
 #SBATCH --job-name=remake_continue
 #SBATCH -o {output_dir}/continuation.out
 #SBATCH -e {output_dir}/continuation.err
+#SBATCH --kill-on-invalid-dep=yes
 {opts}
 remake run {remakefile} --executor slurm
 """
@@ -176,6 +178,82 @@ def latest_spec_path(rule_name):
         return max(versioned)[1]
     legacy = spec_path(rule_name)
     return legacy if legacy.exists() else None
+
+
+def recorded_jobids(rule_name):
+    """Job id(s) from the rule's last-submission sidecar, [] if never
+    submitted (array submissions record one base id, individual submissions
+    one id per task)."""
+    sidecar = JOBS_DIR / f'{rule_name}.jobids.json'
+    if not sidecar.exists():
+        return []
+    recorded = json.loads(sidecar.read_text())
+    if 'slurm_array_job_id' in recorded:
+        return [recorded['slurm_array_job_id']]
+    return recorded.get('slurm_job_ids', [])
+
+
+def active_jobids():
+    """Base job ids of this user's jobs with any non-terminal element —
+    pending/running, but also suspended/held/requeued ('1234_5' array
+    elements map to base id '1234'). Raises SqueueError when the queue
+    state is unknown."""
+    return {
+        base
+        for base, elems in squeue_snapshot().items()
+        if any(state not in INACTIVE_STATES for _, state, _ in elems)
+    }
+
+
+def check_resubmit_safe(submit_path):
+    """Guard for `remake resubmit`: raise RemakeError when re-executing
+    submit.sh would duplicate still-queued jobs, or would abort halfway on
+    dependency ids baked in as literals whose jobs have left the queue.
+    submit.sh is executed verbatim (no replanning), so the only safe course
+    on any doubt — including an unreachable squeue — is to refuse and point
+    at `remake run`, which replans and skips queued rules correctly."""
+    text = submit_path.read_text()
+    try:
+        active = active_jobids()
+    except SqueueError as e:
+        raise RemakeError(
+            f'{e}. Cannot verify nothing in {submit_path} is still queued: '
+            'refusing to resubmit. Retry when squeue works, or replan with: '
+            'remake run <remakefile> --executor slurm'
+        ) from e
+
+    # One sidecar write per rule the script submits.
+    submitted_rules = re.findall(r'> \S*/([^/\s]+)\.jobids\.json', text)
+    queued = {
+        rule: ids for rule in submitted_rules
+        if (ids := [j for j in recorded_jobids(rule) if j in active])
+    }
+    if queued:
+        detail = ', '.join(f'{rule} (job {",".join(ids)})' for rule, ids in queued.items())
+        raise RemakeError(
+            f'Still queued from the last submission: {detail}. Resubmitting '
+            f'would run duplicates racing on the same outputs. Wait, or '
+            'replan with: remake run <remakefile> --executor slurm '
+            '(skips queued rules and submits the rest)'
+        )
+
+    # Rules already queued at generation time were skipped, wiring their
+    # downstream --dependency flags to literal job ids. Once those jobs
+    # leave the queue the ids go stale: sbatch rejects the dependency and
+    # `set -e` aborts the script halfway (jobs submitted, sidecars not
+    # written). Only a replan re-derives the wiring.
+    literal_ids = set()
+    for dep in re.findall(r'--dependency=(\S+)', text):
+        for clause in dep.split(','):  # 'afterok:1001:$JOB_proc'
+            literal_ids.update(t for t in clause.split(':')[1:] if t.isdigit())
+    stale = sorted(jobid for jobid in literal_ids if jobid not in active)
+    if stale:
+        raise RemakeError(
+            f'{submit_path} depends on job id(s) {", ".join(stale)} that '
+            'have left the queue (baked in when those rules were skipped as '
+            'already queued). sbatch would reject the dependency mid-script. '
+            'Replan with: remake run <remakefile> --executor slurm'
+        )
 
 
 def last_submission(rule_name, task_key=None):
@@ -297,14 +375,25 @@ class SlurmExecutor(Executor):
 
         if deferred_rules:
             names = ', '.join(rule.name for rule in deferred_rules)
-            self._write_continuation()
             all_refs = [ref for sub in submitted.values() for ref in sub.jobid_refs]
-            lines.append(f'# Continuation: replans and submits deferred rules ({names}).')
-            dep = f'--dependency=afterok:{":".join(all_refs)} ' if all_refs else ''
-            lines.append(
-                f'sbatch --parsable {dep}{self.slurm_dir}/continuation.sbatch'
-            )
-            lines.append('')
+            if all_refs:
+                self._write_continuation()
+                lines.append(f'# Continuation: replans and submits deferred rules ({names}).')
+                lines.append(
+                    f'sbatch --parsable --dependency=afterok:{":".join(all_refs)} '
+                    f'{self.slurm_dir}/continuation.sbatch'
+                )
+                lines.append('')
+            else:
+                # Nothing submitted or queued to wait on: a continuation would
+                # replan the exact same state and submit another continuation,
+                # forever (review finding 8). Whatever the deferred matrices
+                # are waiting for, this run cannot produce it.
+                logger.warning(
+                    f'Deferred rule(s) {names} are waiting on data no submitted '
+                    'job will produce; not submitting a continuation. '
+                    'Fix the missing inputs and re-run.'
+                )
 
         self.submit_path.parent.mkdir(parents=True, exist_ok=True)
         self.submit_path.write_text('\n'.join(lines))
@@ -426,22 +515,8 @@ class SlurmExecutor(Executor):
             raise RemakeError(f'{self.submit_path} failed (exit {result.returncode})')
 
     def _active_jobids(self):
-        """Base job ids of this user's jobs with any non-terminal element —
-        pending/running, but also suspended/held/requeued ('1234_5' array
-        elements map to base id '1234')."""
-        return {
-            base
-            for base, elems in squeue_snapshot().items()
-            if any(state not in INACTIVE_STATES for _, state, _ in elems)
-        }
+        return active_jobids()
 
     def _queued_jobids(self, rule, active_jobids):
         """This rule's previously-submitted job ids that are still active."""
-        sidecar = self.jobs_dir / f'{rule.name}.jobids.json'
-        if not sidecar.exists():
-            return []
-        recorded = json.loads(sidecar.read_text())
-        ids = recorded.get('slurm_job_ids', [])
-        if 'slurm_array_job_id' in recorded:
-            ids = [recorded['slurm_array_job_id']]
-        return [jobid for jobid in ids if jobid in active_jobids]
+        return [jobid for jobid in recorded_jobids(rule.name) if jobid in active_jobids]

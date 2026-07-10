@@ -294,6 +294,47 @@ def test_resubmit_without_submit_sh_errors(slurm_dir, capsys):
     assert 'No .remake/submit.sh' in capsys.readouterr().err
 
 
+def test_resubmit_refuses_while_jobs_still_queued(slurm_dir, capsys):
+    # Review finding 6: resubmit used to re-execute submit.sh with no queue
+    # check, submitting duplicates of still-queued rules (two writers per
+    # output) and overwriting their sidecars.
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    nsubmitted = len(sbatch_calls(slurm_dir))
+    (slurm_dir / 'shim/squeue.out').write_text('1001_3 PD\n')
+
+    assert cli('resubmit', 'pipeline.py') == 2
+    err = capsys.readouterr().err
+    assert 'Still queued' in err and 'gen' in err and '1001' in err
+    assert len(sbatch_calls(slurm_dir)) == nsubmitted  # nothing re-executed
+
+
+def test_resubmit_refuses_when_squeue_fails(slurm_dir, capsys):
+    # Resubmit executes submit.sh verbatim; with the queue unknowable the
+    # only safe course is to refuse.
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    break_squeue(slurm_dir)
+    assert cli('resubmit', 'pipeline.py') == 2
+    assert 'refusing to resubmit' in capsys.readouterr().err
+
+
+def test_resubmit_refuses_stale_literal_dependency_ids(slurm_dir, capsys):
+    # A rule skipped as already-queued wires downstream --dependency flags
+    # to its literal job ids. Once those jobs leave the queue, sbatch
+    # rejects the dependency and set -e aborts submit.sh halfway — refuse
+    # and point at a replan instead.
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    (slurm_dir / 'shim/squeue.out').write_text('1001_3 PD\n')
+    cli('run', 'pipeline.py', '-E', 'slurm')  # gen skipped: afterok:1001 baked in
+    assert '--dependency=afterok:1001' in Path('.remake/submit.sh').read_text()
+    (slurm_dir / 'shim/squeue.out').write_text('')  # 1001 gone from the queue
+    nsubmitted = len(sbatch_calls(slurm_dir))
+
+    assert cli('resubmit', 'pipeline.py') == 2
+    err = capsys.readouterr().err
+    assert '1001' in err and 'left the queue' in err
+    assert len(sbatch_calls(slurm_dir)) == nsubmitted
+
+
 # --- run-array-task: the payload SLURM jobs execute ---
 
 
@@ -576,6 +617,25 @@ def test_deferred_rule_gets_continuation_job(slurm_dir):
     continuation = Path('.remake/slurm/continuation.sbatch').read_text()
     assert 'remake run dynamic.py --executor slurm' in continuation
     assert '#SBATCH --partition=test-par' in continuation
+    # Finding 9: without this, one failed upstream task leaves the
+    # continuation pending forever as DependencyNeverSatisfied.
+    assert '#SBATCH --kill-on-invalid-dep=yes' in continuation
+
+
+def test_no_continuation_when_nothing_to_wait_on(slurm_dir, capsys):
+    # Review finding 8: run_tasks([], deferred) used to submit a
+    # dependency-less continuation that replans the same state and submits
+    # another continuation, forever. If nothing was submitted or queued,
+    # whatever the deferred matrices wait for cannot appear — warn instead.
+    Path('dynamic.py').write_text(DYNAMIC_PIPELINE)
+    cli('run', 'dynamic.py', '-E', 'slurm')
+    cli('run-array-task', 'dynamic.py', 'discover', '0')  # writes data/ids.json
+    Path('data/ids.json').unlink()  # discover recorded complete, dyn re-defers
+    nsubmitted = len(sbatch_calls(slurm_dir))
+
+    cli('run', 'dynamic.py', '-E', 'slurm')
+    assert 'continuation' not in Path('.remake/submit.sh').read_text()
+    assert len(sbatch_calls(slurm_dir)) == nsubmitted  # no self-replication
 
 
 def test_slurm_executor_needs_remakefile():

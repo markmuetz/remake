@@ -455,11 +455,14 @@ class RemakeCLI:
     def remake_resubmit(self, args):
         import subprocess as sp
 
+        from .executors.slurm_executor import check_resubmit_safe
+
         submit = Path('.remake/submit.sh')
         if not submit.exists():
             raise RemakeError(
                 f'No {submit} — generate it with: remake run {args.remakefile} --executor slurm'
             )
+        check_resubmit_safe(submit)
         result = sp.run(['bash', str(submit)], capture_output=True, text=True)
         if result.stdout.strip():
             print(result.stdout.strip())
