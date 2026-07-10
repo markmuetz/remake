@@ -258,6 +258,79 @@ rmk.rules_from_current_module()
     assert 'aftercorr' not in submit
 
 
+def test_shared_upstream_output_gets_afterok_not_aftercorr(slurm_dir):
+    # Pre-tag review (0.8.1) finding: when upstream elements share an output
+    # (e.g. one zarr store region-written by every element), "element i's
+    # output" is every element's output, so the subset test alone passes
+    # vacuously — but downstream element i would start while siblings are
+    # still writing the shared store. Shared outputs must force afterok.
+    Path('shared.py').write_text('''
+from pathlib import Path
+from remake import Remake, rule
+
+@rule(outputs={'store': 'data/all.txt', 'part': 'data/part_{n}.txt'},
+      matrix={'n': list(range(12))})
+def write_all(outputs, n):
+    Path(outputs['part']).write_text(str(n))
+
+@rule(inputs={'store': 'data/all.txt'}, outputs={'o': 'data/read_{n}.txt'},
+      matrix={'n': list(range(12))}, depends_on=[write_all])
+def read_all(inputs, outputs, n):
+    Path(outputs['o']).write_text('x')
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    cli('run', 'shared.py', '-E', 'slurm', '--dry-run')
+    submit = Path('.remake/submit.sh').read_text()
+    assert '--dependency=afterok:$JOB_write_all' in submit
+    assert 'aftercorr' not in submit
+
+
+def test_ordering_only_dependency_gets_afterok(slurm_dir):
+    # Same review: a downstream that reads nothing from its upstream
+    # (ordering-only depends_on) proves nothing element-wise — the empty
+    # intersection must not pass the aftercorr test vacuously.
+    Path('ordering.py').write_text('''
+from pathlib import Path
+from remake import Remake, rule
+
+@rule(outputs={'o': 'data/a_{n}.txt'}, matrix={'n': list(range(12))})
+def a(outputs, n):
+    Path(outputs['o']).write_text(str(n))
+
+@rule(outputs={'o': 'data/b_{n}.txt'}, matrix={'n': list(range(12))},
+      depends_on=[a])
+def b(outputs, n):
+    Path(outputs['o']).write_text(str(n))
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    cli('run', 'ordering.py', '-E', 'slurm', '--dry-run')
+    submit = Path('.remake/submit.sh').read_text()
+    assert '--dependency=afterok:$JOB_a' in submit
+    assert 'aftercorr' not in submit
+
+
+def test_corrupt_jobids_sidecar_does_not_brick_run(slurm_dir, capsys):
+    # Pre-tag review (0.8.1) finding: sidecars are written by a shell
+    # redirect in submit.sh — a killed script or full disk leaves a
+    # truncated file. That must degrade (warning, treated as absent, specs
+    # kept) rather than crash every SLURM command with a JSONDecodeError.
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    Path('.remake/jobs/gen.jobids.json').write_text('{"slurm_array_')  # truncated
+    (slurm_dir / 'shim/squeue.out').write_text('1002_3 PD\n')  # proc queued
+
+    cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')  # must not raise
+    submit = Path('.remake/submit.sh').read_text()
+    assert 'gen.sbatch' in submit  # unreadable sidecar -> not queued, resubmit
+    assert '--dependency=afterok:1002' in submit  # proc's intact sidecar honoured
+    capsys.readouterr()
+    cli('slurm-status', 'pipeline.py')  # read-only paths survive too
+    assert 'proc' in capsys.readouterr().out
+
+
 def test_suspended_job_still_counts_as_queued(slurm_dir):
     # Review finding 3: the active filter used to accept only PD/R/CF, so a
     # suspended array (scontrol suspend, gang preemption) looked done and

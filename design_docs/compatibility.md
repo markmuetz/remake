@@ -46,6 +46,14 @@ ships a defensive `ALTER TABLE` migration path, so "the DB gets ramps even in
   upgrade itself rather than a defect in what was recorded.) Cut patches
   from `main` while it is still fix-only; branch from the release tag only
   if a fix becomes urgent after feature work has landed.
+  - *Recorded exception (2026-07-10, 0.8.1, flagged by the pre-tag review):*
+    the `info` four-state partition renames the `--json` key `success` →
+    `up_to_date` and adds `stale` — a CLI output change in a patch. Accepted
+    because the old `success` count was itself misleading (it silently
+    included successes the planner would rerun — closer to a bug than a
+    contract), the break is loud (`KeyError`, never wrong data), and 0.8.x
+    has no known external consumers of `info --json`. Not a precedent:
+    output-contract changes still default to the minor lane.
 
 ## The 1.0 contract
 

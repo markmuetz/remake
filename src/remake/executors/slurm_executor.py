@@ -149,9 +149,8 @@ def submitted_spec_path(rule_name):
     files but never sidecars — can't skew it. Falls back to the newest spec
     file on disk when nothing was ever submitted (dry-run debugging), None
     if there are no specs at all."""
-    sidecar = JOBS_DIR / f'{rule_name}.jobids.json'
-    if sidecar.exists():
-        recorded = json.loads(sidecar.read_text())
+    recorded = _read_sidecar(JOBS_DIR / f'{rule_name}.jobids.json')
+    if recorded is not None:
         return spec_path(rule_name, recorded.get('run_seq'))
     return latest_spec_path(rule_name)
 
@@ -172,6 +171,20 @@ def latest_spec_path(rule_name):
     return legacy if legacy.exists() else None
 
 
+def _read_sidecar(sidecar):
+    """Parse a jobids sidecar; None if missing or unreadable. Sidecars are
+    written by a shell redirect in submit.sh, so a killed script or full
+    disk can leave a truncated file — callers treat that as 'no recorded
+    submission' (fail safe) rather than crashing every SLURM command."""
+    try:
+        return json.loads(sidecar.read_text())
+    except FileNotFoundError:
+        return None
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning(f'Unreadable jobids sidecar {sidecar} ({e}); treating as absent')
+        return None
+
+
 SPEC_MAX_AGE_DAYS = 7
 
 
@@ -186,14 +199,21 @@ def prune_spec_files(max_age_days=SPEC_MAX_AGE_DAYS):
     if not JOBS_DIR.exists():
         return
     keep = set()
+    skip_rules = set()
     for sidecar in JOBS_DIR.glob('*.jobids.json'):
         rule_name = sidecar.name.removesuffix('.jobids.json')
-        recorded = json.loads(sidecar.read_text())
+        recorded = _read_sidecar(sidecar)
+        if recorded is None:
+            # Can't tell which spec the submission pins: keep all of them.
+            skip_rules.add(rule_name)
+            continue
         keep.add(spec_path(rule_name, recorded.get('run_seq')))
     cutoff = time.time() - max_age_days * 86400
     npruned = 0
     for path in JOBS_DIR.glob('*.json'):
         if path.name.endswith('.jobids.json') or path in keep:
+            continue
+        if path.name.split('.')[0] in skip_rules:
             continue
         if path.stat().st_mtime < cutoff:
             path.unlink()
@@ -207,10 +227,9 @@ def recorded_jobids(rule_name):
     submitted. One base id per rule since arrays-everywhere; 'slurm_job_ids'
     (one id per task) is read for sidecars written by pre-arrays-only
     versions, whose jobs may still be queued."""
-    sidecar = JOBS_DIR / f'{rule_name}.jobids.json'
-    if not sidecar.exists():
+    recorded = _read_sidecar(JOBS_DIR / f'{rule_name}.jobids.json')
+    if recorded is None:
         return []
-    recorded = json.loads(sidecar.read_text())
     if 'slurm_array_job_id' in recorded:
         return [recorded['slurm_array_job_id']]
     return recorded.get('slurm_job_ids', [])
@@ -285,10 +304,9 @@ def last_submission(rule_name, task_key=None):
     position in the job spec of the submission the sidecar records (pinned by
     its run_seq, so later replans don't skew it); None unless task_key is
     given."""
-    sidecar = JOBS_DIR / f'{rule_name}.jobids.json'
-    if not sidecar.exists():
+    recorded = _read_sidecar(JOBS_DIR / f'{rule_name}.jobids.json')
+    if recorded is None:
         return None, None
-    recorded = json.loads(sidecar.read_text())
     jobids = recorded_jobids(rule_name)
     index = None
     specs_path = spec_path(rule_name, recorded.get('run_seq'))
@@ -311,10 +329,16 @@ def _elementwise(upstream_tasks, tasks):
         return False
     up_outputs = [{str(p) for p in t.outputs.values()} for t in upstream_tasks]
     all_up = set().union(*up_outputs)
-    return all(
-        {str(p) for p in task.inputs.values()} & all_up <= up_outputs[i]
-        for i, task in enumerate(tasks)
-    )
+    if sum(len(outs) for outs in up_outputs) != len(all_up):
+        # Elements share an output (e.g. one zarr store region-written by
+        # all): "element i's file" is every element's file, so the subset
+        # test below would pass vacuously while element i's data is still
+        # being written by its siblings.
+        return False
+    reads = [{str(p) for p in task.inputs.values()} & all_up for task in tasks]
+    # Every element must actually read from its counterpart (an empty
+    # intersection — ordering-only depends_on — proves nothing).
+    return all(read and read <= up_outputs[i] for i, read in enumerate(reads))
 
 
 class _SubmittedRule:
