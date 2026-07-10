@@ -96,8 +96,10 @@ entries are pruned to [todos_archive.md](todos_archive.md) at each release
   (specs immutable per run_seq, sbatch pins via `--specs`, sidecar records
   run_seq, task-info index pinned): findings 1–3 and 12 are downgraded from
   index corruption to duplicate submission, finding 10a fixed. Still open from
-  that cluster: squeue-failure fail-safe (finding 1's duplicate half; design in
-  slurm_already_running.md), per-task skip (finding 4), and pruning
+  that cluster: ~~squeue-failure fail-safe~~ (landed 2026-07-10:
+  `squeue_snapshot` raises `SqueueError`, run refuses to submit over an
+  unknown queue when submissions are recorded, slurm-status errors cleanly),
+  per-task skip (finding 4), and pruning
   accumulated `<rule>.<run_seq>.json` files (one per rule per submission/
   dry-run; a prune is only safe when the sidecar's recorded submission has
   left the queue). Independent of that:
@@ -112,8 +114,9 @@ entries are pruned to [todos_archive.md](todos_archive.md) at each release
   (`squeue_snapshot`/`_active_jobids`/`_queued_jobids` skip a whole rule whose
   last submission is still PD/R); make it per-task and replan-proof by stamping
   each job with a run id + its spec path so a queue snapshot maps back to the
-  exact remake task. Also fixes the latent resubmit-all bug where a *failed*
-  squeue is read as an empty queue. Design: [slurm_already_running.md](slurm_already_running.md).
+  exact remake task. (The latent resubmit-all bug — a *failed* squeue read as
+  an empty queue — was fixed separately 2026-07-10, `SqueueError` fail-safe.)
+  Design: [slurm_already_running.md](slurm_already_running.md).
   (Once landed, `run -E slurm`'s per-rule submission line is the natural home
   for a "skipped N already-queued tasks" message.)
 - [ ] Check behaviour of deferrable rules under SLURM. When running, I think

@@ -27,6 +27,16 @@ cat "$dir/squeue.out" 2>/dev/null
 exit 0
 '''
 
+# A broken squeue (controller down/throttled): errors instead of reporting.
+SQUEUE_FAIL_SHIM = '''#!/bin/bash
+echo 'slurm_load_jobs error: Socket timed out on send/recv operation' >&2
+exit 1
+'''
+
+
+def break_squeue(slurm_dir):
+    (slurm_dir / 'shim/squeue').write_text(SQUEUE_FAIL_SHIM)
+
 # gen/proc: 12 tasks, same matrix -> arrays wired with aftercorr.
 # agg: fan-in, 1 task -> individual job with afterok; per-rule config merge.
 PIPELINE = '''
@@ -428,6 +438,64 @@ def test_task_info_array_index_survives_replan(slurm_dir, capsys):
     cli('task-info', 'pipeline.py', '-Q', 'rule == "gen" and n == 4')
     out = capsys.readouterr().out
     assert 'slurm:    job 1001' in out and 'array index 4' in out
+
+
+# --- squeue failure: never mistaken for an empty queue ---
+
+
+def test_squeue_failure_with_recorded_submissions_refuses(slurm_dir, capsys):
+    # The latent resubmit-all bug (design_docs/slurm_already_running.md):
+    # squeue failing used to look like an empty queue, green-lighting
+    # duplicates of still-queued arrays. With submissions on record and the
+    # queue state unknown, refuse to submit.
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    nsubmitted = len(sbatch_calls(slurm_dir))
+    submitted = specs_file('gen')
+    break_squeue(slurm_dir)
+
+    assert cli('run', 'pipeline.py', '-E', 'slurm') == 2
+    err = capsys.readouterr().err
+    assert 'refusing to submit' in err
+    assert 'gen' in err and 'Socket timed out' in err
+    assert len(sbatch_calls(slurm_dir)) == nsubmitted  # nothing submitted
+    assert specs_file('gen') == submitted  # no new spec files either
+
+
+def test_squeue_failure_dry_run_also_refuses(slurm_dir, capsys):
+    # A dry run stages submit.sh (which `remake resubmit` executes blind),
+    # so it must not plan around an unknown queue either.
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    break_squeue(slurm_dir)
+    assert cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run') == 2
+    assert 'refusing to submit' in capsys.readouterr().err
+
+
+def test_squeue_failure_fresh_dir_proceeds(slurm_dir):
+    # No jobids sidecars -> nothing we submitted can be queued: a broken or
+    # missing squeue (e.g. planning off-cluster) must not block the first
+    # submission.
+    break_squeue(slurm_dir)
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    assert len(sbatch_calls(slurm_dir)) == 3
+
+
+def test_squeue_failure_slurm_status_errors_cleanly(slurm_dir, capsys):
+    # slurm-status must report the failure, not "not in queue" for every job.
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    break_squeue(slurm_dir)
+    capsys.readouterr()
+    assert cli('slurm-status', 'pipeline.py') == 2
+    captured = capsys.readouterr()
+    assert 'squeue failed' in captured.err
+    assert 'not in queue' not in captured.out
+
+
+def test_squeue_snapshot_missing_squeue_raises(tmp_path, monkeypatch):
+    from remake.executors.slurm_executor import SqueueError, squeue_snapshot
+
+    monkeypatch.setenv('PATH', str(tmp_path))  # no squeue anywhere
+    with pytest.raises(SqueueError, match='squeue not found'):
+        squeue_snapshot()
 
 
 # --- dynamic matrices: continuation job ---

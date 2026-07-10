@@ -20,8 +20,9 @@ confused DB, at worst. On a wide array this is silent and expensive.
 Detection is built, but at **rule** granularity:
 
 - `squeue_snapshot()` — one `squeue -h -r -u $USER -o '%i %t %r'` call,
-  returning `{base_jobid: [(elem_id, state, reason)]}`. Returns `{}` when
-  squeue is missing or errors.
+  returning `{base_jobid: [(elem_id, state, reason)]}`. Raises `SqueueError`
+  when squeue is missing or errors (since 2026-07-10; it used to return `{}`,
+  the resubmit-all bug analysed below).
 - `_active_jobids()` — base ids with any element in `PD`/`R`/`CF`.
 - `_queued_jobids(rule, active)` — reads the rule's last-submission sidecar
   `.remake/jobs/<rule>.jobids.json` and intersects with the active set.
@@ -132,9 +133,12 @@ not worth it given the above.
 
 ## Concrete changes
 
-- `squeue_snapshot()`: separate "ran, empty" from "failed" (sentinel or
-  exception); callers fail safe on failure. *(fixes the latent resubmit-all
-  bug)*
+- ~~`squeue_snapshot()`: separate "ran, empty" from "failed" (sentinel or
+  exception); callers fail safe on failure.~~ *Done 2026-07-10:* raises
+  `SqueueError(RemakeError)`; `run_tasks` refuses to submit when the planned
+  rules have recorded submissions (proceeds with a warning on a fresh dir, so
+  off-cluster dry runs keep working); `slurm-status` reports the failure and
+  exits 2 instead of showing every job as "not in queue".
 - Stamp jobs with `--comment=remake:<runid>:<rule>:<specpath>`; persist the run
   id with the submission (alongside `<rule>.jobids.json`).
 - Map queue elements → tasks via run id + spec path + index; share this with

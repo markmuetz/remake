@@ -191,13 +191,16 @@ def _blocked_stage2_elements(dir_):
     dependency. Returns [(elem_id, state, reason)]. Empty when SLURM has
     already cancelled them (kill_invalid_depend) or squeue is unavailable."""
     sys.path.insert(0, str(REPO_ROOT / 'src'))
-    from remake.executors.slurm_executor import squeue_snapshot
+    from remake.executors.slurm_executor import SqueueError, squeue_snapshot
 
     sidecar = dir_ / '.remake' / 'jobs' / 'stage2.jobids.json'
     if not sidecar.exists():
         return []
     base = json.loads(sidecar.read_text()).get('slurm_array_job_id')
-    snap = squeue_snapshot()
+    try:
+        snap = squeue_snapshot()
+    except SqueueError:
+        return []
     return [
         (elem, state, reason)
         for elem, state, reason in snap.get(str(base), [])

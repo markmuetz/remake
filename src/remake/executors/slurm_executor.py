@@ -87,17 +87,28 @@ def _sbatch_opts(config):
     return '\n'.join(f'#SBATCH --{k}={v}' for k, v in config.items() if v)
 
 
+class SqueueError(RemakeError):
+    """squeue could not be run, so the queue state is unknown. Distinct from
+    an empty queue: treating "unknown" as "empty" would green-light
+    resubmitting jobs that are still in flight
+    (design_docs/slurm_already_running.md)."""
+
+
 def squeue_snapshot():
     """{base_jobid: [(element_id, state, reason)]} for this user's queued/
-    running jobs, one squeue call. Empty when squeue is unavailable."""
+    running jobs, one squeue call. {} means squeue ran and the queue is
+    empty; raises SqueueError when squeue is missing or fails — callers must
+    fail safe rather than assume an empty queue."""
     try:
         result = sp.run(
             ['squeue', '-h', '-r', '-u', getpass.getuser(), '-o', '%i %t %r'],
             capture_output=True, text=True, check=True,
         )
-    except (FileNotFoundError, sp.CalledProcessError) as e:
-        logger.debug(f'squeue unavailable ({e!r})')
-        return {}
+    except FileNotFoundError as e:
+        raise SqueueError('squeue not found: cannot check the job queue') from e
+    except sp.CalledProcessError as e:
+        detail = (e.stderr or '').strip() or f'exit {e.returncode}'
+        raise SqueueError(f'squeue failed ({detail}): queue state unknown') from e
     snapshot = {}
     for line in result.stdout.splitlines():
         if not line.strip():
@@ -212,7 +223,29 @@ class SlurmExecutor(Executor):
         for task in tasks:
             rule_tasks.setdefault(task.rule, []).append(task)
 
-        active_jobids = self._active_jobids()
+        try:
+            active_jobids = self._active_jobids()
+        except SqueueError as e:
+            # Unknown queue state. With previous submissions on record for
+            # the planned rules we cannot tell whether they are still in
+            # flight, and submitting blind risks duplicate arrays racing on
+            # the same outputs — refuse. On a fresh dir (no sidecars) nothing
+            # we submitted can be queued, so proceed as if the queue is empty
+            # (keeps dry runs working off-cluster).
+            recorded = [
+                rule.name for rule in rule_tasks
+                if (self.jobs_dir / f'{rule.name}.jobids.json').exists()
+            ]
+            if recorded:
+                raise RemakeError(
+                    f'{e}. Previous submissions are recorded for '
+                    f'{", ".join(recorded)} and may still be queued/running: '
+                    'refusing to submit possible duplicates. Retry when '
+                    'squeue works; if you are sure nothing is queued, delete '
+                    '.remake/jobs/<rule>.jobids.json and re-run.'
+                ) from e
+            logger.warning(f'{e}; no previous submissions recorded, proceeding')
+            active_jobids = set()
         # One run_seq for this whole submission, allocated here on the submit
         # node: it versions the immutable job-spec files and is stamped into
         # each spec so downstream propagation survives the submit→compute
