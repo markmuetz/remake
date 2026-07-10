@@ -31,6 +31,7 @@ tasks are picked up by a later run.
 """
 import getpass
 import json
+import shlex
 import subprocess as sp
 from pathlib import Path
 
@@ -94,18 +95,33 @@ class SqueueError(RemakeError):
     (design_docs/slurm_already_running.md)."""
 
 
+SQUEUE_TIMEOUT = 60
+
+# squeue %t codes for jobs that are finished or will never run again. Any
+# other state — PD/R/CF, but also suspended (S/ST), held/requeued (RH/RD/RQ/
+# SE) and completing (CG) — can still (re-)read its job specs and write its
+# outputs, so it counts as active. Inverted (inactive, not active) so an
+# unrecognised state fails safe: treated as active, the rule is deferred to
+# a later run rather than double-submitted.
+INACTIVE_STATES = frozenset(('BF', 'CA', 'CD', 'DL', 'F', 'NF', 'OOM', 'TO'))
+
+
 def squeue_snapshot():
     """{base_jobid: [(element_id, state, reason)]} for this user's queued/
     running jobs, one squeue call. {} means squeue ran and the queue is
-    empty; raises SqueueError when squeue is missing or fails — callers must
-    fail safe rather than assume an empty queue."""
+    empty; raises SqueueError when squeue is missing, fails or hangs —
+    callers must fail safe rather than assume an empty queue."""
     try:
         result = sp.run(
             ['squeue', '-h', '-r', '-u', getpass.getuser(), '-o', '%i %t %r'],
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, check=True, timeout=SQUEUE_TIMEOUT,
         )
     except FileNotFoundError as e:
         raise SqueueError('squeue not found: cannot check the job queue') from e
+    except sp.TimeoutExpired as e:
+        raise SqueueError(
+            f'squeue gave no response within {SQUEUE_TIMEOUT}s: queue state unknown'
+        ) from e
     except sp.CalledProcessError as e:
         detail = (e.stderr or '').strip() or f'exit {e.returncode}'
         raise SqueueError(f'squeue failed ({detail}): queue state unknown') from e
@@ -329,8 +345,11 @@ class SlurmExecutor(Executor):
             array_throttle=f'%{throttle}' if throttle else '',
             output_dir=output_dir,
             opts=_sbatch_opts(config),
-            remakefile=self.remakefile,
-            specs=spec_path(rule.name, run_seq),
+            # The remakefile is a user-typed path (spaces in home/group dirs
+            # word-split on the compute node); other interpolations are
+            # rule-name-derived .remake/ paths, safe unquoted.
+            remakefile=shlex.quote(str(self.remakefile)),
+            specs=shlex.quote(str(spec_path(rule.name, run_seq))),
         )
         self.slurm_dir.mkdir(parents=True, exist_ok=True)
         (self.slurm_dir / f'{rule.name}.sbatch').write_text(script)
@@ -391,7 +410,7 @@ class SlurmExecutor(Executor):
         script = CONTINUATION_SBATCH_TPL.format(
             output_dir=self.output_dir,
             opts=_sbatch_opts(config),
-            remakefile=self.remakefile,
+            remakefile=shlex.quote(str(self.remakefile)),
         )
         (self.slurm_dir / 'continuation.sbatch').write_text(script)
 
@@ -407,12 +426,13 @@ class SlurmExecutor(Executor):
             raise RemakeError(f'{self.submit_path} failed (exit {result.returncode})')
 
     def _active_jobids(self):
-        """Base job ids of this user's pending/running jobs ('1234_5' array
+        """Base job ids of this user's jobs with any non-terminal element —
+        pending/running, but also suspended/held/requeued ('1234_5' array
         elements map to base id '1234')."""
         return {
             base
             for base, elems in squeue_snapshot().items()
-            if any(state in ('PD', 'R', 'CF') for _, state, _ in elems)
+            if any(state not in INACTIVE_STATES for _, state, _ in elems)
         }
 
     def _queued_jobids(self, rule, active_jobids):

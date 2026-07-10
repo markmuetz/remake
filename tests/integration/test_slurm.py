@@ -220,6 +220,31 @@ def test_already_queued_rule_is_skipped(slurm_dir):
     assert not any('gen.sbatch' in call for call in calls[nsubmitted:])
 
 
+def test_suspended_job_still_counts_as_queued(slurm_dir):
+    # Review finding 3: the active filter used to accept only PD/R/CF, so a
+    # suspended array (scontrol suspend, gang preemption) looked done and
+    # was double-submitted. Active is now "any non-terminal state".
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    nsubmitted = len(sbatch_calls(slurm_dir))
+    (slurm_dir / 'shim/squeue.out').write_text('1001_3 S\n')
+
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    calls = sbatch_calls(slurm_dir)
+    assert not any('gen.sbatch' in call for call in calls[nsubmitted:])
+
+
+def test_terminal_job_state_does_not_block_resubmission(slurm_dir):
+    # The other side of the inverted filter: a job squeue still lists but in
+    # a terminal state (completed, briefly visible) must not park the rule.
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    nsubmitted = len(sbatch_calls(slurm_dir))
+    (slurm_dir / 'shim/squeue.out').write_text('1001_3 CD\n1001_4 F\n')
+
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    calls = sbatch_calls(slurm_dir)
+    assert any('gen.sbatch' in call for call in calls[nsubmitted:])
+
+
 def test_dry_run_does_not_overwrite_queued_rule_specs(slurm_dir):
     # todos.md filed --dry-run as bypassing the already-queued guard and
     # overwriting a queued rule's specs while array elements still read
@@ -438,6 +463,44 @@ def test_task_info_array_index_survives_replan(slurm_dir, capsys):
     cli('task-info', 'pipeline.py', '-Q', 'rule == "gen" and n == 4')
     out = capsys.readouterr().out
     assert 'slurm:    job 1001' in out and 'array index 4' in out
+
+
+def test_run_array_task_rejects_key_mismatch(slurm_dir, capsys):
+    # Review finding 5's live half (matrix-sourced non-scalars are already
+    # rejected at plan time, dag._check_scalar_kwargs): if a spec's kwargs
+    # rebuild to a task whose key differs from the submitted one
+    # (hand-edited or corrupt spec file), fail loudly instead of recording
+    # the result under a phantom key the planner never reads.
+    cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')
+    path = specs_file('gen')
+    specs = json.loads(path.read_text())
+    specs[3]['kwargs'] = {'n': 99}  # no longer matches task_key
+    path.write_text(json.dumps(specs))
+
+    assert cli('run-array-task', 'pipeline.py', 'gen', '3', '--specs', str(path)) == 2
+    assert 'rebuilt task key' in capsys.readouterr().err
+    assert not Path('data').exists()  # nothing ran
+
+
+def test_remakefile_with_space_is_quoted_in_scripts(slurm_dir):
+    # Review finding 11: the remakefile is a user-typed name interpolated
+    # into bash; unquoted, a space word-splits on the compute node and every
+    # job fails after queueing.
+    Path('my pipeline.py').write_text(PIPELINE)
+    cli('run', 'my pipeline.py', '-E', 'slurm', '--dry-run')
+    gen = Path('.remake/slurm/gen.sbatch').read_text()
+    assert "remake run-array-task 'my pipeline.py' gen $SLURM_ARRAY_TASK_ID" in gen
+
+
+def test_squeue_snapshot_timeout_raises(slurm_dir, monkeypatch):
+    # A hung squeue (wedged controller connection) must fail safe like an
+    # erroring one, not block the run forever.
+    import remake.executors.slurm_executor as se
+
+    (slurm_dir / 'shim/squeue').write_text('#!/bin/bash\nsleep 5\n')
+    monkeypatch.setattr(se, 'SQUEUE_TIMEOUT', 0.2)
+    with pytest.raises(se.SqueueError, match='no response'):
+        se.squeue_snapshot()
 
 
 # --- squeue failure: never mistaken for an empty queue ---

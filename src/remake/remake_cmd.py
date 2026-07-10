@@ -439,6 +439,15 @@ class RemakeCLI:
         # without the field fall back to None — durable check just won't fire).
         rmk.metadata = SidecarWriter(run_seq=spec.get('run_seq'))
         task = rmk.task_from_spec(spec['rule'], spec['kwargs'])
+        if task.key != spec['task_key']:
+            # Kwargs didn't survive the JSON round-trip (should have been
+            # caught at spec-write time): running would record the result
+            # under a key the planner never reads — pending forever.
+            raise RemakeError(
+                f'{args.rule}[{args.index}]: rebuilt task key {task.key} != '
+                f'submitted key {spec["task_key"]} — kwargs changed in the '
+                f'JSON round-trip through {specs_path}'
+            )
         _add_task_log_sink(task)
         logger.info(f'Running {task}')
         rmk.run_task(task)

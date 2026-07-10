@@ -102,12 +102,16 @@ entries are pruned to [todos_archive.md](todos_archive.md) at each release
   per-task skip (finding 4), and pruning
   accumulated `<rule>.<run_seq>.json` files (one per rule per submission/
   dry-run; a prune is only safe when the sidecar's recorded submission has
-  left the queue). Independent of that:
-  tuple kwargs → phantom task key (run-array-task ignores `spec['task_key']`),
+  left the queue). Small fixes batch landed 2026-07-10: squeue timeout →
+  SqueueError, finding 3 (active = any non-terminal state, inverted filter),
+  finding 5's live half (run-array-task asserts rebuilt key == submitted
+  `spec['task_key']`; the matrix-sourced case was already blocked at plan
+  time by dag scalar check, e3d5183), finding 11 (remakefile/specs paths
+  shlex-quoted in all three templates). Still open, independent of that:
   resubmit with no queue check + baked literal dependency ids, aftercorr chosen
   by kwargs equality not data dependence, continuation self-replication +
-  missing `--kill-on-invalid-dep`, dry-run rewriting real state, unquoted
-  remakefile path. Overlaps the per-task already-running item below (findings
+  missing `--kill-on-invalid-dep`, dry-run staging submit.sh (10b). Overlaps
+  the per-task already-running item below (findings
   1 and 4 are its motivating bugs; design in
   [slurm_already_running.md](slurm_already_running.md)) — land them together.
 - [ ] Per-task "already running?" detection. Rule-level skipping exists
