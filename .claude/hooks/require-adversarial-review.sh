@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# PreToolUse hook (Bash matcher): block `git commit` when the staged diff is
-# large, unless an adversarial review ack marker exists. The marker is
-# consumed on use so each large change needs a fresh /code-review.
+# PreToolUse hook (Bash matcher): block `git commit` when the staged diff
+# touches many Python lines, unless an adversarial review ack marker exists.
+# The marker is consumed on use so each large change needs a fresh
+# /code-review. Non-Python changes (docs, config, data) don't count.
 set -u
 
 input=$(cat)
@@ -13,7 +14,7 @@ case "$cmd" in
 esac
 
 repo=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-lines=$(git -C "$repo" diff --cached --numstat | awk '{n += $1 + $2} END {print n + 0}')
+lines=$(git -C "$repo" diff --cached --numstat -- '*.py' | awk '{n += $1 + $2} END {print n + 0}')
 threshold=${REVIEW_ACK_THRESHOLD:-200}
 ack="$repo/.claude/review-ack"
 
@@ -26,5 +27,5 @@ if [ -f "$ack" ]; then
   exit 0
 fi
 
-echo "Staged diff is $lines changed lines (threshold $threshold). Adversarial review is required for large changes: run /code-review at medium+ effort in a fresh context, address the findings, then 'touch $ack' and retry the commit. Do not split the commit to dodge the threshold." >&2
+echo "Staged diff is $lines changed Python lines (threshold $threshold). Adversarial review is required for large changes: run /code-review at medium+ effort in a fresh context, address the findings, then 'touch $ack' and retry the commit. Do not split the commit to dodge the threshold." >&2
 exit 2
