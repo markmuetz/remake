@@ -2,7 +2,28 @@
 
 Concrete known problems and debts, ordered roughly by severity. Completed
 entries are pruned to [todos_archive.md](todos_archive.md) at each release
-(last prune: 2026-07-03, at 0.8.0).
+(last prune: 2026-07-10, at 0.8.1).
+
+## Release: broken as shipped
+
+- [ ] **The `remake[examples]` extra in 0.8.2 is broken in a clean env —
+  fix and ship 0.8.3** (found 2026-07-10, minutes after publishing).
+  h5netcdf ≥ 1.8 made its h5py backend *optional* (h5py is no longer a hard
+  dependency), so `pip install "remake[examples]"` gives an h5netcdf that
+  can't open files: `make_example_data.py` (which uses
+  `engine='h5netcdf'` explicitly) dies with
+  `ImportError: No module named 'h5py'`. Our dev venv masked it — something
+  in the dev group pulls h5py transitively, which is why 223 tests pass.
+  State when parked: the one-line fix (add `"h5py"` to
+  `[project.optional-dependencies] examples` in pyproject.toml) is already
+  in the working tree, **uncommitted**; `uv lock` not yet re-run. Remaining
+  steps: `uv lock`, verify properly this time — `uv build`, install the
+  built wheel with `[examples]` into a **clean** venv, run
+  `make_example_data.py` + ex2 + ex5 — then CHANGELOG 0.8.3 entry, version
+  bump, commit, tag v0.8.3 (patch: no pre-tag review needed, per the
+  2026-07-10 roadmap.md decision). Lesson for the checklist: verifying an
+  extra means installing the *built artifact* into a clean env, not testing
+  in the dev venv.
 
 ## Performance / scaling
 
