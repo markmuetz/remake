@@ -1,11 +1,65 @@
 # Todos archive
 
-Completed (`[x]`) entries pruned from [todos.md](todos.md) at the 0.8.0
-release (2026-07-03), kept verbatim for the record — including two whose
-checkboxes were stale in the live list (the top-level `RemakeError` handler,
-done 2026-06-19; the `retry_lock_commit` livelock, fixed 2026-06-12 via
-sidecars). Class: **Record** — frozen; trust the code. Open remainders noted
-inside archived items were re-stubbed in the live list at prune time.
+Completed (`[x]`) entries pruned from [todos.md](todos.md) at each release,
+kept verbatim for the record. Class: **Record** — frozen; trust the code.
+Open remainders noted inside archived items were re-stubbed in the live list
+at prune time.
+
+## Pruned at 0.8.1 (2026-07-10) — SLURM
+
+- [x] **2026-07-09 submission-logic review findings — CLOSED 2026-07-10**
+  (full report: [code_reviews/2026-07-09_review.md](code_reviews/2026-07-09_review.md)).
+  Landed, in order: per-submission immutable spec files (root fix — findings
+  1–4/10a/12 downgraded or fixed); squeue-failure fail-safe (`SqueueError`;
+  run/resubmit refuse over an unknown queue, slurm-status errors cleanly);
+  squeue timeout; finding 3 (active = any non-terminal state); finding 5's
+  live half (run-array-task asserts rebuilt key == `spec['task_key']`; matrix
+  case already blocked at plan time, e3d5183); finding 11 (paths
+  shlex-quoted); finding 6 (`check_resubmit_safe`: refuses on queued jobs,
+  squeue failure, or stale literal dependency ids); findings 8/9
+  (no dependency-less continuation; `--kill-on-invalid-dep=yes` on the
+  continuation); age-based spec pruning (>7 days, sidecar-referenced kept);
+  finding 7 (aftercorr only when element-wise correspondence is *proved*
+  from task inputs/outputs, else afterok); C2 (arrays-everywhere — individual
+  mode removed, which also removes C1's dual sidecar encoding; legacy
+  `slurm_job_ids` sidecars still read). Post-review (0.8.1 pre-tag): the
+  `_elementwise` proof tightened (pairwise-disjoint upstream outputs,
+  non-empty per-element reads) and unreadable jobids sidecars degrade with a
+  warning instead of crashing.
+  **Parked** (Mark; design + revival notes in
+  [slurm_already_running.md](slurm_already_running.md)): per-task skip,
+  `--comment` job stamping, and the per-rule submission ledger both it and
+  provable pruning would need — too complicated for minimal payback.
+  **Archived without action** (rationale): 10b (dry run stages submit.sh) —
+  the dangerous half (resubmit executing a dry plan blind) is covered by the
+  resubmit guard, and "generate everything, submit nothing" is exactly what
+  makes dry run useful for inspection; C3 (each array element parses the
+  whole spec file) — low MBs of JSON at target scale, negligible; C4/C5
+  (minor duplication) — fold in opportunistically when that code is next
+  touched.
+- [x] ~~Check behaviour of deferrable rules under SLURM~~ — **resolved
+  2026-07-10** (the note said "downstream" but meant *upstream*). Verified
+  empirically end-to-end: editing the upstream of a complete dynamic
+  pipeline (a) under singleproc reruns the deferrable rule's tasks in the
+  same invocation (wave replan loop); (b) under SLURM defers the deferrable
+  rule ("matrix would expand from stale upstream output") and submits a
+  continuation pinned afterok on the upstream, which replans and resubmits
+  it — regression test
+  `test_upstream_rerun_defers_deferrable_rule_to_continuation`; (c) durable
+  `upstream-newer` propagation covers a lost continuation at the next
+  invocation. The bug as observed on JASMIN (~2026-06-13/15) was real but
+  predated 1fc16c4 (2026-06-17, defer @deferrable matrices on stale
+  upstream); a failed upstream element could also silently park the
+  continuation until finding 9's `--kill-on-invalid-dep` fix (2026-07-10).
+  Open remainder re-stubbed in the live list: `remake why` doesn't surface
+  "deferred because upstream reruns".
+
+---
+
+Entries below were pruned at the 0.8.0 release (2026-07-03) — including two
+whose checkboxes were stale in the live list (the top-level `RemakeError`
+handler, done 2026-06-19; the `retry_lock_commit` livelock, fixed 2026-06-12
+via sidecars).
 
 ## Performance / scaling
 

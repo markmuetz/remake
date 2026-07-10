@@ -82,50 +82,15 @@ entries are pruned to [todos_archive.md](todos_archive.md) at each release
 
 ## SLURM
 
-- [x] **2026-07-09 submission-logic review findings — CLOSED 2026-07-10**
-  (full report: [code_reviews/2026-07-09_review.md](code_reviews/2026-07-09_review.md)).
-  Landed, in order: per-submission immutable spec files (root fix — findings
-  1–4/10a/12 downgraded or fixed); squeue-failure fail-safe (`SqueueError`;
-  run/resubmit refuse over an unknown queue, slurm-status errors cleanly);
-  squeue timeout; finding 3 (active = any non-terminal state); finding 5's
-  live half (run-array-task asserts rebuilt key == `spec['task_key']`; matrix
-  case already blocked at plan time, e3d5183); finding 11 (paths
-  shlex-quoted); finding 6 (`check_resubmit_safe`: refuses on queued jobs,
-  squeue failure, or stale literal dependency ids); findings 8/9
-  (no dependency-less continuation; `--kill-on-invalid-dep=yes` on the
-  continuation); age-based spec pruning (>7 days, sidecar-referenced kept);
-  finding 7 (aftercorr only when element-wise correspondence is *proved*
-  from task inputs/outputs, else afterok); C2 (arrays-everywhere — individual
-  mode removed, which also removes C1's dual sidecar encoding; legacy
-  `slurm_job_ids` sidecars still read).
-  **Parked** (Mark; design + revival notes in
-  [slurm_already_running.md](slurm_already_running.md)): per-task skip,
-  `--comment` job stamping, and the per-rule submission ledger both it and
-  provable pruning would need — too complicated for minimal payback.
-  **Archived without action** (rationale): 10b (dry run stages submit.sh) —
-  the dangerous half (resubmit executing a dry plan blind) is covered by the
-  resubmit guard, and "generate everything, submit nothing" is exactly what
-  makes dry run useful for inspection; C3 (each array element parses the
-  whole spec file) — low MBs of JSON at target scale, negligible; C4/C5
-  (minor duplication) — fold in opportunistically when that code is next
-  touched.
-- [x] ~~Check behaviour of deferrable rules under SLURM~~ — **resolved
-  2026-07-10** (the note said "downstream" but meant *upstream*). Verified
-  empirically end-to-end: editing the upstream of a complete dynamic
-  pipeline (a) under singleproc reruns the deferrable rule's tasks in the
-  same invocation (wave replan loop); (b) under SLURM defers the deferrable
-  rule ("matrix would expand from stale upstream output") and submits a
-  continuation pinned afterok on the upstream, which replans and resubmits
-  it — regression test
-  `test_upstream_rerun_defers_deferrable_rule_to_continuation`; (c) durable
-  `upstream-newer` propagation covers a lost continuation at the next
-  invocation. The bug as observed on JASMIN (~2026-06-13/15) was real but
-  predated 1fc16c4 (2026-06-17, defer @deferrable matrices on stale
-  upstream); a failed upstream element could also silently park the
-  continuation until finding 9's `--kill-on-invalid-dep` fix (2026-07-10).
-  Note: `remake why` does not surface "deferred because upstream reruns" —
-  it reports only the upstream's own reasons (minor UX gap, `info` does show
-  deferred rows).
+The 2026-07-09 submission-logic review cluster and the deferrable-rules
+check were closed 2026-07-10 and pruned to
+[todos_archive.md](todos_archive.md) at the 0.8.1 release (parked designs
+and rationale: [slurm_already_running.md](slurm_already_running.md)).
+
+- [ ] `remake why` doesn't surface "deferred because upstream reruns" for a
+  deferrable rule's tasks — it reports only the upstream's own reasons
+  (`info` does show deferred rows). Minor UX gap found while closing the
+  deferrable-rules check.
 
 ## UX
 

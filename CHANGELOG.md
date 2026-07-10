@@ -6,6 +6,56 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-07-10
+
+A SLURM-executor hardening release: the fixes from an adversarial review
+of the submission logic. No schema changes, no new rerun triggers —
+upgrading does not cause an existing pipeline to rerun anything.
+
+### Fixed
+
+- **A failed `squeue` is no longer mistaken for an empty queue.**
+  `squeue` failing, missing, or hanging (60s timeout) used to look like
+  "nothing queued", green-lighting duplicate submission of arrays still in
+  flight. It now raises a distinct error: `remake run -E slurm` refuses to
+  submit when previous submissions are recorded (proceeds with a warning on
+  a fresh directory), and `remake slurm-status` reports the failure instead
+  of showing every job as "not in queue".
+- **Job specs are per-submission and immutable**
+  (`.remake/jobs/<rule>.<run_seq>.json`; each sbatch script pins its own
+  submission's file via `run-array-task --specs`). Replans and dry runs
+  write a fresh file, so a queued array always executes the exact task list
+  it was submitted with — the spec-rewrite index corruption is structurally
+  impossible. `task-info`'s array-index mapping survives replans. Spec files
+  older than 7 days are pruned automatically (each rule's last-submitted
+  spec is kept at any age).
+- **`remake resubmit` is guarded**: it now refuses when jobs from the last
+  submission are still queued (duplicates racing on the same outputs), when
+  `squeue` fails, or when `submit.sh` bakes in literal dependency job ids
+  that have left the queue (sbatch would reject them mid-script) — each with
+  a pointer to `remake run -E slurm`, which replans correctly.
+- **`aftercorr` (element-wise) dependencies are now proved, not assumed.**
+  Previously chosen when upstream/downstream kwargs matched, which let a
+  stencil-style rule (task *n* reads upstream *n−1*, *n*) start elements
+  against unwritten neighbour outputs, and let elements racing on a shared
+  upstream output (e.g. one zarr store) start early — silent partial data.
+  Correspondence is now derived from resolved task inputs/outputs (pairwise
+  disjoint upstream outputs, every element reading its counterpart), falling
+  back to `afterok` (wait for the whole upstream job) when unprovable.
+- **Suspended/held jobs count as queued.** The active filter accepted only
+  PD/R/CF, so a suspended or requeue-held array looked finished and was
+  double-submitted; it now treats every non-terminal state as active.
+- **Continuation jobs can no longer self-replicate or hang forever**: a
+  continuation is only submitted when there is something to wait on, and it
+  carries `--kill-on-invalid-dep=yes` so a failed upstream cancels it
+  instead of leaving it pending as `DependencyNeverSatisfied`.
+- **`run-array-task` verifies the rebuilt task key** against the submitted
+  spec's `task_key`, failing loudly instead of recording a result under a
+  key the planner never reads (task stuck pending forever).
+- **Robustness**: a truncated jobids sidecar (killed script, full disk) is
+  treated as absent with a warning instead of crashing every SLURM command;
+  remakefile paths containing spaces are quoted in generated scripts.
+
 ### Changed
 
 - **`remake info` columns are now a four-state partition**: `up-to-date`,
@@ -13,7 +63,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   successes the planner would rerun). The counts satisfy
   `up-to-date + stale + failed + pending = tasks` and
   `up-to-date + to run = tasks`. In `--json`, the per-rule/totals key
-  `success` is replaced by `up_to_date` and `stale` is added.
+  `success` is replaced by `up_to_date` and `stale` is added. (A CLI-output
+  change in a patch release — recorded exception in
+  `design_docs/compatibility.md`: the old count was misleading and the break
+  is loud.)
+- **Every SLURM rule is submitted as one array job**, even a single task
+  (`--array=0-0`); the separate individual-job mode is gone. Sidecars always
+  record `slurm_array_job_id` (old `slurm_job_ids` sidecars are still read,
+  so in-flight submissions survive the upgrade). The `array_threshold`
+  config key is obsolete and ignored.
 
 ## [0.8.0] — 2026-07-03
 
