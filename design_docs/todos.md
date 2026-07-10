@@ -82,6 +82,24 @@ entries are pruned to [todos_archive.md](todos_archive.md) at each release
 
 ## SLURM
 
+- [ ] **Fix the 2026-07-09 submission-logic review findings** — 12 correctness
+  issues (11 confirmed) + 5 cleanups:
+  [code_reviews/2026-07-09_review.md](code_reviews/2026-07-09_review.md).
+  Root theme: the "never rewrite a spec a queued array still reads" invariant
+  has a single guard (already-queued detection) that fails open three ways
+  (squeue error swallowed at debug, mid-rule sbatch failure under `set -e`
+  before the sidecar echo, suspended/held states not counted as active).
+  **Per-submission immutable spec files (`<rule>.<run_seq>.json`, referenced by
+  the sbatch script) fix findings 1–4 and 12 at the root** — spec rewrites can
+  never corrupt queued arrays, and the executor can then submit exactly the
+  not-yet-queued tasks instead of skipping whole rules. Independent of that:
+  tuple kwargs → phantom task key (run-array-task ignores `spec['task_key']`),
+  resubmit with no queue check + baked literal dependency ids, aftercorr chosen
+  by kwargs equality not data dependence, continuation self-replication +
+  missing `--kill-on-invalid-dep`, dry-run rewriting real state, unquoted
+  remakefile path. Overlaps the per-task already-running item below (findings
+  1 and 4 are its motivating bugs; design in
+  [slurm_already_running.md](slurm_already_running.md)) — land them together.
 - [ ] Per-task "already running?" detection. Rule-level skipping exists
   (`squeue_snapshot`/`_active_jobids`/`_queued_jobids` skip a whole rule whose
   last submission is still PD/R); make it per-task and replan-proof by stamping
