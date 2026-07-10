@@ -109,9 +109,23 @@ entries are pruned to [todos_archive.md](todos_archive.md) at each release
   whole spec file) — low MBs of JSON at target scale, negligible; C4/C5
   (minor duplication) — fold in opportunistically when that code is next
   touched.
-- [ ] Check behaviour of deferrable rules under SLURM. When running, I think
-  that the downstream tasks rerunning should have triggered a rerun of the
-  deferrable jobs but did not. Worth checking.
+- [x] ~~Check behaviour of deferrable rules under SLURM~~ — **resolved
+  2026-07-10** (the note said "downstream" but meant *upstream*). Verified
+  empirically end-to-end: editing the upstream of a complete dynamic
+  pipeline (a) under singleproc reruns the deferrable rule's tasks in the
+  same invocation (wave replan loop); (b) under SLURM defers the deferrable
+  rule ("matrix would expand from stale upstream output") and submits a
+  continuation pinned afterok on the upstream, which replans and resubmits
+  it — regression test
+  `test_upstream_rerun_defers_deferrable_rule_to_continuation`; (c) durable
+  `upstream-newer` propagation covers a lost continuation at the next
+  invocation. The bug as observed on JASMIN (~2026-06-13/15) was real but
+  predated 1fc16c4 (2026-06-17, defer @deferrable matrices on stale
+  upstream); a failed upstream element could also silently park the
+  continuation until finding 9's `--kill-on-invalid-dep` fix (2026-07-10).
+  Note: `remake why` does not surface "deferred because upstream reruns" —
+  it reports only the upstream's own reasons (minor UX gap, `info` does show
+  deferred rows).
 
 ## UX
 

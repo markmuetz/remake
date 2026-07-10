@@ -697,6 +697,38 @@ def test_no_continuation_when_nothing_to_wait_on(slurm_dir, capsys):
     assert len(sbatch_calls(slurm_dir)) == nsubmitted  # no self-replication
 
 
+def test_upstream_rerun_defers_deferrable_rule_to_continuation(slurm_dir):
+    # todos.md ("deferrable rules under SLURM"): with the whole dynamic
+    # pipeline complete, editing the upstream rule must not leave the
+    # deferrable rule stranded as up-to-date. The planner defers it (its
+    # matrix would expand from the stale upstream output, 1fc16c4) and the
+    # executor submits a continuation pinned afterok on the upstream, which
+    # replans and resubmits it once the upstream has rerun.
+    Path('dynamic.py').write_text(DYNAMIC_PIPELINE)
+    cli('run', 'dynamic.py', '-E', 'slurm')
+    cli('run-array-task', 'dynamic.py', 'discover', '0')
+    cli('run', 'dynamic.py', '-E', 'slurm')  # ingests; submits dyn
+    for i in range(3):
+        cli('run-array-task', 'dynamic.py', 'dyn', str(i))
+
+    Path('dynamic.py').write_text(DYNAMIC_PIPELINE.replace(
+        'json.dumps([1, 2, 3])', 'json.dumps(sorted([1, 2, 3]))'))
+    cli('run', 'dynamic.py', '-E', 'slurm')
+    submit = Path('.remake/submit.sh').read_text()
+    assert 'discover.sbatch' in submit
+    assert 'dyn.sbatch' not in submit  # deferred, not planned stale-complete
+    assert (
+        'sbatch --parsable --dependency=afterok:$JOB_discover '
+        '.remake/slurm/continuation.sbatch' in submit
+    )
+
+    # The continuation replans after discover completes: dyn is stale
+    # (upstream-newer) and resubmitted.
+    cli('run-array-task', 'dynamic.py', 'discover', '0')
+    cli('run', 'dynamic.py', '-E', 'slurm')  # what the continuation runs
+    assert 'dyn.sbatch' in Path('.remake/submit.sh').read_text()
+
+
 def test_slurm_executor_needs_remakefile():
     from remake import Remake, RemakeError, SlurmExecutor
 
