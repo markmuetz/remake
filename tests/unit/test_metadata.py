@@ -2,6 +2,7 @@ import sqlite3
 from pathlib import Path
 from time import perf_counter
 
+import pytest
 from loguru import logger
 
 from remake import Remake, Sqlite3Backend, rule
@@ -33,6 +34,13 @@ def _two_same_named_rules(tmp_path):
         Path(outputs['o']).write_text('two')
 
     return r1, process
+
+
+def test_backend_context_manager_closes_connection():
+    with Sqlite3Backend(':memory:') as meta:
+        assert meta.conn.execute('SELECT 1').fetchone() == (1,)
+    with pytest.raises(sqlite3.ProgrammingError):
+        meta.conn.execute('SELECT 1')
 
 
 def test_duplicate_rule_name_across_remakefiles_warns(tmp_path):

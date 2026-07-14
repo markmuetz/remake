@@ -147,6 +147,28 @@ class Sqlite3Backend(MetadataManager):
         # task this invocation commits. See the `meta` table comment.
         self._run_seq = None
 
+    def close(self):
+        self.conn.close()
+
+    # Unlike sqlite3.Connection's own `with` (transaction commit/rollback),
+    # this scopes the backend's lifetime: the connection closes on exit.
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+
+    def __del__(self):
+        # sqlite3's finalizer emits a ResourceWarning for an unclosed
+        # connection at an arbitrary later gc point; close here so a backend
+        # that was never explicitly closed doesn't trip that.
+        conn = getattr(self, 'conn', None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
     def _add_missing_columns(self):
         """Lightweight forward-compat for columns added after a DB was first
         created (still no general migration support — see the module docstring).

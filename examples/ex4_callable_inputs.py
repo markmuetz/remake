@@ -52,7 +52,8 @@ def validate_config(inputs, outputs):
 def calibrate(inputs, outputs, site, year):
     import csv
     factor = calibration[site]
-    rows = list(csv.DictReader(Path(inputs['raw']).open()))
+    with Path(inputs['raw']).open() as f:
+        rows = list(csv.DictReader(f))
     with Path(outputs['cal']).open('w', newline='') as f:
         w = csv.DictWriter(f, fieldnames=['site', 'year', 'value'])
         w.writeheader()
@@ -101,7 +102,8 @@ def seasonal_means(inputs, outputs, site, year, season):
         key = f'm{m:02d}'
         if key not in inputs:
             continue
-        rows = list(csv.DictReader(Path(inputs[key]).open()))
+        with Path(inputs[key]).open() as f:
+            rows = list(csv.DictReader(f))
         all_values.extend(float(r['value']) for r in rows)
     with Path(outputs['seasonal']).open('w', newline='') as f:
         w = csv.writer(f)
@@ -127,7 +129,8 @@ def annual_summary(inputs, outputs, site, year):
     import csv, statistics
     all_means = []
     for path in inputs.values():
-        rows = list(csv.DictReader(Path(path).open()))
+        with Path(path).open() as f:
+            rows = list(csv.DictReader(f))
         all_means.extend(float(r['mean']) for r in rows)
     with Path(outputs['annual']).open('w', newline='') as f:
         w = csv.writer(f)

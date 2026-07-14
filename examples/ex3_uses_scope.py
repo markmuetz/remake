@@ -46,7 +46,8 @@ def normalise(values: list[float]) -> list[float]:
 )
 def filter_data(inputs, outputs, year):
     import csv
-    rows = list(csv.DictReader(Path(inputs['src']).open()))
+    with Path(inputs['src']).open() as f:
+        rows = list(csv.DictReader(f))
     kept = [r for r in rows if float(r['value']) > threshold]
     values = [float(r['value']) for r in kept]
     normed = normalise(values)
@@ -70,7 +71,8 @@ def combine(inputs, outputs):
     import csv
     all_rows = []
     for path in inputs.values():
-        all_rows.extend(list(csv.DictReader(Path(path).open())))
+        with Path(path).open() as f:
+            all_rows.extend(list(csv.DictReader(f)))
     with Path(outputs['combined']).open('w', newline='') as f:
         w = csv.DictWriter(f, fieldnames=['year', 'value', 'normed'])
         w.writeheader()
