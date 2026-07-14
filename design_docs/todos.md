@@ -46,6 +46,17 @@ entries are pruned to [todos_archive.md](todos_archive.md) at each release
 
 ## Smaller debts
 
+- [ ] **Definition-vs-visibility for namespace scans** (found designing
+  the parked remakefile-deps feature,
+  [remakefile_deps.md](remakefile_deps.md)): `load_remake` errors on an
+  *imported* Remake object in the module namespace, and — silent and
+  worse — `rules_from_current_module()` would claim an imported rule
+  (`from other import fetch` for `inputs=fetch.outputs`) into the wrong
+  pipeline. Fix: `Remake.__init__` records its defining file (caller
+  frame), rules already know their module; both scans filter to
+  objects *defined* in the scanned file. Worth doing independently of
+  the parked feature.
+
 - [ ] `eval`-based query filter (see MM comment in `core/planner.py:27`):
   `make_predicate` does `eval(compile(query, ...))` against task kwargs.
   Hardened (`__builtins__` stripped, kwargs as the only locals) and the query
