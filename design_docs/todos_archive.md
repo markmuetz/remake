@@ -5,6 +5,21 @@ kept verbatim for the record. Class: **Record** — frozen; trust the code.
 Open remainders noted inside archived items were re-stubbed in the live list
 at prune time.
 
+## Pruned at 0.8.3 (2026-07-14) — release
+
+- [x] **The `remake[examples]` extra in 0.8.2 is broken in a clean env —
+  fix and ship 0.8.3** (found 2026-07-10, minutes after publishing).
+  h5netcdf ≥ 1.8 made its h5py backend *optional*, so
+  `pip install "remake[examples]"` gave an h5netcdf that can't open files
+  (`ImportError: No module named 'h5py'` from `make_example_data.py`,
+  which uses `engine='h5netcdf'` explicitly). The dev venv masked it —
+  the dev group pulls h5py transitively, so all tests passed. Fixed in
+  0.8.3 by adding `h5py` to the extra; this time verified by installing
+  the *built wheel* with `[examples]` into a clean venv and running
+  `make_example_data.py` + ex2 + ex5. **Lesson (now the rule): verifying
+  an extra means installing the built artifact into a clean env, never
+  testing in the dev venv.**
+
 ## Pruned at 0.8.1 (2026-07-10) — SLURM
 
 - [x] **2026-07-09 submission-logic review findings — CLOSED 2026-07-10**

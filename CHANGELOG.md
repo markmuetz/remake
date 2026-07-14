@@ -6,6 +6,25 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.3] — 2026-07-14
+
+### Fixed
+
+- **The `remake[examples]` extra shipped broken in 0.8.2**: h5netcdf ≥ 1.8
+  made its h5py backend optional, so a clean
+  `pip install "remake[examples]"` couldn't open NetCDF files
+  (`ImportError: No module named 'h5py'` from `make_example_data.py`).
+  The extra now depends on `h5py` explicitly.
+- The bundled examples are now held warning-clean by the test suite
+  (warnings are test failures), which caught and fixed five unclosed file
+  handles in ex3/ex4.
+
+### Added
+
+- `Sqlite3Backend` gained `close()` and context-manager support
+  (`with Sqlite3Backend(...) as meta:`), and closes its connection on
+  garbage collection instead of emitting a `ResourceWarning`.
+
 ## [0.8.2] — 2026-07-10
 
 ### Added
@@ -285,4 +304,7 @@ the `remake` Claude skill (`references/remake2_to_remake3.md`). The rewrite was
 validated by reproducing a real multi-figure paper pipeline (`mcs_prime`)
 end-to-end on JASMIN with outputs identical to the remake2 reference.
 
+[0.8.3]: https://github.com/markmuetz/remake/releases/tag/v0.8.3
+[0.8.2]: https://github.com/markmuetz/remake/releases/tag/v0.8.2
+[0.8.1]: https://github.com/markmuetz/remake/releases/tag/v0.8.1
 [0.8.0]: https://github.com/markmuetz/remake/releases/tag/v0.8.0

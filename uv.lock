@@ -1837,6 +1837,7 @@ debug = [
 examples = [
     { name = "dask" },
     { name = "h5netcdf" },
+    { name = "h5py" },
     { name = "netcdf4", version = "1.7.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and platform_machine == 'ARM64' and sys_platform == 'win32'" },
     { name = "netcdf4", version = "1.7.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or platform_machine != 'ARM64' or sys_platform != 'win32'" },
     { name = "pyyaml" },
@@ -1878,6 +1879,7 @@ requires-dist = [
     { name = "dask", marker = "extra == 'examples'" },
     { name = "distributed", marker = "extra == 'dask'", specifier = ">=2024.8.0" },
     { name = "h5netcdf", marker = "extra == 'examples'" },
+    { name = "h5py", marker = "extra == 'examples'" },
     { name = "ipdb", marker = "extra == 'debug'" },
     { name = "loguru" },
     { name = "netcdf4", marker = "extra == 'examples'", specifier = ">=1.7.2" },
