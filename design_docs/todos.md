@@ -105,6 +105,14 @@ and rationale: [slurm_already_running.md](slurm_already_running.md)).
 
 ## UX
 
+- [ ] **Missing external inputs: fail fast with a hint** (scoped as
+  0.9.0 item 8, spec in
+  [future_releases/v0.9.0.md](future_releases/v0.9.0.md)): running a
+  pipeline whose ungenerated/unfetched external inputs are missing
+  currently produces N per-task FileNotFoundError failures (33 in the
+  2026-07-10 examples session) instead of one pre-run list plus the
+  remakefile's `external_inputs_hint`.
+
 - [ ] Run-start observability (lesser remainder of the 2026-07-02
   observability work, main asks archived): log chosen executor/nproc/config
   at run start; the direct-DB-write-vs-sidecar decision and per-task
