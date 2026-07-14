@@ -1,13 +1,16 @@
 # Remakefile dependencies + discovery (`run-all`)
 
-> **Status: PARKED (MM, 2026-07-14).** Design captured from discussion,
-> not scheduled for a release. Parked because the cross-remakefile rerun
-> story is messy: when a task in the upstream remakefile goes stale, what
-> should rerun downstream has no clean answer (see §Staleness — the reason
-> it's parked). Revive by settling that section first; the rest of the
-> design is ready. One piece is independently worthwhile regardless —
-> §Definition vs visibility — stubbed in [todos.md](todos.md).
-> Class: **Design**.
+> **Status: split (MM, 2026-07-14).** The **dependency half is PARKED** —
+> the cross-remakefile rerun story is messy: when a task in the upstream
+> remakefile goes stale, what should rerun downstream has no clean answer
+> (see §Staleness). Revive by settling that section first. The
+> **discovery/`run-all` half is UNPARKED** (same day): without `requires`
+> it needs no ordering, no gate, and no SLURM staging — remakefiles are
+> treated as independent, which dissolves everything hard (see
+> §run-all without dependencies). Scoped into 0.9.0
+> ([future_releases/v0.9.0.md](future_releases/v0.9.0.md)). One further
+> piece is independently worthwhile — §Definition vs visibility — stubbed
+> in [todos.md](todos.md). Class: **Design**.
 
 ## Motivation
 
@@ -21,7 +24,7 @@ then a *process* remakefile (MM has several such). Wanted:
 
 ## Design (as discussed)
 
-### Remakefile dependencies
+### Remakefile dependencies (PARKED)
 
 - Declaration: `Remake(requires=['download.py'])`, paths relative to the
   declaring remakefile (consistent with the post-0.8.0 anchor rule).
@@ -36,24 +39,44 @@ then a *process* remakefile (MM has several such). Wanted:
 - Co-located remakefiles already share one `.remake/` store, so no
   metadata work for the same-directory case.
 
-### Discovery / `run-all`
+### run-all without dependencies (UNPARKED — the 0.9.0 scope)
+
+MM's observation (2026-07-14): keep `remake run-all` *without* the
+dependency structure — it makes running all the examples easy, and they
+are independent anyway. Dropping `requires` dissolves both hard parts:
+
+- **No ordering**: no topo-sort, no cycles, no up-to-date gate. Run in
+  sorted-filename order (deterministic, nothing more implied) and
+  document that `run-all` makes **no ordering promises** — the contract
+  independent remakefiles need. When deps are revived, `requires` slots
+  back in as the ordering layer of this same command; nothing is lost.
+- **No SLURM staging**: the staging headache was downstream submissions
+  needing `afterok` on upstream jobs. Independent remakefiles submit
+  independently — run-all under SLURM is "submit each in turn", which
+  the executor already does.
+
+What survives from the original design unchanged:
 
 - **Discovery must not import**: identify candidates with a cheap AST
   scan (a `Remake(...)` call / `@rule` decorators), then `load_remake`
   only those. Importing every `.py` executes side effects
   (`make_example_data.py` would run).
-- `run-all`: discover in cwd (flag for recursive), topo-sort by
-  `requires`, error on cycles, run each remakefile only after its
-  upstreams report fully up to date. Subdirectory remakefiles run in
-  their own `.remake/` stores (existing chdir behaviour).
-  `examples/` is a ready-made integration test.
-- **SLURM staging**: the SLURM executor returns after submission, so
-  sequential run-all can't just proceed. v1 = sync executors only, clean
-  error under SLURM. v2 sketch: the jobids sidecars record every
-  submitted job, so the downstream remakefile's first-wave sbatch can
-  carry `--dependency=afterok:` on all upstream jobs — coarse but
-  correct, reusing the continuation machinery hardened 2026-07. Own
-  design pass when revived.
+- Recursive flag (e.g. `ex5_multifile/pipeline.py`); each remakefile
+  runs against its own directory's `.remake/` store via the existing
+  chdir behaviour. `examples/` is a ready-made integration test.
+
+New decisions for the standalone version:
+
+- **Failure policy**: continue past a failing remakefile; print a
+  summary table at the end (ran / failed / skipped), exit non-zero if
+  any failed. Stopping at first failure defeats "run all the examples".
+- **Unloadable remakefiles**: ex9 imports xarray at module load — on a
+  minimal install discovery finds it but `load_remake` raises. Per-file
+  "skipped: import failed" line in the summary, not a crash.
+- **Caveat to document**: the examples aren't fully independent — most
+  need `make_example_data.py` (a plain script, not a remakefile) run
+  first, and run-all won't order it. The docs workflow stays "generate
+  data, then `remake run-all`".
 
 ## Staleness — the reason it's parked
 
