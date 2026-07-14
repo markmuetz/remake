@@ -73,7 +73,7 @@ rather than back-filled later. Fields not stored by 0.8:
 | Field | Status | Plan |
 | --- | --- | --- |
 | `startTime` / wall time / peak RSS | not stored — `TaskRecord` has only completion `timestamp` | filled once **per-task resource capture** (0.9) lands; until then emit `endTime` only |
-| `sha256` per file | not stored | the **general stored-checksum capability** (see below), captured in 0.10 alongside export; else `--checksums` cold-reread fallback, else omit |
+| `sha256` per file | not stored | the **general stored-checksum capability** (see below) — **capture moved to 0.9.0** (decided 2026-07-14, MM: record in 0.9, consume in 0.10 — export needs the 0.9-era history to exist; rides the `output_stat` migration, see [future_releases/v0.9.0.md](future_releases/v0.9.0.md) item 2); else `--checksums` cold-reread fallback, else omit |
 | `agent` (producing user/host) | not stored per task | SLURM sidecars could carry it; otherwise omit (or, weakly, the crate author at export time — *not* provenance-accurate, so prefer omit) |
 | environment (conda/uv lock or hash), pipeline git hash | not stored | **0.10 provenance capture**, co-shipped with export — attach to the workflow / `CreateAction`s when present |
 
@@ -94,7 +94,11 @@ purged off scratch and cannot be hashed at all.
 
 So a stored output checksum is a **shared capability** consumed by `verify
 --checksum`, content-addressed output-versioning, the stats store and dedup —
-RO-Crate is just one reader. Tri-state (it can't be unconditionally on —
+RO-Crate is just one reader. **Capture ships in 0.9.0** (2026-07-14: recorded
+opt-in at the post-success hook, sha256, `checksum` column on `output_stat`,
+per-file in `Dir` manifests; all *readers* stay 0.10.x — checksum-based
+staleness in particular is a new rerun trigger and gets its own design pass).
+Tri-state (it can't be unconditionally on —
 hashing multi-GB netCDF/zarr every run is a tax on everyone):
 
 - **off** (default) — `ro-crate --checksums` stays as the lazy cold-reread
