@@ -68,6 +68,12 @@ maintained. When adding a doc, say which class it is.
   per-task already-running detection (open todo; design ready).
 - [rocrate_export.md](rocrate_export.md) — RO-Crate provenance export
   design (scheduled 0.10.x).
+- [resource_capture.md](resource_capture.md) — per-task wall/CPU/peak-RSS
+  capture design (0.9.0 item 1).
+- [dir_outputs.md](dir_outputs.md) — directory outputs (`Dir` token) design
+  (0.9.0 item 6).
+- [remakefile_deps.md](remakefile_deps.md) — cross-remakefile dependencies
+  (PARKED) and the `run-all` discovery half (0.9.0 item 7).
 - [claude_remake_skill.md](claude_remake_skill.md) — plan for the Claude
   Code remake skill and the CLI gap audit it drove.
 - [attribution.md](attribution.md) — who contributed which design ideas,
