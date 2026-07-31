@@ -68,6 +68,33 @@ def _group_failures(failures):
     return out
 
 
+def _format_bytes(nbytes):
+    """Bytes as a short human-readable string (1024-based)."""
+    value = float(nbytes)
+    for unit in ('B', 'K', 'M', 'G', 'T'):
+        if value < 1024 or unit == 'T':
+            return f'{value:.0f}{unit}' if unit == 'B' else f'{value:.1f}{unit}'
+        value /= 1024
+
+
+def _resources_line(resources):
+    """The `resources:` line for `task-info`, or None if nothing was
+    measured. Peak RSS is annotated when it did not come from sampling, so a
+    getrusage number (interpreter baseline included) is not read as a
+    like-for-like measurement — see design_docs/resource_capture.md."""
+    if resources.get('wall_s') is None:
+        return None
+    parts = [f'wall {resources["wall_s"]:.2f}s']
+    if resources.get('cpu_s') is not None:
+        parts.append(f'cpu {resources["cpu_s"]:.2f}s')
+    if resources.get('max_rss_bytes') is not None:
+        peak = f'peak rss {_format_bytes(resources["max_rss_bytes"])}'
+        if resources.get('rss_method') != 'sample':
+            peak += f' ({resources["rss_method"]})'
+        parts.append(peak)
+    return ', '.join(parts)
+
+
 def _add_task_log_sink(task):
     """One process, one file — safe under concurrent SLURM array elements,
     unlike the shared log."""
@@ -407,15 +434,22 @@ class RemakeCLI:
         return 1 if nfailed else 0
 
     def remake_run_task(self, args):
+        from .util.resources import one_task_per_process
+
         rmk = self._load(args)
         task = rmk.task_from_key(args.task_key)
         _add_task_log_sink(task)
         logger.info(f'Running {task}')
-        rmk.run_task(task)
+        # One task, then the process exits: getrusage's process-wide peak RSS
+        # is this task's peak, so it is a valid fallback where /proc is
+        # unavailable (util/resources.py).
+        with one_task_per_process():
+            rmk.run_task(task)
 
     def remake_run_array_task(self, args):
         from .executors.slurm_executor import submitted_spec_path
         from .metadata.sidecar import SidecarWriter
+        from .util.resources import one_task_per_process
 
         # Hundreds of concurrent array elements must not touch the shared
         # SQLite DB (livelock on shared filesystems): load without
@@ -450,7 +484,9 @@ class RemakeCLI:
             )
         _add_task_log_sink(task)
         logger.info(f'Running {task}')
-        rmk.run_task(task)
+        # As run-task: one array element = one task = one process.
+        with one_task_per_process():
+            rmk.run_task(task)
 
     def remake_resubmit(self, args):
         import subprocess as sp
@@ -787,6 +823,10 @@ class RemakeCLI:
         print(f'{task}  {task.key}')
         when = f' at {data["timestamp"]}' if data['timestamp'] else ''
         print(f'status:   {paint.status(data["status"])}{when}')
+        resources = _resources_line(data['resources'])
+        if resources:
+            # Of the last execution — set-state doesn't un-measure a run.
+            print(f'resources: {resources}')
         for name, path_info in data['inputs'].items():
             mark = (paint('exists', 'green') if path_info['exists']
                     else paint('missing', 'red', 'bold'))

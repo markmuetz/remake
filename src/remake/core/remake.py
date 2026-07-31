@@ -14,6 +14,7 @@ from ..metadata.metadata_manager import (
     RecordCache,
 )
 from ..util import task_log_path
+from ..util.resources import capture_for_config
 from .dag import build_rule_dag, expand_rule, iter_expand_rule
 from .exceptions import Defer, RemakeError
 from .planner import cascade_settled, explain_task, make_predicate, plan
@@ -43,6 +44,19 @@ class _TemplatePlaceholder:
                 f'format spec {spec!r} on {{{self.name}}} renders '
                 f'value-dependently')
         return str(self)
+
+
+def _resource_fields(resources):
+    """Measured resources as JSONL log fields, omitting what was not
+    measured (`max_rss_bytes` is None on a task-reusing process without
+    /proc — see util/resources.py)."""
+    fields = {}
+    if resources['cpu_s'] is not None:
+        fields['cpu_s'] = round(resources['cpu_s'], 6)
+    if resources['max_rss_bytes'] is not None:
+        fields['max_rss_bytes'] = resources['max_rss_bytes']
+        fields['rss_method'] = resources['rss_method']
+    return fields
 
 
 class Remake:
@@ -394,6 +408,15 @@ class Remake:
             'status': STATUS_NAMES.get(record.status, 'pending') if record else 'pending',
             'timestamp': record.timestamp if record else None,
             'exception': record.exception if record else '',
+            # The LAST execution's measured resources — not necessarily the
+            # task's current state (set-state does not clear them). All None
+            # when never run, never measured, or a pre-0.9 record.
+            'resources': {
+                'wall_s': record.wall_s if record else None,
+                'cpu_s': record.cpu_s if record else None,
+                'max_rss_bytes': record.max_rss_bytes if record else None,
+                'rss_method': record.rss_method if record else None,
+            },
             'inputs': inputs,
             'outputs': outputs,
             'log': {'path': str(log_path), 'exists': log_path.exists()},
@@ -747,20 +770,33 @@ class Remake:
             args.append(task.inputs)
         if task.rule.outputs is not None:
             args.append(task.outputs)
-        start = perf_counter()
+        # Resources are measured here, the one execution chokepoint every
+        # executor shares, so all of them record the same fields
+        # (design_docs/resource_capture.md). Both exit paths record: a task
+        # that fails after three hours is a duration worth keeping.
+        capture = capture_for_config(self.config)
         try:
-            fn(*args, **task.kwargs)
+            with capture:
+                fn(*args, **task.kwargs)
         except Exception:
-            elapsed = perf_counter() - start
+            resources = capture.result()
+            # `or 0` guards the one path where the task failed before the
+            # measurement completed: recording the failure matters more than
+            # the timing, and a TypeError here would lose the real exception.
+            elapsed = resources['wall_s'] or 0.0
             logger.bind(event='task_failed', task=str(task), rule=task.rule.name,
                         key=task.key, seconds=round(elapsed, 6),
+                        **_resource_fields(resources),
                         ).error(f'failed: {task} after {elapsed:.2f}s')
             self.metadata.update_task(
-                task, TASK_STATUS_FAILED, exception=traceback.format_exc()
+                task, TASK_STATUS_FAILED, exception=traceback.format_exc(),
+                resources=resources,
             )
             raise
-        elapsed = perf_counter() - start
+        resources = capture.result()
+        elapsed = resources['wall_s']
         logger.bind(event='task_complete', task=str(task), rule=task.rule.name,
                     key=task.key, seconds=round(elapsed, 6),
+                    **_resource_fields(resources),
                     ).debug('completed {} in {:.2f}s', task, elapsed)
-        self.metadata.update_task(task, TASK_STATUS_SUCCESS)
+        self.metadata.update_task(task, TASK_STATUS_SUCCESS, resources=resources)

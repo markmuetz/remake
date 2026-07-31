@@ -46,12 +46,15 @@ class SidecarWriter(MetadataManager):
     def current_run_seq(self):
         return self.run_seq
 
-    def update_task(self, task, status, exception=''):
+    def update_task(self, task, status, exception='', resources=None):
         path = task_result_path(task.rule.name, task.key)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             'status': status,
             'exception': exception,
+            # Measured on the compute node; written to the DB at ingest.
+            # Absent in pre-0.9 sidecars, which ingest as NULLs.
+            'resources': resources or {},
             'uses_hash': compute_uses_hash(task.rule.uses),
             'io_hash': compute_io_hash(task.rule),
             # Run source as it exists on the compute node: ingest must record

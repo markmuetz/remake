@@ -34,6 +34,16 @@ class TaskRecord:
     exception: str
     io_code_id: Optional[int] = None  # None = pre-upgrade record (not tracked)
     run_seq: Optional[int] = None  # None for pre-upgrade/never-stamped records
+    # The LAST execution's measured resources (design_docs/
+    # resource_capture.md); None = not measured (pre-upgrade record, capture
+    # disabled, or — for max_rss_bytes — a task-reusing process without
+    # /proc). Per-execution history is the 0.10.x stats store, not these.
+    # `set-state` does not clear them: they describe what actually ran, not
+    # the task's current state.
+    wall_s: Optional[float] = None
+    cpu_s: Optional[float] = None
+    max_rss_bytes: Optional[int] = None
+    rss_method: Optional[str] = None
 
 
 class RecordCache:
@@ -107,11 +117,17 @@ class MetadataManager(abc.ABC):
         return None
 
     @abc.abstractmethod
-    def update_task(self, task, status, exception=''):
-        """Record a task execution result."""
+    def update_task(self, task, status, exception='', resources=None):
+        """Record a task execution result.
+
+        `resources` is the measurement from `util.resources` — a dict of
+        wall_s/cpu_s/max_rss_bytes/rss_method, or None where nothing was
+        measured (bulk state changes like `set-state` never ran anything).
+        """
 
     def update_tasks(self, tasks, status, exception=''):
-        """Record the same state for many tasks (backends may batch)."""
+        """Record the same state for many tasks (backends may batch). No
+        resources: this is for bulk state changes, not execution."""
         for task in tasks:
             self.update_task(task, status, exception)
 

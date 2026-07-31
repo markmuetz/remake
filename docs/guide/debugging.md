@@ -56,7 +56,9 @@ remake task-info pipeline.py <task>
 ```
 
 `task-log` prints the task's log file; `task-info` shows its recorded metadata
-(status, paths, jobid/array index for SLURM tasks).
+(status, paths, last execution's wall/CPU time and peak memory, jobid/array
+index for SLURM tasks — see
+[resource use per task](running.md#resource-use-per-task)).
 
 ## Post-mortem debugging with `-X`
 

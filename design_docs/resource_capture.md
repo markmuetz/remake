@@ -1,6 +1,33 @@
 # Per-task resource capture
 
-> **Status: design agreed (Claude + MM, 2026-07-31); not yet implemented.**
+> **Status: design agreed (Claude + MM, 2026-07-31); IMPLEMENTED
+> 2026-07-31** — `util/resources.py` + the wiring below; pre-tag
+> `/code-review ultra` still owed (0.9.0 is a minor).
+>
+> *Post-review hardening (adversarial review, 2026-07-31 — 6 findings, all
+> addressed):* measurement setup can no longer break a task (a machine at
+> its thread limit degrades to no RSS figure instead of failing the run, and
+> the failure path no longer depends on a completed measurement);
+> **concurrent captures in one process** — a dask worker with
+> `threads_per_worker > 1`, where statm and `RUSAGE_SELF` are process-wide —
+> are detected and recorded as wall-time-only rather than as N copies of the
+> process total wearing a per-task label (remake's own LocalCluster pins
+> `threads_per_worker=1`, so only external clusters hit this);
+> `rss_interval` is validated and floored (0 would have made the sampler a
+> spin loop whose CPU is charged to the task it is measuring). One
+> **documented, not fixed**: the sampled peak is the process's RSS while the
+> task ran, so it inherits a floor from memory an earlier task in the same
+> worker left resident — the honest number for "what must I request", but a
+> floor rather than an attribution, and now said so in the docs and the
+> module.
+>
+> *Two things the implementation settled that the design left implicit:*
+> `capture: False` records **no** RSS at all (it does not silently fall back
+> to getrusage — the fallback is only for "sampling wanted, /proc absent"),
+> and the one-task-per-process declaration is a scoped context manager
+> rather than a set-once global, because the CLI is also called in-process
+> (tests, library use) where a permanently-flipped flag would license the
+> getrusage fallback for every later task in that process.
 > Target release: **0.9.0, item 1** — first in the scoped slice, because the
 > run report (item 4) is only as good as the history accumulated before it
 > ships ([future_releases/v0.9.0.md](future_releases/v0.9.0.md)). Class:

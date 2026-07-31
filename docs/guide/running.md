@@ -90,6 +90,56 @@ remake run pipeline.py --check-outputs    # verify/recover outputs this run
 Tasks with no declared outputs are always DB-authoritative — there is nothing
 to check.
 
+## Resource use per task
+
+Every task execution records how long it took and how much memory it used,
+for all executors. `task-info` shows the last execution's numbers:
+
+```
+resources: wall 12.40s, cpu 11.98s, peak rss 1.4G
+```
+
+- **wall** — elapsed time; **cpu** — user+sys CPU of the task process and any
+  children it waited for. `cpu` well under `wall × cores` on a multi-core
+  allocation means you asked for cores the task never used.
+- **peak rss** — the high-water resident memory of the task process and of
+  any child processes it ran. Use it to size a SLURM `mem` request.
+
+Some caveats worth knowing before you act on the numbers:
+
+- Peak memory is **sampled** (every 100 ms by default), so an allocation
+  spike shorter than the interval can be missed. Resident memory also counts
+  shared pages, so shared libraries inflate small tasks a little.
+- The figure is the memory the *process* held while the task ran, so it has
+  a floor: where a worker process runs several tasks in turn, memory an
+  earlier task left resident (Python does not always hand freed memory back
+  to the OS) counts towards the next task's peak. It is the right number for
+  "how much do I request for this task", but a cheap task following an
+  expensive one in the same worker can look dearer than it is.
+- Tasks run **concurrently inside one process** cannot be told apart —
+  memory and CPU are per-process facts. remake detects this and records only
+  wall time. It affects a dask run pointed at an external cluster whose
+  workers use multiple threads; remake's own local cluster, `multiproc` and
+  SLURM all give each task its own process.
+- A task killed by the OOM killer or by SLURM's time limit records
+  **nothing** — it never gets to report. Its state stays as if it never ran;
+  use `sacct` for those.
+- The numbers describe the **last execution**, not the current state:
+  `set-state` does not clear them.
+- Where remake cannot measure memory reliably it records nothing rather than
+  a wrong number, and annotates any non-sampled figure — `peak rss 1.4G
+  (rusage)` is a whole-process reading, which includes the interpreter.
+
+Sampling is on by default and costs a background thread per running task.
+Turn it off (keeping the free wall/CPU timings) with:
+
+```python
+rmk = Remake(config={'resources': {'capture': False}})
+```
+
+`rss_interval` sets the sampling period in seconds:
+`config={'resources': {'rss_interval': 0.01}}`.
+
 ## Forcing state
 
 `set-state` records task state without running, for adopting an existing tree

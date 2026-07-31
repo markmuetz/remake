@@ -6,6 +6,39 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Per-task resource capture** (0.9.0 item 1,
+  `design_docs/resource_capture.md`): every task execution now records wall
+  time, CPU time (user+sys, including waited-for children) and peak resident
+  memory, for **all** executors, into `remake.db`. `remake task-info` shows
+  them (`resources: wall 12.40s, cpu 11.98s, peak rss 1.4G`) and exposes them
+  under a `resources` key in `--json`; the `task_complete`/`task_failed` JSONL
+  events carry the same fields. Failed tasks are measured too. Peak memory is
+  sampled from `/proc` (100 ms by default) rather than read from `getrusage`,
+  which is a *process* high-water mark and would attribute a pooled worker's
+  earlier peak to whichever task finished last; where neither is reliable
+  remake records nothing rather than a wrong number, and `rss_method` says
+  which measurement produced the figure. Disable the sampler with
+  `Remake(config={'resources': {'capture': False}})`; wall/CPU time are free
+  and always recorded. A task killed by the OOM killer or by SLURM records
+  nothing — that remains `sacct`'s job.
+
+### Changed
+
+- `MetadataManager.update_task()` gained an optional `resources=None`
+  keyword. Third-party backends overriding it need the extra keyword in their
+  signature; nothing else changes.
+- `Remake.task_info()` returns an extra `resources` dict (all-`None` when the
+  task never ran or was never measured), and `TaskRecord` gained
+  `wall_s`/`cpu_s`/`max_rss_bytes`/`rss_method`.
+- **Schema (additive, migrated in place):** `task` gained `wall_s`, `cpu_s`,
+  `max_rss_bytes` and `rss_method`. Existing DBs are migrated on open;
+  pre-upgrade records read as "not measured" and **nothing reruns**. The
+  planner never reads these columns, so they can never become a rerun
+  trigger. `set-state` does not clear them: they describe the last actual
+  execution, not the task's current state.
+
 ## [0.8.3] — 2026-07-14
 
 ### Fixed

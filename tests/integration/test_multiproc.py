@@ -57,6 +57,24 @@ def test_multiproc_end_to_end(pipeline_dir, capsys):
     assert len(list(Path('.remake/tasks/log').rglob('*.log'))) == 7
 
 
+def test_multiproc_records_resources_via_sidecars(pipeline_dir, capsys):
+    # Resources are measured in the worker and reach the DB through the
+    # sidecar/ingest path (design_docs/resource_capture.md).
+    assert cli('run', 'pipeline.py', '-E', 'multiproc', '-j', '2') == 0
+
+    capsys.readouterr()
+    cli('info', 'pipeline.py', '--tasks', '--json')
+    key = json.loads(capsys.readouterr().out)['tasks'][0]['key']
+
+    cli('task-info', 'pipeline.py', key, '--json')
+    resources = json.loads(capsys.readouterr().out)['resources']
+    assert resources['wall_s'] is not None
+    # Pooled workers run several tasks each, so this is exactly the case
+    # getrusage would mis-attribute: it must come from the sampler.
+    assert resources['rss_method'] == 'sample'
+    assert resources['max_rss_bytes'] > 0
+
+
 def test_multiproc_failure_exit_code_and_traceback(pipeline_dir, capsys):
     Path('failing.py').write_text('''
 from pathlib import Path

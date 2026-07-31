@@ -63,6 +63,18 @@ CREATE TABLE task (
     last_run_timestamp TIMESTAMP,
     last_run_status INTEGER,
     exception TEXT,
+    -- The LAST execution's measured resources (design_docs/
+    -- resource_capture.md). Nullable and never read by the planner, so they
+    -- can't become a rerun trigger and a pre-upgrade record is simply "not
+    -- measured". Per-execution history is the 0.10.x stats store; these four
+    -- columns are the cheap last-only slice, written by the upsert that
+    -- already happens. rss_method: 'sample' | 'rusage' | NULL — which
+    -- measurement produced max_rss_bytes, so consumers never compare a
+    -- sampled value against a getrusage one.
+    wall_s REAL,
+    cpu_s REAL,
+    max_rss_bytes INTEGER,
+    rss_method TEXT,
     PRIMARY KEY (id),
     FOREIGN KEY(rule_id) REFERENCES rule (id),
     FOREIGN KEY(run_code_id) REFERENCES code (id),
@@ -181,6 +193,13 @@ class Sqlite3Backend(MetadataManager):
             self.conn.execute('ALTER TABLE task ADD COLUMN run_seq INTEGER')
         if 'uses_code_id' not in cols:
             self._migrate_inline_hashes_to_code_ids(cols)
+        # Resource-capture columns (0.9.0). Additive and nullable: an existing
+        # DB gains NULLs and nothing reruns.
+        for col, coltype in (('wall_s', 'REAL'), ('cpu_s', 'REAL'),
+                             ('max_rss_bytes', 'INTEGER'), ('rss_method', 'TEXT')):
+            if col not in cols:
+                logger.info(f'Adding task.{col} column to existing DB')
+                self.conn.execute(f'ALTER TABLE task ADD COLUMN {col} {coltype}')
         rule_cols = {row[1] for row in self.conn.execute('PRAGMA table_info(rule)')}
         if 'remakefile' not in rule_cols:
             logger.info('Adding rule.remakefile column to existing DB')
@@ -411,12 +430,14 @@ class Sqlite3Backend(MetadataManager):
             placeholders = ','.join('?' * len(chunk))
             rows = self.conn.execute(
                 'SELECT key, last_run_status, last_run_timestamp, '
-                '       run_code_id, uses_code_id, io_code_id, run_seq, exception '
+                '       run_code_id, uses_code_id, io_code_id, run_seq, exception, '
+                '       wall_s, cpu_s, max_rss_bytes, rss_method '
                 f'FROM task WHERE key IN ({placeholders})',
                 chunk,
             ).fetchall()
             for (key, status, timestamp, run_code_id, uses_code_id,
-                 io_code_id, run_seq, exception) in rows:
+                 io_code_id, run_seq, exception,
+                 wall_s, cpu_s, max_rss_bytes, rss_method) in rows:
                 records[key] = TaskRecord(
                     key=key,
                     status=status,
@@ -426,6 +447,12 @@ class Sqlite3Backend(MetadataManager):
                     exception=exception or '',
                     io_code_id=io_code_id,  # None for pre-upgrade records
                     run_seq=run_seq,  # None for pre-upgrade/never-stamped records
+                    # None where nothing was measured (pre-upgrade record,
+                    # capture off, bulk set-state).
+                    wall_s=wall_s,
+                    cpu_s=cpu_s,
+                    max_rss_bytes=max_rss_bytes,
+                    rss_method=rss_method,
                 )
         elapsed = perf_counter() - start
         # ~1857 of these dominated a field DEBUG log (logs_analysis §3.3):
@@ -506,16 +533,24 @@ class Sqlite3Backend(MetadataManager):
             rule_id, run_code_id, _, cur_io_code_id = self.rule_ids[rule.name]
             io_text = payload.get('io_hash')
             run_text = payload.get('run_hash')
+            # A sidecar always records an execution, so its resources replace
+            # the columns verbatim (a pre-0.9 sidecar has none: NULLs).
+            res = payload.get('resources') or {}
             self.conn.execute(
                 'INSERT INTO task(key, rule_id, run_code_id, uses_code_id, io_code_id, '
-                '                 run_seq, last_run_timestamp, last_run_status, exception) '
-                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) '
+                '                 run_seq, last_run_timestamp, last_run_status, exception, '
+                '                 wall_s, cpu_s, max_rss_bytes, rss_method) '
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
                 'ON CONFLICT(key) DO UPDATE SET '
                 '    run_code_id = excluded.run_code_id, '
                 '    uses_code_id = excluded.uses_code_id, '
                 '    io_code_id = excluded.io_code_id, '
                 '    run_seq = excluded.run_seq, '
                 '    last_run_timestamp = excluded.last_run_timestamp, '
+                '    wall_s = excluded.wall_s, '
+                '    cpu_s = excluded.cpu_s, '
+                '    max_rss_bytes = excluded.max_rss_bytes, '
+                '    rss_method = excluded.rss_method, '
                 '    last_run_status = excluded.last_run_status, '
                 '    exception = excluded.exception',
                 (
@@ -537,22 +572,27 @@ class Sqlite3Backend(MetadataManager):
                     payload.get('timestamp'),
                     payload['status'],
                     payload.get('exception', ''),
+                    res.get('wall_s'),
+                    res.get('cpu_s'),
+                    res.get('max_rss_bytes'),
+                    res.get('rss_method'),
                 ),
             )
 
-    def update_task(self, task, status, exception=''):
+    def update_task(self, task, status, exception='', resources=None):
         # Allocate run_seq (own txn) before opening the upsert's EXCLUSIVE txn.
-        self._commit_updates([task], status, exception, self.current_run_seq())
+        self._commit_updates(
+            [task], status, exception, self.current_run_seq(), resources)
 
     def update_tasks(self, tasks, status, exception=''):
         self._commit_updates(tasks, status, exception, self.current_run_seq())
 
     @retry_lock_commit
-    def _commit_updates(self, tasks, status, exception, run_seq):
+    def _commit_updates(self, tasks, status, exception, run_seq, resources=None):
         # One EXCLUSIVE transaction for the lot (bulk state changes:
         # set-state, migration adoption).
         for task in tasks:
-            self._upsert_task(task, status, exception, run_seq)
+            self._upsert_task(task, status, exception, run_seq, resources)
 
     @retry_lock_commit
     def delete_tasks(self, tasks):
@@ -562,21 +602,35 @@ class Sqlite3Backend(MetadataManager):
             placeholders = ','.join('?' * len(chunk))
             self.conn.execute(f'DELETE FROM task WHERE key IN ({placeholders})', chunk)
 
-    def _upsert_task(self, task, status, exception='', run_seq=None):
+    def _upsert_task(self, task, status, exception='', run_seq=None, resources=None):
         # The uses/io ids were computed and interned once per rule at
         # ensure_rules time — no per-task hashing or text writes (the old
         # per-task compute_uses_hash was 1e6 AST renders on a big run).
         rule_id, run_code_id, uses_code_id, io_code_id = self.rule_ids[task.rule.name]
+        res = resources or {}
+        # An execution replaces all four resource columns verbatim, NULLs
+        # included, so a fresh wall_s is never left paired with a peak RSS
+        # from an earlier run. A bulk state change (resources=None) measured
+        # nothing and leaves them alone: `set-state --pending` does not
+        # un-measure what actually ran (design_docs/resource_capture.md).
+        resource_update = (
+            '    wall_s = excluded.wall_s, '
+            '    cpu_s = excluded.cpu_s, '
+            '    max_rss_bytes = excluded.max_rss_bytes, '
+            '    rss_method = excluded.rss_method, '
+        ) if resources is not None else ''
         self.conn.execute(
             'INSERT INTO task(key, rule_id, run_code_id, uses_code_id, io_code_id, '
-            '                 run_seq, last_run_timestamp, last_run_status, exception) '
-            "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?, ?) "
+            '                 run_seq, last_run_timestamp, last_run_status, exception, '
+            '                 wall_s, cpu_s, max_rss_bytes, rss_method) '
+            "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?) "
             'ON CONFLICT(key) DO UPDATE SET '
             '    run_code_id = excluded.run_code_id, '
             '    uses_code_id = excluded.uses_code_id, '
             '    io_code_id = excluded.io_code_id, '
             '    run_seq = excluded.run_seq, '
             "    last_run_timestamp = datetime('now'), "
+            f'{resource_update}'
             '    last_run_status = excluded.last_run_status, '
             '    exception = excluded.exception',
             (
@@ -588,5 +642,9 @@ class Sqlite3Backend(MetadataManager):
                 run_seq,
                 status,
                 exception,
+                res.get('wall_s'),
+                res.get('cpu_s'),
+                res.get('max_rss_bytes'),
+                res.get('rss_method'),
             ),
         )
