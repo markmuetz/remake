@@ -57,6 +57,23 @@ entries are pruned to [todos_archive.md](todos_archive.md) at each release
   objects *defined* in the scanned file. Worth doing independently of
   the parked feature.
 
+- [ ] **`ResourceWarning: unclosed database` on Python 3.14 under dask.**
+  Four of them in CI (run 30668511521, 2026-07-31), 3.14 only, all from
+  `tests/integration/test_dask.py`; the tracebacks point at gc during the
+  dask event loop (`asyncio/locks.py`, `importlib._bootstrap`), not at a
+  test assertion. Not a failure — the warnings-are-errors gate covers
+  `test_examples.py` only — but CI should be warning-clean before 3.14 is
+  the common runtime. **Cause not yet established**; candidates worth
+  checking first: a `Sqlite3Backend` in the *parent* finalised mid-event-
+  loop where `__del__`'s close (added 0.8.3) lands after sqlite3 has
+  already warned, or a worker process inheriting the parent's connection
+  if `distributed`'s start method is not `spawn` on the runner. Diagnose
+  before fixing — the obvious "close it in the worker" fix is wrong if the
+  connection is the parent's. Explicit close at `DaskExecutor.run_tasks`
+  teardown (next to `client.close()`/`cluster.close()`) is the likely
+  shape. 0.8.x patch-lane candidate: no API/schema change, no new rerun
+  trigger.
+
 - [ ] `eval`-based query filter (see MM comment in `core/planner.py:27`):
   `make_predicate` does `eval(compile(query, ...))` against task kwargs.
   Hardened (`__builtins__` stripped, kwargs as the only locals) and the query
