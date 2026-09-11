@@ -243,7 +243,8 @@ def test_failed_task_records_resources(tmp_path, meta):
     record = meta.get_tasks_status([task])[task.key]
     assert record.status == TASK_STATUS_FAILED
     assert record.wall_s is not None
-    assert record.max_rss_bytes > 0
+    if Path('/proc/self/statm').exists():  # else in-process runs record no RSS
+        assert record.max_rss_bytes > 0
 
 
 def test_capture_disabled_by_config(tmp_path, meta):
@@ -270,6 +271,7 @@ def test_set_state_does_not_clear_measured_resources(tmp_path, meta):
     assert after.max_rss_bytes == before.max_rss_bytes
 
 
+@needs_proc
 def test_rerun_replaces_all_four_columns(tmp_path, meta):
     # An execution replaces the resource columns verbatim, NULLs included:
     # a fresh wall_s must never be left paired with a stale peak RSS.

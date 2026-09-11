@@ -70,9 +70,14 @@ def test_multiproc_records_resources_via_sidecars(pipeline_dir, capsys):
     resources = json.loads(capsys.readouterr().out)['resources']
     assert resources['wall_s'] is not None
     # Pooled workers run several tasks each, so this is exactly the case
-    # getrusage would mis-attribute: it must come from the sampler.
-    assert resources['rss_method'] == 'sample'
-    assert resources['max_rss_bytes'] > 0
+    # getrusage would mis-attribute: it must come from the sampler, and
+    # without /proc (macOS) nothing is recorded at all.
+    if Path('/proc/self/statm').exists():
+        assert resources['rss_method'] == 'sample'
+        assert resources['max_rss_bytes'] > 0
+    else:
+        assert resources['rss_method'] is None
+        assert resources['max_rss_bytes'] is None
 
 
 def test_multiproc_failure_exit_code_and_traceback(pipeline_dir, capsys):
