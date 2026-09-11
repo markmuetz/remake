@@ -188,6 +188,24 @@ def filter_rows(inputs, outputs):
 See `examples/ex3_uses_scope.py` for the full semantics (one level deep;
 classes are supported — the whole class body is hashed).
 
+!!! warning "Values are compared by `repr` — it must be stable across processes"
+    Functions and classes in `uses` are compared by source code. Everything
+    else is compared by `repr()`, and the stored value is compared with the
+    one computed on the *next* invocation, in a fresh process. Anything whose
+    `repr` embeds a memory address — a function or object nested inside a
+    dict or list (`<function f at 0x7f…>`), most objects without a custom
+    `__repr__` — or other per-process state (a logger, a DB connection)
+    therefore looks changed every time, and **every task of the rule reruns on
+    every `remake run`**. It won't show on the first run, only on the next.
+
+    A large config dict holding callables (constraints, processing functions)
+    is the typical case. Either load it inside the rule body (a local import
+    or function call isn't a free global, so it needs no `uses` entry and is
+    not tracked), or declare a stable summary of it instead — a version
+    string, the handful of scalars that matter, or a hash of the config file.
+    To check: after a successful run, `remake run pipeline.py -n` should plan
+    nothing, and `remake why` names any `uses` entry that differs.
+
 !!! warning "A `uses` key that shadows a different module global warns"
     Inside the rule, the `uses=` value wins for that name. If a `uses` key
     matches a module global bound to a *different* value —

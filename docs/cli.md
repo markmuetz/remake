@@ -123,3 +123,14 @@ remake run  pipeline.py -Q "rule in ['extract', 'process']"
 ```
 
 `-Q True` matches every task.
+
+A query that names a kwarg a rule doesn't have simply doesn't match that
+rule's tasks — it is not an error. `-Q "site == 'oxford' and year < 2015"`
+selects no tasks from an upstream rule whose matrix has only `site`. To include
+such a rule in a subset, select it by name:
+
+```bash
+remake run pipeline.py -Q "site == 'oxford' and (rule == 'setup' or year < 2015)"
+```
+
+Preview with `remake info -Q ...` (or `run -n -Q ...`) to see what matched.
