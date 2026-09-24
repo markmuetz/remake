@@ -54,7 +54,17 @@ remake run pipeline.py --ignore-code-changes
 | Code | Meaning |
 |---|---|
 | `0` | success — everything needed completed |
-| non-zero | one or more tasks failed (see [Debugging](debugging.md)) |
+| `1` | one or more tasks failed (see [Debugging](debugging.md)), or rules were left blocked — a deferred matrix that never became ready; each is logged with what it is waiting on |
+| `2` | usage error — bad arguments, an invalid or unknown-name `-Q` query, a missing or broken remakefile, bad rule dependencies — printed as `error: ...` |
+
+## One run at a time
+
+`remake run` holds a lock (`.remake/run.lock`) while it runs, so a second
+`run` started in the same directory stops with an error instead of running
+the same tasks again and racing on their outputs. The lock is released when
+the run ends, including on Ctrl-C; one left by a crashed run on the same
+machine is detected and replaced automatically. If the error names another
+host and no run is active there, delete `.remake/run.lock`.
 
 ## Checking outputs on disk
 

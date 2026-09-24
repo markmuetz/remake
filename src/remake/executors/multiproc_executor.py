@@ -22,7 +22,7 @@ from multiprocessing import get_context
 from loguru import logger
 
 from ..core.exceptions import RemakeError
-from ..core.planner import upstream_failed
+from ..core.planner import record_failure, upstream_failed
 from .executor import Executor
 
 _worker_rmk = None
@@ -53,7 +53,10 @@ def _worker_init(remakefile):
 def _worker_run(spec):
     from ..util import task_log_path
 
-    rule_name, kwargs = spec
+    rule_name, kwargs, run_seq = spec
+    # Stamp results with the parent invocation's run_seq so durable rerun
+    # propagation (bugs/01) works for multiproc runs as it does for SLURM.
+    _worker_rmk.metadata.run_seq = run_seq
     task = _worker_rmk.task_from_spec(rule_name, kwargs)
     logfile = task_log_path(task)
     logfile.parent.mkdir(parents=True, exist_ok=True)
@@ -93,7 +96,8 @@ class MultiprocExecutor(Executor):
         nfailed = 0
         nskipped = 0
         done = 0
-        failures = {}  # rule -> set of frozenset(kwargs.items())
+        failures = {}  # see planner.record_failure
+        run_seq = self.rmk.metadata.current_run_seq()
         with ProcessPoolExecutor(
             max_workers=self.nproc,
             mp_context=get_context('spawn'),
@@ -107,7 +111,7 @@ class MultiprocExecutor(Executor):
                 to_run = []
                 for task in rule_tasks:
                     if upstream_failed(task, failures):
-                        failures.setdefault(rule, set()).add(frozenset(task.kwargs.items()))
+                        record_failure(failures, task)
                         nskipped += 1
                         done += 1
                         logger.warning(f'{done}/{ntasks} skipped (upstream failed): {task}')
@@ -117,7 +121,8 @@ class MultiprocExecutor(Executor):
                     continue
                 logger.info(f'{rule.name}: {len(to_run)} task(s) on {self.nproc} proc(s)')
                 futures = {
-                    pool.submit(_worker_run, (rule.name, t.kwargs)): t for t in to_run
+                    pool.submit(_worker_run, (rule.name, t.kwargs, run_seq)): t
+                    for t in to_run
                 }
                 # Barrier: drain this rule before starting the next.
                 for future in as_completed(futures):
@@ -126,7 +131,7 @@ class MultiprocExecutor(Executor):
                     if future.result():
                         logger.info(f'{done}/{ntasks}: {task}')
                     else:
-                        failures.setdefault(rule, set()).add(frozenset(task.kwargs.items()))
+                        record_failure(failures, task)
                         nfailed += 1
                         logger.error(f'{done}/{ntasks} failed: {task}')
         if nfailed:

@@ -763,3 +763,236 @@ def test_run_query_force(pipeline_dir, capsys):
     cli('run', 'pipeline.py', '--force', '-Q', 'n == 1')
     assert (pipeline_dir / 'data/out_1.txt').read_text() == '11'
     assert (pipeline_dir / 'data/out_2.txt').exists()
+
+
+BLOCKED = '''
+from pathlib import Path
+from remake import Defer, Remake, deferrable, rule
+
+@rule(outputs={'o': 'a.txt'})
+def a(outputs):
+    Path(outputs['o']).write_text('a')
+
+@deferrable
+def b_matrix():
+    if not Path('never_made.txt').exists():
+        raise Defer('never_made.txt')
+    return [{'x': 1}]
+
+@rule(outputs={'o': 'b_{x}.txt'}, matrix=b_matrix, depends_on=[a])
+def b(outputs, x):
+    Path(outputs['o']).write_text('b')
+
+rmk = Remake()
+rmk.rules_from_current_module()
+'''
+
+
+def test_run_exits_nonzero_when_rules_stay_blocked(tmp_path, monkeypatch, capsys):
+    # Review 2026-09-24 M9: a deferred matrix that never resolves (a typo'd
+    # path, nothing produces it) only warned and exited 0 — CI read it as
+    # success. It now exits 1 and names what the rule is waiting on.
+    monkeypatch.chdir(tmp_path)
+    Path('pipeline.py').write_text(BLOCKED)
+    assert cli('run', 'pipeline.py') == 1
+    assert Path('a.txt').exists()
+    err = capsys.readouterr().err
+    assert 'Blocked rule b' in err and 'never_made.txt' in err
+
+
+def test_query_typos_and_syntax_errors_are_clean_errors(pipeline_dir, capsys):
+    # Review 2026-09-24 M14: a typo'd name silently matched nothing ("Nothing
+    # to do", exit 0) and bad syntax was a raw traceback.
+    cli_error(capsys, 'run', 'pipeline.py', '-Q', 'nn == 1', match='unknown name')
+    cli_error(capsys, 'info', 'pipeline.py', '-Q', 'n ==', match='invalid query')
+    cli_error(capsys, 'set-state', 'pipeline.py', '-Q', 'nn == 1', '--pending',
+              match='unknown name')
+    cli_error(capsys, 'ls-tasks', 'pipeline.py', '-Q', 'nn == 1', match='unknown name')
+
+
+def test_console_log_colour_honours_colour_flag(pipeline_dir, capsys, monkeypatch):
+    # Review 2026-09-24 L25: console logs were always ANSI-coloured, ignoring
+    # --colour never, NO_COLOR and a non-TTY stderr.
+    cli('--colour', 'never', 'run', 'pipeline.py')
+    assert '\x1b[' not in capsys.readouterr().err
+    cli('run', 'pipeline.py', '-f')  # auto: captured stderr is not a TTY
+    assert '\x1b[' not in capsys.readouterr().err
+    monkeypatch.setenv('FORCE_COLOR', '1')
+    cli('run', 'pipeline.py', '-f')
+    assert '\x1b[' in capsys.readouterr().err
+
+
+def test_user_errors_are_clean_exit_2(tmp_path, monkeypatch, capsys):
+    # Review 2026-09-24 L27: these escaped as tracebacks with exit 1 — the
+    # same code as "tasks failed".
+    monkeypatch.chdir(tmp_path)
+    cli_error(capsys, 'info', 'nope.py', match='Remakefile not found')
+    Path('sub').mkdir()
+    cli_error(capsys, 'info', 'sub', match='directory')
+    Path('notes.txt').write_text('x')
+    cli_error(capsys, 'info', 'notes.txt', match='Not a Python remakefile')
+
+    Path('cycle.py').write_text('''
+from remake import Remake, rule
+
+@rule(depends_on=['b'])
+def a():
+    pass
+
+@rule(depends_on=['a'])
+def b():
+    pass
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    cli_error(capsys, 'info', 'cycle.py', match='cycle')
+
+    Path('pipeline.py').write_text(PIPELINE)
+    cli_error(capsys, 'run', 'pipeline.py', '-E', 'no_such_mod:Exec',
+              match='Cannot load executor')
+    Path('.remake').mkdir(exist_ok=True)
+    Path('.remake/remake.db').write_text('this is not sqlite' * 100)
+    cli_error(capsys, 'info', 'pipeline.py', match='not a usable remake database')
+
+
+def test_depends_on_accepts_a_bare_name():
+    # Review 2026-09-24 L4: depends_on='extract' was split into characters.
+    from remake import rule
+
+    @rule(depends_on='extract')
+    def r():
+        pass
+
+    assert r.depends_on == ['extract']
+
+
+def test_broken_pipe_is_quiet(tmp_path):
+    # Review 2026-09-24 L26: `remake ls-tasks ... | head -1` ended in a
+    # BrokenPipeError traceback.
+    import subprocess
+    import sys
+
+    (tmp_path / 'big.py').write_text('''
+from remake import Remake, rule
+
+@rule(matrix={'i': list(range(20000))})
+def r(i):
+    pass
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    proc = subprocess.Popen(
+        [sys.executable, '-c', 'import sys; from remake.remake_cmd import remake_cmd; '
+                               'sys.exit(remake_cmd())', 'ls-tasks', 'big.py'],
+        cwd=tmp_path, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    proc.stdout.readline()
+    proc.stdout.close()
+    err = proc.stderr.read().decode()
+    proc.wait(timeout=60)
+    assert 'Traceback' not in err and 'BrokenPipeError' not in err
+
+
+def test_run_lock_blocks_concurrent_runs(pipeline_dir, capsys):
+    # Review 2026-09-24 M15: two local runs in one directory both executed
+    # every task and raced on the same outputs.
+    import os
+    import socket
+
+    lock = Path('.remake/run.lock')
+    Path('.remake').mkdir(exist_ok=True)
+    # A live holder (this very process) blocks a second run.
+    lock.write_text(json.dumps({'host': socket.gethostname(), 'pid': os.getpid()}))
+    cli_error(capsys, 'run', 'pipeline.py', match='another remake run is active')
+    assert not Path('data/out_1.txt').exists()
+
+    # A holder on another host can't be checked: refused, with the fix named.
+    lock.write_text(json.dumps({'host': 'elsewhere', 'pid': 1}))
+    cli_error(capsys, 'run', 'pipeline.py', match='delete')
+
+    # A dead holder on this host is stale: taken over, and the run proceeds.
+    lock.write_text(json.dumps({'host': socket.gethostname(), 'pid': 2**22 + 12345}))
+    assert cli('run', 'pipeline.py') == 0
+    assert Path('data/out_1.txt').exists()
+    assert not lock.exists()  # released when the run ends
+
+
+def test_run_lock_only_removes_its_own_lock(tmp_path):
+    # Pre-tag review finding 6: `finally` removed whatever lock was there, so
+    # a run whose lock had been deleted by hand deleted the next run's lock.
+    import os
+    import socket
+
+    from remake.metadata.sqlite3_backend import Sqlite3Backend
+    from remake.util.run_lock import run_lock
+
+    with Sqlite3Backend(tmp_path / '.remake' / 'remake.db') as meta:
+        lock = tmp_path / '.remake' / 'run.lock'
+        with run_lock(meta):
+            other = {'host': socket.gethostname(), 'pid': os.getppid()}
+            lock.write_text(json.dumps(other))  # someone else's lock now
+        assert json.loads(lock.read_text()) == other
+
+
+def test_slurm_runs_take_no_run_lock(pipeline_dir):
+    # Pre-tag review finding 7: continuation jobs re-enter `run -E slurm` on
+    # compute nodes; a directory lock would strand or block them.
+    from remake import load_remake
+    from remake.executors.executor import Executor
+
+    class Submitter(Executor):
+        handles_deferred = True
+        seen = None
+
+        def run_tasks(self, tasks, deferred):
+            Submitter.seen = Path('.remake/run.lock').exists()
+            return 0
+
+    rmk = load_remake('pipeline.py')
+    rmk.run(executor=Submitter(rmk))
+    assert Submitter.seen is False
+
+
+def test_filtered_run_with_blocked_rule_still_exits_0(tmp_path, monkeypatch, capsys):
+    # Pre-tag review finding 4: a -Q run that deliberately leaves out the
+    # upstream a deferred rule waits on must not fail (it exited 0 in 0.8.3).
+    monkeypatch.chdir(tmp_path)
+    Path('pipeline.py').write_text('''
+from pathlib import Path
+from remake import Defer, Remake, deferrable, rule
+
+@rule(outputs={'o': 'a.txt'})
+def a(outputs):
+    Path(outputs['o']).write_text('a')
+
+@rule(inputs=a.outputs, outputs={'o': 'manifest.txt'}, depends_on=[a])
+def m(inputs, outputs):
+    Path(outputs['o']).write_text('1')
+
+@deferrable
+def p_matrix():
+    if not Path('manifest.txt').exists():
+        raise Defer('manifest.txt')
+    return [{'x': 1}]
+
+@rule(outputs={'o': 'p_{x}.txt'}, matrix=p_matrix, depends_on=[m])
+def p(outputs, x):
+    Path(outputs['o']).write_text('p')
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    assert cli('run', 'pipeline.py', '-Q', "rule == 'a'") == 0
+    assert 'Blocked rule p (upstream not selected' in capsys.readouterr().err
+
+
+def test_filtered_run_still_fails_on_an_unrelated_blocked_rule(tmp_path, monkeypatch, capsys):
+    # Follow-up review: -Q must not hide a rule that is blocked for reasons
+    # unrelated to the filter (its upstreams are all complete).
+    monkeypatch.chdir(tmp_path)
+    Path('pipeline.py').write_text(BLOCKED)
+    assert cli('run', 'pipeline.py') == 1          # a completes; b blocked
+    assert cli('run', 'pipeline.py', '-Q', "rule == 'a'") == 1
+    assert 'Blocked rule b: matrix not ready' in capsys.readouterr().err

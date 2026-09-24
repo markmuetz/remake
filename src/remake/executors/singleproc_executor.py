@@ -2,7 +2,7 @@ import math
 
 from loguru import logger
 
-from ..core.planner import upstream_failed
+from ..core.planner import record_failure, upstream_failed
 from .executor import Executor
 
 
@@ -12,7 +12,7 @@ class SingleprocExecutor(Executor):
         ndigits = math.floor(math.log10(ntasks)) + 1 if ntasks else 1
         nfailed = 0
         nskipped = 0
-        failures = {}  # rule -> set of frozenset(kwargs.items())
+        failures = {}  # see planner.record_failure
         for i, task in enumerate(tasks):
             prefix = f'{i + 1:>{ndigits}}/{ntasks}'
             if upstream_failed(task, failures):
@@ -20,7 +20,7 @@ class SingleprocExecutor(Executor):
                 # fail noisily on missing inputs. Left unrecorded (pending):
                 # fixing the upstream makes the next run pick them up.
                 # Counts as a failure for downstream propagation.
-                failures.setdefault(task.rule, set()).add(frozenset(task.kwargs.items()))
+                record_failure(failures, task)
                 nskipped += 1
                 logger.warning(f'{prefix} skipped (upstream failed): {task}')
                 continue
@@ -32,7 +32,7 @@ class SingleprocExecutor(Executor):
                     raise  # remake run -X: let the debugger see it
                 # Failure is recorded by run_task; carry on so independent
                 # tasks still run.
-                failures.setdefault(task.rule, set()).add(frozenset(task.kwargs.items()))
+                record_failure(failures, task)
                 nfailed += 1
         if nfailed:
             skipped = f' ({nskipped} downstream task(s) skipped)' if nskipped else ''

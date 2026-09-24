@@ -5,7 +5,11 @@ Rerun logic is DB-first: never run, failed, rule_run code changed (AST
 compare), uses changed, or any relevant upstream task reruns. Filesystem
 checks happen only via the opt-in check_outputs modes.
 """
+import ast
+import builtins
 import difflib
+import inspect
+import os
 from collections import namedtuple
 from time import perf_counter
 
@@ -15,7 +19,7 @@ from loguru import logger
 from ..metadata.metadata_manager import TASK_STATUS_FAILED, TASK_STATUS_SUCCESS
 from ..util.code_compare import CodeComparer
 from .dag import expand_rule
-from .exceptions import Defer
+from .exceptions import Defer, RemakeError
 from .rule import is_deferrable
 from .scope import (
     io_hash,
@@ -27,20 +31,75 @@ from .scope import (
 )
 
 
-def make_predicate(query):
+# Builtins a query may call (review 2026-09-24 M14): with none, reasonable
+# queries like "year in range(2000, 2005)" silently matched nothing.
+QUERY_BUILTINS = {
+    name: getattr(builtins, name)
+    for name in ('abs', 'all', 'any', 'bool', 'float', 'frozenset', 'int', 'len',
+                 'list', 'max', 'min', 'range', 'round', 'set', 'sorted', 'str', 'tuple')
+}
+
+
+def rule_kwarg_names(rules):
+    """Every matrix kwarg name across `rules` — the rule functions'
+    parameters after inputs/outputs (the signature contract makes these the
+    matrix keys, for callable matrices too)."""
+    names = set()
+    for rule in rules:
+        names.update(p for p in inspect.signature(rule.fn).parameters
+                     if p not in ('inputs', 'outputs'))
+    return names
+
+
+def _free_names(tree):
+    """Names a query expression reads, minus those it binds itself
+    (comprehension targets, lambda arguments)."""
+    loaded, bound = set(), set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            (loaded if isinstance(node.ctx, ast.Load) else bound).add(node.id)
+        elif isinstance(node, ast.arg):
+            bound.add(node.arg)
+    return loaded - bound
+
+
+def make_predicate(query, known_names=None):
     """Compile a task-filter expression evaluated against task kwargs plus
     'rule' (the rule name), e.g. "year > 1985 and model == 'era5'",
-    "rule in ['extract', 'clean']"."""
+    "rule in ['extract', 'clean']". A few safe builtins are available
+    (QUERY_BUILTINS).
+
+    `known_names` (every kwarg name in the pipeline, see rule_kwarg_names)
+    turns a name no rule has — almost always a typo — into an error instead
+    of a silent no-match. Bad syntax and evaluation errors are RemakeErrors
+    (a clean CLI error) rather than raw tracebacks."""
     # MM: this looks like a risk - using compile to compile the code?
     # See how pyquerylist does this - it only allows certain Python ops.
-    code = compile(query, '<query>', 'eval')
-
+    try:
+        tree = ast.parse(query, mode='eval')
+        code = compile(tree, '<query>', 'eval')
+    except SyntaxError as e:
+        raise RemakeError(f'invalid query {query!r}: {e.msg}') from None
+    if known_names is not None:
+        unknown = _free_names(tree) - set(known_names) - {'rule'} - QUERY_BUILTINS.keys()
+        if unknown:
+            raise RemakeError(
+                f'query {query!r} uses unknown name(s) {sorted(unknown)} — not a '
+                f'matrix key of any rule (keys: {sorted(known_names)}), "rule", or an '
+                f'allowed builtin ({", ".join(sorted(QUERY_BUILTINS))})'
+            )
     def predicate(kwargs):
         try:
-            return bool(eval(code, {'__builtins__': {}}, dict(kwargs)))
+            # kwargs go in the *globals*: a generator expression (e.g. inside
+            # any()) has its own scope and can't see eval's locals.
+            return bool(eval(code, {**kwargs, '__builtins__': QUERY_BUILTINS}))
         except NameError:
             # Query references a kwarg this rule doesn't have: no match.
             return False
+        except Exception as e:
+            raise RemakeError(
+                f'query {query!r} failed on {dict(kwargs)}: {type(e).__name__}: {e}'
+            ) from None
 
     return predicate
 
@@ -124,22 +183,53 @@ def cascade_settled(rule_set, dag, selected, run_seq, status):
     return settled
 
 
+# Key in an executor's `failures` dict holding the normalised output paths of
+# every task that failed (or was skipped) this run.
+_FAILED_OUTPUTS = '_failed_outputs'
+
+
+def _norm_paths(values):
+    return {os.path.normpath(str(v)) for v in values}
+
+
+def _io_paths(task, part):
+    """A task's normalised input or output paths, or an empty set if its
+    callable spec raises — run_task has already recorded that failure, and
+    the executor's bookkeeping must not re-raise it (and crash the run)."""
+    try:
+        return _norm_paths(getattr(task, part).values())
+    except Exception:
+        return set()
+
+
+def record_failure(failures, task):
+    """Record a failed (or skipped-for-upstream-failure) task in an
+    executor's `failures` dict, for upstream_failed."""
+    failures.setdefault(task.rule, set()).add(frozenset(task.kwargs.items()))
+    failures.setdefault(_FAILED_OUTPUTS, set()).update(_io_paths(task, 'outputs'))
+
+
 def upstream_failed(task, failures):
     """Should task be skipped because upstream tasks failed this run?
 
-    failures: {rule: set of frozenset(kwargs.items())} accumulated by an
-    executor. Mirrors the planner's rerun propagation: element-wise when
-    the matrices are shared, conservative (any failure taints all
-    downstream tasks) otherwise.
+    failures: built by record_failure. Mirrors the planner's rerun
+    propagation — element-wise when the matrices are shared, conservative
+    (any failure taints all downstream tasks) otherwise — and additionally
+    skips any task whose declared inputs include an output of a failed task.
+    A shared matrix doesn't mean each task reads only its same-kwargs
+    upstream (e.g. inputs of year-1): without the path check such a task ran
+    on its failed upstream's stale or missing output (review 2026-09-24 H3,
+    failure-skip part; the full fix is 0.9).
     """
     for dep in task.rule.depends_on:
         failed = failures.get(dep)
         if not failed:
             continue
-        if _same_matrix(task.rule, dep):
-            if frozenset(task.kwargs.items()) in failed:
-                return True
-        else:
+        if not _same_matrix(task.rule, dep):
+            return True
+        if frozenset(task.kwargs.items()) in failed:
+            return True
+        if _io_paths(task, 'inputs') & failures.get(_FAILED_OUTPUTS, set()):
             return True
     return False
 
@@ -323,9 +413,10 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
     # MM: this is a core piece of logic, but I find it hard to understand end-to-end.
     # MM: also quite a long func.
     start = perf_counter()
-    predicate = make_predicate(query) if query else None
+    predicate = make_predicate(query, rule_kwarg_names(rules)) if query else None
     code_comparer = CodeComparer()
     rules = set(rules)
+    nmatched = 0
 
     runnable = []
     deferred = []
@@ -469,8 +560,12 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
                 (records[task.key].run_seq if task.key in records else None)
             for task in tasks
         }
+        nmatched += len(tasks)
         logger.debug('{}: {} task(s), {} to rerun', rule.name, len(tasks), len(rule_rerun))
 
+    if predicate is not None and not nmatched and not deferred:
+        # Distinguish "your query selected nothing" from "all up to date".
+        logger.warning(f'query {query!r} matched no tasks')
     elapsed = perf_counter() - start
     logger.bind(
         event='plan', nrunnable=len(runnable), ndeferred=len(deferred),

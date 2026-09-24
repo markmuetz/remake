@@ -134,7 +134,10 @@ def _make_executor(name, rmk, nproc=None):
             f"{sorted([*builtin, 'multiproc', 'dask'])} or a "
             f'dotted path like mymodule:MyExecutor'
         )
-    cls = getattr(importlib.import_module(module_name), cls_name)
+    try:
+        cls = getattr(importlib.import_module(module_name), cls_name)
+    except (ImportError, AttributeError) as e:
+        raise RemakeError(f'Cannot load executor {name!r}: {e}') from None
     if not (isinstance(cls, type) and issubclass(cls, Executor)):
         raise RemakeError(f'{name!r} is not an Executor subclass')
     return cls(rmk)
@@ -431,7 +434,9 @@ class RemakeCLI:
             force=args.force,
             ignore_code_changes=args.ignore_code_changes,
         )
-        return 1 if nfailed else 0
+        # Exit 0 only when everything needed completed: failed tasks and
+        # rules left blocked (deferred matrix never ready) are both non-zero.
+        return 1 if nfailed or rmk.blocked_rules else 0
 
     def remake_run_task(self, args):
         from .util.resources import one_task_per_process
@@ -467,6 +472,11 @@ class RemakeCLI:
                 f'remake run {args.remakefile} --executor slurm'
             )
         specs = json.loads(specs_path.read_text())
+        if not 0 <= args.index < len(specs):
+            raise RemakeError(
+                f'array index {args.index} out of range: {specs_path} has '
+                f'{len(specs)} task(s)'
+            )
         spec = specs[args.index]
         # run_seq was fixed at submission; carry it into the sidecar so its
         # stamp matches the rest of this submission's tasks (older job specs
@@ -637,11 +647,12 @@ class RemakeCLI:
     def remake_ls_tasks(self, args):
         from .core.dag import iter_expand_rule
         from .core.exceptions import Defer
-        from .core.planner import make_predicate
+        from .core.planner import make_predicate, rule_kwarg_names
 
         rmk = self._load(args)
         rmk.finalize()
-        predicate = make_predicate(args.query) if args.query else None
+        predicate = (make_predicate(args.query, rule_kwarg_names(rmk.rules))
+                     if args.query else None)
         paint = Painter(args.colour)
 
         def input_files(task):
@@ -939,17 +950,21 @@ def remake_cmd(argv=None):
     # Logs go to stderr; stdout carries command output only (so --json and
     # piping stay clean).
     logger.remove()
+    # Honour --colour / NO_COLOR / a non-TTY stderr like the rest of the
+    # output (review 2026-09-24 L25: hardcoded colorize=True filled CI logs
+    # and SLURM .err files with escape codes).
+    colorize = Painter(getattr(args, 'colour', 'auto'), sys.stderr).enabled
     if args.trace:
-        logger.add(sys.stderr, colorize=True, level='TRACE')
+        logger.add(sys.stderr, colorize=colorize, level='TRACE')
     elif args.debug:
-        logger.add(sys.stderr, colorize=True, level='DEBUG')
+        logger.add(sys.stderr, colorize=colorize, level='DEBUG')
     elif args.warning:
         logger.add(
-            sys.stderr, colorize=True, format='<bold><lvl>{message}</lvl></bold>', level='WARNING'
+            sys.stderr, colorize=colorize, format='<lvl>{message}</lvl>', level='WARNING'
         )
     else:
         logger.add(
-            sys.stderr, colorize=True, format='<bold><lvl>{message}</lvl></bold>', level='INFO'
+            sys.stderr, colorize=colorize, format='<lvl>{message}</lvl>', level='INFO'
         )
 
     # Anchor execution to the remakefile's directory: cd there so .remake/ and
@@ -967,7 +982,7 @@ def remake_cmd(argv=None):
             except OSError as e:
                 print(f'error: cannot enter remakefile directory {rf.parent}: {e}',
                       file=sys.stderr)
-                return 1
+                return 2
         args.remakefile = rf.name
 
     # Per-task-process subcommands (SLURM array elements) get a per-task log
@@ -981,7 +996,12 @@ def remake_cmd(argv=None):
         # structured sink), so a miner can group an invocation's lines and
         # correlate e.g. a plan total with its constituent status queries.
         logger.configure(extra={'run_id': uuid.uuid4().hex[:12]})
-        Path('.remake').mkdir(parents=True, exist_ok=True)
+        try:
+            Path('.remake').mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            print(f'error: cannot create .remake/ metadata dir: {e}', file=sys.stderr)
+            os.chdir(orig_cwd)
+            return 2
         debug_level = 'TRACE' if args.trace else 'DEBUG'
         # Three always-on file sinks next to the metadata DB, split so the
         # streams don't compete for one rotation window (logs_analysis §3.2):
@@ -1010,6 +1030,14 @@ def remake_cmd(argv=None):
 
     try:
         return cli.dispatch()
+    except BrokenPipeError:
+        # Output piped into something that stopped reading (`| head`): stop
+        # quietly like other CLI tools, not with a traceback (review L26).
+        # Point stdout at devnull so the interpreter's final flush can't
+        # raise again.
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        return 141  # 128 + SIGPIPE, what a shell reports for a killed writer
     except RemakeError as e:
         # User-facing errors (bad query, >1-task match, unknown rule, ...)
         # print cleanly and exit 2; keep the traceback only under -X.

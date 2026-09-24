@@ -39,6 +39,123 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   trigger. `set-state` does not clear them: they describe the last actual
   execution, not the task's current state.
 
+## [0.8.4] — 2026-09-24
+
+Fixes from the 2026-09-24 full-implementation review (IDs refer to
+`design_docs/code_reviews/2026-09-24_review.md` on `main`).
+
+### Fixed
+
+- **multiproc and dask runs now record `run_seq`** (H1). Their workers
+  stored it as NULL, which silently switched off the durable rerun
+  propagation of 0.8.0 (bug 01): after rerunning only an upstream rule
+  (`run -Q "rule == 'a'"`), downstream tasks were never rerun under
+  `-E multiproc`/`-E dask`. Records already written as NULL stay unmeasured
+  (nothing reruns on upgrade); new runs are tracked.
+- **A task calling `sys.exit()` is now a recorded task failure** (H6).
+  `SystemExit` from task code — typically a CLI `main()` — escaped every
+  executor and ended the whole run silently: `sys.exit(0)` gave exit code 0
+  with the remaining tasks never run and nothing recorded. A non-zero
+  `sys.exit()` is now recorded as a failure (traceback stored) and the run
+  continues; `sys.exit(0)` / `sys.exit()` — a wrapped CLI succeeding — is
+  success. Ctrl-C (`KeyboardInterrupt`) still stops the run.
+- **Failures before the rule function runs are recorded** (M11): creating
+  output directories and resolving callable `inputs`/`outputs` happened
+  outside the failure handling, so e.g. an output path under an existing
+  *file* failed with no traceback anywhere and the task showed as pending.
+- **Failure tracebacks reach the per-task logs** (M12): they are logged at
+  DEBUG (so `remake task-log` shows them for multiproc/dask/SLURM tasks)
+  without adding a traceback per failure to the console.
+- **Duplicate rule names are an error** (H8). Task keys and DB records are
+  keyed by rule name, so two different rules sharing a name (two modules
+  each defining `process`, or a clashing `name=`) silently shared records:
+  the plan listed each task twice, the rules overwrote each other's code
+  record so they reran on every invocation, and multiproc/SLURM ran the
+  first rule for both. Registering such a pipeline now raises `RemakeError`
+  naming both definitions. Re-registering the *same* function (a notebook
+  cell executed again) replaces the earlier rule with a warning instead of
+  doubling the task list.
+- **A half-created `.remake/remake.db` no longer bricks the pipeline** (M5).
+  Whether to create the schema was decided by the file existing, but SQLite
+  creates the file before the schema is written — so a first run killed
+  mid-create (disk/quota full, Ctrl-C) left a file on which every later
+  command failed with `no such table: task` until it was deleted by hand.
+- **Schema creation and migrations are one transaction** (M6). Statements
+  used to commit one at a time, so concurrent first opens after an upgrade
+  (SLURM continuation jobs, `info` next to `run`) raced — `duplicate column
+  name` / `table ... already exists` — and an interrupted migration left a
+  half-migrated DB that was skipped forever (for a 0.8.0a0-era DB: every
+  task of a rule with `uses=` rerunning on every run). Now concurrent
+  openers queue on the lock, an interrupted migration is rolled back and
+  redone on the next open, and a DB left partially created by an older
+  remake is completed.
+- **Lock retries are bounded and only retry lock errors.** Any SQLite
+  `OperationalError` (e.g. `no such table`, disk full) used to be retried
+  forever with growing backoff — a silent hang; they are now raised at
+  once, and a DB still locked after 10 minutes is a clear error.
+- **`run` exits non-zero when rules stay blocked** (M9). A deferred
+  (`@deferrable`) matrix that never resolves — a mistyped path, or an
+  upstream that failed — only logged a warning and exited 0, so scripts and
+  CI read an incomplete run as success. It now exits 1 and each blocked rule
+  is reported with the reason: the paths its `Defer` is waiting on, or that
+  an upstream rule did not complete. `Remake.blocked_rules` lists them after
+  `run()` (whose return value is unchanged: the number of failed tasks).
+  In a filtered (`-Q`) run, a rule blocked only because the query left out
+  an upstream that still has work is reported as a warning and does not
+  change the exit code.
+- **Queries (`-Q`) no longer fail silently** (M14). A name that is no
+  rule's matrix key — almost always a typo, e.g. `-Q "yera == 2000"` — used
+  to match nothing, so `run` said "Nothing to do" (exit 0) and `set-state`
+  quietly changed nothing; it is now an error listing the valid keys.
+  Syntax errors and evaluation errors (e.g. comparing an int to a str) are
+  clean `error:` messages (exit 2) instead of tracebacks. A few safe
+  builtins are available — `range`, `len`, `min`, `max`, `abs`, `int`,
+  `str`, `set`, … — so `-Q "year in range(2000, 2005)"` works (it silently
+  matched nothing before). A query that matches no tasks at all is warned
+  about. (The restricted-parser replacement for `eval` remains a todo.)
+- **An older sidecar result can no longer overwrite a newer record** (M17).
+  A result file left un-ingested (a SLURM element, or a multiproc run whose
+  parent died) was applied unconditionally on the next ingest, reverting a
+  later direct write — e.g. a successful `remake run-task` flipped back to
+  failed. Ingest now only applies results from the same or a later
+  invocation (by `run_seq`, not wall clock, so node clock skew can't
+  reorder them).
+- **Malformed sidecar results are quarantined** (L14). A result file of
+  valid JSON but the wrong shape crashed every `plan`/`info`/`run` until
+  deleted by hand, and an unreadable one was warned about on every command.
+  Both are now renamed to `*.json.bad` with a single warning.
+- **Console logs honour `--colour never`, `NO_COLOR` and non-TTY stderr**
+  (L25). They were always ANSI-coloured (and double-bolded), filling CI logs
+  and SLURM `.err` files with escape codes.
+- **Piping into `head` no longer ends in a `BrokenPipeError` traceback**
+  (L26); remake stops quietly with exit code 141.
+- **User errors are clean `error:` messages with exit code 2** (L27) instead
+  of tracebacks with exit 1 — the code that means "tasks failed". Covers a
+  missing remakefile, a directory or non-`.py` path given as the remakefile,
+  an unknown `depends_on` name or a dependency cycle (now `RuleGraphError`,
+  still a `ValueError` for existing handlers), an unloadable `-E
+  module:Class`, a corrupt `.remake/remake.db`, an unwritable `.remake/`,
+  and an out-of-range `run-array-task` index. Exit codes are documented in
+  the running guide (0 success, 1 tasks failed or rules blocked, 2 usage
+  error).
+- **`depends_on='name'` (a bare string) works** (L4); it was split into
+  single characters (`unknown rule 'e'`). A single `Rule` is accepted too.
+- **Tasks are skipped when an input they read failed to be rebuilt** (H3,
+  failure-skip part). With a shared matrix, only the same-kwargs downstream
+  task was skipped after an upstream failure; a task reading a *different*
+  upstream element (e.g. `inputs` of `year - 1`) still ran — on that
+  element's stale output if one existed from an earlier run. Local
+  executors now also skip any task whose declared inputs include an output
+  of a task that failed this run. (Rerun propagation for such pipelines is
+  the 0.9 fix.)
+- **Concurrent local runs in one directory are prevented** (M15). Two
+  `remake run`s started together both executed every task and raced on the
+  same outputs. `run` now holds `.remake/run.lock`; a second run gets a clear
+  error (exit 2). A lock left by a crashed run on the same host is detected
+  and replaced; one from another host must be deleted by hand if stale (the
+  error says so). SLURM submissions (`-E slurm`, incl. continuation jobs)
+  take no lock; they keep their own duplicate-submission guard.
+
 ## [0.8.3] — 2026-07-14
 
 ### Fixed
@@ -337,6 +454,7 @@ the `remake` Claude skill (`references/remake2_to_remake3.md`). The rewrite was
 validated by reproducing a real multi-figure paper pipeline (`mcs_prime`)
 end-to-end on JASMIN with outputs identical to the remake2 reference.
 
+[0.8.4]: https://github.com/markmuetz/remake/releases/tag/v0.8.4
 [0.8.3]: https://github.com/markmuetz/remake/releases/tag/v0.8.3
 [0.8.2]: https://github.com/markmuetz/remake/releases/tag/v0.8.2
 [0.8.1]: https://github.com/markmuetz/remake/releases/tag/v0.8.1

@@ -238,6 +238,69 @@ def test_failure_recorded_and_run_continues(tmp_path, meta):
     assert [t.kwargs for t in runnable] == [{'n': 2}]
 
 
+def test_sys_exit_in_task_is_a_recorded_failure(tmp_path, meta):
+    # Review 2026-09-24 H6: SystemExit from task code (a CLI main() calling
+    # sys.exit) escaped every executor, ending the run silently — exit 0 for
+    # sys.exit(0) — with nothing recorded and the remaining tasks never run.
+    import sys
+
+    @rule(outputs={'o': str(tmp_path / 'x_{n}.txt')}, matrix={'n': [1, 2, 3]})
+    def exits(outputs, n):
+        Path(outputs['o']).write_text('ok')
+        if n == 2:
+            sys.exit(3)
+        if n == 3:
+            sys.exit(0)  # a CLI main() finishing successfully
+
+    rmk = Remake(rules=[exits], metadata=meta)
+    assert rmk.run() == 1  # one failure; the run continued
+    tasks = {t.kwargs['n']: t for t in rmk.tasks()}
+    recs = rmk.metadata.get_tasks_status(tasks.values())
+    assert recs[tasks[1].key].status == TASK_STATUS_SUCCESS
+    assert recs[tasks[2].key].status == TASK_STATUS_FAILED
+    assert 'SystemExit' in recs[tasks[2].key].exception
+    # sys.exit(0) is success, not failure (pre-tag review finding 5).
+    assert recs[tasks[3].key].status == TASK_STATUS_SUCCESS
+
+
+def test_failure_before_rule_function_is_recorded(tmp_path, meta):
+    # Review 2026-09-24 M11: output-dir creation and io resolution ran outside
+    # run_task's try — such failures were neither recorded nor traced, and
+    # the task showed as pending, not failed.
+    (tmp_path / 'blocker').write_text('a file where a directory should be')
+
+    @rule(outputs={'o': str(tmp_path / 'blocker' / 'x.txt')})
+    def blocked(outputs):
+        Path(outputs['o']).write_text('never')
+
+    rmk = Remake(rules=[blocked], metadata=meta)
+    assert rmk.run() == 1
+    task = rmk.tasks()[0]
+    rec = rmk.metadata.get_tasks_status([task])[task.key]
+    assert rec.status == TASK_STATUS_FAILED
+    assert 'Traceback (most recent call last)' in rec.exception
+
+
+def test_failure_traceback_reaches_debug_log(tmp_path, meta):
+    # Review 2026-09-24 M12: the failure was logged as a one-line ERROR, so
+    # per-task logs (DEBUG sinks) never held the traceback.
+    from loguru import logger
+
+    @rule(outputs={'o': str(tmp_path / 'y.txt')})
+    def fails(outputs):
+        raise ValueError('distinctive-boom')
+
+    lines = []
+    sink = logger.add(lines.append, level='DEBUG')
+    try:
+        Remake(rules=[fails], metadata=meta).run()
+    finally:
+        logger.remove(sink)
+    text = ''.join(lines)
+    assert 'Traceback (most recent call last)' in text
+    assert 'distinctive-boom' in text
+
+
 def test_upstream_failure_skips_downstream(tmp_path, meta):
     @rule(outputs={'o': str(tmp_path / 'a_{n}.txt')}, matrix={'n': [1, 2]})
     def rule_a(outputs, n):
@@ -395,3 +458,134 @@ def test_rules_from_current_module_and_multi_remake(meta):
     # Re-adding is a no-op.
     rmk1.add_rules([r])
     assert rmk1.rules == [r]
+
+
+def test_duplicate_rule_names_rejected(tmp_path, meta):
+    # Review 2026-09-24 H8: task keys are sha1('<rule>:<kwargs>'), so two
+    # rules sharing a name shared keys and DB records — the plan listed every
+    # key twice and the rules overwrote each other's code record forever.
+    import pytest
+
+    from remake import RemakeError
+
+    @rule(outputs={'o': str(tmp_path / 'x_{i}.txt')}, matrix={'i': [1, 2]})
+    def proc(outputs, i):
+        Path(outputs['o']).write_text('first')
+
+    @rule(outputs={'o': str(tmp_path / 'y_{i}.txt')}, matrix={'i': [1, 2]}, name='proc')
+    def proc2(outputs, i):
+        Path(outputs['o']).write_text('second')
+
+    with pytest.raises(RemakeError, match="Duplicate rule name 'proc'"):
+        Remake(rules=[proc, proc2], metadata=meta)
+    # The same Rule object registered twice (e.g. imported under an alias)
+    # is still fine.
+    assert Remake(rules=[proc, proc], metadata=meta).rules == [proc]
+
+
+def test_redefined_rule_replaces_earlier_definition(tmp_path, meta):
+    # A notebook cell (or script section) with @rule executed twice creates a
+    # second Rule for the same function, freshly compiled: it replaces the
+    # first rather than doubling the task list — and downstream rules follow
+    # the new definition (pre-tag review finding 8).
+    import pytest
+
+    from remake import RemakeError
+
+    cell = f'''
+from pathlib import Path
+from remake import rule
+
+@rule(outputs={{'o': {str(tmp_path / 'z_{i}.txt')!r}}}, matrix={{'i': [1, 2]}})
+def cell(outputs, i):
+    Path(outputs['o']).write_text('ok')
+'''
+    first_ns, second_ns = {}, {}
+    exec(compile(cell, '<cell>', 'exec'), first_ns)
+
+    @rule(inputs=first_ns['cell'].outputs, outputs={'o': str(tmp_path / 'w_{i}.txt')},
+          matrix=first_ns['cell'].matrix, depends_on=[first_ns['cell']])
+    def down(inputs, outputs, i):
+        Path(outputs['o']).write_text('ok')
+
+    rmk = Remake(rules=[first_ns['cell'], down], metadata=meta)
+    rmk.finalize()
+    exec(compile(cell, '<cell>', 'exec'), second_ns)
+    rmk.add_rules([second_ns['cell']])
+    assert rmk.rules == [second_ns['cell'], down]
+    assert len(rmk.plan()[0]) == 4
+    assert down.depends_on == [second_ns['cell']]
+
+    # Rules built by one factory share a code object: distinct rules that
+    # clash on a name, not a redefinition (pre-tag review finding 2).
+    def make(prefix):
+        @rule(outputs={'o': str(tmp_path / (prefix + '_{i}.txt'))}, matrix={'i': [1]})
+        def made(outputs, i):
+            pass
+        return made
+
+    with pytest.raises(RemakeError, match='Duplicate rule name'):
+        Remake(rules=[make('u'), make('v')], metadata=meta)
+
+
+def test_failure_skip_follows_inputs_not_just_kwargs(tmp_path, meta):
+    # Review 2026-09-24 H3 (failure-skip part): with a shared matrix only the
+    # same-kwargs downstream task was skipped, so b[2002] — which reads
+    # a[2001]'s output — ran on the stale file a[2001] had failed to rewrite.
+    def build(fail_year):
+        @rule(outputs={'o': str(tmp_path / 'a_{year}.txt')}, matrix={'year': [2000, 2001, 2002]},
+              uses={'fail_year': fail_year})
+        def a(outputs, year):
+            if year == fail_year:
+                raise ValueError('boom')
+            Path(outputs['o']).write_text(f'a{year} v{fail_year}')
+
+        def b_inputs(year):
+            return {'prev': str(tmp_path / f'a_{max(year - 1, 2000)}.txt')}
+
+        @rule(inputs=b_inputs, outputs={'o': str(tmp_path / 'b_{year}.txt')},
+              matrix=a.matrix, depends_on=[a])
+        def b(inputs, outputs, year):
+            Path(outputs['o']).write_text(Path(inputs['prev']).read_text())
+
+        return Remake(rules=[a, b], metadata=meta)
+
+    assert build(fail_year=None).run() == 0
+    assert (tmp_path / 'b_2002.txt').read_text() == 'a2001 vNone'
+
+    rmk = build(fail_year=2001)  # uses= changed: all of a reruns; a[2001] fails
+    rmk.run()
+    b2002 = next(t for t in rmk.tasks() if t.rule.name == 'b' and t.kwargs['year'] == 2002)
+    # b[2002] reads a_2001.txt, whose rewrite failed: skipped this run (its
+    # record still carries the first run's run_seq), not rebuilt from the
+    # stale file — and left for a later run to redo.
+    assert rmk.metadata.get_tasks_status([b2002])[b2002.key].run_seq == 1
+    assert b2002.key in {t.key for t in rmk.plan()[0]}
+
+
+def test_raising_io_spec_does_not_crash_the_run(tmp_path, meta):
+    # Pre-tag review finding 1: failure bookkeeping re-resolved the failed
+    # task's outputs outside any try, re-raising and aborting the run.
+    def outputs(year):
+        if year == 2000:
+            raise RuntimeError('bad spec')
+        return {'o': str(tmp_path / f'o_{year}.txt')}
+
+    @rule(outputs=outputs, matrix={'year': [2000, 2001]})
+    def r(outputs, year):
+        Path(outputs['o']).write_text('ok')
+
+    assert Remake(rules=[r], metadata=meta).run() == 1
+    assert (tmp_path / 'o_2001.txt').exists()
+
+
+def test_sys_exit_non_int_zero_is_failure(tmp_path, meta):
+    # Follow-up review: CPython exits 1 for sys.exit(0.0) — only None or an
+    # int 0 is success.
+    import sys
+
+    @rule(outputs={'o': str(tmp_path / 'f.txt')})
+    def floaty(outputs):
+        sys.exit(0.0)
+
+    assert Remake(rules=[floaty], metadata=meta).run() == 1

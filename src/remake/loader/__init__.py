@@ -42,8 +42,14 @@ def load_remake(filename, finalize=True):
     from ..core.remake import Remake
 
     filename = Path(filename)
+    if not filename.name or filename.is_dir():
+        raise RemakeLoadError(f'Expected a remakefile (.py), got a directory: {filename}')
     if not filename.suffix:
         filename = filename.with_suffix('.py')
+    if filename.suffix != '.py':
+        raise RemakeLoadError(f'Not a Python remakefile (expected a .py file): {filename}')
+    if not (Path.cwd() / filename).is_file():
+        raise RemakeLoadError(f'Remakefile not found: {Path.cwd() / filename}')
     remake_module = load_module(filename)
     remakes = [o for o in vars(remake_module).values() if isinstance(o, Remake)]
     if len(remakes) > 1:

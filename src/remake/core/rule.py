@@ -216,7 +216,12 @@ def rule(
             inputs=inputs,
             outputs=outputs,
             matrix=matrix,
-            depends_on=list(depends_on) if depends_on else [],
+            # A bare name or Rule is one dependency — list('extract') would
+            # split it into characters (review 2026-09-24 L4).
+            depends_on=(
+                [depends_on] if isinstance(depends_on, (str, Rule))
+                else list(depends_on) if depends_on else []
+            ),
             uses=uses_,
             strict_scope=strict_scope,
             config=dict(config) if config else {},

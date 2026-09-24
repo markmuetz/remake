@@ -23,13 +23,13 @@ import os
 from loguru import logger
 
 from ..core.exceptions import RemakeError
-from ..core.planner import upstream_failed
+from ..core.planner import record_failure, upstream_failed
 from .executor import Executor
 
 _worker_rmk_cache = {}
 
 
-def _run_spec(remakefile, rule_name, kwargs):
+def _run_spec(remakefile, rule_name, kwargs, run_seq=None):
     """Runs on a dask worker. Returns True on success."""
     from ..loader import load_remake
     from ..metadata.sidecar import SidecarWriter
@@ -40,6 +40,9 @@ def _run_spec(remakefile, rule_name, kwargs):
         rmk = load_remake(remakefile, finalize=False)
         rmk.metadata = SidecarWriter()
         _worker_rmk_cache[remakefile] = rmk
+    # The parent invocation's run_seq (durable propagation, bugs/01); set per
+    # call because long-lived workers outlive a single invocation.
+    rmk.metadata.run_seq = run_seq
     task = rmk.task_from_spec(rule_name, kwargs)
     logfile = task_log_path(task)
     logfile.parent.mkdir(parents=True, exist_ok=True)
@@ -95,14 +98,15 @@ class DaskExecutor(Executor):
         nfailed = 0
         nskipped = 0
         done = 0
-        failures = {}  # rule -> set of frozenset(kwargs.items())
+        failures = {}  # see planner.record_failure
+        run_seq = self.rmk.metadata.current_run_seq()
         client, cluster = self._client()
         try:
             for rule, rule_tasks in groups:
                 to_run = []
                 for task in rule_tasks:
                     if upstream_failed(task, failures):
-                        failures.setdefault(rule, set()).add(frozenset(task.kwargs.items()))
+                        record_failure(failures, task)
                         nskipped += 1
                         done += 1
                         logger.warning(f'{done}/{ntasks} skipped (upstream failed): {task}')
@@ -113,7 +117,8 @@ class DaskExecutor(Executor):
                 logger.info(f'{rule.name}: {len(to_run)} task(s) on dask ({self.nproc} workers)')
                 futures = {
                     client.submit(
-                        _run_spec, self.remakefile, rule.name, task.kwargs, pure=False
+                        _run_spec, self.remakefile, rule.name, task.kwargs, run_seq,
+                        pure=False,
                     ): task
                     for task in to_run
                 }
@@ -124,7 +129,7 @@ class DaskExecutor(Executor):
                     if future.result():
                         logger.info(f'{done}/{ntasks}: {task}')
                     else:
-                        failures.setdefault(rule, set()).add(frozenset(task.kwargs.items()))
+                        record_failure(failures, task)
                         nfailed += 1
                         logger.error(f'{done}/{ntasks} failed: {task}')
         finally:

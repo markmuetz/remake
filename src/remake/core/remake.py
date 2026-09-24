@@ -5,6 +5,7 @@ from collections import Counter
 from pathlib import Path
 from time import perf_counter
 
+import networkx as nx
 from loguru import logger
 
 from ..metadata.metadata_manager import (
@@ -15,9 +16,16 @@ from ..metadata.metadata_manager import (
 )
 from ..util import task_log_path
 from ..util.resources import capture_for_config
+from ..util.run_lock import run_lock
 from .dag import build_rule_dag, expand_rule, iter_expand_rule
-from .exceptions import Defer, RemakeError
-from .planner import cascade_settled, explain_task, make_predicate, plan
+from .exceptions import Defer, RemakeError, TaskExit
+from .planner import (
+    cascade_settled,
+    explain_task,
+    make_predicate,
+    plan,
+    rule_kwarg_names,
+)
 from .rule import Rule
 from .scope import check_scope, exec_function
 from .task import Task
@@ -59,6 +67,39 @@ def _resource_fields(resources):
     return fields
 
 
+def _blocked_reason(rule):
+    """Why a rule is still deferred when a local run has nothing left to
+    try: its matrix's Defer paths if it still can't expand, else (it would
+    expand, so the planner is holding it back) an upstream that didn't
+    complete this run."""
+    from .rule import is_deferrable
+
+    if is_deferrable(rule.matrix):
+        try:
+            rule.matrix()
+        except Defer as e:
+            waiting = ', '.join(e.paths) if e.paths else 'an unspecified input'
+            return f'matrix not ready — waiting on {waiting}'
+        except Exception as e:  # the matrix itself is broken: say so
+            return f'matrix raised {type(e).__name__}: {e}'
+    return 'an upstream rule did not complete (see failures above)'
+
+
+def _where(rule):
+    fn = rule.fn
+    return f'{getattr(fn, "__module__", "?")}.{getattr(fn, "__qualname__", rule.name)}'
+
+
+def _same_definition(a, b):
+    """Two Rule objects for the same function re-defined (e.g. a notebook
+    cell re-run): same module and qualified name, but freshly compiled code.
+    Distinct functions that merely share a rule name (two modules each
+    defining `process`, a clashing name=) are not — nor are rules built by
+    one factory function, which share a single code object and differ only
+    in closure values."""
+    return _where(a) == _where(b) and a.fn.__code__ is not b.fn.__code__
+
+
 class Remake:
     def __init__(
         self,
@@ -72,6 +113,10 @@ class Remake:
         self.config = config or {}
         self.metadata = metadata
         self.check_outputs = check_outputs
+        # Rules the last run() left unresolved (deferred matrix never ready,
+        # or waiting on an upstream that failed). Non-empty means that run
+        # did not complete everything; the CLI exits non-zero on it.
+        self.blocked_rules = []
         self.strict_scope = strict_scope
         self.rules = []
         self.dag = None
@@ -88,11 +133,26 @@ class Remake:
                 raise RemakeError(f'Not a Rule (use the @rule decorator): {rule!r}')
             if rule in self.rules:
                 continue
+            # Task keys are sha1('<rule name>:<kwargs>'), so two rules sharing
+            # a name share task keys and DB records (review 2026-09-24 H8).
+            existing = next((r for r in self.rules if r.name == rule.name), None)
+            if existing is not None and not _same_definition(existing, rule):
+                raise RemakeError(
+                    f'Duplicate rule name {rule.name!r}: defined by '
+                    f'{_where(existing)} and {_where(rule)}. Rule names must be '
+                    f'unique within a pipeline (rename one, or pass name=...)'
+                )
             # Resolve tri-state strict_scope against the Remake default.
             if rule.strict_scope is None and self.strict_scope:
                 check_scope(rule.fn, rule.uses, strict=True)
             rule.remake = self
-            self.rules.append(rule)
+            if existing is not None:
+                # The same function re-defined — a notebook cell or script
+                # section executed again: the new definition replaces the old.
+                logger.warning(f'Rule {rule.name!r} redefined: replacing the earlier definition')
+                self.rules[self.rules.index(existing)] = rule
+            else:
+                self.rules.append(rule)
         self._finalized = False
 
     def rules_from_current_module(self):
@@ -200,7 +260,7 @@ class Remake:
         dynamic matrix is deferred."""
         if not self._finalized:
             self.finalize()
-        predicate = make_predicate(query) if query else None
+        predicate = make_predicate(query, rule_kwarg_names(self.rules)) if query else None
         for rule in self.rules:
             try:
                 yield from iter_expand_rule(rule, predicate)
@@ -299,7 +359,7 @@ class Remake:
         remaining = Counter(task.rule.name for task in runnable)
         runnable_keys = {task.key for task in runnable}
         deferred_names = {rule.name for rule in deferred}
-        predicate = make_predicate(query) if query else None
+        predicate = make_predicate(query, rule_kwarg_names(self.rules)) if query else None
 
         # Per-rule tally of why the to-run tasks would rerun. One plan() is
         # already done (`runnable`); reuse it per task so this is plan-cost,
@@ -692,9 +752,21 @@ class Remake:
         """Run all tasks that need running, replanning after each wave so
         dynamic (deferred) matrices resolve as their upstreams complete.
         Returns the number of failed tasks (0 for asynchronous executors,
-        which don't know at submission time)."""
+        which don't know at submission time). Holds `.remake/run.lock` for
+        the duration: a second concurrent run in the same directory is a
+        RemakeError."""
         if not self._finalized:
             self.finalize()
+        self.blocked_rules = []
+        if executor is not None and executor.handles_deferred:
+            # SLURM: submission only; continuation jobs re-enter run() on
+            # compute nodes, and the executor has its own duplicate-submission
+            # guard — a directory lock would strand or block them.
+            return self._run(executor, query, force, ignore_code_changes)
+        with run_lock(self.metadata):
+            return self._run(executor, query, force, ignore_code_changes)
+
+    def _run(self, executor, query, force, ignore_code_changes):
         # One run_seq for this whole invocation (shared across replanning
         # waves); committed onto every task so downstream propagation survives
         # to later invocations. See bugs/01_durable_rerun_propagation.md.
@@ -728,8 +800,19 @@ class Remake:
             runnable = [t for t in runnable if t.key not in attempted]
             if not runnable:
                 if deferred:
-                    names = ', '.join(rule.name for rule in deferred)
-                    logger.warning(f'Blocked rules (matrix not ready): {names}')
+                    # Not everything completed: say which rules and why, and
+                    # make the run's outcome reflect it (review 2026-09-24 M9;
+                    # it used to be a bare warning and exit 0). A filtered run
+                    # may deliberately leave out the upstream a deferred rule
+                    # waits on: that one is reported but doesn't fail the run.
+                    excused = self._excluded_by_query(deferred) if query else set()
+                    for rule in deferred:
+                        if rule in excused:
+                            logger.warning(f'Blocked rule {rule.name} (upstream not '
+                                           f'selected by the query): {_blocked_reason(rule)}')
+                        else:
+                            self.blocked_rules.append(rule)
+                            logger.error(f'Blocked rule {rule.name}: {_blocked_reason(rule)}')
                 break
             wave += 1
             logger.bind(event='wave', wave=wave, ntasks=len(runnable)).debug(
@@ -747,51 +830,88 @@ class Remake:
             logger.info('Nothing to do')
         return nfailed
 
+    def _excluded_by_query(self, deferred):
+        """Deferred rules a filtered run can be excused for: those with an
+        upstream (any ancestor) that still has work outside the filter. If
+        every ancestor is complete and the rule is still deferred, the query
+        didn't cause it — it's genuinely blocked."""
+        runnable_all, deferred_all = self.plan()
+        unfinished = {t.rule for t in runnable_all} | set(deferred_all)
+        return {rule for rule in deferred
+                if nx.ancestors(self.dag, rule) & (unfinished - {rule})}
+
     def run_task(self, task):
         """Execute one task and record the result. The single execution
         entry point — used by all executors and `remake run-task`. Timing and
         completion are logged here so every executor gets them uniformly
         (per-element detail at TRACE, per-task duration at DEBUG — the
         summarise-loops convention, per_task_logging.md)."""
-        # opt(lazy=True): the path lists are only built when a TRACE sink is
-        # attached (they'd cost real time at 1e6 tasks otherwise).
-        logger.opt(lazy=True).trace(
-            'running {}: inputs {} -> outputs {}', lambda: task,
-            lambda: [str(p) for p in task.inputs.values()],
-            lambda: [str(p) for p in task.outputs.values()],
-        )
-        for token in task.outputs.values():
-            if hasattr(token, '__fspath__'):
-                Path(token).parent.mkdir(parents=True, exist_ok=True)
-
-        fn = exec_function(task.rule.fn, task.rule.uses)
-        args = []
-        if task.rule.inputs is not None:
-            args.append(task.inputs)
-        if task.rule.outputs is not None:
-            args.append(task.outputs)
-        # Resources are measured here, the one execution chokepoint every
-        # executor shares, so all of them record the same fields
-        # (design_docs/designs/resource_capture.md). Both exit paths record: a task
-        # that fails after three hours is a duration worth keeping.
-        capture = capture_for_config(self.config)
+        start = perf_counter()
+        capture = None
+        # Everything that can fail — output dirs, io resolution (callable
+        # specs run here), the function itself — is inside the try, so every
+        # failure is recorded with its traceback (review 2026-09-24 M11).
         try:
-            with capture:
-                fn(*args, **task.kwargs)
-        except Exception:
-            resources = capture.result()
-            # `or 0` guards the one path where the task failed before the
-            # measurement completed: recording the failure matters more than
-            # the timing, and a TypeError here would lose the real exception.
-            elapsed = resources['wall_s'] or 0.0
+            # opt(lazy=True): the path lists are only built when a TRACE sink
+            # is attached (they'd cost real time at 1e6 tasks otherwise).
+            logger.opt(lazy=True).trace(
+                'running {}: inputs {} -> outputs {}', lambda: task,
+                lambda: [str(p) for p in task.inputs.values()],
+                lambda: [str(p) for p in task.outputs.values()],
+            )
+            for token in task.outputs.values():
+                if hasattr(token, '__fspath__'):
+                    Path(token).parent.mkdir(parents=True, exist_ok=True)
+
+            fn = exec_function(task.rule.fn, task.rule.uses)
+            args = []
+            if task.rule.inputs is not None:
+                args.append(task.inputs)
+            if task.rule.outputs is not None:
+                args.append(task.outputs)
+            # Resources are measured here, the one execution chokepoint every
+            # executor shares, so all of them record the same fields
+            # (design_docs/designs/resource_capture.md). Both exit paths
+            # record: a task that fails after three hours is a duration worth
+            # keeping.
+            capture = capture_for_config(self.config)
+            try:
+                with capture:
+                    fn(*args, **task.kwargs)
+            except SystemExit as exc:
+                # sys.exit(0) / sys.exit() from a wrapped CLI main() means
+                # success; only a non-zero code is a failure (handled below).
+                # Mirror CPython: only None or an int 0 (incl. False) exits 0;
+                # sys.exit(0.0) or sys.exit('msg') exit 1.
+                if not (exc.code is None or (isinstance(exc.code, int) and exc.code == 0)):
+                    raise
+        except (Exception, SystemExit) as exc:
+            # SystemExit from task code (a CLI main() calling sys.exit) is a
+            # task failure, not a request to end the run (review H6).
+            # KeyboardInterrupt still propagates: Ctrl-C stops the run.
+            tb = traceback.format_exc()
+            # Unmeasured (all None) if the task failed before capture began.
+            resources = (capture.result() if capture is not None else
+                         {'wall_s': None, 'cpu_s': None, 'max_rss_bytes': None,
+                          'rss_method': None})
+            # Fall back to our own clock when the capture didn't complete:
+            # recording the failure matters more than the timing.
+            elapsed = resources['wall_s'] or (perf_counter() - start)
             logger.bind(event='task_failed', task=str(task), rule=task.rule.name,
                         key=task.key, seconds=round(elapsed, 6),
                         **_resource_fields(resources),
                         ).error(f'failed: {task} after {elapsed:.2f}s')
+            # The traceback at DEBUG: lands in per-task logs (DEBUG sinks)
+            # without flooding the INFO console on runs with many failures
+            # (review M12).
+            logger.debug('traceback for {}:\n{}', task, tb)
             self.metadata.update_task(
-                task, TASK_STATUS_FAILED, exception=traceback.format_exc(),
-                resources=resources,
+                task, TASK_STATUS_FAILED, exception=tb, resources=resources,
             )
+            if isinstance(exc, SystemExit):
+                raise TaskExit(
+                    f'{task} called sys.exit({exc.code!r})'
+                ) from exc
             raise
         resources = capture.result()
         elapsed = resources['wall_s']
