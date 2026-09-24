@@ -162,3 +162,26 @@ def test_multiproc_records_run_seq_for_durable_propagation(tmp_path, monkeypatch
     assert Path('b_1.txt').read_text() == '3'
     assert cli('run', 'pipeline.py', '-E', 'multiproc') == 0
     assert Path('b_1.txt').read_text() == '4'
+
+
+def test_multiproc_sys_exit_in_task_is_a_failure(tmp_path, monkeypatch):
+    # Review 2026-09-24 H6: a worker's SystemExit came back through
+    # future.result() and ended the whole run silently — exit 0 for
+    # sys.exit(0) — with the remaining tasks never run.
+    monkeypatch.chdir(tmp_path)
+    Path('pipeline.py').write_text('''
+import sys
+from pathlib import Path
+from remake import Remake, rule
+
+@rule(outputs={'o': 'x_{n}.txt'}, matrix={'n': [1, 2, 3, 4]})
+def exits(outputs, n):
+    if n == 2:
+        sys.exit(0)
+    Path(outputs['o']).write_text('ok')
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    assert cli('run', 'pipeline.py', '-E', 'multiproc', '-j', '2') == 1
+    assert sorted(p.name for p in Path('.').glob('x_*.txt')) == ['x_1.txt', 'x_3.txt', 'x_4.txt']

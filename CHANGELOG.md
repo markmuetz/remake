@@ -17,6 +17,19 @@ Fixes from the 2026-09-24 full-implementation review (IDs refer to
   (`run -Q "rule == 'a'"`), downstream tasks were never rerun under
   `-E multiproc`/`-E dask`. Records already written as NULL stay unmeasured
   (nothing reruns on upgrade); new runs are tracked.
+- **A task calling `sys.exit()` is now a recorded task failure** (H6).
+  `SystemExit` from task code — typically a CLI `main()` — escaped every
+  executor and ended the whole run silently: `sys.exit(0)` gave exit code 0
+  with the remaining tasks never run and nothing recorded. It is now
+  recorded as failed (traceback stored) and the run continues; Ctrl-C
+  (`KeyboardInterrupt`) still stops the run.
+- **Failures before the rule function runs are recorded** (M11): creating
+  output directories and resolving callable `inputs`/`outputs` happened
+  outside the failure handling, so e.g. an output path under an existing
+  *file* failed with no traceback anywhere and the task showed as pending.
+- **Failure tracebacks reach the per-task logs** (M12): they are logged at
+  DEBUG (so `remake task-log` shows them for multiproc/dask/SLURM tasks)
+  without adding a traceback per failure to the console.
 
 ## [0.8.3] — 2026-07-14
 

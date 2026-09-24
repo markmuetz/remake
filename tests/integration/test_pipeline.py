@@ -238,6 +238,65 @@ def test_failure_recorded_and_run_continues(tmp_path, meta):
     assert [t.kwargs for t in runnable] == [{'n': 2}]
 
 
+def test_sys_exit_in_task_is_a_recorded_failure(tmp_path, meta):
+    # Review 2026-09-24 H6: SystemExit from task code (a CLI main() calling
+    # sys.exit) escaped every executor, ending the run silently — exit 0 for
+    # sys.exit(0) — with nothing recorded and the remaining tasks never run.
+    import sys
+
+    @rule(outputs={'o': str(tmp_path / 'x_{n}.txt')}, matrix={'n': [1, 2, 3]})
+    def exits(outputs, n):
+        if n == 2:
+            sys.exit(0)
+        Path(outputs['o']).write_text('ok')
+
+    rmk = Remake(rules=[exits], metadata=meta)
+    assert rmk.run() == 1  # one failure; the run continued
+    assert (tmp_path / 'x_1.txt').exists() and (tmp_path / 'x_3.txt').exists()
+    tasks = {t.kwargs['n']: t for t in rmk.tasks()}
+    rec = rmk.metadata.get_tasks_status([tasks[2]])[tasks[2].key]
+    assert rec.status == TASK_STATUS_FAILED
+    assert 'SystemExit' in rec.exception
+
+
+def test_failure_before_rule_function_is_recorded(tmp_path, meta):
+    # Review 2026-09-24 M11: output-dir creation and io resolution ran outside
+    # run_task's try — such failures were neither recorded nor traced, and
+    # the task showed as pending, not failed.
+    (tmp_path / 'blocker').write_text('a file where a directory should be')
+
+    @rule(outputs={'o': str(tmp_path / 'blocker' / 'x.txt')})
+    def blocked(outputs):
+        Path(outputs['o']).write_text('never')
+
+    rmk = Remake(rules=[blocked], metadata=meta)
+    assert rmk.run() == 1
+    task = rmk.tasks()[0]
+    rec = rmk.metadata.get_tasks_status([task])[task.key]
+    assert rec.status == TASK_STATUS_FAILED
+    assert 'Traceback (most recent call last)' in rec.exception
+
+
+def test_failure_traceback_reaches_debug_log(tmp_path, meta):
+    # Review 2026-09-24 M12: the failure was logged as a one-line ERROR, so
+    # per-task logs (DEBUG sinks) never held the traceback.
+    from loguru import logger
+
+    @rule(outputs={'o': str(tmp_path / 'y.txt')})
+    def fails(outputs):
+        raise ValueError('distinctive-boom')
+
+    lines = []
+    sink = logger.add(lines.append, level='DEBUG')
+    try:
+        Remake(rules=[fails], metadata=meta).run()
+    finally:
+        logger.remove(sink)
+    text = ''.join(lines)
+    assert 'Traceback (most recent call last)' in text
+    assert 'distinctive-boom' in text
+
+
 def test_upstream_failure_skips_downstream(tmp_path, meta):
     @rule(outputs={'o': str(tmp_path / 'a_{n}.txt')}, matrix={'n': [1, 2]})
     def rule_a(outputs, n):

@@ -15,7 +15,7 @@ from ..metadata.metadata_manager import (
 )
 from ..util import task_log_path
 from .dag import build_rule_dag, expand_rule, iter_expand_rule
-from .exceptions import Defer, RemakeError
+from .exceptions import Defer, RemakeError, TaskExit
 from .planner import cascade_settled, explain_task, make_predicate, plan
 from .rule import Rule
 from .scope import check_scope, exec_function
@@ -730,34 +730,47 @@ class Remake:
         completion are logged here so every executor gets them uniformly
         (per-element detail at TRACE, per-task duration at DEBUG — the
         summarise-loops convention, per_task_logging.md)."""
-        # opt(lazy=True): the path lists are only built when a TRACE sink is
-        # attached (they'd cost real time at 1e6 tasks otherwise).
-        logger.opt(lazy=True).trace(
-            'running {}: inputs {} -> outputs {}', lambda: task,
-            lambda: [str(p) for p in task.inputs.values()],
-            lambda: [str(p) for p in task.outputs.values()],
-        )
-        for token in task.outputs.values():
-            if hasattr(token, '__fspath__'):
-                Path(token).parent.mkdir(parents=True, exist_ok=True)
-
-        fn = exec_function(task.rule.fn, task.rule.uses)
-        args = []
-        if task.rule.inputs is not None:
-            args.append(task.inputs)
-        if task.rule.outputs is not None:
-            args.append(task.outputs)
         start = perf_counter()
+        # Everything that can fail — output dirs, io resolution (callable
+        # specs run here), the function itself — is inside the try, so every
+        # failure is recorded with its traceback (review 2026-09-24 M11).
         try:
+            # opt(lazy=True): the path lists are only built when a TRACE sink
+            # is attached (they'd cost real time at 1e6 tasks otherwise).
+            logger.opt(lazy=True).trace(
+                'running {}: inputs {} -> outputs {}', lambda: task,
+                lambda: [str(p) for p in task.inputs.values()],
+                lambda: [str(p) for p in task.outputs.values()],
+            )
+            for token in task.outputs.values():
+                if hasattr(token, '__fspath__'):
+                    Path(token).parent.mkdir(parents=True, exist_ok=True)
+
+            fn = exec_function(task.rule.fn, task.rule.uses)
+            args = []
+            if task.rule.inputs is not None:
+                args.append(task.inputs)
+            if task.rule.outputs is not None:
+                args.append(task.outputs)
             fn(*args, **task.kwargs)
-        except Exception:
+        except (Exception, SystemExit) as exc:
+            # SystemExit from task code (a CLI main() calling sys.exit) is a
+            # task failure, not a request to end the run (review H6).
+            # KeyboardInterrupt still propagates: Ctrl-C stops the run.
             elapsed = perf_counter() - start
+            tb = traceback.format_exc()
             logger.bind(event='task_failed', task=str(task), rule=task.rule.name,
                         key=task.key, seconds=round(elapsed, 6),
                         ).error(f'failed: {task} after {elapsed:.2f}s')
-            self.metadata.update_task(
-                task, TASK_STATUS_FAILED, exception=traceback.format_exc()
-            )
+            # The traceback at DEBUG: lands in per-task logs (DEBUG sinks)
+            # without flooding the INFO console on runs with many failures
+            # (review M12).
+            logger.debug('traceback for {}:\n{}', task, tb)
+            self.metadata.update_task(task, TASK_STATUS_FAILED, exception=tb)
+            if isinstance(exc, SystemExit):
+                raise TaskExit(
+                    f'{task} called sys.exit({exc.code!r})'
+                ) from exc
             raise
         elapsed = perf_counter() - start
         logger.bind(event='task_complete', task=str(task), rule=task.rule.name,

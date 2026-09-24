@@ -18,6 +18,16 @@ class ScopeError(RemakeError):
     pass
 
 
+class TaskExit(Exception):
+    """A task's code raised SystemExit (e.g. a CLI `main()` calling
+    `sys.exit`). run_task records the task as failed and raises this in its
+    place, so executors treat it as an ordinary task failure instead of the
+    whole run exiting silently. Deliberately not a RemakeError: it is a task
+    failure, not a usage error."""
+
+    pass
+
+
 class Defer(Exception):
     """Raised by a `@deferrable` matrix callable to signal that the rule
     cannot be expanded this wave — its task list derives from an upstream
