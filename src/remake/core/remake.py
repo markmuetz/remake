@@ -45,6 +45,19 @@ class _TemplatePlaceholder:
         return str(self)
 
 
+def _where(rule):
+    fn = rule.fn
+    return f'{getattr(fn, "__module__", "?")}.{getattr(fn, "__qualname__", rule.name)}'
+
+
+def _same_definition(a, b):
+    """Two Rule objects for the same function re-defined (e.g. a notebook
+    cell re-run): same module and qualified name. Distinct functions that
+    merely share a rule name (two modules each defining `process`, or a
+    clashing name=) are not."""
+    return _where(a) == _where(b)
+
+
 class Remake:
     def __init__(
         self,
@@ -74,11 +87,26 @@ class Remake:
                 raise RemakeError(f'Not a Rule (use the @rule decorator): {rule!r}')
             if rule in self.rules:
                 continue
+            # Task keys are sha1('<rule name>:<kwargs>'), so two rules sharing
+            # a name share task keys and DB records (review 2026-09-24 H8).
+            existing = next((r for r in self.rules if r.name == rule.name), None)
+            if existing is not None and not _same_definition(existing, rule):
+                raise RemakeError(
+                    f'Duplicate rule name {rule.name!r}: defined by '
+                    f'{_where(existing)} and {_where(rule)}. Rule names must be '
+                    f'unique within a pipeline (rename one, or pass name=...)'
+                )
             # Resolve tri-state strict_scope against the Remake default.
             if rule.strict_scope is None and self.strict_scope:
                 check_scope(rule.fn, rule.uses, strict=True)
             rule.remake = self
-            self.rules.append(rule)
+            if existing is not None:
+                # The same function re-defined — a notebook cell or script
+                # section executed again: the new definition replaces the old.
+                logger.warning(f'Rule {rule.name!r} redefined: replacing the earlier definition')
+                self.rules[self.rules.index(existing)] = rule
+            else:
+                self.rules.append(rule)
         self._finalized = False
 
     def rules_from_current_module(self):

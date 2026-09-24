@@ -454,3 +454,43 @@ def test_rules_from_current_module_and_multi_remake(meta):
     # Re-adding is a no-op.
     rmk1.add_rules([r])
     assert rmk1.rules == [r]
+
+
+def test_duplicate_rule_names_rejected(tmp_path, meta):
+    # Review 2026-09-24 H8: task keys are sha1('<rule>:<kwargs>'), so two
+    # rules sharing a name shared keys and DB records — the plan listed every
+    # key twice and the rules overwrote each other's code record forever.
+    import pytest
+
+    from remake import RemakeError
+
+    @rule(outputs={'o': str(tmp_path / 'x_{i}.txt')}, matrix={'i': [1, 2]})
+    def proc(outputs, i):
+        Path(outputs['o']).write_text('first')
+
+    @rule(outputs={'o': str(tmp_path / 'y_{i}.txt')}, matrix={'i': [1, 2]}, name='proc')
+    def proc2(outputs, i):
+        Path(outputs['o']).write_text('second')
+
+    with pytest.raises(RemakeError, match="Duplicate rule name 'proc'"):
+        Remake(rules=[proc, proc2], metadata=meta)
+    # The same Rule object registered twice (e.g. imported under an alias)
+    # is still fine.
+    assert Remake(rules=[proc, proc], metadata=meta).rules == [proc]
+
+
+def test_redefined_rule_replaces_earlier_definition(tmp_path, meta):
+    # A notebook cell (or script section) with @rule executed twice creates a
+    # second Rule for the same function: it replaces the first rather than
+    # doubling the task list.
+    def make():
+        @rule(outputs={'o': str(tmp_path / 'z_{i}.txt')}, matrix={'i': [1, 2]})
+        def cell(outputs, i):
+            Path(outputs['o']).write_text('ok')
+        return cell
+
+    first, second = make(), make()
+    rmk = Remake(rules=[first], metadata=meta)
+    rmk.add_rules([second])
+    assert rmk.rules == [second]
+    assert len(rmk.plan()[0]) == 2

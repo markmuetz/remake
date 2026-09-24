@@ -30,6 +30,15 @@ Fixes from the 2026-09-24 full-implementation review (IDs refer to
 - **Failure tracebacks reach the per-task logs** (M12): they are logged at
   DEBUG (so `remake task-log` shows them for multiproc/dask/SLURM tasks)
   without adding a traceback per failure to the console.
+- **Duplicate rule names are an error** (H8). Task keys and DB records are
+  keyed by rule name, so two different rules sharing a name (two modules
+  each defining `process`, or a clashing `name=`) silently shared records:
+  the plan listed each task twice, the rules overwrote each other's code
+  record so they reran on every invocation, and multiproc/SLURM ran the
+  first rule for both. Registering such a pipeline now raises `RemakeError`
+  naming both definitions. Re-registering the *same* function (a notebook
+  cell executed again) replaces the earlier rule with a warning instead of
+  doubling the task list.
 
 ## [0.8.3] — 2026-07-14
 
