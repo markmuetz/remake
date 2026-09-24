@@ -649,16 +649,13 @@ class Sqlite3Backend(MetadataManager):
                 '    exception = excluded.exception '
                 # Never let an older result overwrite a newer one (review
                 # 2026-09-24 M17): a sidecar left un-ingested (SLURM element,
-                # dead multiproc parent) must not revert a later direct write
-                # such as `remake run-task`. Timestamps are UTC
-                # 'YYYY-MM-DD HH:MM:SS' on both paths, so they compare as
-                # text; run_seq breaks same-second ties; legacy sidecars
-                # without a timestamp still apply.
-                'WHERE task.last_run_timestamp IS NULL '
-                '   OR excluded.last_run_timestamp IS NULL '
-                '   OR excluded.last_run_timestamp > task.last_run_timestamp '
-                '   OR (excluded.last_run_timestamp = task.last_run_timestamp '
-                '       AND COALESCE(excluded.run_seq, 0) >= COALESCE(task.run_seq, 0))',
+                # dead multiproc parent) must not revert a later write such as
+                # `remake run-task`. Ordered by run_seq — allocated centrally
+                # per invocation — not wall clocks, which skew between compute
+                # and login nodes. Without a run_seq on either side (legacy
+                # records/sidecars) the sidecar applies, as before.
+                'WHERE task.run_seq IS NULL OR excluded.run_seq IS NULL '
+                '   OR excluded.run_seq >= task.run_seq',
                 (
                     key,
                     rule_id,

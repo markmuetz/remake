@@ -167,8 +167,8 @@ def test_multiproc_records_run_seq_for_durable_propagation(tmp_path, monkeypatch
 
 def test_multiproc_sys_exit_in_task_is_a_failure(tmp_path, monkeypatch):
     # Review 2026-09-24 H6: a worker's SystemExit came back through
-    # future.result() and ended the whole run silently — exit 0 for
-    # sys.exit(0) — with the remaining tasks never run.
+    # future.result() and ended the whole run (sys.exit(0) even exited 0)
+    # with the remaining tasks never run.
     monkeypatch.chdir(tmp_path)
     Path('pipeline.py').write_text('''
 import sys
@@ -178,7 +178,7 @@ from remake import Remake, rule
 @rule(outputs={'o': 'x_{n}.txt'}, matrix={'n': [1, 2, 3, 4]})
 def exits(outputs, n):
     if n == 2:
-        sys.exit(0)
+        sys.exit(3)
     Path(outputs['o']).write_text('ok')
 
 rmk = Remake()

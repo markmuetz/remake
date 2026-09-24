@@ -88,11 +88,11 @@ def make_predicate(query, known_names=None):
                 f'matrix key of any rule (keys: {sorted(known_names)}), "rule", or an '
                 f'allowed builtin ({", ".join(sorted(QUERY_BUILTINS))})'
             )
-    env = {'__builtins__': QUERY_BUILTINS}
-
     def predicate(kwargs):
         try:
-            return bool(eval(code, env, dict(kwargs)))
+            # kwargs go in the *globals*: a generator expression (e.g. inside
+            # any()) has its own scope and can't see eval's locals.
+            return bool(eval(code, {**kwargs, '__builtins__': QUERY_BUILTINS}))
         except NameError:
             # Query references a kwarg this rule doesn't have: no match.
             return False
@@ -192,11 +192,21 @@ def _norm_paths(values):
     return {os.path.normpath(str(v)) for v in values}
 
 
+def _io_paths(task, part):
+    """A task's normalised input or output paths, or an empty set if its
+    callable spec raises — run_task has already recorded that failure, and
+    the executor's bookkeeping must not re-raise it (and crash the run)."""
+    try:
+        return _norm_paths(getattr(task, part).values())
+    except Exception:
+        return set()
+
+
 def record_failure(failures, task):
     """Record a failed (or skipped-for-upstream-failure) task in an
     executor's `failures` dict, for upstream_failed."""
     failures.setdefault(task.rule, set()).add(frozenset(task.kwargs.items()))
-    failures.setdefault(_FAILED_OUTPUTS, set()).update(_norm_paths(task.outputs.values()))
+    failures.setdefault(_FAILED_OUTPUTS, set()).update(_io_paths(task, 'outputs'))
 
 
 def upstream_failed(task, failures):
@@ -219,7 +229,7 @@ def upstream_failed(task, failures):
             return True
         if frozenset(task.kwargs.items()) in failed:
             return True
-        if _norm_paths(task.inputs.values()) & failures.get(_FAILED_OUTPUTS, set()):
+        if _io_paths(task, 'inputs') & failures.get(_FAILED_OUTPUTS, set()):
             return True
     return False
 

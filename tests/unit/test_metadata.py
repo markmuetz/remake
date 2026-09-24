@@ -445,14 +445,18 @@ def test_older_sidecar_does_not_overwrite_newer_record(tmp_path, monkeypatch):
     from remake.metadata.sidecar import SidecarWriter, task_result_path
 
     rmk, task = _one_task_pipeline(tmp_path, monkeypatch)
-    SidecarWriter(run_seq=1).update_task(task, TASK_STATUS_FAILED, exception='old')
+    rmk.metadata.begin_invocation()  # the earlier invocation the sidecar is from
+    old_seq = rmk.metadata.current_run_seq()
+    SidecarWriter(run_seq=old_seq).update_task(task, TASK_STATUS_FAILED, exception='old')
     path = task_result_path(task.rule.name, task.key)
+    # Ordering is by run_seq, not wall clock (nodes' clocks can skew): even a
+    # sidecar timestamp from the future doesn't make it newer.
     payload = json.loads(path.read_text())
-    payload['timestamp'] = '2000-01-01 00:00:00'
+    payload['timestamp'] = '2999-01-01 00:00:00'
     path.write_text(json.dumps(payload))
 
     rmk.metadata.begin_invocation()
-    rmk.run_task(task)  # direct write: SUCCESS, now
+    rmk.run_task(task)  # direct write: SUCCESS, later invocation
     assert rmk.metadata.ingest_sidecars(rmk.rules) == 1  # consumed...
     rec = rmk.metadata.get_tasks_status([task])[task.key]
     assert rec.status == TASK_STATUS_SUCCESS  # ...but did not win

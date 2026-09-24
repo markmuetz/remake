@@ -917,3 +917,82 @@ def test_run_lock_blocks_concurrent_runs(pipeline_dir, capsys):
     assert cli('run', 'pipeline.py') == 0
     assert Path('data/out_1.txt').exists()
     assert not lock.exists()  # released when the run ends
+
+
+def test_run_lock_only_removes_its_own_lock(tmp_path):
+    # Pre-tag review finding 6: `finally` removed whatever lock was there, so
+    # a run whose lock had been deleted by hand deleted the next run's lock.
+    import os
+    import socket
+
+    from remake.metadata.sqlite3_backend import Sqlite3Backend
+    from remake.util.run_lock import run_lock
+
+    with Sqlite3Backend(tmp_path / '.remake' / 'remake.db') as meta:
+        lock = tmp_path / '.remake' / 'run.lock'
+        with run_lock(meta):
+            other = {'host': socket.gethostname(), 'pid': os.getppid()}
+            lock.write_text(json.dumps(other))  # someone else's lock now
+        assert json.loads(lock.read_text()) == other
+
+
+def test_slurm_runs_take_no_run_lock(pipeline_dir):
+    # Pre-tag review finding 7: continuation jobs re-enter `run -E slurm` on
+    # compute nodes; a directory lock would strand or block them.
+    from remake import load_remake
+    from remake.executors.executor import Executor
+
+    class Submitter(Executor):
+        handles_deferred = True
+        seen = None
+
+        def run_tasks(self, tasks, deferred):
+            Submitter.seen = Path('.remake/run.lock').exists()
+            return 0
+
+    rmk = load_remake('pipeline.py')
+    rmk.run(executor=Submitter(rmk))
+    assert Submitter.seen is False
+
+
+def test_filtered_run_with_blocked_rule_still_exits_0(tmp_path, monkeypatch, capsys):
+    # Pre-tag review finding 4: a -Q run that deliberately leaves out the
+    # upstream a deferred rule waits on must not fail (it exited 0 in 0.8.3).
+    monkeypatch.chdir(tmp_path)
+    Path('pipeline.py').write_text('''
+from pathlib import Path
+from remake import Defer, Remake, deferrable, rule
+
+@rule(outputs={'o': 'a.txt'})
+def a(outputs):
+    Path(outputs['o']).write_text('a')
+
+@rule(inputs=a.outputs, outputs={'o': 'manifest.txt'}, depends_on=[a])
+def m(inputs, outputs):
+    Path(outputs['o']).write_text('1')
+
+@deferrable
+def p_matrix():
+    if not Path('manifest.txt').exists():
+        raise Defer('manifest.txt')
+    return [{'x': 1}]
+
+@rule(outputs={'o': 'p_{x}.txt'}, matrix=p_matrix, depends_on=[m])
+def p(outputs, x):
+    Path(outputs['o']).write_text('p')
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    assert cli('run', 'pipeline.py', '-Q', "rule == 'a'") == 0
+    assert 'Blocked rule p (upstream not selected' in capsys.readouterr().err
+
+
+def test_filtered_run_still_fails_on_an_unrelated_blocked_rule(tmp_path, monkeypatch, capsys):
+    # Follow-up review: -Q must not hide a rule that is blocked for reasons
+    # unrelated to the filter (its upstreams are all complete).
+    monkeypatch.chdir(tmp_path)
+    Path('pipeline.py').write_text(BLOCKED)
+    assert cli('run', 'pipeline.py') == 1          # a completes; b blocked
+    assert cli('run', 'pipeline.py', '-Q', "rule == 'a'") == 1
+    assert 'Blocked rule b: matrix not ready' in capsys.readouterr().err

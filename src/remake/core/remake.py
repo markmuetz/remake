@@ -5,6 +5,7 @@ from collections import Counter
 from pathlib import Path
 from time import perf_counter
 
+import networkx as nx
 from loguru import logger
 
 from ..metadata.metadata_manager import (
@@ -77,10 +78,12 @@ def _where(rule):
 
 def _same_definition(a, b):
     """Two Rule objects for the same function re-defined (e.g. a notebook
-    cell re-run): same module and qualified name. Distinct functions that
-    merely share a rule name (two modules each defining `process`, or a
-    clashing name=) are not."""
-    return _where(a) == _where(b)
+    cell re-run): same module and qualified name, but freshly compiled code.
+    Distinct functions that merely share a rule name (two modules each
+    defining `process`, a clashing name=) are not — nor are rules built by
+    one factory function, which share a single code object and differ only
+    in closure values."""
+    return _where(a) == _where(b) and a.fn.__code__ is not b.fn.__code__
 
 
 class Remake:
@@ -731,6 +734,12 @@ class Remake:
         RemakeError."""
         if not self._finalized:
             self.finalize()
+        self.blocked_rules = []
+        if executor is not None and executor.handles_deferred:
+            # SLURM: submission only; continuation jobs re-enter run() on
+            # compute nodes, and the executor has its own duplicate-submission
+            # guard — a directory lock would strand or block them.
+            return self._run(executor, query, force, ignore_code_changes)
         with run_lock(self.metadata):
             return self._run(executor, query, force, ignore_code_changes)
 
@@ -762,7 +771,6 @@ class Remake:
         attempted = set()
         wave = 0
         start = perf_counter()
-        self.blocked_rules = []
         while True:
             runnable, deferred = _plan()
             force = False  # only force the first wave
@@ -771,10 +779,17 @@ class Remake:
                 if deferred:
                     # Not everything completed: say which rules and why, and
                     # make the run's outcome reflect it (review 2026-09-24 M9;
-                    # it used to be a bare warning and exit 0).
-                    self.blocked_rules = list(deferred)
+                    # it used to be a bare warning and exit 0). A filtered run
+                    # may deliberately leave out the upstream a deferred rule
+                    # waits on: that one is reported but doesn't fail the run.
+                    excused = self._excluded_by_query(deferred) if query else set()
                     for rule in deferred:
-                        logger.error(f'Blocked rule {rule.name}: {_blocked_reason(rule)}')
+                        if rule in excused:
+                            logger.warning(f'Blocked rule {rule.name} (upstream not '
+                                           f'selected by the query): {_blocked_reason(rule)}')
+                        else:
+                            self.blocked_rules.append(rule)
+                            logger.error(f'Blocked rule {rule.name}: {_blocked_reason(rule)}')
                 break
             wave += 1
             logger.bind(event='wave', wave=wave, ntasks=len(runnable)).debug(
@@ -791,6 +806,16 @@ class Remake:
         else:
             logger.info('Nothing to do')
         return nfailed
+
+    def _excluded_by_query(self, deferred):
+        """Deferred rules a filtered run can be excused for: those with an
+        upstream (any ancestor) that still has work outside the filter. If
+        every ancestor is complete and the rule is still deferred, the query
+        didn't cause it — it's genuinely blocked."""
+        runnable_all, deferred_all = self.plan()
+        unfinished = {t.rule for t in runnable_all} | set(deferred_all)
+        return {rule for rule in deferred
+                if nx.ancestors(self.dag, rule) & (unfinished - {rule})}
 
     def run_task(self, task):
         """Execute one task and record the result. The single execution
@@ -820,7 +845,15 @@ class Remake:
                 args.append(task.inputs)
             if task.rule.outputs is not None:
                 args.append(task.outputs)
-            fn(*args, **task.kwargs)
+            try:
+                fn(*args, **task.kwargs)
+            except SystemExit as exc:
+                # sys.exit(0) / sys.exit() from a wrapped CLI main() means
+                # success; only a non-zero code is a failure (handled below).
+                # Mirror CPython: only None or an int 0 (incl. False) exits 0;
+                # sys.exit(0.0) or sys.exit('msg') exit 1.
+                if not (exc.code is None or (isinstance(exc.code, int) and exc.code == 0)):
+                    raise
         except (Exception, SystemExit) as exc:
             # SystemExit from task code (a CLI main() calling sys.exit) is a
             # task failure, not a request to end the run (review H6).

@@ -570,3 +570,12 @@ def test_query_syntax_and_eval_errors_are_remake_errors():
     pred = make_predicate("year > '2000'", {'year'})
     with pytest.raises(RemakeError, match='TypeError'):
         pred({'year': 2001, 'rule': 'r'})
+
+
+def test_query_generator_expressions_see_kwargs():
+    # Pre-tag review finding 3: kwargs were eval *locals*, invisible inside
+    # a generator expression's own scope -> silent no-match.
+    from remake.core.planner import make_predicate
+
+    pred = make_predicate('any(year == y for y in (2000, 2001))', {'year'})
+    assert pred({'year': 2000, 'rule': 'r'}) and not pred({'year': 2005, 'rule': 'r'})

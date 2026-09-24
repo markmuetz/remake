@@ -29,6 +29,13 @@ def _pid_alive(pid):
     return True
 
 
+def _read_holder(path):
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
 @contextlib.contextmanager
 def run_lock(metadata):
     dbloc = getattr(metadata, 'dbloc', None)
@@ -41,15 +48,16 @@ def run_lock(metadata):
         try:
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
-            try:
-                holder = json.loads(path.read_text())
-            except (OSError, ValueError):
-                holder = {}
+            holder = _read_holder(path) or {}
             same_host = holder.get('host') == me['host']
             pid = holder.get('pid')
             if attempt == 1 and same_host and isinstance(pid, int) and not _pid_alive(pid):
-                logger.warning(f'Removing stale run lock left by dead process {pid}: {path}')
-                path.unlink(missing_ok=True)
+                # Re-check right before removing: if another run has just
+                # replaced the stale lock with its own, leave that one alone
+                # (narrows the takeover race to a re-read-then-unlink window).
+                if _read_holder(path) == holder:
+                    logger.warning(f'Removing stale run lock left by dead process {pid}: {path}')
+                    path.unlink(missing_ok=True)
                 continue
             who = f'{holder.get("host", "?")} pid {holder.get("pid", "?")}'
             raise RemakeError(
@@ -63,4 +71,7 @@ def run_lock(metadata):
     try:
         yield
     finally:
-        path.unlink(missing_ok=True)
+        # Only remove our own lock: if it was deleted by hand and another
+        # run took the directory, that run's lock must survive our exit.
+        if _read_holder(path) == me:
+            path.unlink(missing_ok=True)

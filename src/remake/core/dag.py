@@ -20,6 +20,10 @@ def build_rule_dag(rules):
         g.add_node(rule)
         resolved = []
         for dep in rule.depends_on:
+            if not isinstance(dep, str) and getattr(dep, 'name', None) in rules_by_name:
+                # A Rule object resolved earlier may since have been replaced
+                # by a redefinition (notebook cell re-run): use the current one.
+                dep = rules_by_name[dep.name]
             if isinstance(dep, str):
                 if dep not in rules_by_name:
                     raise RuleGraphError(

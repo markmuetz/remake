@@ -20,9 +20,10 @@ Fixes from the 2026-09-24 full-implementation review (IDs refer to
 - **A task calling `sys.exit()` is now a recorded task failure** (H6).
   `SystemExit` from task code — typically a CLI `main()` — escaped every
   executor and ended the whole run silently: `sys.exit(0)` gave exit code 0
-  with the remaining tasks never run and nothing recorded. It is now
-  recorded as failed (traceback stored) and the run continues; Ctrl-C
-  (`KeyboardInterrupt`) still stops the run.
+  with the remaining tasks never run and nothing recorded. A non-zero
+  `sys.exit()` is now recorded as a failure (traceback stored) and the run
+  continues; `sys.exit(0)` / `sys.exit()` — a wrapped CLI succeeding — is
+  success. Ctrl-C (`KeyboardInterrupt`) still stops the run.
 - **Failures before the rule function runs are recorded** (M11): creating
   output directories and resolving callable `inputs`/`outputs` happened
   outside the failure handling, so e.g. an output path under an existing
@@ -64,6 +65,9 @@ Fixes from the 2026-09-24 full-implementation review (IDs refer to
   is reported with the reason: the paths its `Defer` is waiting on, or that
   an upstream rule did not complete. `Remake.blocked_rules` lists them after
   `run()` (whose return value is unchanged: the number of failed tasks).
+  In a filtered (`-Q`) run, a rule blocked only because the query left out
+  an upstream that still has work is reported as a warning and does not
+  change the exit code.
 - **Queries (`-Q`) no longer fail silently** (M14). A name that is no
   rule's matrix key — almost always a typo, e.g. `-Q "yera == 2000"` — used
   to match nothing, so `run` said "Nothing to do" (exit 0) and `set-state`
@@ -78,7 +82,9 @@ Fixes from the 2026-09-24 full-implementation review (IDs refer to
   A result file left un-ingested (a SLURM element, or a multiproc run whose
   parent died) was applied unconditionally on the next ingest, reverting a
   later direct write — e.g. a successful `remake run-task` flipped back to
-  failed. Ingest now only applies results at least as new as the record.
+  failed. Ingest now only applies results from the same or a later
+  invocation (by `run_seq`, not wall clock, so node clock skew can't
+  reorder them).
 - **Malformed sidecar results are quarantined** (L14). A result file of
   valid JSON but the wrong shape crashed every `plan`/`info`/`run` until
   deleted by hand, and an unreadable one was warned about on every command.
@@ -112,7 +118,8 @@ Fixes from the 2026-09-24 full-implementation review (IDs refer to
   same outputs. `run` now holds `.remake/run.lock`; a second run gets a clear
   error (exit 2). A lock left by a crashed run on the same host is detected
   and replaced; one from another host must be deleted by hand if stale (the
-  error says so).
+  error says so). SLURM submissions (`-E slurm`, incl. continuation jobs)
+  take no lock; they keep their own duplicate-submission guard.
 
 ## [0.8.3] — 2026-07-14
 

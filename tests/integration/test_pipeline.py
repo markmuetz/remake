@@ -246,17 +246,21 @@ def test_sys_exit_in_task_is_a_recorded_failure(tmp_path, meta):
 
     @rule(outputs={'o': str(tmp_path / 'x_{n}.txt')}, matrix={'n': [1, 2, 3]})
     def exits(outputs, n):
-        if n == 2:
-            sys.exit(0)
         Path(outputs['o']).write_text('ok')
+        if n == 2:
+            sys.exit(3)
+        if n == 3:
+            sys.exit(0)  # a CLI main() finishing successfully
 
     rmk = Remake(rules=[exits], metadata=meta)
     assert rmk.run() == 1  # one failure; the run continued
-    assert (tmp_path / 'x_1.txt').exists() and (tmp_path / 'x_3.txt').exists()
     tasks = {t.kwargs['n']: t for t in rmk.tasks()}
-    rec = rmk.metadata.get_tasks_status([tasks[2]])[tasks[2].key]
-    assert rec.status == TASK_STATUS_FAILED
-    assert 'SystemExit' in rec.exception
+    recs = rmk.metadata.get_tasks_status(tasks.values())
+    assert recs[tasks[1].key].status == TASK_STATUS_SUCCESS
+    assert recs[tasks[2].key].status == TASK_STATUS_FAILED
+    assert 'SystemExit' in recs[tasks[2].key].exception
+    # sys.exit(0) is success, not failure (pre-tag review finding 5).
+    assert recs[tasks[3].key].status == TASK_STATUS_SUCCESS
 
 
 def test_failure_before_rule_function_is_recorded(tmp_path, meta):
@@ -481,19 +485,47 @@ def test_duplicate_rule_names_rejected(tmp_path, meta):
 
 def test_redefined_rule_replaces_earlier_definition(tmp_path, meta):
     # A notebook cell (or script section) with @rule executed twice creates a
-    # second Rule for the same function: it replaces the first rather than
-    # doubling the task list.
-    def make():
-        @rule(outputs={'o': str(tmp_path / 'z_{i}.txt')}, matrix={'i': [1, 2]})
-        def cell(outputs, i):
-            Path(outputs['o']).write_text('ok')
-        return cell
+    # second Rule for the same function, freshly compiled: it replaces the
+    # first rather than doubling the task list — and downstream rules follow
+    # the new definition (pre-tag review finding 8).
+    import pytest
 
-    first, second = make(), make()
-    rmk = Remake(rules=[first], metadata=meta)
-    rmk.add_rules([second])
-    assert rmk.rules == [second]
-    assert len(rmk.plan()[0]) == 2
+    from remake import RemakeError
+
+    cell = f'''
+from pathlib import Path
+from remake import rule
+
+@rule(outputs={{'o': {str(tmp_path / 'z_{i}.txt')!r}}}, matrix={{'i': [1, 2]}})
+def cell(outputs, i):
+    Path(outputs['o']).write_text('ok')
+'''
+    first_ns, second_ns = {}, {}
+    exec(compile(cell, '<cell>', 'exec'), first_ns)
+
+    @rule(inputs=first_ns['cell'].outputs, outputs={'o': str(tmp_path / 'w_{i}.txt')},
+          matrix=first_ns['cell'].matrix, depends_on=[first_ns['cell']])
+    def down(inputs, outputs, i):
+        Path(outputs['o']).write_text('ok')
+
+    rmk = Remake(rules=[first_ns['cell'], down], metadata=meta)
+    rmk.finalize()
+    exec(compile(cell, '<cell>', 'exec'), second_ns)
+    rmk.add_rules([second_ns['cell']])
+    assert rmk.rules == [second_ns['cell'], down]
+    assert len(rmk.plan()[0]) == 4
+    assert down.depends_on == [second_ns['cell']]
+
+    # Rules built by one factory share a code object: distinct rules that
+    # clash on a name, not a redefinition (pre-tag review finding 2).
+    def make(prefix):
+        @rule(outputs={'o': str(tmp_path / (prefix + '_{i}.txt'))}, matrix={'i': [1]})
+        def made(outputs, i):
+            pass
+        return made
+
+    with pytest.raises(RemakeError, match='Duplicate rule name'):
+        Remake(rules=[make('u'), make('v')], metadata=meta)
 
 
 def test_failure_skip_follows_inputs_not_just_kwargs(tmp_path, meta):
@@ -529,3 +561,31 @@ def test_failure_skip_follows_inputs_not_just_kwargs(tmp_path, meta):
     # stale file — and left for a later run to redo.
     assert rmk.metadata.get_tasks_status([b2002])[b2002.key].run_seq == 1
     assert b2002.key in {t.key for t in rmk.plan()[0]}
+
+
+def test_raising_io_spec_does_not_crash_the_run(tmp_path, meta):
+    # Pre-tag review finding 1: failure bookkeeping re-resolved the failed
+    # task's outputs outside any try, re-raising and aborting the run.
+    def outputs(year):
+        if year == 2000:
+            raise RuntimeError('bad spec')
+        return {'o': str(tmp_path / f'o_{year}.txt')}
+
+    @rule(outputs=outputs, matrix={'year': [2000, 2001]})
+    def r(outputs, year):
+        Path(outputs['o']).write_text('ok')
+
+    assert Remake(rules=[r], metadata=meta).run() == 1
+    assert (tmp_path / 'o_2001.txt').exists()
+
+
+def test_sys_exit_non_int_zero_is_failure(tmp_path, meta):
+    # Follow-up review: CPython exits 1 for sys.exit(0.0) — only None or an
+    # int 0 is success.
+    import sys
+
+    @rule(outputs={'o': str(tmp_path / 'f.txt')})
+    def floaty(outputs):
+        sys.exit(0.0)
+
+    assert Remake(rules=[floaty], metadata=meta).run() == 1
