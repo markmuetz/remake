@@ -891,6 +891,7 @@ rmk.rules_from_current_module()
     proc.stdout.readline()
     proc.stdout.close()
     err = proc.stderr.read().decode()
+    proc.stderr.close()
     proc.wait(timeout=60)
     assert 'Traceback' not in err and 'BrokenPipeError' not in err
 
@@ -996,3 +997,22 @@ def test_filtered_run_still_fails_on_an_unrelated_blocked_rule(tmp_path, monkeyp
     assert cli('run', 'pipeline.py') == 1          # a completes; b blocked
     assert cli('run', 'pipeline.py', '-Q', "rule == 'a'") == 1
     assert 'Blocked rule b: matrix not ready' in capsys.readouterr().err
+
+
+def test_run_from_a_thread_works_and_restores_cwd(tmp_path, monkeypatch):
+    # 0.8.5 review: installing the SIGTERM handler off the main thread raised
+    # ValueError before the try/finally, leaving the process cwd moved.
+    import os
+    import threading
+
+    (tmp_path / 'proj').mkdir()
+    (tmp_path / 'proj' / 'pipeline.py').write_text(PIPELINE)
+    monkeypatch.chdir(tmp_path)
+    result = {}
+    thread = threading.Thread(
+        target=lambda: result.update(code=cli('run', 'proj/pipeline.py')))
+    thread.start()
+    thread.join(60)
+    assert result['code'] == 0
+    assert Path(os.getcwd()) == tmp_path
+    assert (tmp_path / 'proj' / 'data' / 'out_1.txt').exists()

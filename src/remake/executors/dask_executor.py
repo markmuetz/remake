@@ -24,6 +24,8 @@ from loguru import logger
 
 from ..core.exceptions import RemakeError
 from ..core.planner import record_failure, upstream_failed
+from ..metadata import TASK_STATUS_FAILED
+from .multiproc_executor import RUNNING_ROOT, WORKER_DIED
 from .executor import Executor
 
 _worker_rmk_cache = {}
@@ -46,6 +48,11 @@ def _run_spec(remakefile, rule_name, kwargs, run_seq=None):
     task = rmk.task_from_spec(rule_name, kwargs)
     logfile = task_log_path(task)
     logfile.parent.mkdir(parents=True, exist_ok=True)
+    # In-flight marker, as in multiproc: tells the parent whether a task the
+    # cluster failed (KilledWorker) had actually started.
+    marker = RUNNING_ROOT / task.key
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.touch()
     sink_id = logger.add(logfile, level='DEBUG', mode='w')
     try:
         rmk.run_task(task)
@@ -54,6 +61,7 @@ def _run_spec(remakefile, rule_name, kwargs, run_seq=None):
         return False  # recorded (sidecar + log) by run_task
     finally:
         logger.remove(sink_id)
+        marker.unlink(missing_ok=True)
 
 
 class DaskExecutor(Executor):
@@ -78,9 +86,20 @@ class DaskExecutor(Executor):
             )
         if self.scheduler:
             return Client(self.scheduler), None
-        cluster = LocalCluster(
-            n_workers=self.nproc, threads_per_worker=1, dashboard_address=None
-        )
+        import dask
+
+        # A task that kills its worker (OOM, segfault) fails at once as
+        # KilledWorker instead of being retried on 3 more workers — each
+        # retry would kill another (review 2026-09-24 H7). The scheduler
+        # reads this at start-up, so it only applies to clusters we create.
+        # worker-saturation 1.0: a single-threaded worker holds only the task
+        # it is running; the rest wait on the scheduler, so a dying worker
+        # takes no queued, never-started tasks down with it.
+        with dask.config.set({'distributed.scheduler.allowed-failures': 0,
+                              'distributed.scheduler.worker-saturation': 1.0}):
+            cluster = LocalCluster(
+                n_workers=self.nproc, threads_per_worker=1, dashboard_address=None
+            )
         return Client(cluster), cluster
 
     def run_tasks(self, tasks):
@@ -101,6 +120,7 @@ class DaskExecutor(Executor):
         failures = {}  # see planner.record_failure
         run_seq = self.rmk.metadata.current_run_seq()
         client, cluster = self._client()
+        futures = {}
         try:
             for rule, rule_tasks in groups:
                 to_run = []
@@ -115,23 +135,60 @@ class DaskExecutor(Executor):
                 if not to_run:
                     continue
                 logger.info(f'{rule.name}: {len(to_run)} task(s) on dask ({self.nproc} workers)')
-                futures = {
-                    client.submit(
-                        _run_spec, self.remakefile, rule.name, task.kwargs, run_seq,
-                        pure=False,
-                    ): task
-                    for task in to_run
-                }
-                # Barrier: drain this rule before starting the next.
-                for future in as_completed(futures):
-                    done += 1
-                    task = futures[future]
-                    if future.result():
-                        logger.info(f'{done}/{ntasks}: {task}')
-                    else:
-                        record_failure(failures, task)
-                        nfailed += 1
-                        logger.error(f'{done}/{ntasks} failed: {task}')
+                pending, attempts = to_run, 0
+                while pending:
+                    attempts += 1
+                    for task in pending:  # clear stale marks from a killed run
+                        (RUNNING_ROOT / task.key).unlink(missing_ok=True)
+                    futures = {
+                        client.submit(
+                            _run_spec, self.remakefile, rule.name, task.kwargs, run_seq,
+                            pure=False,
+                        ): task
+                        for task in pending
+                    }
+                    pending = []
+                    # Barrier: drain this rule before starting the next.
+                    for future in as_completed(list(futures)):
+                        task = futures.pop(future)
+                        try:
+                            ok = future.result()
+                        except Exception as e:
+                            marker = RUNNING_ROOT / task.key
+                            if not marker.exists() and attempts < 3:
+                                # Failed without ever starting (queued on a
+                                # worker that died): run it again.
+                                future.release()
+                                pending.append(task)
+                                continue
+                            # The worker died running it (KilledWorker) or
+                            # the cluster failed it: no sidecar was written,
+                            # so record the failure here.
+                            marker.unlink(missing_ok=True)
+                            ok = False
+                            self.rmk.metadata.update_task(
+                                task, TASK_STATUS_FAILED,
+                                exception=f'{WORKER_DIED}\n\n{type(e).__name__}: {e}',
+                            )
+                        # Drop the result: a future still held pins its
+                        # result on its worker, and if that worker dies the
+                        # scheduler recomputes it — re-running a finished
+                        # task (H7).
+                        future.release()
+                        done += 1
+                        if ok:
+                            logger.info(f'{done}/{ntasks}: {task}')
+                        else:
+                            record_failure(failures, task)
+                            nfailed += 1
+                            logger.error(f'{done}/{ntasks} failed: {task}')
+        except BaseException:
+            # Ctrl-C / SIGTERM: stop the rest of this rule's tasks too (an
+            # external scheduler would otherwise keep running them).
+            if futures:
+                client.cancel(list(futures))
+            logger.error(f'interrupted after {done}/{ntasks} task(s)')
+            raise
         finally:
             client.close()
             if cluster is not None:

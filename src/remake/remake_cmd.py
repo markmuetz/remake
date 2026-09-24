@@ -7,7 +7,9 @@ import argparse
 import json
 import os
 import re
+import signal
 import sys
+import threading
 from collections import Counter
 from pathlib import Path
 
@@ -338,6 +340,7 @@ class RemakeCLI:
 
     def __init__(self):
         self.args = None
+        self.loaded = []  # Remakes loaded by this command (see _track)
         self.parser = self._build_parser()
 
     def _build_parser(self):
@@ -362,8 +365,16 @@ class RemakeCLI:
         method_name = 'remake_' + args.subcmd_name.replace('-', '_')
         return getattr(self, method_name)(args)
 
+    def _track(self, rmk):
+        """Remember a loaded Remake so remake_cmd can close its metadata
+        backend when the command ends, rather than leaving the SQLite
+        connection to garbage collection (a ResourceWarning, and an
+        unclosed DB handle for in-process callers)."""
+        self.loaded.append(rmk)
+        return rmk
+
     def _load(self, args):
-        rmk = load_remake(args.remakefile)
+        rmk = self._track(load_remake(args.remakefile))
         if getattr(args, 'check_outputs', False):
             rmk.check_outputs = 'always'
         return rmk
@@ -426,7 +437,7 @@ class RemakeCLI:
         # SQLite DB (livelock on shared filesystems): load without
         # finalizing (no ensure_rules, no DB connection) and record the
         # result as a sidecar file, ingested by the next plan/info.
-        rmk = load_remake(args.remakefile, finalize=False)
+        rmk = self._track(load_remake(args.remakefile, finalize=False))
         # Generated sbatch scripts pin their submission's spec file via
         # --specs; the fallback (manual retries, in-flight jobs submitted by
         # pre-0.9 scripts) must resolve the last SUBMITTED spec — a dry run
@@ -696,7 +707,7 @@ class RemakeCLI:
         return 1 if problems else 0
 
     def remake_rule_dag(self, args):
-        rmk = load_remake(args.remakefile)
+        rmk = self._track(load_remake(args.remakefile))
         need_matrix = args.number_of_tasks or args.matrix_keys
         info = rmk.rule_dag(with_matrix=need_matrix)
         order, edges = info['order'], info['edges']
@@ -728,7 +739,7 @@ class RemakeCLI:
             print(line)
 
     def remake_rule_info(self, args):
-        rmk = load_remake(args.remakefile)
+        rmk = self._track(load_remake(args.remakefile))
         rule = rmk.rule_from_name(args.rule_name)
         data = rmk.rule_info(rule)
         if args.json:
@@ -988,8 +999,31 @@ def remake_cmd(argv=None):
         # Handle top level exceptions with a debugger (run -X only).
         sys.excepthook = exception_info
 
+    # SIGTERM (kill, scancel, a CI timeout) stops `run` the same way Ctrl-C
+    # does, so the executors' cleanup runs: queued tasks cancelled, workers
+    # terminated, the run lock released (review 2026-09-24 M10). By default
+    # SIGTERM killed the parent outright and left its workers running.
+    received = {}
+    old_sigterm = None
+
+    def _on_sigterm(signum, frame):
+        received['signal'] = signum
+        raise KeyboardInterrupt
+
     try:
+        # Only the main thread may install signal handlers: an in-process
+        # caller running `run` from another thread keeps the default SIGTERM
+        # behaviour rather than failing. Inside the try so a failure here
+        # can never skip the cwd restore below.
+        if args.subcmd_name == 'run' and threading.current_thread() is threading.main_thread():
+            old_sigterm = signal.signal(signal.SIGTERM, _on_sigterm)
         return cli.dispatch()
+    except KeyboardInterrupt:
+        signum = received.get('signal', signal.SIGINT)
+        if getattr(args, 'debug_exception', False):
+            raise
+        print(f'interrupted ({signal.Signals(signum).name})', file=sys.stderr)
+        return 128 + signum  # the shell convention: 130 Ctrl-C, 143 SIGTERM
     except BrokenPipeError:
         # Output piped into something that stopped reading (`| head`): stop
         # quietly like other CLI tools, not with a traceback (review L26).
@@ -1006,6 +1040,12 @@ def remake_cmd(argv=None):
         print(f'error: {e}', file=sys.stderr)
         return 2
     finally:
+        if old_sigterm is not None:
+            signal.signal(signal.SIGTERM, old_sigterm)
+        for rmk in cli.loaded:
+            close = getattr(rmk.metadata, 'close', None)
+            if close is not None:
+                close()
         os.chdir(orig_cwd)
 
 

@@ -119,3 +119,17 @@ def test_dask_records_run_seq_for_durable_propagation(tmp_path, monkeypatch):
     assert Path('a_1.txt').read_text() == '3'
     assert cli('run', 'pipeline.py', '-E', 'dask', '-j', '1') == 0
     assert Path('b_1.txt').read_text() == '4'
+
+
+def test_dask_survives_a_worker_crash(tmp_path, monkeypatch):
+    # Review 2026-09-24 H7: the crasher was retried on further workers until
+    # KilledWorker escaped, and finished tasks pinned on the dead worker were
+    # recomputed. Now: one recorded failure, every task executed once.
+    from test_multiproc import CRASHER, _check_crash_outcome
+
+    monkeypatch.chdir(tmp_path)
+    Path('p.py').write_text(CRASHER)
+    assert cli('run', 'p.py', '-E', 'dask', '-j', '2') == 1
+    _check_crash_outcome()
+    runs = Path('executions.log').read_text().split()
+    assert sorted(runs) == sorted(set(runs))  # nothing executed twice

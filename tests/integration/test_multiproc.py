@@ -186,3 +186,108 @@ rmk.rules_from_current_module()
 ''')
     assert cli('run', 'pipeline.py', '-E', 'multiproc', '-j', '2') == 1
     assert sorted(p.name for p in Path('.').glob('x_*.txt')) == ['x_1.txt', 'x_3.txt', 'x_4.txt']
+
+
+SLOW = '''
+import os, time
+from pathlib import Path
+from remake import Remake, rule
+
+@rule(outputs={'o': 'out/{n}.txt'}, matrix={'n': list(range(6))})
+def slow(outputs, n):
+    Path('pids').mkdir(exist_ok=True)
+    Path(f'pids/{n}').write_text(str(os.getpid()))
+    time.sleep(3)
+    Path(outputs['o']).write_text('done')
+
+rmk = Remake()
+rmk.rules_from_current_module()
+'''
+
+
+@pytest.mark.parametrize('signame, code', [('SIGINT', 130), ('SIGTERM', 143)])
+def test_multiproc_interrupt_stops_queue_and_workers(tmp_path, signame, code):
+    # Review 2026-09-24 M10: Ctrl-C let every queued task run to completion,
+    # and SIGTERM killed the parent but left its workers running (starting
+    # new tasks). Signal the parent only, as `kill` would.
+    import os
+    import signal
+    import subprocess
+    import sys
+    import time
+
+    (tmp_path / 'p.py').write_text(SLOW)
+    proc = subprocess.Popen(
+        [sys.executable, '-c', 'import sys; from remake.remake_cmd import remake_cmd; '
+                               'sys.exit(remake_cmd())', 'run', 'p.py', '-E', 'multiproc',
+         '-j', '2'],
+        cwd=tmp_path, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    pids = tmp_path / 'pids'
+    deadline = time.monotonic() + 30
+    while not (pids.is_dir() and len(list(pids.iterdir())) >= 2):
+        assert time.monotonic() < deadline, 'workers never started'
+        time.sleep(0.05)
+    sent = time.monotonic()
+    proc.send_signal(getattr(signal, signame))
+    _, err = proc.communicate(timeout=30)
+    assert proc.returncode == code, err.decode()
+    assert time.monotonic() - sent < 2.5  # didn't wait for the queue to drain
+    assert 'interrupted' in err.decode() and 'Traceback' not in err.decode()
+    assert len(list(pids.iterdir())) == 2  # queued tasks never started
+    assert not list((tmp_path / 'out').glob('*.txt')) if (tmp_path / 'out').exists() else True
+    time.sleep(0.5)
+    for pid_file in pids.iterdir():  # no worker outlives the parent
+        with pytest.raises(ProcessLookupError):
+            os.kill(int(pid_file.read_text()), 0)
+    assert not (tmp_path / '.remake' / 'run.lock').exists()
+
+
+CRASHER = '''
+import os, signal, time
+from pathlib import Path
+from remake import Remake, rule
+
+@rule(outputs={'o': 'a/{n}.txt'}, matrix={'n': list(range(6))})
+def a(outputs, n):
+    with open('executions.log', 'a') as f:
+        f.write(f'{n}\\n')
+    time.sleep(0.3)
+    if n == 3:
+        os.kill(os.getpid(), signal.SIGKILL)  # what the OOM killer does
+    Path(outputs['o']).write_text(str(n))
+
+@rule(inputs=a.outputs, outputs={'o': 'b/{n}.txt'}, matrix=a.matrix, depends_on=[a])
+def b(inputs, outputs, n):
+    Path(outputs['o']).write_text(Path(inputs['o']).read_text())
+
+rmk = Remake()
+rmk.rules_from_current_module()
+'''
+
+
+def _check_crash_outcome():
+    import sqlite3
+    from contextlib import closing
+
+    assert sorted(p.name for p in Path('a').glob('*.txt')) == [f'{n}.txt' for n in (0, 1, 2, 4, 5)]
+    with closing(sqlite3.connect('.remake/remake.db')) as conn:
+        rows = conn.execute(
+            'SELECT r.name, t.last_run_status, t.exception FROM task t '
+            'JOIN rule r ON r.id = t.rule_id').fetchall()
+    failed = [(name, exc) for name, status, exc in rows if status == 2]
+    assert len(failed) == 1 and failed[0][0] == 'a'
+    assert 'worker process running this task died' in failed[0][1]
+    assert not list(Path('.remake/tasks/running').glob('*'))
+
+
+def test_multiproc_survives_a_worker_crash(tmp_path, monkeypatch):
+    # Review 2026-09-24 H7: a worker killed mid-task (OOM, segfault) raised
+    # BrokenProcessPool out of the executor — the run aborted with a
+    # traceback, the crasher was never recorded, the rest never ran.
+    monkeypatch.chdir(tmp_path)
+    Path('p.py').write_text(CRASHER)
+    assert cli('run', 'p.py', '-E', 'multiproc', '-j', '3') == 1
+    _check_crash_outcome()
+    # Downstream of the survivors ran; downstream of the crasher skipped.
+    assert sorted(p.name for p in Path('b').glob('*.txt')) == [f'{n}.txt' for n in (0, 1, 2, 4, 5)]
