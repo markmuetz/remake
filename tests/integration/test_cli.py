@@ -763,3 +763,38 @@ def test_run_query_force(pipeline_dir, capsys):
     cli('run', 'pipeline.py', '--force', '-Q', 'n == 1')
     assert (pipeline_dir / 'data/out_1.txt').read_text() == '11'
     assert (pipeline_dir / 'data/out_2.txt').exists()
+
+
+BLOCKED = '''
+from pathlib import Path
+from remake import Defer, Remake, deferrable, rule
+
+@rule(outputs={'o': 'a.txt'})
+def a(outputs):
+    Path(outputs['o']).write_text('a')
+
+@deferrable
+def b_matrix():
+    if not Path('never_made.txt').exists():
+        raise Defer('never_made.txt')
+    return [{'x': 1}]
+
+@rule(outputs={'o': 'b_{x}.txt'}, matrix=b_matrix, depends_on=[a])
+def b(outputs, x):
+    Path(outputs['o']).write_text('b')
+
+rmk = Remake()
+rmk.rules_from_current_module()
+'''
+
+
+def test_run_exits_nonzero_when_rules_stay_blocked(tmp_path, monkeypatch, capsys):
+    # Review 2026-09-24 M9: a deferred matrix that never resolves (a typo'd
+    # path, nothing produces it) only warned and exited 0 — CI read it as
+    # success. It now exits 1 and names what the rule is waiting on.
+    monkeypatch.chdir(tmp_path)
+    Path('pipeline.py').write_text(BLOCKED)
+    assert cli('run', 'pipeline.py') == 1
+    assert Path('a.txt').exists()
+    err = capsys.readouterr().err
+    assert 'Blocked rule b' in err and 'never_made.txt' in err

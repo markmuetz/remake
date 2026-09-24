@@ -404,7 +404,9 @@ class RemakeCLI:
             force=args.force,
             ignore_code_changes=args.ignore_code_changes,
         )
-        return 1 if nfailed else 0
+        # Exit 0 only when everything needed completed: failed tasks and
+        # rules left blocked (deferred matrix never ready) are both non-zero.
+        return 1 if nfailed or rmk.blocked_rules else 0
 
     def remake_run_task(self, args):
         rmk = self._load(args)

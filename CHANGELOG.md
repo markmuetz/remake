@@ -57,6 +57,13 @@ Fixes from the 2026-09-24 full-implementation review (IDs refer to
   `OperationalError` (e.g. `no such table`, disk full) used to be retried
   forever with growing backoff — a silent hang; they are now raised at
   once, and a DB still locked after 10 minutes is a clear error.
+- **`run` exits non-zero when rules stay blocked** (M9). A deferred
+  (`@deferrable`) matrix that never resolves — a mistyped path, or an
+  upstream that failed — only logged a warning and exited 0, so scripts and
+  CI read an incomplete run as success. It now exits 1 and each blocked rule
+  is reported with the reason: the paths its `Defer` is waiting on, or that
+  an upstream rule did not complete. `Remake.blocked_rules` lists them after
+  `run()` (whose return value is unchanged: the number of failed tasks).
 
 ## [0.8.3] — 2026-07-14
 

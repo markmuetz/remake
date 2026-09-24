@@ -45,6 +45,24 @@ class _TemplatePlaceholder:
         return str(self)
 
 
+def _blocked_reason(rule):
+    """Why a rule is still deferred when a local run has nothing left to
+    try: its matrix's Defer paths if it still can't expand, else (it would
+    expand, so the planner is holding it back) an upstream that didn't
+    complete this run."""
+    from .rule import is_deferrable
+
+    if is_deferrable(rule.matrix):
+        try:
+            rule.matrix()
+        except Defer as e:
+            waiting = ', '.join(e.paths) if e.paths else 'an unspecified input'
+            return f'matrix not ready — waiting on {waiting}'
+        except Exception as e:  # the matrix itself is broken: say so
+            return f'matrix raised {type(e).__name__}: {e}'
+    return 'an upstream rule did not complete (see failures above)'
+
+
 def _where(rule):
     fn = rule.fn
     return f'{getattr(fn, "__module__", "?")}.{getattr(fn, "__qualname__", rule.name)}'
@@ -71,6 +89,10 @@ class Remake:
         self.config = config or {}
         self.metadata = metadata
         self.check_outputs = check_outputs
+        # Rules the last run() left unresolved (deferred matrix never ready,
+        # or waiting on an upstream that failed). Non-empty means that run
+        # did not complete everything; the CLI exits non-zero on it.
+        self.blocked_rules = []
         self.strict_scope = strict_scope
         self.rules = []
         self.dag = None
@@ -727,14 +749,19 @@ class Remake:
         attempted = set()
         wave = 0
         start = perf_counter()
+        self.blocked_rules = []
         while True:
             runnable, deferred = _plan()
             force = False  # only force the first wave
             runnable = [t for t in runnable if t.key not in attempted]
             if not runnable:
                 if deferred:
-                    names = ', '.join(rule.name for rule in deferred)
-                    logger.warning(f'Blocked rules (matrix not ready): {names}')
+                    # Not everything completed: say which rules and why, and
+                    # make the run's outcome reflect it (review 2026-09-24 M9;
+                    # it used to be a bare warning and exit 0).
+                    self.blocked_rules = list(deferred)
+                    for rule in deferred:
+                        logger.error(f'Blocked rule {rule.name}: {_blocked_reason(rule)}')
                 break
             wave += 1
             logger.bind(event='wave', wave=wave, ntasks=len(runnable)).debug(

@@ -54,7 +54,7 @@ remake run pipeline.py --ignore-code-changes
 | Code | Meaning |
 |---|---|
 | `0` | success — everything needed completed |
-| non-zero | one or more tasks failed (see [Debugging](debugging.md)) |
+| non-zero | one or more tasks failed (see [Debugging](debugging.md)), or rules were left blocked — a deferred matrix that never became ready; each is logged with what it is waiting on |
 
 ## Checking outputs on disk
 
