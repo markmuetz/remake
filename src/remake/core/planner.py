@@ -9,6 +9,7 @@ import ast
 import builtins
 import difflib
 import inspect
+import os
 from collections import namedtuple
 from time import perf_counter
 
@@ -182,22 +183,43 @@ def cascade_settled(rule_set, dag, selected, run_seq, status):
     return settled
 
 
+# Key in an executor's `failures` dict holding the normalised output paths of
+# every task that failed (or was skipped) this run.
+_FAILED_OUTPUTS = '_failed_outputs'
+
+
+def _norm_paths(values):
+    return {os.path.normpath(str(v)) for v in values}
+
+
+def record_failure(failures, task):
+    """Record a failed (or skipped-for-upstream-failure) task in an
+    executor's `failures` dict, for upstream_failed."""
+    failures.setdefault(task.rule, set()).add(frozenset(task.kwargs.items()))
+    failures.setdefault(_FAILED_OUTPUTS, set()).update(_norm_paths(task.outputs.values()))
+
+
 def upstream_failed(task, failures):
     """Should task be skipped because upstream tasks failed this run?
 
-    failures: {rule: set of frozenset(kwargs.items())} accumulated by an
-    executor. Mirrors the planner's rerun propagation: element-wise when
-    the matrices are shared, conservative (any failure taints all
-    downstream tasks) otherwise.
+    failures: built by record_failure. Mirrors the planner's rerun
+    propagation — element-wise when the matrices are shared, conservative
+    (any failure taints all downstream tasks) otherwise — and additionally
+    skips any task whose declared inputs include an output of a failed task.
+    A shared matrix doesn't mean each task reads only its same-kwargs
+    upstream (e.g. inputs of year-1): without the path check such a task ran
+    on its failed upstream's stale or missing output (review 2026-09-24 H3,
+    failure-skip part; the full fix is 0.9).
     """
     for dep in task.rule.depends_on:
         failed = failures.get(dep)
         if not failed:
             continue
-        if _same_matrix(task.rule, dep):
-            if frozenset(task.kwargs.items()) in failed:
-                return True
-        else:
+        if not _same_matrix(task.rule, dep):
+            return True
+        if frozenset(task.kwargs.items()) in failed:
+            return True
+        if _norm_paths(task.inputs.values()) & failures.get(_FAILED_OUTPUTS, set()):
             return True
     return False
 

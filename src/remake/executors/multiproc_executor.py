@@ -22,7 +22,7 @@ from multiprocessing import get_context
 from loguru import logger
 
 from ..core.exceptions import RemakeError
-from ..core.planner import upstream_failed
+from ..core.planner import record_failure, upstream_failed
 from .executor import Executor
 
 _worker_rmk = None
@@ -96,7 +96,7 @@ class MultiprocExecutor(Executor):
         nfailed = 0
         nskipped = 0
         done = 0
-        failures = {}  # rule -> set of frozenset(kwargs.items())
+        failures = {}  # see planner.record_failure
         run_seq = self.rmk.metadata.current_run_seq()
         with ProcessPoolExecutor(
             max_workers=self.nproc,
@@ -111,7 +111,7 @@ class MultiprocExecutor(Executor):
                 to_run = []
                 for task in rule_tasks:
                     if upstream_failed(task, failures):
-                        failures.setdefault(rule, set()).add(frozenset(task.kwargs.items()))
+                        record_failure(failures, task)
                         nskipped += 1
                         done += 1
                         logger.warning(f'{done}/{ntasks} skipped (upstream failed): {task}')
@@ -131,7 +131,7 @@ class MultiprocExecutor(Executor):
                     if future.result():
                         logger.info(f'{done}/{ntasks}: {task}')
                     else:
-                        failures.setdefault(rule, set()).add(frozenset(task.kwargs.items()))
+                        record_failure(failures, task)
                         nfailed += 1
                         logger.error(f'{done}/{ntasks} failed: {task}')
         if nfailed:

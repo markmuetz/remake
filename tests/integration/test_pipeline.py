@@ -494,3 +494,38 @@ def test_redefined_rule_replaces_earlier_definition(tmp_path, meta):
     rmk.add_rules([second])
     assert rmk.rules == [second]
     assert len(rmk.plan()[0]) == 2
+
+
+def test_failure_skip_follows_inputs_not_just_kwargs(tmp_path, meta):
+    # Review 2026-09-24 H3 (failure-skip part): with a shared matrix only the
+    # same-kwargs downstream task was skipped, so b[2002] — which reads
+    # a[2001]'s output — ran on the stale file a[2001] had failed to rewrite.
+    def build(fail_year):
+        @rule(outputs={'o': str(tmp_path / 'a_{year}.txt')}, matrix={'year': [2000, 2001, 2002]},
+              uses={'fail_year': fail_year})
+        def a(outputs, year):
+            if year == fail_year:
+                raise ValueError('boom')
+            Path(outputs['o']).write_text(f'a{year} v{fail_year}')
+
+        def b_inputs(year):
+            return {'prev': str(tmp_path / f'a_{max(year - 1, 2000)}.txt')}
+
+        @rule(inputs=b_inputs, outputs={'o': str(tmp_path / 'b_{year}.txt')},
+              matrix=a.matrix, depends_on=[a])
+        def b(inputs, outputs, year):
+            Path(outputs['o']).write_text(Path(inputs['prev']).read_text())
+
+        return Remake(rules=[a, b], metadata=meta)
+
+    assert build(fail_year=None).run() == 0
+    assert (tmp_path / 'b_2002.txt').read_text() == 'a2001 vNone'
+
+    rmk = build(fail_year=2001)  # uses= changed: all of a reruns; a[2001] fails
+    rmk.run()
+    b2002 = next(t for t in rmk.tasks() if t.rule.name == 'b' and t.kwargs['year'] == 2002)
+    # b[2002] reads a_2001.txt, whose rewrite failed: skipped this run (its
+    # record still carries the first run's run_seq), not rebuilt from the
+    # stale file — and left for a later run to redo.
+    assert rmk.metadata.get_tasks_status([b2002])[b2002.key].run_seq == 1
+    assert b2002.key in {t.key for t in rmk.plan()[0]}

@@ -99,6 +99,14 @@ Fixes from the 2026-09-24 full-implementation review (IDs refer to
   error).
 - **`depends_on='name'` (a bare string) works** (L4); it was split into
   single characters (`unknown rule 'e'`). A single `Rule` is accepted too.
+- **Tasks are skipped when an input they read failed to be rebuilt** (H3,
+  failure-skip part). With a shared matrix, only the same-kwargs downstream
+  task was skipped after an upstream failure; a task reading a *different*
+  upstream element (e.g. `inputs` of `year - 1`) still ran — on that
+  element's stale output if one existed from an earlier run. Local
+  executors now also skip any task whose declared inputs include an output
+  of a task that failed this run. (Rerun propagation for such pipelines is
+  the 0.9 fix.)
 
 ## [0.8.3] — 2026-07-14
 
