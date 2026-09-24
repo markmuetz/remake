@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.4] — 2026-09-24
+
 Fixes from the 2026-09-24 full-implementation review (IDs refer to
 `design_docs/code_reviews/2026-09-24_review.md` on `main`).
 
@@ -419,6 +421,7 @@ the `remake` Claude skill (`references/remake2_to_remake3.md`). The rewrite was
 validated by reproducing a real multi-figure paper pipeline (`mcs_prime`)
 end-to-end on JASMIN with outputs identical to the remake2 reference.
 
+[0.8.4]: https://github.com/markmuetz/remake/releases/tag/v0.8.4
 [0.8.3]: https://github.com/markmuetz/remake/releases/tag/v0.8.3
 [0.8.2]: https://github.com/markmuetz/remake/releases/tag/v0.8.2
 [0.8.1]: https://github.com/markmuetz/remake/releases/tag/v0.8.1
