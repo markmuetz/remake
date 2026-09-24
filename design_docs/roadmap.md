@@ -65,6 +65,22 @@ held is enough; run a review only when the range warrants it. (The 0.8.1
 pre-tag review did catch two real bugs and a lane violation — for a large or
 executor-heavy range, still consider one.)
 
+**Which model reviews** (decided 2026-09-24, MM). Neither the hook nor this
+gate requires a particular model — only a fresh, adversarial context — so
+match the model to what a miss costs:
+
+- **Per-commit hook reviews** (>200 changed Python lines): **Sonnet**, at
+  medium effort, scoped to `src/`. Frequent and narrow, and a miss is likely
+  caught by the pre-tag review. Run it as a review agent with a model
+  override: `/code-review` runs as a fork of the session and always uses the
+  session's model.
+- **Pre-tag reviews of a release range**: **Opus**. Once per release, the
+  last check before PyPI; the bugs that matter here (e.g. the 0.8.4 M5/M6
+  review's masked disk-full `ROLLBACK` and legacy half-created DBs) need
+  reasoning about failure modes, not just reading the diff.
+- **Haiku**: mechanical checks only (links, CHANGELOG consistency), never
+  adversarial review.
+
 ## Milestones
 
 ### 0.8.x — maintenance lane (parallel, not a milestone)
