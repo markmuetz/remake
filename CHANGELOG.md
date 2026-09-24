@@ -83,6 +83,22 @@ Fixes from the 2026-09-24 full-implementation review (IDs refer to
   valid JSON but the wrong shape crashed every `plan`/`info`/`run` until
   deleted by hand, and an unreadable one was warned about on every command.
   Both are now renamed to `*.json.bad` with a single warning.
+- **Console logs honour `--colour never`, `NO_COLOR` and non-TTY stderr**
+  (L25). They were always ANSI-coloured (and double-bolded), filling CI logs
+  and SLURM `.err` files with escape codes.
+- **Piping into `head` no longer ends in a `BrokenPipeError` traceback**
+  (L26); remake stops quietly with exit code 141.
+- **User errors are clean `error:` messages with exit code 2** (L27) instead
+  of tracebacks with exit 1 — the code that means "tasks failed". Covers a
+  missing remakefile, a directory or non-`.py` path given as the remakefile,
+  an unknown `depends_on` name or a dependency cycle (now `RuleGraphError`,
+  still a `ValueError` for existing handlers), an unloadable `-E
+  module:Class`, a corrupt `.remake/remake.db`, an unwritable `.remake/`,
+  and an out-of-range `run-array-task` index. Exit codes are documented in
+  the running guide (0 success, 1 tasks failed or rules blocked, 2 usage
+  error).
+- **`depends_on='name'` (a bare string) works** (L4); it was split into
+  single characters (`unknown rule 'e'`). A single `Rule` is accepted too.
 
 ## [0.8.3] — 2026-07-14
 

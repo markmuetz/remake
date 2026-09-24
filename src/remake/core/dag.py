@@ -7,7 +7,7 @@ import itertools
 
 import networkx as nx
 
-from .exceptions import Defer, SignatureError
+from .exceptions import Defer, RuleGraphError, SignatureError
 from .rule import is_deferrable
 from .task import Task
 
@@ -22,7 +22,7 @@ def build_rule_dag(rules):
         for dep in rule.depends_on:
             if isinstance(dep, str):
                 if dep not in rules_by_name:
-                    raise ValueError(
+                    raise RuleGraphError(
                         f'{rule.name}: depends_on references unknown rule {dep!r}'
                     )
                 dep = rules_by_name[dep]
@@ -31,7 +31,7 @@ def build_rule_dag(rules):
         rule.depends_on = resolved
     if not nx.is_directed_acyclic_graph(g):
         cycle = nx.find_cycle(g)
-        raise ValueError(f'Rule dependencies contain a cycle: {cycle}')
+        raise RuleGraphError(f'Rule dependencies contain a cycle: {cycle}')
     return g
 
 

@@ -204,6 +204,15 @@ class Sqlite3Backend(MetadataManager):
         self.conn = sqlite3.connect(self.dbloc)
         try:
             self._init_schema()
+        except sqlite3.DatabaseError as e:
+            self.conn.close()
+            if isinstance(e, sqlite3.OperationalError):
+                raise
+            # e.g. "file is not a database": a corrupt or foreign file.
+            raise RemakeError(
+                f'{self.dbloc} is not a usable remake database ({e}); move it '
+                f'aside to start a fresh one'
+            ) from None
         except BaseException:
             self.conn.close()
             raise

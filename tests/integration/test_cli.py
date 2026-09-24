@@ -808,3 +808,88 @@ def test_query_typos_and_syntax_errors_are_clean_errors(pipeline_dir, capsys):
     cli_error(capsys, 'set-state', 'pipeline.py', '-Q', 'nn == 1', '--pending',
               match='unknown name')
     cli_error(capsys, 'ls-tasks', 'pipeline.py', '-Q', 'nn == 1', match='unknown name')
+
+
+def test_console_log_colour_honours_colour_flag(pipeline_dir, capsys, monkeypatch):
+    # Review 2026-09-24 L25: console logs were always ANSI-coloured, ignoring
+    # --colour never, NO_COLOR and a non-TTY stderr.
+    cli('--colour', 'never', 'run', 'pipeline.py')
+    assert '\x1b[' not in capsys.readouterr().err
+    cli('run', 'pipeline.py', '-f')  # auto: captured stderr is not a TTY
+    assert '\x1b[' not in capsys.readouterr().err
+    monkeypatch.setenv('FORCE_COLOR', '1')
+    cli('run', 'pipeline.py', '-f')
+    assert '\x1b[' in capsys.readouterr().err
+
+
+def test_user_errors_are_clean_exit_2(tmp_path, monkeypatch, capsys):
+    # Review 2026-09-24 L27: these escaped as tracebacks with exit 1 — the
+    # same code as "tasks failed".
+    monkeypatch.chdir(tmp_path)
+    cli_error(capsys, 'info', 'nope.py', match='Remakefile not found')
+    Path('sub').mkdir()
+    cli_error(capsys, 'info', 'sub', match='directory')
+    Path('notes.txt').write_text('x')
+    cli_error(capsys, 'info', 'notes.txt', match='Not a Python remakefile')
+
+    Path('cycle.py').write_text('''
+from remake import Remake, rule
+
+@rule(depends_on=['b'])
+def a():
+    pass
+
+@rule(depends_on=['a'])
+def b():
+    pass
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    cli_error(capsys, 'info', 'cycle.py', match='cycle')
+
+    Path('pipeline.py').write_text(PIPELINE)
+    cli_error(capsys, 'run', 'pipeline.py', '-E', 'no_such_mod:Exec',
+              match='Cannot load executor')
+    Path('.remake').mkdir(exist_ok=True)
+    Path('.remake/remake.db').write_text('this is not sqlite' * 100)
+    cli_error(capsys, 'info', 'pipeline.py', match='not a usable remake database')
+
+
+def test_depends_on_accepts_a_bare_name():
+    # Review 2026-09-24 L4: depends_on='extract' was split into characters.
+    from remake import rule
+
+    @rule(depends_on='extract')
+    def r():
+        pass
+
+    assert r.depends_on == ['extract']
+
+
+def test_broken_pipe_is_quiet(tmp_path):
+    # Review 2026-09-24 L26: `remake ls-tasks ... | head -1` ended in a
+    # BrokenPipeError traceback.
+    import subprocess
+    import sys
+
+    (tmp_path / 'big.py').write_text('''
+from remake import Remake, rule
+
+@rule(matrix={'i': list(range(20000))})
+def r(i):
+    pass
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    proc = subprocess.Popen(
+        [sys.executable, '-c', 'import sys; from remake.remake_cmd import remake_cmd; '
+                               'sys.exit(remake_cmd())', 'ls-tasks', 'big.py'],
+        cwd=tmp_path, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    proc.stdout.readline()
+    proc.stdout.close()
+    err = proc.stderr.read().decode()
+    proc.wait(timeout=60)
+    assert 'Traceback' not in err and 'BrokenPipeError' not in err

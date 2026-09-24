@@ -18,6 +18,13 @@ class ScopeError(RemakeError):
     pass
 
 
+class RuleGraphError(RemakeError, ValueError):
+    """Bad rule dependencies (unknown depends_on name, a cycle). Also a
+    ValueError, which is what these were raised as before 0.8.4."""
+
+    pass
+
+
 class TaskExit(Exception):
     """A task's code raised SystemExit (e.g. a CLI `main()` calling
     `sys.exit`). run_task records the task as failed and raises this in its

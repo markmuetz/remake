@@ -54,7 +54,8 @@ remake run pipeline.py --ignore-code-changes
 | Code | Meaning |
 |---|---|
 | `0` | success — everything needed completed |
-| non-zero | one or more tasks failed (see [Debugging](debugging.md)), or rules were left blocked — a deferred matrix that never became ready; each is logged with what it is waiting on |
+| `1` | one or more tasks failed (see [Debugging](debugging.md)), or rules were left blocked — a deferred matrix that never became ready; each is logged with what it is waiting on |
+| `2` | usage error — bad arguments, an invalid or unknown-name `-Q` query, a missing or broken remakefile, bad rule dependencies — printed as `error: ...` |
 
 ## Checking outputs on disk
 
