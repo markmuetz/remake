@@ -2,41 +2,15 @@
 
 Concrete known problems and debts, ordered roughly by severity. Completed
 entries are pruned to [todos_archive.md](records/todos_archive.md) at each release
-(last prune: 2026-07-14, at 0.8.3).
+(last prune: 2026-09-24, at 0.8.4).
 
 Findings from [code_reviews/](code_reviews/) are tracked here by their
 review ID once scheduled; the review doc keeps the full scenario and fix.
 
-## 0.8.4 patch lane — from the 2026-09-24 review
+## 0.8.4 — released 2026-09-24
 
-The roadmap's 0.8.4 list. IDs link into
-[code_reviews/2026-09-24_review.md](code_reviews/2026-09-24_review.md);
-patch rules in [compatibility.md](compatibility.md). The 0.9 items from the
-same review are scoped in [releases/v0.9.0.md](releases/v0.9.0.md).
-
-- [ ] **H1** multiproc/dask record `run_seq = NULL` — durable propagation
-  off under `-E multiproc`/`dask`.
-- [ ] **H3 (failure-skip part)** skip downstream tasks whose *actual*
-  upstream failed, not the same-kwargs one (full fix is 0.9).
-- [ ] **H6** `SystemExit`/`KeyboardInterrupt` in a task aborts the run
-  silently (exit 0 on `sys.exit(0)`).
-- [ ] **H8** duplicate rule names within one `Remake` → error.
-- [ ] **M5** zero-byte/partial DB bricks the pipeline.
-- [ ] **M6** migrations non-atomic, racy, not resumable.
-- [ ] **M9** `run` exits 0 with blocked (never-ready) rules; surface
-  `Defer.paths`.
-- [ ] **M11** failures before the rule function (mkdir, io resolution) not
-  recorded.
-- [ ] **M12** tracebacks missing from per-task logs; worker task events
-  missing from `remake.jsonl`.
-- [ ] **M14** queries: typos/builtins silently match nothing; syntax errors
-  as tracebacks. (Quick fix only — the restricted parser is the item under
-  Smaller debts.)
-- [ ] **M15** local run lock.
-- [ ] **M17** sidecar ingest overwrites newer records.
-- [ ] **L14** malformed sidecar crashes every command; quarantine bad files.
-- [ ] **L25–L27** colour ignores `--colour never`/`NO_COLOR`; BrokenPipe;
-  user errors as tracebacks with exit 1.
+All items shipped; archived verbatim in
+[records/todos_archive.md](records/todos_archive.md) ("Pruned at 0.8.4").
 
 ## 0.8.5 patch lane
 
@@ -117,7 +91,7 @@ are the slow, flaky part.
   shape. 0.8.x patch-lane candidate: no API/schema change, no new rerun
   trigger.
 
-- [ ] `eval`-based query filter (review 2026-09-24 M14 is the 0.8.4 quick fix; see MM comment in `core/planner.py:27`):
+- [ ] `eval`-based query filter (the review 2026-09-24 M14 quick fix — clean errors, unknown names, safe builtins — shipped in 0.8.4; see MM comment in `core/planner.py:27`):
   `make_predicate` does `eval(compile(query, ...))` against task kwargs.
   Hardened (`__builtins__` stripped, kwargs as the only locals) and the query
   is the user's own, so the threat model is low — but it is not a sandbox
@@ -135,15 +109,6 @@ are the slow, flaky part.
   the planner tests.
 - [ ] No Hypothesis property tests despite the design doc promising them
   (task key uniqueness/stability, matrix normalisation).
-- [ ] **Bound and message-match `retry_lock_commit`** (0.8.4 candidate; review L19 adds: reads are not retried at all)
-  (`sqlite3_backend.py`): it catches *any* `OperationalError` (not just
-  "database is locked" — also "no such table", disk-full, malformed schema)
-  and retries forever with growing backoff, so a genuine error becomes a
-  silent hang. Match on the lock message, re-raise others, cap attempts.
-  The sidecar design removed the high-concurrency pressure (livelock
-  history in [todos_archive.md](records/todos_archive.md)), so this is robustness,
-  not the old livelock. Also flagged in the 0.8.0 release plan §E and
-  discussion.md ("the wrong primitive").
 - [ ] `ZarrStore.is_complete()` checks `.zmetadata` (zarr v2); zarr v3
   consolidated metadata lives in `zarr.json`. Handle both when xarray/zarr
   versions move.

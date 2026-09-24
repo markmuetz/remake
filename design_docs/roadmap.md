@@ -86,7 +86,7 @@ match the model to what a miss costs:
 ### 0.8.x — maintenance lane (parallel, not a milestone)
 Non-breaking bug fixes and safe robustness shipped as patches. Patch rules
 (no API/DSL/schema breaks, no reruns caused by the upgrade itself) in
-[compatibility.md](compatibility.md). **0.8.4** is the review's patch list:
+[compatibility.md](compatibility.md). **0.8.4** (released 2026-09-24) was the review's patch list:
 multiproc/dask `run_seq` (H1), `SystemExit` in tasks (H6), duplicate rule
 names (H8), atomic DB create + migrations
 (M5, M6), non-zero exit for blocked rules (M9), recording pre-`fn` failures

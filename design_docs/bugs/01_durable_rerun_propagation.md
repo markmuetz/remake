@@ -1,9 +1,9 @@
 # Bug 01 — Upstream→downstream rerun propagation is not durable
 
 **Status:** fixed (run-sequence id, option 2 below) — 2026-06-22.
-**Regression (2026-09-24):** the fix is inert under `-E multiproc` and
-`-E dask` — their workers record `run_seq = NULL`, so the backstop is
-skipped (review 2026-09-24 H1; 0.8.4 in [todos.md](../todos.md)).
+**Regression (found 2026-09-24, fixed in 0.8.4):** the fix was inert under
+`-E multiproc` and `-E dask` — their workers recorded `run_seq = NULL`, so
+the backstop was skipped (review 2026-09-24 H1).
 **Affects:** local and SLURM execution.
 **Moved from** `design_docs/discussion.md` (was "Propagation gap").
 **Reported by:** Mark Muetzelfeldt — identified the partial-target (`run -Q`)

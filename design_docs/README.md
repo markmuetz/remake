@@ -58,7 +58,7 @@ todos.md by review ID once scheduled.
 - [MM_review.md](MM_review.md) — running log of Mark's source reviews
   (`# MM:` comments) and their outcomes.
 - [bugs/](bugs/) — one numbered file per confirmed bug, status in its
-  header: 01 durable propagation (fixed; multiproc/dask regression noted),
+  header: 01 durable propagation (fixed; multiproc/dask regression fixed in 0.8.4),
   02 task-info on non-path input (open), 03 fresh-DB adoption (closed —
   superseded), 04 info status queries (fixed), 05 SLURM sidecar run-code
   (fixed).

@@ -5,6 +5,48 @@ kept verbatim for the record. Class: **Record** — frozen; trust the code.
 Open remainders noted inside archived items were re-stubbed in the live list
 at prune time.
 
+## Pruned at 0.8.4 (2026-09-24) — release
+
+The 0.8.4 patch list from the 2026-09-24 full-implementation review
+([code_reviews/2026-09-24_review.md](../code_reviews/2026-09-24_review.md)),
+plus the `retry_lock_commit` debt fixed alongside M6. Also shipped, found
+in passing: L4 (`depends_on` bare string). The Opus pre-tag and Sonnet
+follow-up reviews' findings were fixed in the same release (commit
+`9145a3c` on `maint/0.8.x`).
+
+- [x] **H1** multiproc/dask record `run_seq = NULL` — durable propagation
+  off under `-E multiproc`/`dask`.
+- [x] **H3 (failure-skip part)** skip downstream tasks whose *actual*
+  upstream failed, not the same-kwargs one (full fix is 0.9).
+- [x] **H6** `SystemExit`/`KeyboardInterrupt` in a task aborts the run
+  silently (exit 0 on `sys.exit(0)`).
+- [x] **H8** duplicate rule names within one `Remake` → error.
+- [x] **M5** zero-byte/partial DB bricks the pipeline.
+- [x] **M6** migrations non-atomic, racy, not resumable.
+- [x] **M9** `run` exits 0 with blocked (never-ready) rules; surface
+  `Defer.paths`.
+- [x] **M11** failures before the rule function (mkdir, io resolution) not
+  recorded.
+- [x] **M12** tracebacks missing from per-task logs; worker task events
+  missing from `remake.jsonl`.
+- [x] **M14** queries: typos/builtins silently match nothing; syntax errors
+  as tracebacks. (Quick fix only — the restricted parser is the item under
+  Smaller debts.)
+- [x] **M15** local run lock.
+- [x] **M17** sidecar ingest overwrites newer records.
+- [x] **L14** malformed sidecar crashes every command; quarantine bad files.
+- [x] **L25–L27** colour ignores `--colour never`/`NO_COLOR`; BrokenPipe;
+  user errors as tracebacks with exit 1.
+- [x] **Bound and message-match `retry_lock_commit`** (0.8.4 candidate; review L19 adds: reads are not retried at all)
+  (`sqlite3_backend.py`): it catches *any* `OperationalError` (not just
+  "database is locked" — also "no such table", disk-full, malformed schema)
+  and retries forever with growing backoff, so a genuine error becomes a
+  silent hang. Match on the lock message, re-raise others, cap attempts.
+  The sidecar design removed the high-concurrency pressure (livelock
+  history in [todos_archive.md](todos_archive.md)), so this is robustness,
+  not the old livelock. Also flagged in the 0.8.0 release plan §E and
+  discussion.md ("the wrong primitive").
+
 ## Pruned at 0.8.3 (2026-07-14) — release
 
 - [x] **The `remake[examples]` extra in 0.8.2 is broken in a clean env —
