@@ -29,7 +29,7 @@ from .executor import Executor
 _worker_rmk_cache = {}
 
 
-def _run_spec(remakefile, rule_name, kwargs):
+def _run_spec(remakefile, rule_name, kwargs, run_seq=None):
     """Runs on a dask worker. Returns True on success."""
     from ..loader import load_remake
     from ..metadata.sidecar import SidecarWriter
@@ -40,6 +40,9 @@ def _run_spec(remakefile, rule_name, kwargs):
         rmk = load_remake(remakefile, finalize=False)
         rmk.metadata = SidecarWriter()
         _worker_rmk_cache[remakefile] = rmk
+    # The parent invocation's run_seq (durable propagation, bugs/01); set per
+    # call because long-lived workers outlive a single invocation.
+    rmk.metadata.run_seq = run_seq
     task = rmk.task_from_spec(rule_name, kwargs)
     logfile = task_log_path(task)
     logfile.parent.mkdir(parents=True, exist_ok=True)
@@ -96,6 +99,7 @@ class DaskExecutor(Executor):
         nskipped = 0
         done = 0
         failures = {}  # rule -> set of frozenset(kwargs.items())
+        run_seq = self.rmk.metadata.current_run_seq()
         client, cluster = self._client()
         try:
             for rule, rule_tasks in groups:
@@ -113,7 +117,8 @@ class DaskExecutor(Executor):
                 logger.info(f'{rule.name}: {len(to_run)} task(s) on dask ({self.nproc} workers)')
                 futures = {
                     client.submit(
-                        _run_spec, self.remakefile, rule.name, task.kwargs, pure=False
+                        _run_spec, self.remakefile, rule.name, task.kwargs, run_seq,
+                        pure=False,
                     ): task
                     for task in to_run
                 }

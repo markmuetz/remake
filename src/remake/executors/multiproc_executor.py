@@ -53,7 +53,10 @@ def _worker_init(remakefile):
 def _worker_run(spec):
     from ..util import task_log_path
 
-    rule_name, kwargs = spec
+    rule_name, kwargs, run_seq = spec
+    # Stamp results with the parent invocation's run_seq so durable rerun
+    # propagation (bugs/01) works for multiproc runs as it does for SLURM.
+    _worker_rmk.metadata.run_seq = run_seq
     task = _worker_rmk.task_from_spec(rule_name, kwargs)
     logfile = task_log_path(task)
     logfile.parent.mkdir(parents=True, exist_ok=True)
@@ -94,6 +97,7 @@ class MultiprocExecutor(Executor):
         nskipped = 0
         done = 0
         failures = {}  # rule -> set of frozenset(kwargs.items())
+        run_seq = self.rmk.metadata.current_run_seq()
         with ProcessPoolExecutor(
             max_workers=self.nproc,
             mp_context=get_context('spawn'),
@@ -117,7 +121,8 @@ class MultiprocExecutor(Executor):
                     continue
                 logger.info(f'{rule.name}: {len(to_run)} task(s) on {self.nproc} proc(s)')
                 futures = {
-                    pool.submit(_worker_run, (rule.name, t.kwargs)): t for t in to_run
+                    pool.submit(_worker_run, (rule.name, t.kwargs, run_seq)): t
+                    for t in to_run
                 }
                 # Barrier: drain this rule before starting the next.
                 for future in as_completed(futures):

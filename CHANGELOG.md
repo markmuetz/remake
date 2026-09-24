@@ -6,6 +6,18 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Fixes from the 2026-09-24 full-implementation review (IDs refer to
+`design_docs/code_reviews/2026-09-24_review.md` on `main`).
+
+### Fixed
+
+- **multiproc and dask runs now record `run_seq`** (H1). Their workers
+  stored it as NULL, which silently switched off the durable rerun
+  propagation of 0.8.0 (bug 01): after rerunning only an upstream rule
+  (`run -Q "rule == 'a'"`), downstream tasks were never rerun under
+  `-E multiproc`/`-E dask`. Records already written as NULL stay unmeasured
+  (nothing reruns on upgrade); new runs are tracked.
+
 ## [0.8.3] — 2026-07-14
 
 ### Fixed

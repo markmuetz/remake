@@ -120,3 +120,45 @@ def test_default_nproc_falls_back_without_affinity(monkeypatch):
     monkeypatch.delattr(mp.os, 'sched_getaffinity', raising=False)
     monkeypatch.setattr(mp.os, 'cpu_count', lambda: 12)
     assert mp._default_nproc() == 12
+
+
+PROPAGATION = '''
+from pathlib import Path
+from remake import Remake, rule
+
+@rule(outputs={'o': 'a_{n}.txt'}, matrix={'n': [1]})
+def a(outputs, n):
+    Path(outputs['o']).write_text(str(n * 2))
+
+@rule(inputs=a.outputs, outputs={'o': 'b_{n}.txt'}, matrix=a.matrix, depends_on=[a])
+def b(inputs, outputs, n):
+    Path(outputs['o']).write_text(str(int(Path(inputs['o']).read_text()) + 1))
+
+rmk = Remake()
+rmk.rules_from_current_module()
+'''
+
+
+def test_multiproc_records_run_seq_for_durable_propagation(tmp_path, monkeypatch):
+    # Review 2026-09-24 H1: multiproc workers recorded run_seq = NULL, which
+    # silently disabled bug 01's durable propagation. Scenario 2 of bug 01
+    # under -E multiproc: edit A, rerun only A, then a plain run must rerun B.
+    import sqlite3
+
+    monkeypatch.chdir(tmp_path)
+    # Same-size edits within one second can replay a stale .pyc (review L11):
+    # stop both this process and the spawned workers (env var) writing one.
+    monkeypatch.setattr('sys.dont_write_bytecode', True)
+    monkeypatch.setenv('PYTHONDONTWRITEBYTECODE', '1')
+    Path('pipeline.py').write_text(PROPAGATION)
+    assert cli('run', 'pipeline.py', '-E', 'multiproc', '-j', '2') == 0
+    with sqlite3.connect('.remake/remake.db') as conn:
+        seqs = [r[0] for r in conn.execute('SELECT run_seq FROM task')]
+    assert seqs and None not in seqs
+
+    Path('pipeline.py').write_text(PROPAGATION.replace('n * 2', 'n * 3'))
+    assert cli('run', 'pipeline.py', '-E', 'multiproc', '-Q', "rule == 'a'") == 0
+    assert Path('a_1.txt').read_text() == '3'
+    assert Path('b_1.txt').read_text() == '3'
+    assert cli('run', 'pipeline.py', '-E', 'multiproc') == 0
+    assert Path('b_1.txt').read_text() == '4'

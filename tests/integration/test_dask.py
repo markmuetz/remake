@@ -95,3 +95,26 @@ def test_dask_needs_remakefile():
 
     with pytest.raises(RemakeError, match='remakefile'):
         DaskExecutor(Remake())
+
+
+def test_dask_records_run_seq_for_durable_propagation(tmp_path, monkeypatch):
+    # Review 2026-09-24 H1 (see the multiproc twin): dask workers recorded
+    # run_seq = NULL, disabling bug 01's durable propagation.
+    import sqlite3
+
+    from test_multiproc import PROPAGATION
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr('sys.dont_write_bytecode', True)
+    monkeypatch.setenv('PYTHONDONTWRITEBYTECODE', '1')
+    Path('pipeline.py').write_text(PROPAGATION)
+    assert cli('run', 'pipeline.py', '-E', 'dask', '-j', '1') == 0
+    with sqlite3.connect('.remake/remake.db') as conn:
+        seqs = [r[0] for r in conn.execute('SELECT run_seq FROM task')]
+    assert seqs and None not in seqs
+
+    Path('pipeline.py').write_text(PROPAGATION.replace('n * 2', 'n * 3'))
+    assert cli('run', 'pipeline.py', '-E', 'dask', '-j', '1', '-Q', "rule == 'a'") == 0
+    assert Path('a_1.txt').read_text() == '3'
+    assert cli('run', 'pipeline.py', '-E', 'dask', '-j', '1') == 0
+    assert Path('b_1.txt').read_text() == '4'
