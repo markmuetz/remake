@@ -1,7 +1,12 @@
 # SLURM "is this task already running?" detection
 
+> **Status: implemented in part, rest parked (2026-07-10).** The
+> queue-state and per-submission spec fixes shipped in 0.8.1; per-task
+> skip and ledger-based pruning are parked (see "2026-07-10 decisions"
+> below) in favour of age-based pruning.
+
 A design note for the duplicate-submission guard. Builds on
-[slurm_implementation.md](slurm_implementation.md) (sidecar/ingest result
+[slurm_implementation.md](../records/slurm_implementation.md) (sidecar/ingest result
 recording) and the SLURM executor in `src/remake/executors/slurm_executor.py`.
 
 ## The problem

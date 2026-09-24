@@ -201,7 +201,7 @@ def rule(
 ):
     """Define a rule. Returns a free-standing Rule object (not the function).
 
-    See remake3_design.md for the full parameter semantics.
+    See design_docs/design.md for the full parameter semantics.
     """
 
     def decorator(fn):

@@ -42,7 +42,7 @@ that computes structured data a programmatic user would want; pure terminal
 rendering (table layout, exit codes, argparse glue) stays in the CLI.** Test:
 "would a notebook user want this back as a dict/list?" Now recorded as a
 canonical design principle ("CLI is a thin render layer over a complete Python
-API") in `remake3_design.md` § Core design principles.
+API") in `design.md` § Core design principles.
 
 Status of the remaining read-only commands against that test:
 

@@ -81,7 +81,7 @@ def _resources_line(resources):
     """The `resources:` line for `task-info`, or None if nothing was
     measured. Peak RSS is annotated when it did not come from sampling, so a
     getrusage number (interpreter baseline included) is not read as a
-    like-for-like measurement — see design_docs/resource_capture.md."""
+    like-for-like measurement — see design_docs/designs/resource_capture.md."""
     if resources.get('wall_s') is None:
         return None
     parts = [f'wall {resources["wall_s"]:.2f}s']
@@ -972,7 +972,7 @@ def remake_cmd(argv=None):
 
     # Per-task-process subcommands (SLURM array elements) get a per-task log
     # sink instead — concurrent appends to the shared logs corrupt them on
-    # NFS-class filesystems (see design_docs/per_task_logging.md).
+    # NFS-class filesystems (see design_docs/designs/per_task_logging.md).
     per_task = args.subcmd_name in ('run-task', 'run-array-task')
     if hasattr(args, 'remakefile') and not per_task:
         import uuid

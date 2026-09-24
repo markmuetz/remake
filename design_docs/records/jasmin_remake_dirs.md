@@ -1,5 +1,7 @@
 # remake directories on JASMIN
 
+> **Record** — frozen; trust the code where they differ. A dated survey snapshot.
+
 Survey of `~/projects` generated 2026-07-02; `~/deploy` added and the whole
 classification corrected 2026-07-03.
 

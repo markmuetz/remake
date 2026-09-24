@@ -11,8 +11,8 @@
 > discussion.md, parked); tokens are one module (`core/tokens.py`).
 
 How to transform the existing remake2 code in `src/remake/` into the design in
-[remake3_design.md](remake3_design.md). Covers the next five items of the
-[implementation plan](remake3_implementation_plan.md): core, output tokens,
+[design.md](../design.md). Covers the next five items of the
+[implementation plan](implementation_plan.md): core, output tokens,
 metadata backend, executors, dynamic matrices.
 
 Guiding choice throughout: **simple over complex**. Where remake2 had a
@@ -92,7 +92,7 @@ adaptation and is rewritten.
   within-wave tasks are independent by construction. This is the single
   biggest simplification and is what makes 1e6-task pipelines loadable.
   Known limitation (intra-rule task dependencies are inexpressible):
-  see "No task-level DAG" in [remake3_design.md](remake3_design.md).
+  see "No task-level DAG" in [design.md](../design.md).
 
 ### New `planner.py` — subsumes and deletes `task_control.py`
 

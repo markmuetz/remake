@@ -21,7 +21,7 @@ before 1.0:
 | --- | --- | --- | --- |
 | **Python / CLI API** | `Remake` methods + their return shapes, command names + flags, exit codes | Break freely; record every break in `CHANGELOG.md` | Cost to the user is *edits* — cheap to absorb, easy to grep/fix. |
 | **Remakefile DSL** | `@rule` and its keywords (`inputs`/`outputs`/`matrix`/`depends_on`/`uses`/`config`/`strict_scope`/`name`), token types, registration helpers | Break freely **but stabilise earliest** — this is the first surface frozen approaching 1.0 | This is the user's *source code*. Churn means rewriting pipelines, the most expensive kind of edit. |
-| **On-disk state** | `.remake/` — the SQLite schema (`remake.db`), job specs (`.remake/jobs/*.json`), jobid + per-task result sidecars, log layout | **Do not break gratuitously even now.** Ship a schema migration, or at minimum detect an old layout and fail with a clear "rebuild required" message — never silently misread it | Breakage forces a **full rebuild of an already-completed pipeline**. At remake's target scale (~1e4 tasks producing ~1e6 files, expensive SLURM jobs on JASMIN — see remake3_design.md "Scale target") that is hours-to-days of compute, falling on exactly the users remake exists for. |
+| **On-disk state** | `.remake/` — the SQLite schema (`remake.db`), job specs (`.remake/jobs/*.json`), jobid + per-task result sidecars, log layout | **Do not break gratuitously even now.** Ship a schema migration, or at minimum detect an old layout and fail with a clear "rebuild required" message — never silently misread it | Breakage forces a **full rebuild of an already-completed pipeline**. At remake's target scale (~1e4 tasks producing ~1e6 files, expensive SLURM jobs on JASMIN — see design.md "Scale target") that is hours-to-days of compute, falling on exactly the users remake exists for. |
 
 The on-disk carve-out is not new policy bolted on — the SQLite backend already
 ships a defensive `ALTER TABLE` migration path, so "the DB gets ramps even in
@@ -58,7 +58,7 @@ ships a defensive `ALTER TABLE` migration path, so "the DB gets ramps even in
 ## The 1.0 contract
 
 1.0 ships once the **remakefile DSL**, the **public Python/CLI API**, and the
-**on-disk format** are judged stable (the freeze is the 0.12.x → 1.0 step in
+**on-disk format** are judged stable (the freeze is the 0.10.x → 1.0 step in
 the roadmap). After 1.0:
 
 - **SemVer is binding.** Breaking changes to any of the three surfaces happen
@@ -73,7 +73,7 @@ the roadmap). After 1.0:
   (underscore-prefixed members, `core.*` internals, the exact text of log
   lines) is explicitly *not* covered, so internal refactors never count as
   breaking. This is what lets the "CLI is a thin render layer over a complete
-  Python API" principle (see `remake3_design.md`) stay refactorable.
+  Python API" principle (see `design.md`) stay refactorable.
 
 ## Out of scope for the guarantee (always)
 

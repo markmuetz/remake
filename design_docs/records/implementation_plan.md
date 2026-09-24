@@ -2,12 +2,12 @@
 
 > **Status: execution record.** The plan is complete bar the noted stragglers;
 > counts and "remaining" notes below are point-in-time (mostly 2026-06-15) and
-> are not maintained. Live state: [todos.md](todos.md) for open work,
-> [remake3_0.8.0_release.md](remake3_0.8.0_release.md) for the release
+> are not maintained. Live state: [todos.md](../todos.md) for open work,
+> [v0.8.0_record.md](../releases/v0.8.0_record.md) for the release
 > checklist, the test suite for current counts.
 
 High-level progress tracking for implementing
-[remake3_design.md](remake3_design.md). Each item will get its own design/plan
+[design.md](../design.md). Each item will get its own design/plan
 doc in `design_docs/` when work on it starts.
 
 - [x] Initial decisions: package/import name, fate of remake2 code in
@@ -44,7 +44,7 @@ doc in `design_docs/` when work on it starts.
     task-log, why, slurm-status, lint, version. Queries select by kwargs
     and rule name (`-Q "rule in ['r1', 'r2'] and year == 2010"`). Logs to
     stderr, data to stdout. Grew out of the gap audit in
-    [claude_remake_skill.md](claude_remake_skill.md).
+    [claude_remake_skill.md](../designs/claude_remake_skill.md).
 - [x] Unit tests
 - [x] Integration tests
   - 123 tests under tests/unit and tests/integration; examples are loaded
@@ -89,7 +89,7 @@ doc in `design_docs/` when work on it starts.
     job (todos.md), a docs deploy job (GitHub Pages) and a tag-triggered
     PyPI release.
 - [ ] Claude Code remake skill (`.claude/skills/remake/`) — see
-  [claude_remake_skill.md](claude_remake_skill.md)
+  [claude_remake_skill.md](../designs/claude_remake_skill.md)
   - skeleton + authoring + migration + triage/monitoring/status sections
     done and CLI gap items implemented 2026-06-12; remaining: validate in
     anger on JASMIN, health-check section, plugin packaging
@@ -107,7 +107,7 @@ doc in `design_docs/` when work on it starts.
   `upstream-newer` reason in `remake why` and a guarded, cascade-by-default
   `set-state --success` (`--no-cascade` to opt out). Full design, scenarios
   and implementation steps:
-  [bugs/01_durable_rerun_propagation.md](bugs/01_durable_rerun_propagation.md).
+  [bugs/01_durable_rerun_propagation.md](../bugs/01_durable_rerun_propagation.md).
   Regression test already red:
   `test_partial_target_rerun_propagates_to_downstream`.
 
@@ -115,7 +115,7 @@ doc in `design_docs/` when work on it starts.
 
 The road from the shipped `0.8.0a0` alpha to the full `0.8.0` release —
 including the `remake3`→`main` branch migration — is laid out in
-[remake3_0.8.0_release.md](remake3_0.8.0_release.md).
+[v0.8.0_record.md](../releases/v0.8.0_record.md).
 
 
 1. **JASMIN revalidation** of the post-livelock stack:
@@ -157,15 +157,15 @@ including the `remake3`→`main` branch migration — is laid out in
    -> PyPI.
 4. **PyPI** — ~~metadata polish, alpha upload~~ done: 0.8.0a0 live on PyPI
    (2026-06-15, Trusted Publishing). TestPyPI dry run skipped.
-5. Backlog beyond the plan: open items in [todos.md](todos.md)
+5. Backlog beyond the plan: open items in [todos.md](../todos.md)
    (benchmark in CI, batched completion transactions, fallback-mode stat
    cost, eval-query parser, uses-shadowing warning, Hypothesis tests,
    zarr v3 tokens, per-task log file-count budget) and the
-   [discussion.md](discussion.md) ideas (terminal output, SLURM monitor,
+   [discussion.md](../discussion.md) ideas (terminal output, SLURM monitor,
    web interface, dask design, config cascade, logging injection,
    intra-rule deps, RO-Crate, plugins, .remake layout).
 
-See also: [todos.md](todos.md) (known problems and debts),
-[discussion.md](discussion.md) (ideas to return to) and
-[alternatives.md](alternatives.md) (how remake relates to other workflow
+See also: [todos.md](../todos.md) (known problems and debts),
+[discussion.md](../discussion.md) (ideas to return to) and
+[alternatives.md](../alternatives.md) (how remake relates to other workflow
 tools, and its niche).

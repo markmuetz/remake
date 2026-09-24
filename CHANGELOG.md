@@ -9,7 +9,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - **Per-task resource capture** (0.9.0 item 1,
-  `design_docs/resource_capture.md`): every task execution now records wall
+  `design_docs/designs/resource_capture.md`): every task execution now records wall
   time, CPU time (user+sys, including waited-for children) and peak resident
   memory, for **all** executors, into `remake.db`. `remake task-info` shows
   them (`resources: wall 12.40s, cpu 11.98s, peak rss 1.4G`) and exposes them

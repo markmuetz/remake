@@ -8,9 +8,14 @@
 > it needs no ordering, no gate, and no SLURM staging — remakefiles are
 > treated as independent, which dissolves everything hard (see
 > §run-all without dependencies). Scoped into 0.9.0
-> ([future_releases/v0.9.0.md](future_releases/v0.9.0.md)). One further
+> ([releases/v0.9.0.md](../releases/v0.9.0.md)). One further
 > piece is independently worthwhile — §Definition vs visibility — stubbed
-> in [todos.md](todos.md). Class: **Design**.
+> in [todos.md](../todos.md). Class: **Design**.
+>
+> *Milestones and 0.9.0 item numbers in the body are as of writing; the
+> 2026-09-24 re-plan ([roadmap.md](../roadmap.md),
+> [releases/v0.9.0.md](../releases/v0.9.0.md)) supersedes them where they
+> differ.*
 
 ## Motivation
 

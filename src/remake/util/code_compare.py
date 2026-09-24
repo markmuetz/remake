@@ -9,7 +9,7 @@ from loguru import logger
 # Full-body code dumps at TRACE are opt-in: they print both versions of every
 # compared function, which in the field crowded everything else out of the
 # rotated log (~55k of 56.8k lines in one project's remake.log — see
-# design_docs/logs_analysis/README.md §3). The one-line summaries below stay.
+# design_docs/records/logs_analysis/README.md §3). The one-line summaries below stay.
 _LOG_CODE = os.environ.get('REMAKE_LOG_CODE') == '1'
 
 

@@ -57,7 +57,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # A self-contained two-rule pipeline. Reads its parameters from a sibling
-# bench_params.yaml (human-readable config -> YAML; see remake3_design.md
+# bench_params.yaml (human-readable config -> YAML; see design_docs/design.md
 # "Config file formats") so the {i} matrix placeholders never collide with
 # str.format brace-escaping. stage1 has no inputs (pure generator); stage2
 # shares stage1's matrix 1-to-1, so the executor wires it as an aftercorr

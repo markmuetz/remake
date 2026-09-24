@@ -1,6 +1,6 @@
 # Todos archive
 
-Completed (`[x]`) entries pruned from [todos.md](todos.md) at each release,
+Completed (`[x]`) entries pruned from [todos.md](../todos.md) at each release,
 kept verbatim for the record. Class: **Record** — frozen; trust the code.
 Open remainders noted inside archived items were re-stubbed in the live list
 at prune time.
@@ -23,7 +23,7 @@ at prune time.
 ## Pruned at 0.8.1 (2026-07-10) — SLURM
 
 - [x] **2026-07-09 submission-logic review findings — CLOSED 2026-07-10**
-  (full report: [code_reviews/2026-07-09_review.md](code_reviews/2026-07-09_review.md)).
+  (full report: [code_reviews/2026-07-09_review.md](../code_reviews/2026-07-09_review.md)).
   Landed, in order: per-submission immutable spec files (root fix — findings
   1–4/10a/12 downgraded or fixed); squeue-failure fail-safe (`SqueueError`;
   run/resubmit refuse over an unknown queue, slurm-status errors cleanly);
@@ -42,7 +42,7 @@ at prune time.
   non-empty per-element reads) and unreadable jobids sidecars degrade with a
   warning instead of crashing.
   **Parked** (Mark; design + revival notes in
-  [slurm_already_running.md](slurm_already_running.md)): per-task skip,
+  [slurm_already_running.md](../designs/slurm_already_running.md)): per-task skip,
   `--comment` job stamping, and the per-rule submission ledger both it and
   provable pruning would need — too complicated for minimal payback.
   **Archived without action** (rationale): 10b (dry run stages submit.sh) —
@@ -134,7 +134,7 @@ via sidecars).
   stores raw source once per rule — unlocking the human-readable `uses`
   code-change diff and `rule-info` source display. Schema migration required
   (alpha 0.8.0a0, acceptable). Likely also resolves
-  [bug 04](bugs/04_info_redundant_and_superlinear_status_queries.md) Issue 2
+  [bug 04](../bugs/04_info_redundant_and_superlinear_status_queries.md) Issue 2
   (superlinear `get_tasks_status`: the slowest rule's `uses_hash` is
   ~145 KB/row × 1465 tasks ≈ 213 MB scanned per status query) — confirm
   whether the status SELECT pulls `uses_hash` before profiling further.
@@ -161,7 +161,7 @@ via sidecars).
   dropping the inline columns, so existing bloated DBs (272 MB wescon-tools)
   recover the space on first contact with the new code.
 - [x] **`remake info` queries every rule's status twice**
-  ([bug 04](bugs/04_info_redundant_and_superlinear_status_queries.md)
+  ([bug 04](../bugs/04_info_redundant_and_superlinear_status_queries.md)
   Issue 1). **Done 2026-07-02** via `RecordCache` (metadata_manager.py): a
   per-invocation read-through cache (per task key, misses cached too)
   wrapped around the backend for the read-only commands, so the plan pass
@@ -338,7 +338,7 @@ via sidecars).
   corrupt (observed on JASMIN 2026-06-12, 176-element array). Fixed:
   `run-task`/`run-array-task` write a per-task log at
   `.remake/tasks/log/<rule>/<key[:2]>/<key[2:]>.log` instead of the shared
-  sink — see design_docs/per_task_logging.md (incl. the open total-file-
+  sink — see design_docs/designs/per_task_logging.md (incl. the open total-file-
   count budget question).
 - [x] `retry_lock_commit` concurrency machinery has a sharp livelock cliff
   well below 400-way concurrency. Stress-tested on JASMIN 2026-06-12 with

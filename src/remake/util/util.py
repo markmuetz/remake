@@ -49,5 +49,5 @@ class Capturing(list):
 
 def task_log_path(task):
     """Per-task log file, named by stable task key (sharded: 256 buckets per
-    rule, see design_docs/per_task_logging.md)."""
+    rule, see design_docs/designs/per_task_logging.md)."""
     return Path('.remake/tasks/log') / task.rule.name / task.key[:2] / f'{task.key[2:]}.log'

@@ -1,8 +1,10 @@
 # SLURM executor — implementation plan
 
+> **Record** — frozen; trust the code where they differ. SLURM executor build-out and JASMIN validation (June–July 2026).
+
 Implementation plan for the SLURM executor item, to be developed and
 validated on JASMIN. The behaviour is fully specified in
-[remake3_design.md](remake3_design.md) (SLURM executor and dynamic
+[design.md](../design.md) (SLURM executor and dynamic
 matrices sections) and scoped in
 [detailed_code_implementation.md](detailed_code_implementation.md) §4 —
 this doc covers how the work proceeds, what is testable locally, and the
@@ -118,7 +120,7 @@ be spent only on cluster-shaped problems.
 
 Replaces direct `update_task` calls from per-task SLURM processes with a
 write-sidecar / ingest-serially split, mirroring the per-task-logging
-layout (`design_docs/per_task_logging.md`).
+layout (`design_docs/designs/per_task_logging.md`).
 
 ### Write side: `run-task` / `run-array-task`
 

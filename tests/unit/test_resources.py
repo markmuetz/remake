@@ -1,4 +1,4 @@
-"""Per-task resource capture (design_docs/resource_capture.md).
+"""Per-task resource capture (design_docs/designs/resource_capture.md).
 
 Thresholds are deliberately generous: these are measurements on whatever
 machine CI happens to give us, not deterministic values. They assert the

@@ -5,7 +5,7 @@ code-derived state (run source, the normalised uses/io strings) lives in the
 content-addressed `code` table and task rows carry only integer FKs. Storing
 the uses/io text inline per task made real DBs enormous (272 MB for 3341
 tasks, 99.8% of it duplicated uses text) and made status queries scale with
-task count (design_docs/logs_analysis/README.md). Older DBs are migrated in
+task count (design_docs/records/logs_analysis/README.md). Older DBs are migrated in
 place by `_add_missing_columns`.
 """
 import json
@@ -612,7 +612,7 @@ class Sqlite3Backend(MetadataManager):
         # included, so a fresh wall_s is never left paired with a peak RSS
         # from an earlier run. A bulk state change (resources=None) measured
         # nothing and leaves them alone: `set-state --pending` does not
-        # un-measure what actually ran (design_docs/resource_capture.md).
+        # un-measure what actually ran (design_docs/designs/resource_capture.md).
         resource_update = (
             '    wall_s = excluded.wall_s, '
             '    cpu_s = excluded.cpu_s, '

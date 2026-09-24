@@ -1,7 +1,7 @@
 """Rule-level DAG construction and task expansion. Pure functions, no I/O.
 
 The rule DAG is the only graph remake builds — there is no task-level DAG.
-See remake3_design.md, "No task-level DAG".
+See design_docs/design.md, "No task-level DAG".
 """
 import itertools
 

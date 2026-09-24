@@ -3,13 +3,13 @@
 How per-task SLURM array processes record results without touching the
 shared SQLite DB: concurrent writers livelock SQLite on NFS-class
 filesystems past a few hundred processes (see
-design_docs/slurm_implementation.md, "Sidecar result files", and
+design_docs/records/slurm_implementation.md, "Sidecar result files", and
 tests/benchmarks/bench_sqlite_contention.py). `remake run-array-task`
 writes one JSON sidecar per result; the next invocation that reads the
 DB (plan/run/info) ingests pending sidecars in a single batched
 transaction (`Sqlite3Backend.ingest_sidecars`) and deletes them.
 
-Sharded like the per-task logs (design_docs/per_task_logging.md), but
+Sharded like the per-task logs (design_docs/designs/per_task_logging.md), but
 self-cleaning: sidecars are deleted on ingest.
 """
 import json

@@ -2,10 +2,15 @@
 
 > **Status: design agreed in discussion (MM + Claude, 2026-07-14); not yet
 > implemented.** Target release: 0.9.0 (new API — barred from the 0.8.x
-> patch lane by [compatibility.md](compatibility.md)); folded into the
+> patch lane by [compatibility.md](../compatibility.md)); folded into the
 > scoped 0.9.0 alongside resource capture and output validation, with which
-> it dovetails ([future_releases/v0.9.0.md](future_releases/v0.9.0.md)).
+> it dovetails ([releases/v0.9.0.md](../releases/v0.9.0.md)).
 > Class: **Design** — decisions below are settled unless marked open.
+>
+> *Milestones and 0.9.0 item numbers in the body are as of writing; the
+> 2026-09-24 re-plan ([roadmap.md](../roadmap.md),
+> [releases/v0.9.0.md](../releases/v0.9.0.md)) supersedes them where they
+> differ.*
 
 ## Motivation
 

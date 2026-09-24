@@ -59,7 +59,7 @@ def test_multiproc_end_to_end(pipeline_dir, capsys):
 
 def test_multiproc_records_resources_via_sidecars(pipeline_dir, capsys):
     # Resources are measured in the worker and reach the DB through the
-    # sidecar/ingest path (design_docs/resource_capture.md).
+    # sidecar/ingest path (design_docs/designs/resource_capture.md).
     assert cli('run', 'pipeline.py', '-E', 'multiproc', '-j', '2') == 0
 
     capsys.readouterr()

@@ -460,7 +460,7 @@ def test_run_array_task_writes_per_task_log(slurm_dir):
     task_log = Path(f'.remake/tasks/log/gen/{key[:2]}/{key[2:]}.log')
     assert 'gen[n=3]' in task_log.read_text()
     # The shared logs are untouched: per-task processes must not append to
-    # any of them (concurrent corruption, see design_docs/per_task_logging.md).
+    # any of them (concurrent corruption, see design_docs/designs/per_task_logging.md).
     for path, before in shared.items():
         assert Path(path).read_text() == before, path
 
@@ -680,7 +680,7 @@ def test_squeue_snapshot_timeout_raises(slurm_dir, monkeypatch):
 
 
 def test_squeue_failure_with_recorded_submissions_refuses(slurm_dir, capsys):
-    # The latent resubmit-all bug (design_docs/slurm_already_running.md):
+    # The latent resubmit-all bug (design_docs/designs/slurm_already_running.md):
     # squeue failing used to look like an empty queue, green-lighting
     # duplicates of still-queued arrays. With submissions on record and the
     # queue state unknown, refuse to submit.

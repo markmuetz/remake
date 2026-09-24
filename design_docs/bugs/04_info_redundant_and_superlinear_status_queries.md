@@ -95,7 +95,7 @@ and any per-row object construction).
 
 **Root cause — the `code.code` JOIN in `get_tasks_status`.** Confirmed
 against source by the field-log analysis in
-[logs_analysis/README.md](../logs_analysis/README.md) §1.1–1.2. The query
+[logs_analysis/README.md](../records/logs_analysis/README.md) §1.1–1.2. The query
 is `SELECT ... FROM task LEFT JOIN code ON task.run_code_id = code.id`
 (`sqlite3_backend.py:248`), which pulls back the **full stored run source
 (`code.code`) for every task**, so the planner can feed it into
@@ -120,7 +120,7 @@ compare. This collapses the 256× amplification. (The implementation chose
 FK-by-id over the `code_hash` digest sketched here — same effect on the
 JOIN, and it keeps the old source recoverable by id so `why` retains its
 before→after messages; see the *Implemented* note in
-[graduated_discussion.md](../graduated_discussion.md).)
+[graduated_discussion.md](../records/graduated_discussion.md).)
 
 ## Issue 3 — `task.uses_hash` inflates the DB (size, not query time)
 
@@ -132,7 +132,7 @@ tasks and 149 KB of distinct code). This bloats the DB and the page-cache
 footprint — which amplifies Issue 2's run-to-run *variance* (a bigger
 file is slower to warm) — but it is **not** what the status query reads.
 Tracked in full under "Display code changes in `uses` functions" in
-[graduated_discussion.md](../graduated_discussion.md) (*Measured in the wild*).
+[graduated_discussion.md](../records/graduated_discussion.md) (*Measured in the wild*).
 
 **Fix (implemented 2026-07-02, commit 4407d34).** `task.uses_hash`/
 `io_hash` inline strings became `uses_code_id`/`io_code_id` FKs into the

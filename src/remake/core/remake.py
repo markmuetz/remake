@@ -772,7 +772,7 @@ class Remake:
             args.append(task.outputs)
         # Resources are measured here, the one execution chokepoint every
         # executor shares, so all of them record the same fields
-        # (design_docs/resource_capture.md). Both exit paths record: a task
+        # (design_docs/designs/resource_capture.md). Both exit paths record: a task
         # that fails after three hours is a duration worth keeping.
         capture = capture_for_config(self.config)
         try:

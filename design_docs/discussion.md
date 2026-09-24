@@ -1,11 +1,35 @@
 # Discussion
 
-High-level ideas to return to. Not commitments — each needs its own
-design discussion before any work starts.
+Ideas to return to. **Not commitments** — each needs its own design pass
+before any work starts. Class: **Working** — items leave this file when they
+are resolved:
 
-- **Terminal output** — richer progress display for `remake run` (live
-  task counts, per-rule progress, colour); what the right level of
-  polish is for a batch tool.
+- **designed** → a doc in [designs/](designs/), leaving a one-line pointer here;
+- **scheduled** → a milestone in [roadmap.md](roadmap.md) (see the index below);
+- **shipped** → moved verbatim to
+  [records/graduated_discussion.md](records/graduated_discussion.md);
+- **a confirmed bug** → a numbered file in [bugs/](bugs/).
+
+Regrouped by theme 2026-09-24 (item text unchanged; see git history for the
+previous flat order).
+
+## Index — items the roadmap schedules
+
+| Item | Section below | Roadmap |
+|---|---|---|
+| Configuration cascade (+ profiles) | Configuration & extensibility | 0.9.x |
+| Grab code version / python module state | Provenance & history | 0.10.x |
+| I/O verification / reconcile (`remake verify`) | Provenance & history | 0.10.x |
+| Stats / run-history store (minimal) | Provenance & history | 0.10.x |
+| `.remake` location (next to artefacts?) | Outputs, storage & on-disk layout | 0.10.x (decide) |
+| Temporary / scratch intermediates | Outputs, storage & on-disk layout | design check 0.10.x; build after 1.0 |
+| RO-Crate export | Provenance & history → [designs/rocrate_export.md](designs/rocrate_export.md) | after 1.0 |
+| Output enumeration, query by status | CLI & UX / Outputs | after 1.0 |
+| Web interface | CLI & UX | after 1.0 (exploration, separate extra) |
+| Plugins | Configuration & extensibility | after 1.0, if demand |
+
+## Execution & SLURM
+
 - **SLURM monitor** — live view of queued/running/completed cluster jobs
   (remake2 had `monitor.py`); how it relates to `info` and the jobid
   sidecar files.
@@ -108,6 +132,165 @@ design discussion before any work starts.
     deliberately needs no new task status: queue for liveness, DB for
     outcome). The local wrapper itself (ssh submit → poll → rsync) belongs in
     the user's rsync_recipes repo, not remake.
+- **Per-rule housekeeping job (SLURM) — probably to be implemented.** A
+  one-shot (non-array) SLURM job depending `aftercorr`/`afterok` on a
+  rule's array, running once after all its elements complete. Makes the
+  edge between rule N's array and rule N+1's array an explicit, first-class
+  job rather than relying solely on the global continuation job.
+  - *Primary action: DB sync.* It is the natural single-writer point to
+    ingest that rule's sidecars — exactly the low-concurrency path the
+    sidecar design assumes, no new contention. The next plan/run already
+    ingests, so the win is **timeliness** (mid-pipeline `info`/
+    `slurm-status` reflect reality without waiting for the next manual
+    command) plus being the *vehicle* for the cleanup actions below — not
+    ingest correctness, which sidecars already give us.
+  - *Fits the model.* Still submit-and-log-out: SLURM owns the graph for
+    the pipeline's life; this is just another node in it. **Not** the
+    rejected orchestrator daemon (see below) — nothing long-lived on a
+    login node, no IPC, recovery is still replan-from-DB + `squeue`.
+  - *Design question:* does housekeeping **replace** the single global
+    continuation job (becoming a finer-grained per-rule version of it), or
+    sit alongside it? Lean towards generalising the continuation into this.
+  - Relates to the **SLURM monitor** item (a place to surface progress) and
+    is the enabling mechanism for **temporary files** below.
+- **Per-element SLURM startup cost (lazy networkx).** Each array element is
+  a fresh `remake run-array-task` process whose wall-time is dominated by
+  Python startup + imports, not the task. Measured cold: `import
+  remake.remake_cmd` ≈ 336 ms, of which ~260 ms is **networkx**, pulled in
+  eagerly by `remake.core.dag` at package load. But `run-array-task` never
+  builds or traverses the DAG — it loads one task spec (`finalize=False`)
+  and runs it. On JASMIN this bit hard during the failure-propagation test
+  (2026-06-14): 40 elements landed on one node and cold-imported the same
+  large module tree from the shared filesystem simultaneously — an import
+  storm that turned sub-second imports into minutes and pushed several past
+  a 20-min wall clock (`TIMEOUT`). Throttling (`--array=0-N%T`) caps
+  concurrency and removes the storm, but each element still pays the import.
+  Lazy-importing networkx (or keeping it off the `run-array-task` path)
+  would roughly halve per-element startup and ease the storm. Mostly a
+  benchmark artefact — real tasks compute for minutes, so startup is noise
+  (cf. the 1e6/real-pipeline benchmarks, where startup wasn't the
+  bottleneck) — so this is an optimisation, not a correctness issue. Needs
+  a design pass: which imports are truly needed per task path, and whether
+  to split a lean `run-array-task` entry point from the full CLI.
+- **Fragile `remake` on PATH in SLURM jobs.** The generated sbatch payload
+  invokes a bare `remake run-array-task ...`. The jobs only find it because
+  `submit.sh` runs inside the `uv` venv and sbatch inherits that PATH via
+  the default `--export=ALL`; submitted from a plain shell, `remake` is not
+  on PATH (`which remake` finds nothing on a JASMIN login node — it lives
+  only in the venv). Options to harden: emit `python -m remake.remake_cmd`
+  instead of the console script; or capture the resolved interpreter/venv
+  path at submission time and bake it into the sbatch script. Relates to
+  the per-element startup item (a `python -m` entry point is also where a
+  lean import path would live).
+- **Optimistic direct DB write under SLURM, with sidecar fallback.**
+  Today per-task array processes never touch the DB: they write JSON
+  sidecars (design_docs/records/slurm_implementation.md), ingested in batch by
+  the next DB-reader. That is robust but defers visibility — results are
+  not in the DB until a *later* invocation (continuation job, next
+  `run`/`info`) ingests them; a terminal wave needs a follow-up `remake
+  info` before anything shows. Proposal: a task tries to write its result
+  directly to `remake.db`, and falls back to a sidecar only if it fails.
+  - The win is **latency-to-visibility**, not DB pressure relief.
+    Results land the instant a task finishes, in the common (low-
+    contention) case.
+  - Why it is self-regulating rather than a thundering herd: the
+    *fallback caps the herd*. A writer that fails gives up and goes quiet
+    (writes a sidecar) instead of continuing to contend, so contention
+    cannot escalate. And most real jobs are O(1–10 min) with natural
+    jitter around the mean, so completion times — and thus write
+    attempts — spread out rather than arriving as one synchronised burst.
+    Quiet period → direct write succeeds; busy period → fast-fail and
+    degrade gracefully to exactly today's sidecar behaviour.
+  - **Hard requirement: the retry must be bounded and fast-failing.** The
+    existing `retry_lock_commit` (sqlite3_backend.py) has *unbounded*
+    exponential backoff — it never gives up, just slows down — which is
+    the wrong primitive here. The direct-write path needs a separate
+    `try_commit(max_attempts=2, busy_timeout=short)` that raises quickly,
+    at which point the sidecar fallback engages.
+  - Correctness is never at risk: the sidecar net still catches any
+    failed/abandoned write, and the upsert is idempotent. Make ingest
+    last-writer-wins by timestamp so a stale sidecar can't clobber a
+    newer direct write.
+  - Caveats: SQLite locking over NFS/Lustre is the real JASMIN hazard
+    (flaky POSIX locks) — a bounded fast-fail could in principle falsely
+    fail/succeed there, so this needs a cluster validation run before the
+    default flips (`bench_sqlite_contention.py` extends to it). Don't
+    reach for WAL as an alternative — WAL is unsafe over NFS. Likely
+    shipped behind a config flag, perhaps auto-off above an array-size
+    threshold; sidecar-only stays the conservative default until proven.
+
+## CLI & UX
+
+- **Terminal output** — richer progress display for `remake run` (live
+  task counts, per-rule progress, colour); what the right level of
+  polish is for a batch tool.
+- **CLI interface** — assorted behaviours to decide:
+  - `remake` on missing file: sensible default when no remakefile is
+    given (search cwd? `.remake/config` default, as remake2 had?).
+  (Decided sub-items — `--ignore-code-changes`, `set-state`, multi-task
+  `why`, `info --reasons`, grouped `info -F` — moved to
+  [records/graduated_discussion.md](records/graduated_discussion.md),
+  2026-09-24.)
+- **query by status** — `-Q 'status == "failed"'` is not possible: queries
+  are evaluated at matrix expansion, before the DB is consulted. `run -I`
+  covers the main case (failed ∪ never-run), but selecting tasks by
+  recorded status (failures-only for `set-state`/`ls-tasks`, say) would
+  need plan-time filtering — decide whether it earns the complexity.
+- **logging** - Perhaps the rule decorator could have a logger=True line, that
+  passes in a loguru logger to the function? Or just say that the user can
+  set up a loguru logger then use that as using `uses`.
+- **Opt-in frame-locals dump on exception** — capture variable state at
+  the moment a task raises, written alongside the stored traceback, as the
+  *non-interactive* complement to `-X`.
+  - Motivation: remake already has the stored traceback (`info -F`) and
+    interactive post-mortem (`-X`, which forces singleproc, runs
+    in-process and needs the failure reproduced at a terminal). The gap is
+    a **failed SLURM array task that died on the cluster** — you can't pdb
+    into it, but a locals dump captured at failure time lets you inspect
+    what went wrong after the fact. That HPC case is the real value; this
+    is not redundant with `-X`.
+  - Design hazard — serialisation. "Full variable dump" taken literally is
+    dangerous: rule locals routinely hold multi-GB xarray Datasets, open
+    file handles, DB connections, unpicklable objects. Naive pickling
+    either explodes the dump size or crashes *inside the failure handler*.
+    So: best-effort **safe `repr()` with per-value truncation**, never
+    pickle live objects; default to the **innermost frame + the rule
+    function's frame**, not the whole chain at full depth.
+  - Opt-in (off by default): size/cost, and a dump can write sensitive
+    data/secrets to disk. A `config={'debug': {...}}` flag or a `run`
+    option.
+  - Lands alongside the per-task traceback under `.remake/tasks/log/...`
+    so `task-info`/`task-log` surface it; rides the existing sidecar
+    result path, so it works under SLURM arrays.
+  - Prior art: `stackprinter` renders tracebacks with truncated per-frame
+    values — a good dependency or reference implementation. (`cgitb`, the
+    old stdlib answer, is removed in 3.13 — don't reach for it.)
+- **Web interface** — *being actively reconsidered (2026-06-23); originally scheduled
+  as a 0.12.x exploration; re-planned 2026-09-24 to an after-1.0 exploration,
+  as a separate optional extra — see [roadmap.md](roadmap.md).* The original design
+  doc rules a GUI/dashboard out of scope, and a *passive read-only viewer*
+  over the SQLite DB remains low-value (external tools can already query it).
+  The idea now on the table is bigger and changes the calculus: a
+  **single-page, interactive control plane** — launch and cancel runs, watch
+  tasks change state in real time, drill into a failing task's log/traceback,
+  re-run or `set-state` a selection, all from the browser. That is a genuine
+  differentiator (no SLURM-native, stale-rebuild-aware tool offers live
+  interaction at remake's scale), and the just-built programmatic `Remake`
+  API is the natural backend for it — the web layer would be another *render
+  + drive* client over the same methods the CLI uses, consistent with the
+  "CLI is a thin render layer" principle (see compatibility.md / design doc).
+  - *Open tensions to resolve before any work:* it reverses the "static
+    reports, not a server" discipline that has kept remake lean (a live UI
+    needs a running process — how does that coexist with a batch tool whose
+    runs are detached SLURM submissions?); real-time task state under SLURM
+    means polling `squeue`/sidecars or a push channel; auth/exposure on a
+    shared HPC login node; and keeping it strictly optional (an extra, never
+    a dependency of the core). Decide whether "real-time" means *observe* a
+    detached run or *also drive* one, and whether the server is local-only
+    (developer laptop / `ssh -L` tunnel) vs deployed.
+
+## Outputs, storage & on-disk layout
+
 - **Output enumeration for transfer — `ls-tasks --paths` / `--dirs`
   (2026-07-09).** Companion to the `slurm-status --verdict` item above: once
   the pipeline is known-done, the sync step should get its file list *from
@@ -157,238 +340,8 @@ design discussion before any work starts.
     killer upgrade: `-Q 'status == "success"'` scoped to the latest run ⇒
     incremental sync of exactly what a run produced, and the clean fix for
     enumerated-but-absent files); **RO-Crate export**
-    ([rocrate_export.md](rocrate_export.md)) and archiving/cleanup/du —
+    ([rocrate_export.md](designs/rocrate_export.md)) and archiving/cleanup/du —
     all sit on the same "enumerate a pipeline's files, filtered" verb.
-- **Pending/running split — a distinct in-flight task status (2026-07-06).**
-  Came out of the `info` four-state partition work (up-to-date / stale /
-  failed / pending, commit `2846bf2`): the `pending` bucket conflates two
-  states — *never run* (no DB record) and *in flight / interrupted* (a
-  record exists but isn't terminal). Mid-run on SLURM that's a routine
-  ambiguity: hundreds of tasks sit in `pending` while `squeue` shows them
-  RUNNING. A rename of the column (e.g. "never run") was considered and
-  rejected — it would be actively wrong for the in-flight case and would
-  split the status vocabulary (`info --tasks`, `set-state --pending`,
-  `why`'s "last run pending" all say `pending`). The real fix is a new
-  `running` status stamped when a task starts, leaving `pending` to mean
-  strictly "no record".
-  - *Cheap part:* `status_summary` can already distinguish the two (record
-    absent vs record non-terminal) — the summary-side split is a few lines.
-  - *Real cost:* it's a user-facing status, so it touches the DB status
-    semantics, every executor's record-writing (local, multiproc, dask,
-    SLURM — including sidecar ingestion timing), and every renderer of
-    statuses (`info`, `--tasks`, `--json`, `task-info`, colours in
-    `STATUS_STYLE`). Crash-handling needs care: a task that died without
-    writing a terminal record would show `running` forever unless something
-    (next plan? `slurm-status` cross-check against squeue?) demotes it.
-  - *Payoff:* `info` reads like a progress bar for live runs
-    (pending → running → success/failed), and pairs naturally with the
-    **SLURM monitor** / **Terminal output** ideas above — the same state is
-    what a live view would poll.
-  - *Status: on hold (2026-07-09).* The crash-staleness problem above (a
-    `running` record whose task died silently, needing queue reconciliation
-    to demote) is too much scope for the payoff right now. Keep `info`
-    DB-only and `slurm-status` queue-only.
-- **Web interface** — *being actively reconsidered (2026-06-23); scheduled
-  as a 0.12.x exploration in [roadmap.md](roadmap.md).* The original design
-  doc rules a GUI/dashboard out of scope, and a *passive read-only viewer*
-  over the SQLite DB remains low-value (external tools can already query it).
-  The idea now on the table is bigger and changes the calculus: a
-  **single-page, interactive control plane** — launch and cancel runs, watch
-  tasks change state in real time, drill into a failing task's log/traceback,
-  re-run or `set-state` a selection, all from the browser. That is a genuine
-  differentiator (no SLURM-native, stale-rebuild-aware tool offers live
-  interaction at remake's scale), and the just-built programmatic `Remake`
-  API is the natural backend for it — the web layer would be another *render
-  + drive* client over the same methods the CLI uses, consistent with the
-  "CLI is a thin render layer" principle (see compatibility.md / design doc).
-  - *Open tensions to resolve before any work:* it reverses the "static
-    reports, not a server" discipline that has kept remake lean (a live UI
-    needs a running process — how does that coexist with a batch tool whose
-    runs are detached SLURM submissions?); real-time task state under SLURM
-    means polling `squeue`/sidecars or a push channel; auth/exposure on a
-    shared HPC login node; and keeping it strictly optional (an extra, never
-    a dependency of the core). Decide whether "real-time" means *observe* a
-    detached run or *also drive* one, and whether the server is local-only
-    (developer laptop / `ssh -L` tunnel) vs deployed.
-- **Dask integration — long grass.** A basic dask executor exists
-  (2026-06-12: spec-based like multiproc/SLURM, LocalCluster or a
-  configured scheduler address) and that is where it stops: dask is a
-  nightmare on JASMIN (MM), which is remake's primary target, so
-  dask-*native* integration (inter-rule futures instead of per-rule
-  barriers, dask-jobqueue, long-lived-worker staleness) is deliberately
-  parked. Do not pick this up without a concrete user need on a platform
-  where dask actually behaves.
-- **CLI interface** — assorted behaviours to decide:
-  - `remake` on missing file: sensible default when no remakefile is
-    given (search cwd? `.remake/config` default, as remake2 had?).
-  - ~~"only if not run"~~ done: `run --ignore-code-changes/-I` — rerun
-    only what has never *succeeded* (failed reruns; upstream propagation
-    stays on so fan-ins pick up newly-run elements).
-  - ~~record-existing-outputs command~~ done, generalised to
-    `set-state -Q <query> (--success [--check-outputs] | --pending)`;
-    migration adoption = `set-state file -Q True --success
-    --check-outputs`.
-  - **Rerun reasons (remake2's `info --reasons`).** remake3 has a dedicated
-    `why` verb, so split along that seam rather than overloading `info`:
-    - ~~*Per-task detail → multi-task `why`.*~~ **Done 2026-06-15.** `why -Q
-      <query>` explains every match (block per task + summary); bare `why`
-      explains the runnable set; `why <key>` is the unchanged N=1 case.
-      `Remake.explain_tasks(tasks=None)` plans *once* and passes the runnable
-      list into the module-level `explain_task(..., runnable=...)` per task,
-      so it's plan-cost not N*plan; scope is bounded by the query or the
-      runnable default (never silently stats the whole matrix). Dissolved
-      the `RemakeError`-as-traceback nit for the >1 case (no longer an
-      error). Tests in test_cli.py.
-    - ~~*Aggregate rollup → `info --reasons`.*~~ **Done 2026-06-15.** `info
-      --reasons` adds a per-rule tally of would-run reason *categories*
-      (e.g. `stage1: 4 last-run-failed`), reusing the single `plan()` info
-      already does (plan-cost, not N*plan). Categories come from the planner
-      itself: `explain_task` now returns `Reason(category, message)` tuples
-      (`why` prints the message, this reads the category), so the buckets
-      are authoritative, not string-matched. A task can contribute several
-      categories, so counts may exceed the to-run total (documented).
-      `--json` puts a `reasons` dict on each rule row. `ls-tasks` stays pure
-      selection.
-  - ~~**Dedup `info -F` failures (remake2's unwieldy `info -F`).**~~ **Done
-    2026-06-15.** `-F` now groups failed tasks by a message-*insensitive*
-    signature (exception type + the traceback's frame locations) — so
-    `ValueError ... i=0/1/2/...` collapse into one group "ValueError at
-    stage1.py:9 ×N" with one representative traceback (real message intact),
-    its log, and `+N more: <tasks>`. `--all-failures` keeps the exhaustive
-    per-task dump; `--json` emits grouped (or the full list under
-    `--all-failures`). `_traceback_signature`/`_group_failures` in
-    remake_cmd.py; tests in test_cli.py.
-    - A log-template miner like **Drain3** is *an* approach (clusters the
-      message text itself, masks variable tokens → `... i=<*>`, recovers the
-      per-message values); it handles partially-similar failures well. But
-      we used the dep-free `(exception type, frame locations)` signature —
-      keep deps down; it covers the "one bug, N tasks" case that matters and
-      needs no runtime dependency.
-- **Grab code version** — record the pipeline repo's git hash/status in
-  task metadata at run time (remake2's `get_git_info` did this; dropped
-  in the trim).
-- **Get python module state** — record the environment alongside runs:
-  conda/pip/uv/pixi lockfile or `pip freeze` snapshot; how much is
-  remake's job vs the user's.
-- **Integrate RO-Crate** — *graduated to a full design doc:
-  [rocrate_export.md](rocrate_export.md) (scheduled 0.10.x, bundled with the
-  env/git provenance capture). The notes below are the origin sketch, kept for
-  the record.* Package outputs + metadata +
-  provenance as an
-  [RO-Crate](https://www.researchobject.org/ro-crate/) for
-  publication/archival; natural successor to remake2's archive feature.
-  Key realisation: remake already *holds* almost everything RO-Crate wants
-  (rules, tasks, kwargs, input/output paths, code/uses/io hashes,
-  timestamps, status) — the feature is mostly a **serialiser** over the
-  existing metadata, not new bookkeeping.
-  - *The mapping (remake → RO-Crate / schema.org):*
-    - pipeline → the crate root `Dataset`; the remakefile → the
-      `ComputationalWorkflow` / `SoftwareSourceCode` `mainEntity` (language
-      Python; remake itself a `SoftwareApplication` with its version).
-    - each rule → a `HowToStep` / `SoftwareApplication` carrying the rule's
-      `run` source (already stored in `rule.source`).
-    - each completed task → a `CreateAction`: `instrument` = the rule,
-      `object` = input `File`s, `result` = output `File`s, `startTime`/
-      `endTime` from metadata, `actionStatus` = Completed/Failed from task
-      status, kwargs → `PropertyValue` parameters, `agent` = user/host.
-    - each output → a `File` (`contentSize`, `dateModified`, optional
-      `sha256`, `encodingFormat` by extension); a zarr/multi-file output →
-      a `Dataset`, an S3 output → referenced by URL (the token type already
-      tells us which: FileToken / ZarrStore / S3Object).
-  - *Target profile:* the **Workflow Run Crate** profile (declare
-    `conformsTo` its URI); it exists precisely for "a workflow plus a record
-    of running it".
-  - *Two modes:* **reference** (default) — metadata-only crate whose `File`
-    entities point at data in place (cheap, for an existing tree); and
-    **`--include-data`** — copy outputs into the crate dir / zip
-    (self-contained, for archival/publication, the heavy path).
-  - *Shape:* `remake ro-crate [remakefile] [-o DIR] [--zip] [-Q query]
-    [--include-data] [--checksums]`. `-Q` scopes which tasks are crated.
-  - *Implementation:* a new `remake/export/rocrate.py` that walks
-    rules/tasks/metadata and emits `ro-crate-metadata.json`. **Hand-roll the
-    JSON-LD** (the `@graph` is a small list of dict entities we fully
-    control) rather than depend on `ro-crate-py` — consistent with the
-    dep-averse stance elsewhere (cf. the Drain3-vs-hand-rolled call); pull
-    `ro-crate-py` in later only if validation/round-trip earns it. Optional
-    extra either way (`remake[rocrate]` if a dep is used).
-  - *Checksums belong at workflow time, not crate time (own capability).*
-    Hashing should happen **on the node that produced the output, right
-    after it is written** — the bytes are local and hot in page cache, the
-    work is distributed across the array, and the result is captured *as
-    produced* (so later drift/corruption is detectable). Re-hashing at
-    `remake ro-crate` time means a cold serial re-read of the whole tree
-    over the network — or the data has been purged off scratch and can't be
-    hashed at all. So a stored output checksum is a **general capability**,
-    not an RO-Crate detail: `verify --checksum` (corruption, not just
-    existence), output-versioning **(B) content-addressing**, the stats
-    store, and dedup all consume it; RO-Crate is one reader. Tri-state, since
-    it can't be unconditionally on (hashing multi-GB netCDF/zarr every run
-    costs everyone): **off** (default; `ro-crate --checksums` stays as the
-    lazy cold-re-read fallback), **on at run time** (opt-in
-    `config={'checksum': 'sha256'}` / `run --checksum` → `run_task` hashes
-    outputs post-success and ships the digest in the **sidecar payload**,
-    computed compute-side), and a **hybrid read** (consumers use stored
-    digests when present, else compute-with-warning or omit). sha256 for
-    crate conformance; streamed post-write read rather than wrapping the
-    write handle.
-  - *Sharp edges:* **Scale:** 1e6 tasks → 1e6 `CreateAction`s is an enormous
-    JSON-LD — so `-Q`-scope by default, warn past a threshold, and offer a
-    `--summary` mode that emits one `CreateAction` per *rule* (with a task
-    count) instead of per task. Incomplete/deferred tasks are omitted (or
-    marked); reference-mode `File`s may be absent on scratch (degrade like
-    `check_outputs`).
-  - *Relates to:* the **stats store** (richer `CreateAction` timing /
-    agent / parameters when present — but degrade to `last_run_timestamp`
-    when not) and **grab code version / python module state** (workflow
-    provenance: git hash + env → `SoftwareSourceCode.version` /
-    environment). Degrade gracefully when those aren't recorded.
-- **`.remake` folder next to output artefacts** — metadata colocated
-  with the data it describes rather than the cwd the pipeline ran from;
-  interacts with shared stores and multiple pipelines per data tree.
-- **Plugins** — entry-point-based discovery of third-party executors,
-  tokens and metadata backends (the dotted-path executor injection is a
-  first step).
-- **.remake** — currently there is one single .remake folder for all
-  files within a directory, with one single remake.db. Is this correct?
-  Interacts with the "`.remake` next to artefacts" item above.
-- **configuration** - there should be three levels of config:
-  `~/.remake/config.yaml`, `<project>/.remake/config.yaml`, and potentially
-  within a remakefile, with cascade from general to specific.
-- **query by status** — `-Q 'status == "failed"'` is not possible: queries
-  are evaluated at matrix expansion, before the DB is consulted. `run -I`
-  covers the main case (failed ∪ never-run), but selecting tasks by
-  recorded status (failures-only for `set-state`/`ls-tasks`, say) would
-  need plan-time filtering — decide whether it earns the complexity.
-- **logging** - Perhaps the rule decorator could have a logger=True line, that
-  passes in a loguru logger to the function? Or just say that the user can
-  set up a loguru logger then use that as using `uses`.
-- **intra-rule task dependency** - Should this be possible? A sequentially
-  defined rule where each task depends on the one before? Challenges the
-  no-task-DAG principle that planning memory, SLURM array eligibility and
-  failure-skip propagation all lean on — needs a real design discussion.
-
-- **Per-rule housekeeping job (SLURM) — probably to be implemented.** A
-  one-shot (non-array) SLURM job depending `aftercorr`/`afterok` on a
-  rule's array, running once after all its elements complete. Makes the
-  edge between rule N's array and rule N+1's array an explicit, first-class
-  job rather than relying solely on the global continuation job.
-  - *Primary action: DB sync.* It is the natural single-writer point to
-    ingest that rule's sidecars — exactly the low-concurrency path the
-    sidecar design assumes, no new contention. The next plan/run already
-    ingests, so the win is **timeliness** (mid-pipeline `info`/
-    `slurm-status` reflect reality without waiting for the next manual
-    command) plus being the *vehicle* for the cleanup actions below — not
-    ingest correctness, which sidecars already give us.
-  - *Fits the model.* Still submit-and-log-out: SLURM owns the graph for
-    the pipeline's life; this is just another node in it. **Not** the
-    rejected orchestrator daemon (see below) — nothing long-lived on a
-    login node, no IPC, recovery is still replan-from-DB + `squeue`.
-  - *Design question:* does housekeeping **replace** the single global
-    continuation job (becoming a finer-grained per-rule version of it), or
-    sit alongside it? Lean towards generalising the continuation into this.
-  - Relates to the **SLURM monitor** item (a place to surface progress) and
-    is the enabling mechanism for **temporary files** below.
-
 - **Temporary / scratch intermediate files — desirable feature, at some
   point.** Let a pipeline mark intermediate outputs as deletable once fully
   consumed (HPC scratch pressure: huge intermediates that only exist to
@@ -421,208 +374,6 @@ design discussion before any work starts.
     upstream" — `temp()` (we delete it) and scratch (the system deletes it)
     become two cases of the same machinery, rather than two overlapping
     mechanisms. Builds on the existing `check_outputs='fallback'` thinking.
-
-- **Per-element SLURM startup cost (lazy networkx).** Each array element is
-  a fresh `remake run-array-task` process whose wall-time is dominated by
-  Python startup + imports, not the task. Measured cold: `import
-  remake.remake_cmd` ≈ 336 ms, of which ~260 ms is **networkx**, pulled in
-  eagerly by `remake.core.dag` at package load. But `run-array-task` never
-  builds or traverses the DAG — it loads one task spec (`finalize=False`)
-  and runs it. On JASMIN this bit hard during the failure-propagation test
-  (2026-06-14): 40 elements landed on one node and cold-imported the same
-  large module tree from the shared filesystem simultaneously — an import
-  storm that turned sub-second imports into minutes and pushed several past
-  a 20-min wall clock (`TIMEOUT`). Throttling (`--array=0-N%T`) caps
-  concurrency and removes the storm, but each element still pays the import.
-  Lazy-importing networkx (or keeping it off the `run-array-task` path)
-  would roughly halve per-element startup and ease the storm. Mostly a
-  benchmark artefact — real tasks compute for minutes, so startup is noise
-  (cf. the 1e6/real-pipeline benchmarks, where startup wasn't the
-  bottleneck) — so this is an optimisation, not a correctness issue. Needs
-  a design pass: which imports are truly needed per task path, and whether
-  to split a lean `run-array-task` entry point from the full CLI.
-
-- **No-inputs/outputs orchestration pattern.** The hk26 pyflextrkr
-  migration (2026-06-19) uses rules with only `depends_on` and `matrix` —
-  no `inputs=` or `outputs=`. pyflextrkr manages its own file layout
-  internally via `root_path`; duplicating those paths in remake outputs
-  would be fragile and add no value. remake3 tracks completion via the
-  metadata DB alone. This is a valid and likely common pattern when
-  wrapping tools that own their own I/O (climate models, simulation
-  frameworks, etc.). Worth documenting as a first-class pattern — the
-  current examples all use inputs/outputs, which may give the impression
-  they're required. A minimal example (e.g. `ex7_orchestration_only.py`)
-  would help.
-
-- **Variant-dict matrix pattern.** Same migration: domain/experiment
-  overlay combinations are parameterised as a `VARIANTS` dict mapping
-  labels to config file lists (`{'global': [], 'sahel_z10':
-  ['configs/domains/sahel_z10.yml'], ...}`), with
-  `list(VARIANTS.keys())` as the matrix dimension and the dict passed
-  via `uses`. Adding a new variant is a one-line dict entry. This is a
-  clean pattern for "matrix over configurations" (as opposed to simple
-  scalars) that could be documented alongside the callable-matrix
-  examples.
-
-- **Rule+`Defer` as a cross-invocation filesystem cache — plausible pattern,
-  one real gotcha.** Raised against wescon_radar_dev.py's `CasePathsMap`: a
-  hand-rolled class that globs raw CAMRa/Kepler directories and memoizes
-  the (batched) path list per `(case, radar)` key. The memoization only
-  lives for one Python process, so the glob reruns on *every* `remake`
-  invocation — `info`, `lint`, `why`, `run -n`, not just `run` — because
-  matrix callables are plain Python, unmanaged by remake's own caching.
-  The proposed fix: a rule that globs once and writes the path list to
-  disk, with downstream matrices `@deferrable`/`Defer`-gated on that
-  output — same idiom `gather_delta_z_stats_matrix`/`compare_delta_z_matrix`
-  already use in that file. Decouple further by storing only the raw
-  sorted paths (not the batches), so a batch-size constant can change
-  without rerunning the glob rule at all.
-  - *The asymmetry that makes this different from existing `Defer` uses.*
-    Every current `Defer` use gates on output from an upstream *remake*
-    rule — the planner genuinely waits for data that doesn't exist yet.
-    Here there's no upstream rule; the raw files exist on disk from day
-    one. Using a rule purely as a persistent filesystem-glob cache is a
-    legitimate but inverted use of the mechanism, and it trades away a
-    property the current unmanaged glob has for free: because the glob is
-    unconditional every invocation, newly-arrived raw files (backfill,
-    late data) are picked up on the very next `remake` run with zero
-    action. Once it's a rule, success is sticky — remake doesn't watch
-    arbitrary directories for content changes, so new files sit unnoticed
-    until someone explicitly `--force`s the glob rule. For a pipeline
-    where raw IOP data was still arriving/being backfilled, that's a real
-    silent-staleness risk, not just a style question.
-  - *Where this might point for remake itself — a generic disk-cache
-    decorator, not a matrix-specific one.* `CasePathsMap.__call__(case,
-    radar)` is actually called from three separate callables (`matrix`,
-    `inputs`, `outputs`), each invoked per-task during expansion — so
-    caching just the `matrix=` callable's return value wouldn't cover
-    `inputs`/`outputs` re-globbing. The right shape targets the expensive
-    *helper* directly, usable from all three:
-    `@disk_cache` wrapping e.g. `find_case_paths(case, radar)`. Storage
-    would follow the existing `.remake/jobs/<rule>.jobids.json` sidecar
-    convention — `.remake/cache/<qualname>/<hash-of-args>.json`, one small
-    inspectable/`rm`-able file per call — with args restricted to the same
-    JSON-round-trip-stable scalars already enforced on matrix kwargs
-    (`_check_scalar_kwargs`, dag.py), for the same reason (a tuple
-    silently becoming a list would corrupt the cache key).
-    Invalidation is the hard part and is exactly the risk above:
-    never-expiring needs a manual bust (`rm -rf .remake/cache` or a
-    `remake cache clear` verb) and reintroduces silent staleness; a TTL
-    bounds the staleness window but the number is arbitrary; a cheap
-    re-validation (dir mtime/file count) before paying for the full glob
-    is best-of-both but NFS mtime semantics on JASMIN's GWS are already
-    flagged elsewhere in this doc as unreliable, so it's not a safe sole
-    signal there. Also worth asking whether this needs to be a remake
-    feature at all — hash-keyed disk caching is a solved problem
-    (`joblib.Memory`, `diskcache`); remake's only distinctive value-add
-    would be living under `.remake/` by convention and CLI visibility
-    (`remake info` showing cache age/staleness), which may not earn its
-    keep as core plumbing.
-  - **Decision (2026-07-02): not doing this unless a pressing need shows
-    up.** Parked, not scheduled — wescon_radar_dev.py keeps `CasePathsMap`
-    as-is. Revisit only if the per-invocation glob cost (or a second,
-    independent case of the same shape) actually starts to hurt.
-
-- **Fragile `remake` on PATH in SLURM jobs.** The generated sbatch payload
-  invokes a bare `remake run-array-task ...`. The jobs only find it because
-  `submit.sh` runs inside the `uv` venv and sbatch inherits that PATH via
-  the default `--export=ALL`; submitted from a plain shell, `remake` is not
-  on PATH (`which remake` finds nothing on a JASMIN login node — it lives
-  only in the venv). Options to harden: emit `python -m remake.remake_cmd`
-  instead of the console script; or capture the resolved interpreter/venv
-  path at submission time and bake it into the sbatch script. Relates to
-  the per-element startup item (a `python -m` entry point is also where a
-  lean import path would live).
-
-- **Orchestrator daemon — considered and rejected as load-bearing
-  (2026-06-13).** Proposal: invoke a `remake-daemon` on most `remake run`
-  to orchestrate tasks — a listener/responder subprocess + a process-runner
-  subprocess, the single reader/writer of `remake.db` while active,
-  monitoring SLURM queues and restarting failed jobs. The remake CLI would
-  talk to the listener, which talks to the DB. Pitched benefits: single DB
-  writer (no sidecars), live failed-job restart, live monitoring.
-
-  Decision: **do not make a daemon default or load-bearing, especially for
-  SLURM.** Reasoning:
-  - *The "no sidecars for SLURM" benefit is largely illusory.* The
-    contention problem was concurrent SQLite *writers*; sidecars fix it by
-    construction (independent file writes, single-threaded ingest). A daemon
-    serializes ingest too, but array jobs still run on compute nodes and
-    their results must cross the compute→login boundary. The options are:
-    write sidecars and let the daemon ingest them (still sidecars); open
-    800 sockets back to one login-node listener (worse contention than 800
-    independent FS writes, over a flaky/firewalled compute→login path, with
-    backpressure we now own); or poll `sacct` (can't recover
-    `uses_hash`/exception without the task writing a sidecar). So SLURM
-    would almost certainly still consume sidecars — the daemon only
-    duplicates what they already do, cheaply (validated ~2.5 ms/sidecar,
-    linear, no cliff at 800-way).
-  - *It fights JASMIN reality.* The current SLURM design's superpower is
-    submit-and-log-out: the continuation job replans itself and SLURM (an
-    HA, long-lived, cluster-wide scheduler) owns the dependency graph for
-    the multi-day life of the pipeline. A daemon must instead stay alive on
-    a login/sci node for that whole duration — exactly what JASMIN
-    discourages (process-killers, memory caps, reboots). If it dies, cold
-    recovery from DB + `squeue` *is* `remake run` replanning today — so the
-    daemon adds a fragile layer on top of the stateless recovery it can't
-    remove.
-  - *Costs:* two execution models maintained forever (small/local and `-X`
-    runs want a no-daemon fast path); IPC surface (singleton lock with
-    NFS stale-detection — the same hard problem SQLite locking was — stale
-    sockets, protocol versioning, crash recovery); a testability regression
-    versus the current pure-function + golden-file SLURM tests; and forced
-    coordination between concurrent invocations/users (today idempotent
-    ingest + squeue de-dup make these safe-ish).
-  - *Per-executor:* singleproc is already one writer (daemon = pure
-    overhead + breaks `-X`); multiproc's coordinator wants the *parent* as
-    sole writer via a `multiprocessing` queue, not a bespoke daemon; dask
-    *already has* a daemon (its scheduler) with futures back to the client;
-    SLURM is the only real target and the worst fit. For every executor
-    except SLURM, single-writer is trivial or already provided by the
-    runtime.
-
-  What the daemon *is* good for — interactive, adaptive orchestration (live
-  retry of transient failures, rich progress, continuous in-process
-  replanning instead of continuation jobs, live SLURM monitor) — is real,
-  but should be an **optional, non-load-bearing layer**, never the sole DB
-  writer and never required for correctness:
-  - A foreground, restartable `remake monitor`/`watch`: live view +
-    opportunistic resubmit of failed/transient jobs. The pipeline stays
-    correct and crash-recoverable without it. (You cannot have both "daemon
-    is sole writer" and "works when the daemon dies"; on JASMIN you need
-    the latter.) Relates to the **SLURM monitor** item above.
-  - Transient SLURM failures: prefer sbatch `--requeue`/retry — SLURM does
-    node-death/preemption requeue better than a login-node daemon could.
-  - multiproc: drop local sidecars by making the parent the sole writer via
-    a queue (a real simplification, no daemon needed).
-
-- **Opt-in frame-locals dump on exception** — capture variable state at
-  the moment a task raises, written alongside the stored traceback, as the
-  *non-interactive* complement to `-X`.
-  - Motivation: remake already has the stored traceback (`info -F`) and
-    interactive post-mortem (`-X`, which forces singleproc, runs
-    in-process and needs the failure reproduced at a terminal). The gap is
-    a **failed SLURM array task that died on the cluster** — you can't pdb
-    into it, but a locals dump captured at failure time lets you inspect
-    what went wrong after the fact. That HPC case is the real value; this
-    is not redundant with `-X`.
-  - Design hazard — serialisation. "Full variable dump" taken literally is
-    dangerous: rule locals routinely hold multi-GB xarray Datasets, open
-    file handles, DB connections, unpicklable objects. Naive pickling
-    either explodes the dump size or crashes *inside the failure handler*.
-    So: best-effort **safe `repr()` with per-value truncation**, never
-    pickle live objects; default to the **innermost frame + the rule
-    function's frame**, not the whole chain at full depth.
-  - Opt-in (off by default): size/cost, and a dump can write sensitive
-    data/secrets to disk. A `config={'debug': {...}}` flag or a `run`
-    option.
-  - Lands alongside the per-task traceback under `.remake/tasks/log/...`
-    so `task-info`/`task-log` surface it; rides the existing sidecar
-    result path, so it works under SLURM arrays.
-  - Prior art: `stackprinter` renders tracebacks with truncated per-frame
-    values — a good dependency or reference implementation. (`cgitb`, the
-    old stdlib answer, is removed in 3.13 — don't reach for it.)
-
 - **Output versioning** — a sanctioned mechanism for keeping (not
   silently clobbering) old outputs when a rule's code or inputs change.
   Today remake's stale-rebuild *detects* the change (run-code / `uses=` /
@@ -667,44 +418,34 @@ design discussion before any work starts.
     low-risk and unlocks inspection), and treat **(C)** as the real
     feature once retention/restore is designed. **(B)** stays optional —
     powerful but the opacity makes it a poor default.
+- **`.remake` folder next to output artefacts** — metadata colocated
+  with the data it describes rather than the cwd the pipeline ran from;
+  interacts with shared stores and multiple pipelines per data tree.
+- **.remake** — currently there is one single .remake folder for all
+  files within a directory, with one single remake.db. Is this correct?
+  Interacts with the "`.remake` next to artefacts" item above.
 
-- **Optimistic direct DB write under SLURM, with sidecar fallback.**
-  Today per-task array processes never touch the DB: they write JSON
-  sidecars (design_docs/slurm_implementation.md), ingested in batch by
-  the next DB-reader. That is robust but defers visibility — results are
-  not in the DB until a *later* invocation (continuation job, next
-  `run`/`info`) ingests them; a terminal wave needs a follow-up `remake
-  info` before anything shows. Proposal: a task tries to write its result
-  directly to `remake.db`, and falls back to a sidecar only if it fails.
-  - The win is **latency-to-visibility**, not DB pressure relief.
-    Results land the instant a task finishes, in the common (low-
-    contention) case.
-  - Why it is self-regulating rather than a thundering herd: the
-    *fallback caps the herd*. A writer that fails gives up and goes quiet
-    (writes a sidecar) instead of continuing to contend, so contention
-    cannot escalate. And most real jobs are O(1–10 min) with natural
-    jitter around the mean, so completion times — and thus write
-    attempts — spread out rather than arriving as one synchronised burst.
-    Quiet period → direct write succeeds; busy period → fast-fail and
-    degrade gracefully to exactly today's sidecar behaviour.
-  - **Hard requirement: the retry must be bounded and fast-failing.** The
-    existing `retry_lock_commit` (sqlite3_backend.py) has *unbounded*
-    exponential backoff — it never gives up, just slows down — which is
-    the wrong primitive here. The direct-write path needs a separate
-    `try_commit(max_attempts=2, busy_timeout=short)` that raises quickly,
-    at which point the sidecar fallback engages.
-  - Correctness is never at risk: the sidecar net still catches any
-    failed/abandoned write, and the upsert is idempotent. Make ingest
-    last-writer-wins by timestamp so a stale sidecar can't clobber a
-    newer direct write.
-  - Caveats: SQLite locking over NFS/Lustre is the real JASMIN hazard
-    (flaky POSIX locks) — a bounded fast-fail could in principle falsely
-    fail/succeed there, so this needs a cluster validation run before the
-    default flips (`bench_sqlite_contention.py` extends to it). Don't
-    reach for WAL as an alternative — WAL is unsafe over NFS. Likely
-    shipped behind a config flag, perhaps auto-off above an array-size
-    threshold; sidecar-only stays the conservative default until proven.
+## Configuration & extensibility
 
+- **configuration** - there should be three levels of config:
+  `~/.remake/config.yaml`, `<project>/.remake/config.yaml`, and potentially
+  within a remakefile, with cascade from general to specific.
+- **Plugins** — entry-point-based discovery of third-party executors,
+  tokens and metadata backends (the dotted-path executor injection is a
+  first step).
+
+## Provenance & history
+
+- **Grab code version** — record the pipeline repo's git hash/status in
+  task metadata at run time (remake2's `get_git_info` did this; dropped
+  in the trim).
+- **Get python module state** — record the environment alongside runs:
+  conda/pip/uv/pixi lockfile or `pip freeze` snapshot; how much is
+  remake's job vs the user's.
+- **Integrate RO-Crate** — *graduated to a full design doc:
+  [designs/rocrate_export.md](designs/rocrate_export.md) (after 1.0 per the
+  2026-09-24 roadmap; the capture it consumes is 0.10.x). The origin sketch
+  that lived here is kept as that doc's "Origins" appendix.*
 - **I/O verification / reconcile subcommand** (`remake verify`,
   `-Q`-composable). On-demand reconciliation of filesystem reality into
   the DB — snakemake-like, but opt-in rather than the only model. Three
@@ -730,7 +471,6 @@ design discussion before any work starts.
     state-writing sibling of the read-only `ls-tasks --check`. (a)+(c) are
     the safe core to build first; (b) stays behind its flag, scoped to
     external inputs, never default.
-
 - **Stats / run-history store (`remake stats`).** Record what *happened*
   over time — observability/history, a fundamentally different concern
   from `remake.db`, which holds mutable *operational state* ("what needs
@@ -797,45 +537,7 @@ design discussion before any work starts.
     `task_run` table *is* provenance history, feeding the output-versioning
     **(D) metadata-tracked provenance** option directly.
 
-- **`check_outputs='fallback'` silently adopts stale outputs after code
-  changes — defeats iterative development.** Discovered 2026-06-18 during
-  `theta_e_analysis.py` development: editing the plot function (changing
-  y-axis orientation, switching pcolormesh→contourf, etc.) then running
-  `set-state --pending` + `remake run` repeatedly produced apparently
-  identical output. The task's output file already existed on disk from a
-  previous run; the `--pending` cleared its DB record; but the next `run`
-  saw "no DB record + output exists" and silently re-adopted the stale
-  file under the default `check_outputs='fallback'` mode — so the new code
-  never actually executed. Only `remake run --force` bypassed the adoption
-  and ran the updated code.
-
-  This is clearly wrong behaviour for iterative work. The `fallback` mode
-  was designed for **migration** (adopt a pre-existing output tree into a
-  fresh `.remake/` without rerunning everything), and it works well for
-  that one-shot case. But as the default mode during normal development it
-  creates a trap: the user edits code, the planner sees "output complete,
-  no record → adopt", and the edit is silently ignored. The user sees
-  success, the output looks unchanged, and has no signal that the code
-  never ran — the tool lies by omission.
-
-  **Recommendation: default to `check_outputs='never'` for normal
-  operation.** Migration adoption should be an explicit opt-in step
-  (`set-state -Q True --success --check-outputs`, or a one-shot
-  `check_outputs='fallback'` on the first run of a migrated pipeline),
-  not an always-on default that silently swallows code changes. The
-  `'fallback'` mode's invariant — "if the output exists, the task
-  succeeded" — is only true when the code that produced it hasn't changed,
-  and the planner *cannot check that* when there is no DB record to compare
-  hashes against.
-
-  Alternatively, if `'fallback'` stays the default: at minimum, adoption
-  should be **loudly reported** (a per-task warning or an `info` summary
-  line: "N tasks adopted from disk without running"), so the user knows
-  their code was bypassed. But the deeper issue is that adoption is
-  semantically wrong when the user *intends* a rerun — there is no way
-  to distinguish "legacy output from a prior tool" from "stale output
-  from the current tool's previous run with different code", and the
-  default should not guess.
+## Documentation
 
 - **Key-concepts documentation.** The docs site is currently task-oriented
   (getting-started, running, SLURM, debugging) — it teaches you *how* to do
@@ -899,7 +601,6 @@ design discussion before any work starts.
     auto-link glossary terms across the docs. The mkdocstrings API reference
     stays the source of truth for signatures — Concepts explains *meaning*,
     not types.
-
 - **Explainer: task state and how to find it out.** A companion how-to (or a
   Concepts sub-page) for the single most common user question: *"what's going
   on, and what happens if I hit run?"* Today the answer is spread across five
@@ -950,14 +651,240 @@ design discussion before any work starts.
   *can't* yet ask `-Q 'status == "failed"'` and must use `info -F` /
   `run --ignore-code-changes` instead).
 
-- **Propagation gap: upstream→downstream rerun propagation is not durable.**
-  Moved to a tracked bug doc: see
-  [design_docs/bugs/01_durable_rerun_propagation.md](bugs/01_durable_rerun_propagation.md)
-  (crash + partial-target scenarios, fix = run-sequence id).
+## Patterns to document
 
+Idioms seen in migrations that work today and want a documented,
+blessed form rather than new machinery.
+
+- **No-inputs/outputs orchestration pattern.** The hk26 pyflextrkr
+  migration (2026-06-19) uses rules with only `depends_on` and `matrix` —
+  no `inputs=` or `outputs=`. pyflextrkr manages its own file layout
+  internally via `root_path`; duplicating those paths in remake outputs
+  would be fragile and add no value. remake3 tracks completion via the
+  metadata DB alone. This is a valid and likely common pattern when
+  wrapping tools that own their own I/O (climate models, simulation
+  frameworks, etc.). Worth documenting as a first-class pattern — the
+  current examples all use inputs/outputs, which may give the impression
+  they're required. A minimal example (e.g. `ex7_orchestration_only.py`)
+  would help.
+- **Variant-dict matrix pattern.** Same migration: domain/experiment
+  overlay combinations are parameterised as a `VARIANTS` dict mapping
+  labels to config file lists (`{'global': [], 'sahel_z10':
+  ['configs/domains/sahel_z10.yml'], ...}`), with
+  `list(VARIANTS.keys())` as the matrix dimension and the dict passed
+  via `uses`. Adding a new variant is a one-line dict entry. This is a
+  clean pattern for "matrix over configurations" (as opposed to simple
+  scalars) that could be documented alongside the callable-matrix
+  examples.
+- **Rule+`Defer` as a cross-invocation filesystem cache — plausible pattern,
+  one real gotcha.** Raised against wescon_radar_dev.py's `CasePathsMap`: a
+  hand-rolled class that globs raw CAMRa/Kepler directories and memoizes
+  the (batched) path list per `(case, radar)` key. The memoization only
+  lives for one Python process, so the glob reruns on *every* `remake`
+  invocation — `info`, `lint`, `why`, `run -n`, not just `run` — because
+  matrix callables are plain Python, unmanaged by remake's own caching.
+  The proposed fix: a rule that globs once and writes the path list to
+  disk, with downstream matrices `@deferrable`/`Defer`-gated on that
+  output — same idiom `gather_delta_z_stats_matrix`/`compare_delta_z_matrix`
+  already use in that file. Decouple further by storing only the raw
+  sorted paths (not the batches), so a batch-size constant can change
+  without rerunning the glob rule at all.
+  - *The asymmetry that makes this different from existing `Defer` uses.*
+    Every current `Defer` use gates on output from an upstream *remake*
+    rule — the planner genuinely waits for data that doesn't exist yet.
+    Here there's no upstream rule; the raw files exist on disk from day
+    one. Using a rule purely as a persistent filesystem-glob cache is a
+    legitimate but inverted use of the mechanism, and it trades away a
+    property the current unmanaged glob has for free: because the glob is
+    unconditional every invocation, newly-arrived raw files (backfill,
+    late data) are picked up on the very next `remake` run with zero
+    action. Once it's a rule, success is sticky — remake doesn't watch
+    arbitrary directories for content changes, so new files sit unnoticed
+    until someone explicitly `--force`s the glob rule. For a pipeline
+    where raw IOP data was still arriving/being backfilled, that's a real
+    silent-staleness risk, not just a style question.
+  - *Where this might point for remake itself — a generic disk-cache
+    decorator, not a matrix-specific one.* `CasePathsMap.__call__(case,
+    radar)` is actually called from three separate callables (`matrix`,
+    `inputs`, `outputs`), each invoked per-task during expansion — so
+    caching just the `matrix=` callable's return value wouldn't cover
+    `inputs`/`outputs` re-globbing. The right shape targets the expensive
+    *helper* directly, usable from all three:
+    `@disk_cache` wrapping e.g. `find_case_paths(case, radar)`. Storage
+    would follow the existing `.remake/jobs/<rule>.jobids.json` sidecar
+    convention — `.remake/cache/<qualname>/<hash-of-args>.json`, one small
+    inspectable/`rm`-able file per call — with args restricted to the same
+    JSON-round-trip-stable scalars already enforced on matrix kwargs
+    (`_check_scalar_kwargs`, dag.py), for the same reason (a tuple
+    silently becoming a list would corrupt the cache key).
+    Invalidation is the hard part and is exactly the risk above:
+    never-expiring needs a manual bust (`rm -rf .remake/cache` or a
+    `remake cache clear` verb) and reintroduces silent staleness; a TTL
+    bounds the staleness window but the number is arbitrary; a cheap
+    re-validation (dir mtime/file count) before paying for the full glob
+    is best-of-both but NFS mtime semantics on JASMIN's GWS are already
+    flagged elsewhere in this doc as unreliable, so it's not a safe sole
+    signal there. Also worth asking whether this needs to be a remake
+    feature at all — hash-keyed disk caching is a solved problem
+    (`joblib.Memory`, `diskcache`); remake's only distinctive value-add
+    would be living under `.remake/` by convention and CLI visibility
+    (`remake info` showing cache age/staleness), which may not earn its
+    keep as core plumbing.
+  - **Decision (2026-07-02): not doing this unless a pressing need shows
+    up.** Parked, not scheduled — wescon_radar_dev.py keeps `CasePathsMap`
+    as-is. Revisit only if the per-invocation glob cost (or a second,
+    independent case of the same shape) actually starts to hurt.
+
+## Ideas from Snakemake
+
+*Moved from `future_releases/v0.9.0.md` 2026-09-24, when that file was
+rescoped to the 0.9 plan. Items since scheduled are tracked in
+[roadmap.md](roadmap.md); the rest remain an un-scoped menu.*
+
+Short list of features worth considering for a 0.9.0, drawn from a
+side-by-side translation of the remake examples into Snakemake (and luigi)
+— see the `remake_vs` repo and its `COMPARISON.md`. The aim is not to copy
+Snakemake but to take the handful of its runtime/tooling/ecosystem ideas
+that fit remake's model (rule-level DAG, `OutputToken` outputs, SQLite
+metadata, AST/`uses` rerun tracking) and would pay off cheaply.
+
+None of these block anything; this is a menu, roughly ordered within each
+section by value-for-effort. See [roadmap.md](roadmap.md) for how 0.9.0
+sits in the wider plan.
+
+### Runtime
+
+- **Output validation before marking complete (`ensure`-style).** Snakemake's
+  `ensure(..., non_empty=True)` / checksum check catches silently truncated
+  or empty outputs. remake already has `OutputToken.is_complete()`; extend it
+  (or add an optional validator) so a rule's outputs are checked for
+  non-empty / size / checksum at completion, not just existence. High value,
+  small surface — it slots into the token ABC.
+
+- **Per-task resource capture (portable `benchmark:`).** Snakemake's
+  `benchmark:` records wall time and peak RSS per job to a file. remake should
+  record wall time and peak memory per task into the metadata DB for *all*
+  executors (not only the SLURM `sacct` post-mortem already in discussion.md).
+  Feeds the HTML report below and any future resource-aware scheduling.
+
+- **Local resource budgets + task weights.** Snakemake's `resources:` +
+  `--resources mem_mb=...` stop the local/multiproc scheduler oversubscribing
+  a node. Let a rule declare a weight (e.g. `mem`, `slots`) and have the
+  multiproc/dask executors respect a global budget, so a few heavy tasks
+  don't all land at once. (SLURM already gets this via per-rule config.)
+
+- **`group:`-style task coalescing for SLURM.** Snakemake `group:` packs many
+  small jobs into one submission. remake submits one array per rule; a way to
+  fuse a chain of cheap per-task steps into a single array element would cut
+  scheduler load at the 1e6-task scale the benchmarks target.
+
+- **Tunable rerun triggers.** Snakemake's `--rerun-triggers {mtime,params,
+  code,input,...}` lets users pick what counts as stale. remake's AST/`uses`
+  model is stronger by default, but a knob to e.g. *ignore mtime and rerun on
+  code/`uses` only* (or vice versa) would help migration and CI-style runs.
+
+### Tooling
+
+- **DAG / rule-graph export.** Snakemake `--dag`/`--rulegraph`/`--filegraph`
+  emit Graphviz. remake already builds a rule-level graph internally; a
+  `remake dag [--rules|--tasks] -o graph.dot` would be a near-free,
+  high-impact onboarding/debugging aid. (A *static* export, distinct from the
+  live web UI that discussion.md rules out of scope.)
+
+- **Self-contained run report.** Snakemake `--report report.html` bundles
+  provenance, per-task runtimes, config and results into one file. remake's
+  SQLite DB already holds most of this; a `remake report` that renders it to a
+  single static HTML would be a strong deliverable — again static, not a
+  server.
+
+- **Richer dry-run reasons.** Snakemake `-n -r` annotates every job with *why*
+  it will run. remake has `why` and `--dry-run` separately; merging "what runs"
+  with per-task reasons (changed code / missing output / changed `uses`) in one
+  dry-run view would close the gap.
+
+### Ecosystem
+
+- **`script:` / `notebook:`-style external rule bodies.** Snakemake can point a
+  rule at an external `.py`/`.R`/notebook and inject inputs/outputs/params.
+  remake rules are inline Python functions; an optional "run this script with
+  the task's inputs/outputs/params bound" mode would lower boilerplate for
+  larger codebases and non-trivial analyses.
+
+- **Storage backends as first-class tokens.** Snakemake storage plugins make
+  remote I/O (S3/GCS/HTTP) ordinary inputs/outputs. remake has an `S3Object`
+  token but it is `is_complete()`-only, not a declared dependency. Generalise
+  the token ABC into a small storage-backend interface so remote artefacts can
+  be true upstream/downstream dependencies. Pairs with the plugins item in
+  discussion.md.
+
+- **Execution profiles.** Snakemake "profiles" are named, shareable execution
+  configs (a cluster's defaults in one place). remake's config cascade
+  (discussion.md) should expose a *named profile* concept — e.g. a shipped
+  `jasmin` profile carrying partition/account/time defaults — so users stop
+  hand-copying SLURM settings. Directly useful for the JASMIN migration.
+
+> **RO-Crate export** was briefly slated here (2026-06-23) but moved to
+> **0.10.x** the same day (and after 1.0 in the 2026-09-24 re-plan), to ship alongside the environment/git provenance
+> *capture* it depends on for full richness — see
+> [rocrate_export.md](designs/rocrate_export.md) and [roadmap.md](roadmap.md).
+
+### Already on the radar — Snakemake corroborates these
+
+These are elsewhere in this file; the comparison reinforces them
+as worth doing, not new:
+
+- **`temp()` / scratch intermediates** — auto-delete intermediates once
+  consumed (the hardest one given the rule-level DAG; see the note there).
+- **Environment capture** — record a conda/pip/uv lockfile or env hash per
+  run for reproducibility.
+- **Transient-failure retries** — Snakemake `retries:` / `--retries`; remake
+  already plans to lean on sbatch `--requeue` for SLURM.
+- **SLURM resource audit** (`sacct`) — the post-mortem resource view.
+
+## Parked
+
+Deliberately not being worked on; each says what would revive it.
+
+- **Pending/running split — a distinct in-flight task status (2026-07-06).**
+  Came out of the `info` four-state partition work (up-to-date / stale /
+  failed / pending, commit `2846bf2`): the `pending` bucket conflates two
+  states — *never run* (no DB record) and *in flight / interrupted* (a
+  record exists but isn't terminal). Mid-run on SLURM that's a routine
+  ambiguity: hundreds of tasks sit in `pending` while `squeue` shows them
+  RUNNING. A rename of the column (e.g. "never run") was considered and
+  rejected — it would be actively wrong for the in-flight case and would
+  split the status vocabulary (`info --tasks`, `set-state --pending`,
+  `why`'s "last run pending" all say `pending`). The real fix is a new
+  `running` status stamped when a task starts, leaving `pending` to mean
+  strictly "no record".
+  - *Cheap part:* `status_summary` can already distinguish the two (record
+    absent vs record non-terminal) — the summary-side split is a few lines.
+  - *Real cost:* it's a user-facing status, so it touches the DB status
+    semantics, every executor's record-writing (local, multiproc, dask,
+    SLURM — including sidecar ingestion timing), and every renderer of
+    statuses (`info`, `--tasks`, `--json`, `task-info`, colours in
+    `STATUS_STYLE`). Crash-handling needs care: a task that died without
+    writing a terminal record would show `running` forever unless something
+    (next plan? `slurm-status` cross-check against squeue?) demotes it.
+  - *Payoff:* `info` reads like a progress bar for live runs
+    (pending → running → success/failed), and pairs naturally with the
+    **SLURM monitor** / **Terminal output** ideas above — the same state is
+    what a live view would poll.
+  - *Status: on hold (2026-07-09).* The crash-staleness problem above (a
+    `running` record whose task died silently, needing queue reconciliation
+    to demote) is too much scope for the payoff right now. Keep `info`
+    DB-only and `slurm-status` queue-only.
+- **Dask integration — long grass.** A basic dask executor exists
+  (2026-06-12: spec-based like multiproc/SLURM, LocalCluster or a
+  configured scheduler address) and that is where it stops: dask is a
+  nightmare on JASMIN (MM), which is remake's primary target, so
+  dask-*native* integration (inter-rule futures instead of per-rule
+  barriers, dask-jobqueue, long-lived-worker staleness) is deliberately
+  parked. Do not pick this up without a concrete user need on a platform
+  where dask actually behaves.
 - **Lambda source recovery for inline callable specs — parked 2026-07-03.**
   Investigated during the rule-syntax discussion (see the settled-decision
-  record in [graduated_discussion.md](graduated_discussion.md)): could
+  record in [graduated_discussion.md](records/graduated_discussion.md)): could
   `inputs=lambda site: {...}` become first-class, so a rule's callable specs
   live *inside* the decorator block instead of as named module-level
   functions? Today lambdas get raw-line-text capture (`function_source` →
@@ -986,8 +913,78 @@ design discussion before any work starts.
     slots into `function_source` with a graceful fallback, leaving the
     comparer/manifest/`why` pipeline untouched.
 
+## Rejected
+
+Considered and decided against, kept with the reasoning.
+
+- **Orchestrator daemon — considered and rejected as load-bearing
+  (2026-06-13).** Proposal: invoke a `remake-daemon` on most `remake run`
+  to orchestrate tasks — a listener/responder subprocess + a process-runner
+  subprocess, the single reader/writer of `remake.db` while active,
+  monitoring SLURM queues and restarting failed jobs. The remake CLI would
+  talk to the listener, which talks to the DB. Pitched benefits: single DB
+  writer (no sidecars), live failed-job restart, live monitoring.
+
+  Decision: **do not make a daemon default or load-bearing, especially for
+  SLURM.** Reasoning:
+  - *The "no sidecars for SLURM" benefit is largely illusory.* The
+    contention problem was concurrent SQLite *writers*; sidecars fix it by
+    construction (independent file writes, single-threaded ingest). A daemon
+    serializes ingest too, but array jobs still run on compute nodes and
+    their results must cross the compute→login boundary. The options are:
+    write sidecars and let the daemon ingest them (still sidecars); open
+    800 sockets back to one login-node listener (worse contention than 800
+    independent FS writes, over a flaky/firewalled compute→login path, with
+    backpressure we now own); or poll `sacct` (can't recover
+    `uses_hash`/exception without the task writing a sidecar). So SLURM
+    would almost certainly still consume sidecars — the daemon only
+    duplicates what they already do, cheaply (validated ~2.5 ms/sidecar,
+    linear, no cliff at 800-way).
+  - *It fights JASMIN reality.* The current SLURM design's superpower is
+    submit-and-log-out: the continuation job replans itself and SLURM (an
+    HA, long-lived, cluster-wide scheduler) owns the dependency graph for
+    the multi-day life of the pipeline. A daemon must instead stay alive on
+    a login/sci node for that whole duration — exactly what JASMIN
+    discourages (process-killers, memory caps, reboots). If it dies, cold
+    recovery from DB + `squeue` *is* `remake run` replanning today — so the
+    daemon adds a fragile layer on top of the stateless recovery it can't
+    remove.
+  - *Costs:* two execution models maintained forever (small/local and `-X`
+    runs want a no-daemon fast path); IPC surface (singleton lock with
+    NFS stale-detection — the same hard problem SQLite locking was — stale
+    sockets, protocol versioning, crash recovery); a testability regression
+    versus the current pure-function + golden-file SLURM tests; and forced
+    coordination between concurrent invocations/users (today idempotent
+    ingest + squeue de-dup make these safe-ish).
+  - *Per-executor:* singleproc is already one writer (daemon = pure
+    overhead + breaks `-X`); multiproc's coordinator wants the *parent* as
+    sole writer via a `multiprocessing` queue, not a bespoke daemon; dask
+    *already has* a daemon (its scheduler) with futures back to the client;
+    SLURM is the only real target and the worst fit. For every executor
+    except SLURM, single-writer is trivial or already provided by the
+    runtime.
+
+  What the daemon *is* good for — interactive, adaptive orchestration (live
+  retry of transient failures, rich progress, continuous in-process
+  replanning instead of continuation jobs, live SLURM monitor) — is real,
+  but should be an **optional, non-load-bearing layer**, never the sole DB
+  writer and never required for correctness:
+  - A foreground, restartable `remake monitor`/`watch`: live view +
+    opportunistic resubmit of failed/transient jobs. The pipeline stays
+    correct and crash-recoverable without it. (You cannot have both "daemon
+    is sole writer" and "works when the daemon dies"; on JASMIN you need
+    the latter.) Relates to the **SLURM monitor** item above.
+  - Transient SLURM failures: prefer sbatch `--requeue`/retry — SLURM does
+    node-death/preemption requeue better than a login-node daemon could.
+  - multiproc: drop local sidecars by making the parent the sole writer via
+    a queue (a real simplification, no daemon needed).
+- **intra-rule task dependency** - Should this be possible? A sequentially
+  defined rule where each task depends on the one before? Challenges the
+  no-task-DAG principle that planning memory, SLURM array eligibility and
+  failure-skip propagation all lean on — needs a real design discussion.
+
 ## Graduated (designed and implemented)
 
-Moved to [graduated_discussion.md](graduated_discussion.md) — full design
+Moved to [graduated_discussion.md](records/graduated_discussion.md) — full design
 records (including the `uses`/`io` storage rework with its stage A/B
 implementation postscripts and field verification) live there.

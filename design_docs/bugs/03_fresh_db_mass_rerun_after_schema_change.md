@@ -1,6 +1,14 @@
 # Bug 03 — schema change forces a fresh `.remake/`, and the `never` default then wants to rerun everything
 
-**Status:** open (UX / docs) — reported 2026-06-30. **Premise partly
+**Status:** **closed — superseded (MM, 2026-09-24).** Additive schema
+changes migrate in place (below). The residual point — signposting adoption
+when a `.remake/` is fresh for some other reason — is carried by
+`remake verify --adopt` (roadmap 0.10.x; discussion.md "I/O verification"),
+and the commonest *other* route to a fresh DB, a half-created file, is
+review 2026-09-24 M5 (0.8.4). The original status and analysis follow for
+the record.
+
+**Original status:** open (UX / docs) — reported 2026-06-30. **Premise partly
 overtaken 2026-07-02:** schema changes now ship in-place migrations
 (`_add_missing_columns`, incl. the inline-hash→FK backfill + VACUUM,
 field-verified on a 272 MB DB with zero reruns), so "schema change ⇒ delete
@@ -34,7 +42,7 @@ existing output tree. Local and SLURM.
    even though the full v13 output tree (7600+ files) was present on disk.
    Cause: this build defaults to `check_outputs='never'` (correctly —
    the `'fallback'`-as-default trap is documented in
-   `remake3_0.8.0_release.md` §E.3 and `discussion.md`). With `never`, a
+   `v0.8.0_record.md` §E.3 and `discussion.md`). With `never`, a
    no-DB-record task always reruns; existing outputs are not adopted.
 
 3. Recovery was the migration-adoption idiom:
@@ -60,7 +68,7 @@ Two rough edges, neither a logic bug, both worth smoothing:
 
 - **Doc drift on the default.** The design docs correctly pin the default
   to `'never'`, but the bundled Claude skill text
-  (`design_docs/claude_remake_skill.md:117`, and the deployed `SKILL.md`)
+  (`design_docs/designs/claude_remake_skill.md:117`, and the deployed `SKILL.md`)
   still tells the reader to rely on `check_outputs='fallback'` "so
   existing on-disk outputs are recognised without rerunning" as if it
   were ambient. Post-flip, adoption is explicit: `set-state … --success

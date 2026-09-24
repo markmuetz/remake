@@ -2,7 +2,7 @@
 
 Writes per-rule JSON job specs, per-rule sbatch scripts and a master
 .remake/submit.sh, then executes it (unless dry_run). See
-design_docs/remake3_design.md (SLURM executor) for the full behaviour.
+design_docs/design.md (SLURM executor) for the full behaviour.
 
 File layout (all relative to the working directory, like the metadata DB):
     .remake/jobs/<rule>.<run_seq>.json  array of {task_key, rule, kwargs,
@@ -86,7 +86,7 @@ class SqueueError(RemakeError):
     """squeue could not be run, so the queue state is unknown. Distinct from
     an empty queue: treating "unknown" as "empty" would green-light
     resubmitting jobs that are still in flight
-    (design_docs/slurm_already_running.md)."""
+    (design_docs/designs/slurm_already_running.md)."""
 
 
 SQUEUE_TIMEOUT = 60
@@ -195,7 +195,7 @@ def prune_spec_files(max_age_days=SPEC_MAX_AGE_DAYS):
     job reads a week-old spec, and the sidecar exception covers the one
     case that outlives the window — the last submission pending for a long
     time. (Full design + accepted residual risk:
-    design_docs/slurm_already_running.md, 2026-07-10 decisions.)"""
+    design_docs/designs/slurm_already_running.md, 2026-07-10 decisions.)"""
     if not JOBS_DIR.exists():
         return
     keep = set()

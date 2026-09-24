@@ -1,5 +1,7 @@
 # Attribution
 
+> **Record** — frozen; trust the code where they differ. Reconstructed from session transcripts; append new entries, don't rewrite.
+
 ## Provenance
 
 remake3 is a clean-break rewrite of **remake** (remake2), authored and directed

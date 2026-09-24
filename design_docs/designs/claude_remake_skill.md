@@ -1,5 +1,8 @@
 # Claude Code remake skill
 
+> **Status: implemented** — the skill lives at `.claude/skills/remake/`;
+> this doc is its plan and the CLI gap audit it drove.
+
 A Claude Code skill that makes Claude an effective remake operator and
 author: diagnosing failures, monitoring SLURM runs, explaining rerun
 decisions, writing and migrating pipelines. Lives in the repo at

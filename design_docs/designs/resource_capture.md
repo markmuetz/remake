@@ -30,9 +30,14 @@
 > getrusage fallback for every later task in that process.
 > Target release: **0.9.0, item 1** — first in the scoped slice, because the
 > run report (item 4) is only as good as the history accumulated before it
-> ships ([future_releases/v0.9.0.md](future_releases/v0.9.0.md)). Class:
+> ships ([releases/v0.9.0.md](../releases/v0.9.0.md)). Class:
 > **Design** — decisions below are settled; the four questions left open in
 > the first pass were resolved as proposed (see Settled, at the end).
+>
+> *Milestones and 0.9.0 item numbers in the body are as of writing; the
+> 2026-09-24 re-plan ([roadmap.md](../roadmap.md),
+> [releases/v0.9.0.md](../releases/v0.9.0.md)) supersedes them where they
+> differ.*
 
 ## Motivation
 
@@ -50,14 +55,14 @@ Three concrete asks this unblocks:
    The `sacct` audit (0.10.x) does this post-mortem and SLURM-only; this
    does it for *all* executors, from remake's own measurements.
 3. **"remake saved you N CPU-hours"** — the value metric in
-   [discussion.md](discussion.md) needs historical durations to multiply
+   [discussion.md](../discussion.md) needs historical durations to multiply
    stale-skips by. 0.9.0 gets the per-task numbers; the rollup is 0.10.x.
 
 ## Decisions
 
 ### 1. Storage: columns on `task` in `remake.db` — *not* `stats.db`
 
-[discussion.md](discussion.md) argues at length for a separate append-only
+[discussion.md](../discussion.md) argues at length for a separate append-only
 `.remake/stats.db` with one row *per execution* (full history, per-run
 grain, derived aggregates). That remains right — and it stays **0.10.x**
 (the roadmap's `remake stats` item). 0.9.0 does the smaller thing:
@@ -76,7 +81,7 @@ Why last-only in the operational DB rather than history in a new one:
 
 - **Zero new writes.** The values ride the existing `_upsert_task` /
   `_ingest_records` statements. No second transaction per task — the thing
-  [todos.md](todos.md) already flags as the per-task write cost.
+  [todos.md](../todos.md) already flags as the per-task write cost.
 - **Nothing to read them but us.** The planner never touches these columns,
   so they cannot become a rerun trigger; a pre-upgrade record with NULLs is
   simply "not measured".
@@ -189,7 +194,7 @@ backends that don't want it.
   records), and `get_tasks_status` selects them.
 
 This is a public-API change to an ABC in a minor release — permitted
-pre-1.0 ([compatibility.md](compatibility.md): "break freely, record in
+pre-1.0 ([compatibility.md](../compatibility.md): "break freely, record in
 CHANGELOG"), and additive-with-default, so the only breakage is a
 third-party backend that overrode `update_task` with a strict signature.
 CHANGELOG entry under **Changed**, one-line migration.
@@ -271,7 +276,7 @@ nobody enables is worthless. The knob exists for the pathological case
    sampling has it without a release.
 3. **No host/node name.** Cheap and useful for "why is this rule slow on
    node X", but it is per-execution `stats.db` data (0.10.x) and mildly
-   identifying (the privacy note in [discussion.md](discussion.md)).
+   identifying (the privacy note in [discussion.md](../discussion.md)).
 4. **`set-state` does not clear the columns.** Marking a task pending by
    hand does not un-measure what ran; the columns describe the last actual
    execution, and `rss_method` NULL already means "unmeasured". Consumers

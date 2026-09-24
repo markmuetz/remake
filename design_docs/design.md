@@ -1,5 +1,16 @@
 # remake3 — Design Document
 
+> **Class: Living** — the normative design; kept true as the code moves.
+> **Known divergences (2026-09-24):** the full-implementation review found
+> places where the code falls short of what this document intends — notably
+> run code includes the `@rule(...)` decorator (review H2), shared-matrix
+> propagation can *under*-rerun, contrary to "No task-level DAG" below (H3),
+> and stored io/`uses` renderings are not stable across Python versions or
+> set ordering (H4, H5). The intent here stands; the fixes are scheduled in
+> [releases/v0.9.0.md](releases/v0.9.0.md). See
+> [code_reviews/2026-09-24_review.md](code_reviews/2026-09-24_review.md).
+> A full accuracy pass of this document against the code is still owed.
+
 ## Motivation
 
 remake2 has served well for traditional file-based scientific pipelines, but three
@@ -563,7 +574,7 @@ is carried over from remake2; the 2026-07 storage rework reshaped `task` so
 that **all code-derived state is an integer FK into `code`** — storing the
 uses/io text inline per task row made real DBs enormous (272 MB for 3341
 tasks, 99.8% duplicated text) and made status queries scale with task count
-(design_docs/logs_analysis/README.md).
+(design_docs/records/logs_analysis/README.md).
 
 ```sql
 CREATE TABLE code (            -- content-addressed; interned by exact content
@@ -1214,10 +1225,13 @@ hierarchies and implicit globals needs judgement, not regex.
 ## What is explicitly out of scope for remake3
 
 - Content-based change detection (hashing file contents) — the DB is the
-  source of truth; filesystem checks are opt-in
+  source of truth; filesystem checks are opt-in (0.9 adds opt-in output checksum
+  *capture* for provenance; checksum-based staleness would be a new rerun
+  trigger needing its own design — see releases/v0.9.0.md item 4)
 - A *passive* GUI or web dashboard — out of scope (the SQLite DB is queryable
   directly by external tools). Note (2026-06-23): an *interactive,
   API-backed* web control plane is being reconsidered as a deliberate
-  exception — scheduled as a 0.12.x exploration; see
+  exception — an after-1.0 exploration as a separate optional extra
+  (re-planned 2026-09-24; was 0.12.x); see
   [roadmap.md](roadmap.md) and [discussion.md](discussion.md).
 - Distributed state beyond what SLURM provides natively

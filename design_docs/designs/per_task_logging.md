@@ -1,5 +1,10 @@
 # Per-task logging
 
+> **Status: implemented** (2026-06-12; multiproc and dask workers
+> included). Open: the per-task log file-count budget
+> ([todos.md](../todos.md)). The 2026-09-24 review adds that failure
+> tracebacks never reach these logs (M12, 0.8.4).
+
 Design for fixing the shared-log corruption found during JASMIN validation
 (2026-06-12), and the layout of per-task log files. See todos.md (Smaller
 debts) for the original observation and discussion.md for the related

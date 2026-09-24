@@ -1,12 +1,22 @@
 # RO-Crate export
 
+> **Status: design, not scheduled before 1.0.** Re-planned 2026-09-24:
+> export is additive, so it ships after 1.0; the provenance *capture* it
+> consumes stays pre-1.0 (checksum capture 0.9, env/git 0.10) so the
+> history exists when it lands.
+>
+> *Milestones and 0.9.0 item numbers in the body are as of writing; the
+> 2026-09-24 re-plan ([roadmap.md](../roadmap.md),
+> [releases/v0.9.0.md](../releases/v0.9.0.md)) supersedes them where they
+> differ.*
+
 Design for `remake ro-crate` — packaging a completed (or partially
 completed) pipeline as an [RO-Crate](https://www.researchobject.org/ro-crate/)
 for publication, archival and citation. Scheduled for **0.10.x** — bundled
 with the environment/git/checksum provenance *capture* it consumes, so the
 crate ships rich rather than emitting omitted fields (see
-[roadmap.md](roadmap.md); moved here from 0.9 on 2026-06-23). Graduates the
-idea sketched in [discussion.md](discussion.md) into a concrete design.
+[roadmap.md](../roadmap.md); moved here from 0.9 on 2026-06-23). Graduates the
+idea sketched in [discussion.md](../discussion.md) into a concrete design.
 
 ## Goal
 
@@ -73,7 +83,7 @@ rather than back-filled later. Fields not stored by 0.8:
 | Field | Status | Plan |
 | --- | --- | --- |
 | `startTime` / wall time / peak RSS | not stored — `TaskRecord` has only completion `timestamp` | filled once **per-task resource capture** (0.9) lands; until then emit `endTime` only |
-| `sha256` per file | not stored | the **general stored-checksum capability** (see below) — **capture moved to 0.9.0** (decided 2026-07-14, MM: record in 0.9, consume in 0.10 — export needs the 0.9-era history to exist; rides the `output_stat` migration, see [future_releases/v0.9.0.md](future_releases/v0.9.0.md) item 2); else `--checksums` cold-reread fallback, else omit |
+| `sha256` per file | not stored | the **general stored-checksum capability** (see below) — **capture moved to 0.9.0** (decided 2026-07-14, MM: record in 0.9, consume in 0.10 — export needs the 0.9-era history to exist; rides the `output_stat` migration, see [releases/v0.9.0.md](../releases/v0.9.0.md) item 2); else `--checksums` cold-reread fallback, else omit |
 | `agent` (producing user/host) | not stored per task | SLURM sidecars could carry it; otherwise omit (or, weakly, the crate author at export time — *not* provenance-accurate, so prefer omit) |
 | environment (conda/uv lock or hash), pipeline git hash | not stored | **0.10 provenance capture**, co-shipped with export — attach to the workflow / `CreateAction`s when present |
 
@@ -115,7 +125,7 @@ part of the RO-Crate deliverable; RO-Crate consumes whatever digests exist.
 ## API / CLI split
 
 Per the "CLI is a thin render layer over a complete Python API" principle
-([compatibility.md](compatibility.md), `remake3_design.md`):
+([compatibility.md](../compatibility.md), `design.md`):
 
 - **`Remake.ro_crate(query=None, *, include_data=False, checksums='auto',
   completed_only=True, summary=False)` → `CrateManifest`** — pure construction
@@ -191,3 +201,81 @@ remake ro-crate [remakefile] [-o DIR] [--zip] [-Q QUERY] \
   (cost at scale) vs omit when `--include-data` is off.
 - Whether to surface the internal `run_seq` ordering as provenance, or keep it
   internal (leaning: keep internal).
+
+## Appendix: Origins
+
+The sketch this design grew from, moved verbatim from
+[discussion.md](../discussion.md) on 2026-09-24.
+
+- **Integrate RO-Crate** — *graduated to a full design doc:
+  [rocrate_export.md](rocrate_export.md) (scheduled 0.10.x, bundled with the
+  env/git provenance capture). The notes below are the origin sketch, kept for
+  the record.* Package outputs + metadata +
+  provenance as an
+  [RO-Crate](https://www.researchobject.org/ro-crate/) for
+  publication/archival; natural successor to remake2's archive feature.
+  Key realisation: remake already *holds* almost everything RO-Crate wants
+  (rules, tasks, kwargs, input/output paths, code/uses/io hashes,
+  timestamps, status) — the feature is mostly a **serialiser** over the
+  existing metadata, not new bookkeeping.
+  - *The mapping (remake → RO-Crate / schema.org):*
+    - pipeline → the crate root `Dataset`; the remakefile → the
+      `ComputationalWorkflow` / `SoftwareSourceCode` `mainEntity` (language
+      Python; remake itself a `SoftwareApplication` with its version).
+    - each rule → a `HowToStep` / `SoftwareApplication` carrying the rule's
+      `run` source (already stored in `rule.source`).
+    - each completed task → a `CreateAction`: `instrument` = the rule,
+      `object` = input `File`s, `result` = output `File`s, `startTime`/
+      `endTime` from metadata, `actionStatus` = Completed/Failed from task
+      status, kwargs → `PropertyValue` parameters, `agent` = user/host.
+    - each output → a `File` (`contentSize`, `dateModified`, optional
+      `sha256`, `encodingFormat` by extension); a zarr/multi-file output →
+      a `Dataset`, an S3 output → referenced by URL (the token type already
+      tells us which: FileToken / ZarrStore / S3Object).
+  - *Target profile:* the **Workflow Run Crate** profile (declare
+    `conformsTo` its URI); it exists precisely for "a workflow plus a record
+    of running it".
+  - *Two modes:* **reference** (default) — metadata-only crate whose `File`
+    entities point at data in place (cheap, for an existing tree); and
+    **`--include-data`** — copy outputs into the crate dir / zip
+    (self-contained, for archival/publication, the heavy path).
+  - *Shape:* `remake ro-crate [remakefile] [-o DIR] [--zip] [-Q query]
+    [--include-data] [--checksums]`. `-Q` scopes which tasks are crated.
+  - *Implementation:* a new `remake/export/rocrate.py` that walks
+    rules/tasks/metadata and emits `ro-crate-metadata.json`. **Hand-roll the
+    JSON-LD** (the `@graph` is a small list of dict entities we fully
+    control) rather than depend on `ro-crate-py` — consistent with the
+    dep-averse stance elsewhere (cf. the Drain3-vs-hand-rolled call); pull
+    `ro-crate-py` in later only if validation/round-trip earns it. Optional
+    extra either way (`remake[rocrate]` if a dep is used).
+  - *Checksums belong at workflow time, not crate time (own capability).*
+    Hashing should happen **on the node that produced the output, right
+    after it is written** — the bytes are local and hot in page cache, the
+    work is distributed across the array, and the result is captured *as
+    produced* (so later drift/corruption is detectable). Re-hashing at
+    `remake ro-crate` time means a cold serial re-read of the whole tree
+    over the network — or the data has been purged off scratch and can't be
+    hashed at all. So a stored output checksum is a **general capability**,
+    not an RO-Crate detail: `verify --checksum` (corruption, not just
+    existence), output-versioning **(B) content-addressing**, the stats
+    store, and dedup all consume it; RO-Crate is one reader. Tri-state, since
+    it can't be unconditionally on (hashing multi-GB netCDF/zarr every run
+    costs everyone): **off** (default; `ro-crate --checksums` stays as the
+    lazy cold-re-read fallback), **on at run time** (opt-in
+    `config={'checksum': 'sha256'}` / `run --checksum` → `run_task` hashes
+    outputs post-success and ships the digest in the **sidecar payload**,
+    computed compute-side), and a **hybrid read** (consumers use stored
+    digests when present, else compute-with-warning or omit). sha256 for
+    crate conformance; streamed post-write read rather than wrapping the
+    write handle.
+  - *Sharp edges:* **Scale:** 1e6 tasks → 1e6 `CreateAction`s is an enormous
+    JSON-LD — so `-Q`-scope by default, warn past a threshold, and offer a
+    `--summary` mode that emits one `CreateAction` per *rule* (with a task
+    count) instead of per task. Incomplete/deferred tasks are omitted (or
+    marked); reference-mode `File`s may be absent on scratch (degrade like
+    `check_outputs`).
+  - *Relates to:* the **stats store** (richer `CreateAction` timing /
+    agent / parameters when present — but degrade to `last_run_timestamp`
+    when not) and **grab code version / python module state** (workflow
+    provenance: git hash + env → `SoftwareSourceCode.version` /
+    environment). Degrade gracefully when those aren't recorded.

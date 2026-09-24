@@ -1,10 +1,18 @@
 # Roadmap
 
-The plan beyond 0.8.0. **Directional, not a commitment** — milestones and
+The plan beyond 0.8.x. **Directional, not a commitment** — milestones and
 contents will move; each feature still needs its own design pass (the detail
-lives in [discussion.md](discussion.md), [future_releases/](future_releases/)
+lives in [discussion.md](discussion.md), [releases/](releases/)
 and [todos.md](todos.md)). Compatibility rules for everything here are in
 [compatibility.md](compatibility.md).
+
+> **Re-planned 2026-09-24 (MM)** after the full-implementation review
+> ([code_reviews/2026-09-24_review.md](code_reviews/2026-09-24_review.md)).
+> The previous plan ran four feature milestones (0.9 → 0.12) before 1.0,
+> ordered by theme. The new plan asks one question of every item — *does 1.0
+> need it?* — and moves everything additive to after 1.0: two milestones
+> instead of four, and a smaller frozen surface. The per-item assessment is
+> [below](#assessment-of-the-previous-plan-2026-09-24).
 
 ## Positioning — what we are optimising for
 
@@ -13,20 +21,32 @@ AST-aware stale rebuild, in pure Python**. Roadmap items earn their place by
 *deepening that niche*, not by chasing general workflow-tool parity. The
 standout bets:
 
-1. **Provenance & reproducibility at scale** — make "reliably recreate any
-   output" true end-to-end (RO-Crate, env capture, git hash, run report).
-2. **remake-as-a-library** — the programmatic `Remake` API (shipped in 0.8.0)
-   driven/introspected from a notebook is a real differentiator vs CLI/DSL-
-   centric tools; treat it as a headline, and as the backend for everything
-   else (CLI, report, web).
-3. **Storage-backend tokens as first-class dependencies** — remote artefacts
-   as real upstream/downstream deps, which `make` fundamentally cannot do.
-4. **Scale ergonomics** — `temp()` intermediates and resource budgets, because
-   disk/memory pressure is the actual pain at 1e6 files.
+1. **Correct stale rebuild at scale** — the core promise. "Never
+   under-rerun, rarely over-rerun" must hold across executors, Python
+   versions and real pipeline shapes before anything is frozen.
+2. **Provenance & reproducibility** — make "reliably recreate any output"
+   true end-to-end (env capture, git hash, checksums; export formats later).
+3. **remake-as-a-library** — the programmatic `Remake` API driven/introspected
+   from a notebook, as the backend for everything else (CLI, reports, any
+   future UI).
+4. **Scale ergonomics** — disk/memory pressure is the actual pain at 1e6
+   files (`Dir` outputs, scratch/`temp()` lifecycle, file-side stat costs).
 
 Discipline preserved: **no orchestrator daemon, no passive dashboard.** Static
-reports + a queryable DB. (The one deliberate revisit is the *interactive*
-web control plane in 0.12.x — see below.)
+exports + a queryable DB.
+
+## What 1.0 means — the test applied to every item
+
+[compatibility.md](compatibility.md) says 1.0 ships when three surfaces are
+stable: the **remakefile DSL**, the **public Python/CLI API** (incl. `--json`
+output), and the **on-disk format**. So:
+
+- A feature that **changes one of those surfaces** must be designed (not
+  necessarily fully built) **before** the freeze.
+- A feature that is **purely additive** — a new command, export, or client —
+  can ship in any 1.x and **does not gate 1.0**.
+- **Correctness of what gets stored** (hashes, keys, schema) gates 1.0,
+  because freezing a defect makes fixing it a breaking change.
 
 ## Pre-tag review gate
 
@@ -48,75 +68,160 @@ executor-heavy range, still consider one.)
 ## Milestones
 
 ### 0.8.x — maintenance lane (parallel, not a milestone)
-Non-breaking bug fixes and safe robustness shipped as patches while 0.9.0 is
-in development — e.g. bounding `retry_lock_commit`, the zarr-v3 token check,
-coverage corners (todos.md). Patch rules (no API/DSL/schema breaks, no new
-rerun triggers) in [compatibility.md](compatibility.md). Cut from `main`
-until feature work lands there; branch from the `v0.8.0` tag only if needed
-after that.
+Non-breaking bug fixes and safe robustness shipped as patches. Patch rules
+(no API/DSL/schema breaks, no reruns caused by the upgrade itself) in
+[compatibility.md](compatibility.md). **0.8.4** is the review's patch list:
+multiproc/dask `run_seq` (H1), `SystemExit` in tasks (H6), worker-crash
+tolerance (H7) and clean Ctrl-C/SIGTERM (M10), duplicate rule names (H8), atomic DB create + migrations
+(M5, M6), non-zero exit for blocked rules (M9), recording pre-`fn` failures
+(M11), tracebacks in per-task logs (M12), query errors/typos (M14), a local
+run lock (M15), ingest monotonicity (M17), bad-sidecar quarantine (L14),
+colour/BrokenPipe/exit-code hygiene (L25–L27), and the failure-skip part of
+H3. Plus the older debts in [todos.md](todos.md) (`retry_lock_commit`, zarr
+v3). Cut from `main` while it is fix-only; branch from the latest tag if
+feature work has landed.
 
-### 0.9.x — observability & correctness
-The scoped slice in [future_releases/v0.9.0.md](future_releases/v0.9.0.md):
-output validation (`ensure`-style on the token ABC), per-task resource capture
-(wall time + peak RSS, all executors), static DAG/rule-graph export, the
-single-file HTML run report, and execution profiles (a shipped `jasmin`
-profile).
+### 0.9.x — correctness of the core + DSL shape
+Everything that changes what is *stored* or what the *DSL* looks like, so it
+is settled before the freeze. Scoped in
+[releases/v0.9.0.md](releases/v0.9.0.md).
 
-### 0.10.x — provenance & reproducibility (capture + export)
-Bundle the provenance *capture* with the *export* that consumes it, so the
-crate ships rich from the start. **Capture:** environment (conda/pip/uv
-lockfile or hash per run), pipeline git hash/status per run, optional run-time
-output checksums (the shared capability in
-[rocrate_export.md](rocrate_export.md)), plus `remake stats` run-history and
-query-by-status (`-Q 'status == "failed"'`). **Export:** **RO-Crate export**
-([rocrate_export.md](rocrate_export.md)) — a Workflow Run Crate serialised from
-the metadata DB; moved here from 0.9 (2026-06-23) precisely so the `agent` /
-environment / git / checksum fields it wants are being recorded rather than
-omitted. Also clears scale-debt that gates everything (see Cross-cutting).
+- **Change-detection correctness** (review H2–H5, M1–M4, M8, M19): strip the
+  decorator from run code; canonical, order-insensitive, Python-version-
+  independent rendering of `uses`/io values; path-derived task-to-task
+  dependencies replacing the shared-matrix assumption (review Appendix A);
+  canonical task keys; scope-analysis fidelity; a resolved-path digest for
+  fan-ins. Each normalises *both* sides so no existing DB mass-reruns.
+- **Schema version** (`PRAGMA user_version`) — the 1.0 contract's "refuse
+  and print the upgrade step" is impossible without it.
+- **DSL-shaping features:** `Dir` token ([dir_outputs.md](designs/dir_outputs.md)),
+  output validation (`Ensure`) + opt-in checksum *capture*, fail fast on
+  missing external inputs.
+- **One configuration design:** named profiles (a shipped `jasmin` profile)
+  *and* the user/project config-file cascade, designed together — the config
+  file format becomes a frozen surface, so design it once. Record the
+  effective config per run.
+- **Cheap, high-value tooling:** static DAG export (`remake dag`), `run-all`
+  (only if it stays tiny).
+- Done already: per-task resource capture
+  ([resource_capture.md](designs/resource_capture.md)).
 
-### 0.11.x — extensibility
-Open the abstractions up: storage-backend tokens (generalise `OutputToken` so
-S3/GCS/HTTP are *declared* deps, not just `is_complete()` probes), plugin
-entry-point discovery (third-party executors / tokens / backends), and the
-three-level config cascade with named, shareable profiles generalised from
-0.9's `jasmin` profile.
+### 0.10.x — provenance capture + surface freeze preparation
+- **Provenance capture:** environment (lockfile/env hash) and pipeline git
+  hash/status per run — cheap, and export formats later depend on the
+  history existing.
+- **`remake verify`** — output reconciliation and adoption (the safe (a)+(c)
+  core in [discussion.md](discussion.md)); mtime mode stays behind a flag.
+- **Minimal run history** (`stats`) — per-run records; no dashboard.
+- **Scale work driven by field data** — the file-side stat frontier on
+  Lustre/NFS, `bench_field_scale.py` load-bearing in CI.
+- **Settle the frozen surfaces:** the output-token interface (stat/size,
+  batch listing, identity normalisation — so storage backends can be added
+  later without breaking it); `--json` shapes with a version field; exit
+  codes (0/1/2 documented and meaningful); `Remake` method naming aligned
+  with the CLI and library use anchored to the remakefile dir; the declared
+  public API in `docs/api/`; the location of `.remake/` (decide the
+  "next to artefacts" question).
+- **Design check only:** confirm `temp()`/scratch lifecycle can be added
+  post-1.0 without a breaking schema change.
 
-### 0.12.x — interactive web control plane + 1.0 freeze (pre-1.0 capstone)
-Two strands, landing together as the last pre-1.0 milestone:
-
-- **Interactive single-page web interface** *(exploration — reverses the
-  long-standing "out of scope" stance; full open questions in
-  [discussion.md](discussion.md)).* A browser control plane that launches/
-  cancels runs, shows task state in real time, drills into failures, and
-  re-runs/`set-state`s selections — built as another *render + drive* client
-  over the `Remake` API. A genuine differentiator; gated on resolving the
-  "live server vs detached-SLURM batch tool" tension first.
-- **Toward 1.0 — the freeze.** `temp()`/scratch intermediates and local
-  resource budgets/task weights (the scale-ergonomics work), then *stabilise
-  the surfaces*: freeze the remakefile DSL, settle the on-disk format, and
-  declare the public Python/CLI API per [compatibility.md](compatibility.md).
-
-### 1.0 — the contract begins
+### 1.0 — the freeze; the contract begins
 Ships once the remakefile DSL, public API and on-disk format are judged
 stable. From here, [compatibility.md](compatibility.md) is binding: SemVer,
 deprecation ramps, automatic on-disk migrations.
 
+## After 1.0 — additive, in rough priority order
+
+None of these gates 1.0; each is a new command, export or client over
+surfaces frozen at 1.0.
+
+1. **`temp()` / scratch intermediates** — high value for the niche; build
+   when a real pipeline needs it (design checked in 0.10).
+2. **Single-file HTML run report** (`remake report`) — the showpiece view
+   over resource capture + DAG export.
+3. **RO-Crate export** ([rocrate_export.md](designs/rocrate_export.md)) — a
+   serialiser over the DB; rich because 0.10 capture has been recording.
+4. **Storage-backend implementations** (S3/GCS/HTTP as declared
+   dependencies) on the token interface settled in 0.10.
+5. **Query by status**, output enumeration (`ls-tasks --paths`), clean
+   verbs, richer dry-run — CLI additions as demand shows.
+6. **Interactive web control plane** — *exploration only*, as a separate
+   optional package/extra over the `Remake` API; gated on resolving the
+   "live server vs detached SLURM batch tool" tension and login-node auth.
+7. **Plugin entry points** — only if a third-party ecosystem appears;
+   dotted-path injection covers the need meanwhile.
+
 ## Cross-cutting (continuous, not a milestone)
 
-Scale-debt from [todos.md](todos.md) that must keep pace with the feature
-work — recalibrated 2026-07-02 against the stated scale target (~1e4 tasks ×
-~1e2 files/task = 1e6 *files*; see remake3_design.md "Scale target"): the
-file-side stat/resolution frontier (1e6-path sweeps on Lustre/NFS), making
-`bench_field_scale.py` load-bearing in CI (the 1e6-task bench stays as manual
-stress headroom), bounding `retry_lock_commit`, zarr v3 `is_complete()`, and
-the long-promised Hypothesis property tests. (Batching the per-task
-`EXCLUSIVE` commit was deprioritised — seconds at the design scale.)
+Scale-debt from [todos.md](todos.md) keeps pace with feature work,
+calibrated against the design scale (~1e4 tasks × ~1e2 files/task = 1e6
+*files*; see design.md "Scale target"): the file-side stat/
+resolution frontier, quadratic diagnostics (`why`, `info --reasons`, `lint`
+— review M20), bounding `retry_lock_commit`, zarr v3 `is_complete()`, and the
+long-promised Hypothesis property tests (task keys, matrix normalisation).
 
 ## Explicitly *not* doing
 
-Per the design doc and reaffirmed here: orchestrator daemon (rejected as
-load-bearing), passive read-only dashboard (low value — query the DB), and
-dask-*native* integration (parked; dask misbehaves on JASMIN, remake's target).
-The 0.12.x web interface is *interactive*, opt-in, and API-backed — a
-deliberate exception argued on differentiator grounds, not a reversal of the
-"stay lean" discipline.
+- **Orchestrator daemon** (rejected as load-bearing; see discussion.md).
+- **Passive read-only dashboard** (query the DB).
+- **Dask-native integration** beyond the existing executor (dask misbehaves
+  on JASMIN, remake's target).
+- **Local resource budgets / task weights** — SLURM already handles
+  resources and multiproc is not the primary target; stays on the menu only.
+- **Intra-rule task dependencies** — would break the rule-level DAG that
+  planning memory, array eligibility and failure-skip rely on.
+
+---
+
+## Assessment of the previous plan (2026-09-24)
+
+The reasoning behind the re-plan, kept for the record. Test applied: does the
+item change a frozen surface (DSL, public API incl. `--json`, on-disk
+format)? If yes it must be designed before 1.0; if purely additive it can
+follow.
+
+**Previous 0.9.0**
+
+| Item | Merit | v1? |
+|---|---|---|
+| Resource capture | Done; cheap, useful | — |
+| Output validation (`Ensure`) + checksum capture | Medium: catches truncated outputs; early capture only pays if something reads it later | **Design yes** (DSL + schema); keep it small |
+| DAG export | High value, near-free | No, but cheap |
+| HTML run report | Nice showpiece; real maintenance cost | **No** — additive, post-1.0 |
+| `jasmin` profile | Real migration value | **Yes, merged** with the config cascade — design the config format once |
+| `Dir` token | High: many scientific tools write directories | **Yes** — DSL surface |
+| `run-all` | Low: a shell loop does it | No; harmless if tiny |
+| Fail fast on missing inputs | High, cheap | Yes (UX correctness) |
+
+**Previous 0.10.x**
+
+| Item | Merit | v1? |
+|---|---|---|
+| Env + git capture | High for "reliably recreate", cheap | Yes (additive schema, but history must start early) |
+| `verify` / reconcile | High: scratch-purge recovery, adopting existing trees | Nice-to-have, additive |
+| RO-Crate export | Niche; valuable for publication/citation | **No** — a serialiser, ideal post-1.0 |
+| Stats store | Moderate; overlaps the report | Minimal only |
+| Query by status | Useful, needs plan-time filtering | No — additive |
+| Scale debt | Essential for the niche | Driven by field data |
+
+**Previous 0.11.x**
+
+| Item | Merit | v1? |
+|---|---|---|
+| Storage-backend tokens | Some relevance (JASMIN object store); big design | **Split:** settle the token *interface* pre-1.0 (it gets frozen, and it isn't settled — `Dir`, checksums, path-map dependencies); implementations post-1.0 |
+| Plugin entry points | Low: no third-party ecosystem; dotted paths work; publishing ABCs multiplies the frozen surface | **Overkill** — post-1.0 if ever |
+| Config cascade | Needed | **Yes** — folded into the 0.9 config design |
+
+**Previous 0.12.x**
+
+| Item | Merit | v1? |
+|---|---|---|
+| Interactive web control plane | Differentiator, but the most expensive item; contradicts "no server"; clashes with detached SLURM; login-node auth | **Overkill** — additive by design (another API client); separate extra, post-1.0 |
+| `temp()` / scratch lifecycle | High for the niche (disk pressure); deep semantics | Design-check pre-1.0; build when needed |
+| Local resource budgets / task weights | Low: SLURM handles resources | **Overkill** — dropped to the menu |
+
+**Missing from the previous plan, but needed for 1.0** (from the review):
+a schema version; fixing stored hashes and task keys before freezing them
+(H2, H4, H5, M19); settled `--json` shapes and exit codes; a declared public
+API with library use anchored to the remakefile dir (M13); and the
+correctness bugs, above all H1, H3 and H6–H8.

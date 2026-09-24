@@ -174,7 +174,7 @@ def test_uses_change_after_migration_reruns(tmp_path):
     assert len(runnable) == 2  # both tasks: uses= changed
 
 
-# --- status-query scaling regression (design_docs/logs_analysis §1.1/1.2) ---
+# --- status-query scaling regression (design_docs/records/logs_analysis §1.1/1.2) ---
 #
 # The field failure this guards against: get_tasks_status once returned the
 # full run source per task (a JOIN on code.code) and task rows stored the

@@ -22,7 +22,7 @@ class TaskRecord:
 
     Code/uses/io are carried as integer ids into the content-addressed `code`
     table, not as text — fetching the text per task is what made status
-    queries scale with task count (design_docs/logs_analysis/README.md §1.2).
+    queries scale with task count (design_docs/records/logs_analysis/README.md §1.2).
     Consumers resolve ids to text via `MetadataManager.get_codes`, once per
     distinct id rather than once per task."""
 

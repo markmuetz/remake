@@ -1,6 +1,6 @@
 # Graduated discussion items
 
-Items from [discussion.md](discussion.md) that have been **designed and
+Items from [discussion.md](../discussion.md) that have been **designed and
 implemented** — kept verbatim for the record (design reasoning, decisions and
 their revisions, field measurements). The live ideas list stays in
 discussion.md; when an item ships, it moves here with its implementation
@@ -85,7 +85,7 @@ new evidence.
 
   *Measured in the wild (2026-07-02, Mark Muetzelfeldt).* Reached from the
   opposite direction — a `remake info` that felt slow (see
-  [bugs/04](bugs/04_info_redundant_and_superlinear_status_queries.md)) — and the
+  [bugs/04](../bugs/04_info_redundant_and_superlinear_status_queries.md)) — and the
   numbers make the "worth fixing now" case concrete. On the
   `wescon_radar_dev.py` pipeline's `.remake/remake.db`: **272 MB total for just
   3341 task + 74 code + 12 rule rows**, and it is *not* free-page bloat
@@ -152,7 +152,7 @@ new evidence.
   data loss, no mass rerun (`info` still 0-to-run), and `remake -D info`
   wall dropped ~10.2 s → ~4.3 s with the 1465-task status query down
   ~110× (2.2 s → 0.02 s). Details in
-  [bugs/04](bugs/04_info_redundant_and_superlinear_status_queries.md)
+  [bugs/04](../bugs/04_info_redundant_and_superlinear_status_queries.md)
   (*Field verification*).
 
   *Stage B implemented 2026-07-02, with a second key revision.* The
@@ -222,9 +222,101 @@ new evidence.
   sidecars; consumed by `slurm-status`, `task-info`, resubmission and
   already-queued detection.
 - **Per-task logging under SLURM arrays** — per-task key-named log files;
-  see design_docs/per_task_logging.md.
+  see design_docs/designs/per_task_logging.md.
 - **Task inspection/validation** — `remake lint` (near-miss input wiring,
   missing depends_on).
+
+- **CLI interface — decided behaviours.** Moved from discussion.md
+  2026-09-24 (the open sub-item, default remakefile discovery, stays
+  there).
+  - ~~"only if not run"~~ done: `run --ignore-code-changes/-I` — rerun
+    only what has never *succeeded* (failed reruns; upstream propagation
+    stays on so fan-ins pick up newly-run elements).
+  - ~~record-existing-outputs command~~ done, generalised to
+    `set-state -Q <query> (--success [--check-outputs] | --pending)`;
+    migration adoption = `set-state file -Q True --success
+    --check-outputs`.
+  - **Rerun reasons (remake2's `info --reasons`).** remake3 has a dedicated
+    `why` verb, so split along that seam rather than overloading `info`:
+    - ~~*Per-task detail → multi-task `why`.*~~ **Done 2026-06-15.** `why -Q
+      <query>` explains every match (block per task + summary); bare `why`
+      explains the runnable set; `why <key>` is the unchanged N=1 case.
+      `Remake.explain_tasks(tasks=None)` plans *once* and passes the runnable
+      list into the module-level `explain_task(..., runnable=...)` per task,
+      so it's plan-cost not N*plan; scope is bounded by the query or the
+      runnable default (never silently stats the whole matrix). Dissolved
+      the `RemakeError`-as-traceback nit for the >1 case (no longer an
+      error). Tests in test_cli.py.
+    - ~~*Aggregate rollup → `info --reasons`.*~~ **Done 2026-06-15.** `info
+      --reasons` adds a per-rule tally of would-run reason *categories*
+      (e.g. `stage1: 4 last-run-failed`), reusing the single `plan()` info
+      already does (plan-cost, not N*plan). Categories come from the planner
+      itself: `explain_task` now returns `Reason(category, message)` tuples
+      (`why` prints the message, this reads the category), so the buckets
+      are authoritative, not string-matched. A task can contribute several
+      categories, so counts may exceed the to-run total (documented).
+      `--json` puts a `reasons` dict on each rule row. `ls-tasks` stays pure
+      selection.
+  - ~~**Dedup `info -F` failures (remake2's unwieldy `info -F`).**~~ **Done
+    2026-06-15.** `-F` now groups failed tasks by a message-*insensitive*
+    signature (exception type + the traceback's frame locations) — so
+    `ValueError ... i=0/1/2/...` collapse into one group "ValueError at
+    stage1.py:9 ×N" with one representative traceback (real message intact),
+    its log, and `+N more: <tasks>`. `--all-failures` keeps the exhaustive
+    per-task dump; `--json` emits grouped (or the full list under
+    `--all-failures`). `_traceback_signature`/`_group_failures` in
+    remake_cmd.py; tests in test_cli.py.
+    - A log-template miner like **Drain3** is *an* approach (clusters the
+      message text itself, masks variable tokens → `... i=<*>`, recovers the
+      per-message values); it handles partially-similar failures well. But
+      we used the dep-free `(exception type, frame locations)` signature —
+      keep deps down; it covers the "one bug, N tasks" case that matters and
+      needs no runtime dependency.
+
+- **`check_outputs='fallback'` silently adopts stale outputs after code
+  changes — defeats iterative development.** Discovered 2026-06-18 during
+  `theta_e_analysis.py` development: editing the plot function (changing
+  y-axis orientation, switching pcolormesh→contourf, etc.) then running
+  `set-state --pending` + `remake run` repeatedly produced apparently
+  identical output. The task's output file already existed on disk from a
+  previous run; the `--pending` cleared its DB record; but the next `run`
+  saw "no DB record + output exists" and silently re-adopted the stale
+  file under the default `check_outputs='fallback'` mode — so the new code
+  never actually executed. Only `remake run --force` bypassed the adoption
+  and ran the updated code.
+
+  This is clearly wrong behaviour for iterative work. The `fallback` mode
+  was designed for **migration** (adopt a pre-existing output tree into a
+  fresh `.remake/` without rerunning everything), and it works well for
+  that one-shot case. But as the default mode during normal development it
+  creates a trap: the user edits code, the planner sees "output complete,
+  no record → adopt", and the edit is silently ignored. The user sees
+  success, the output looks unchanged, and has no signal that the code
+  never ran — the tool lies by omission.
+
+  **Recommendation: default to `check_outputs='never'` for normal
+  operation.** Migration adoption should be an explicit opt-in step
+  (`set-state -Q True --success --check-outputs`, or a one-shot
+  `check_outputs='fallback'` on the first run of a migrated pipeline),
+  not an always-on default that silently swallows code changes. The
+  `'fallback'` mode's invariant — "if the output exists, the task
+  succeeded" — is only true when the code that produced it hasn't changed,
+  and the planner *cannot check that* when there is no DB record to compare
+  hashes against.
+
+  Alternatively, if `'fallback'` stays the default: at minimum, adoption
+  should be **loudly reported** (a per-task warning or an `info` summary
+  line: "N tasks adopted from disk without running"), so the user knows
+  their code was bypassed. But the deeper issue is that adoption is
+  semantically wrong when the user *intends* a rerun — there is no way
+  to distinguish "legacy output from a prior tool" from "stale output
+  from the current tool's previous run with different code", and the
+  default should not guess.
+  - *Resolved 2026-06-19* (commit `9b428c2`, one of the 0.8.0 release
+    blockers): the default is now `check_outputs='never'`; `fallback` is an
+    explicit opt-in for migration adoption. Moved here 2026-09-24. (The
+    residual risk under an explicit `fallback` — adopting partial outputs of
+    an interrupted first run — is review 2026-09-24 M16.)
 
 ## Settled design decisions (no code change)
 
@@ -268,7 +360,7 @@ new evidence.
   comprehensions already put most specs inside the rule block, and
   statement-shaped specs (e.g. `Defer`-raising matrices) can never be
   lambdas anyway. Full record under "Lambda source recovery" in
-  [discussion.md](discussion.md).
+  [discussion.md](../discussion.md).
 
   *Reopen bar:* a post-0.8.0 side-by-side prototype (the class front-end is
   ~50 lines compiling to the same `Rule` dataclass) rewritten against the
