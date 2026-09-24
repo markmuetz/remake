@@ -1,3 +1,4 @@
+from contextlib import closing
 import sqlite3
 from pathlib import Path
 from time import perf_counter
@@ -290,3 +291,130 @@ def test_identical_shared_rule_does_not_warn(tmp_path):
     msgs = _capture_warnings(lambda: meta.ensure_rules([process], remakefile='b.py'))
 
     assert not any('defined in both' in m for m in msgs)
+
+
+# --- review 2026-09-24 M5/M6: atomic schema create + migrations ---
+
+
+def test_zero_byte_db_is_initialised_not_bricked(tmp_path):
+    # M5: a 0-byte file (first run killed mid-create, disk/quota full) used
+    # to count as "existing", so every later open failed with
+    # "no such table: task".
+    db = tmp_path / 'remake.db'
+    db.touch()
+    with Sqlite3Backend(db) as meta:
+        tables = {r[0] for r in meta.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {'task', 'rule', 'code', 'meta'} <= tables
+
+
+def test_failed_schema_create_leaves_a_recoverable_db(tmp_path, monkeypatch):
+    # M5: schema creation is one transaction — dying half-way leaves no
+    # tables at all, and the next open creates the schema from scratch.
+    import remake.metadata.sqlite3_backend as backend
+
+    real = backend._schema_statements
+
+    def half():
+        stmts = real()
+        return stmts[:3] + ['THIS IS NOT SQL']
+
+    db = tmp_path / 'remake.db'
+    monkeypatch.setattr(backend, '_schema_statements', half)
+    with pytest.raises(sqlite3.OperationalError):
+        Sqlite3Backend(db)
+    monkeypatch.setattr(backend, '_schema_statements', real)
+    with closing(sqlite3.connect(db)) as conn, conn:
+        assert not list(conn.execute("SELECT name FROM sqlite_master WHERE type='table'"))
+    with Sqlite3Backend(db) as meta:
+        assert meta.conn.execute("SELECT value FROM meta WHERE key='run_seq'").fetchone() == (0,)
+
+
+def _old_db(path):
+    """A DB as written before run_seq/meta existed (0.8.0a0-era shape)."""
+    with Sqlite3Backend(path):
+        pass
+    with closing(sqlite3.connect(path)) as conn, conn:
+        conn.execute('ALTER TABLE task DROP COLUMN run_seq')
+        conn.execute('DROP TABLE meta')
+
+
+def test_failed_migration_rolls_back_and_is_redone(tmp_path, monkeypatch):
+    # M6: migrations used to autocommit statement by statement, so an
+    # interrupted one left a half-migrated DB that was then skipped forever.
+    db = tmp_path / 'remake.db'
+    _old_db(db)
+    real = Sqlite3Backend._add_missing_columns
+
+    def dies_half_way(self):
+        self.conn.execute('ALTER TABLE task ADD COLUMN run_seq INTEGER')
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(Sqlite3Backend, '_add_missing_columns', dies_half_way)
+    with pytest.raises(KeyboardInterrupt):
+        Sqlite3Backend(db)
+    with closing(sqlite3.connect(db)) as conn, conn:
+        assert 'run_seq' not in {r[1] for r in conn.execute('PRAGMA table_info(task)')}
+    monkeypatch.setattr(Sqlite3Backend, '_add_missing_columns', real)
+    with Sqlite3Backend(db) as meta:
+        assert 'run_seq' in {r[1] for r in meta.conn.execute('PRAGMA table_info(task)')}
+        assert meta.conn.execute("SELECT value FROM meta WHERE key='run_seq'").fetchone() == (0,)
+
+
+def _open(db):
+    Sqlite3Backend(db).close()
+    return 'ok'
+
+
+def test_concurrent_first_opens_do_not_race(tmp_path):
+    # M6: concurrent openers of an old DB all ALTERed the same columns
+    # ("duplicate column name") and of a fresh DB all created the same
+    # tables ("table code already exists").
+    from concurrent.futures import ProcessPoolExecutor
+    from multiprocessing import get_context
+
+    old, fresh = tmp_path / 'old.db', tmp_path / 'fresh.db'
+    _old_db(old)
+    with ProcessPoolExecutor(8, mp_context=get_context('spawn')) as pool:
+        results = list(pool.map(_open, [old] * 8 + [fresh] * 8))
+    assert results == ['ok'] * 16
+
+
+def test_retry_locked_reraises_non_lock_errors_and_gives_up(monkeypatch):
+    # todos "Bound and message-match retry_lock_commit": any OperationalError
+    # used to be retried forever, turning a real error into a silent hang.
+    import remake.metadata.sqlite3_backend as backend
+    from remake import RemakeError
+
+    def broken():
+        raise sqlite3.OperationalError('no such table: task')
+
+    with pytest.raises(sqlite3.OperationalError, match='no such table'):
+        backend._retry_locked(broken, 'test')
+
+    monkeypatch.setattr(backend, 'LOCK_RETRY_SECONDS', 0)
+    monkeypatch.setattr(backend, 'sleep', lambda s: None)
+
+    def locked():
+        raise sqlite3.OperationalError('database is locked')
+
+    with pytest.raises(RemakeError, match='still locked'):
+        backend._retry_locked(locked, 'test')
+
+
+def test_partially_created_legacy_db_is_completed(tmp_path):
+    # Review of the M5 fix: before it, executescript committed statement by
+    # statement, so a first run killed part-way could leave some tables but
+    # no `task`. Opening such a DB must complete the schema — including the
+    # unique index on task.key — rather than fail on the tables it has.
+    from remake.metadata.sqlite3_backend import SQL_SCHEMA
+
+    db = tmp_path / 'remake.db'
+    first_two = SQL_SCHEMA.split(');', 2)
+    with closing(sqlite3.connect(db)) as conn, conn:
+        conn.executescript(first_two[0] + ');' + first_two[1] + ');')
+        assert len(list(conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"))) == 2
+    with Sqlite3Backend(db) as meta:
+        names = {r[0] for r in meta.conn.execute('SELECT name FROM sqlite_master')}
+    assert {'task', 'meta', 'task_key_index'} <= names

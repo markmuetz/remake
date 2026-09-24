@@ -39,6 +39,24 @@ Fixes from the 2026-09-24 full-implementation review (IDs refer to
   naming both definitions. Re-registering the *same* function (a notebook
   cell executed again) replaces the earlier rule with a warning instead of
   doubling the task list.
+- **A half-created `.remake/remake.db` no longer bricks the pipeline** (M5).
+  Whether to create the schema was decided by the file existing, but SQLite
+  creates the file before the schema is written — so a first run killed
+  mid-create (disk/quota full, Ctrl-C) left a file on which every later
+  command failed with `no such table: task` until it was deleted by hand.
+- **Schema creation and migrations are one transaction** (M6). Statements
+  used to commit one at a time, so concurrent first opens after an upgrade
+  (SLURM continuation jobs, `info` next to `run`) raced — `duplicate column
+  name` / `table ... already exists` — and an interrupted migration left a
+  half-migrated DB that was skipped forever (for a 0.8.0a0-era DB: every
+  task of a rule with `uses=` rerunning on every run). Now concurrent
+  openers queue on the lock, an interrupted migration is rolled back and
+  redone on the next open, and a DB left partially created by an older
+  remake is completed.
+- **Lock retries are bounded and only retry lock errors.** Any SQLite
+  `OperationalError` (e.g. `no such table`, disk full) used to be retried
+  forever with growing backoff — a silent hang; they are now raised at
+  once, and a DB still locked after 10 minutes is a clear error.
 
 ## [0.8.3] — 2026-07-14
 

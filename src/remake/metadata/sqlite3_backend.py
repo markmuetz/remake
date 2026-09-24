@@ -12,10 +12,11 @@ import json
 import random
 import sqlite3
 from pathlib import Path
-from time import perf_counter, sleep
+from time import monotonic, perf_counter, sleep
 
 from loguru import logger
 
+from ..core.exceptions import RemakeError
 from ..core.scope import io_hash as compute_io_hash
 from ..core.scope import raw_uses_parts
 from ..core.scope import uses_hash as compute_uses_hash
@@ -102,23 +103,81 @@ INSERT INTO meta(key, value) VALUES ('run_seq', 0);
 """
 
 
+def _schema_statements():
+    """SQL_SCHEMA as single, idempotent statements, run one by one inside an
+    explicit transaction (executescript would COMMIT it first).
+
+    Idempotent (IF NOT EXISTS / OR IGNORE) so they can run on every open: a
+    DB left partially created by an older remake — whose executescript
+    committed statement by statement — gets its missing tables and index
+    instead of failing on the ones it has. sqlite3.complete_statement is
+    tokenizer-aware, so a ';' inside a comment doesn't split a statement."""
+    stmts, buf = [], ''
+    for line in SQL_SCHEMA.splitlines(keepends=True):
+        buf += line
+        if sqlite3.complete_statement(buf):
+            stmts.append(_idempotent(buf))
+            buf = ''
+    assert not buf.strip(), 'SQL_SCHEMA ends with an incomplete statement'
+    return stmts
+
+
+def _idempotent(stmt):
+    for old, new in (('CREATE TABLE ', 'CREATE TABLE IF NOT EXISTS '),
+                     ('CREATE UNIQUE INDEX ', 'CREATE UNIQUE INDEX IF NOT EXISTS '),
+                     ('CREATE INDEX ', 'CREATE INDEX IF NOT EXISTS '),
+                     ('INSERT INTO ', 'INSERT OR IGNORE INTO ')):
+        stmt = stmt.replace(old, new)
+    return stmt
+
+
+# How long a writer keeps retrying a locked DB before giving up. Long enough
+# to sit out another process's one-time migration or a big sidecar ingest;
+# finite, so a DB that stays locked becomes an error rather than a hang.
+LOCK_RETRY_SECONDS = 600
+
+
+def _is_lock_error(exc):
+    msg = str(exc).lower()
+    return 'locked' in msg or 'busy' in msg
+
+
+def _retry_locked(fn, what):
+    """Call fn(), retrying with capped exponential backoff while SQLite
+    reports lock contention. Any other OperationalError ("no such table",
+    disk full, malformed schema) is re-raised at once instead of being
+    retried forever (todos: "Bound and message-match retry_lock_commit")."""
+    deadline = monotonic() + LOCK_RETRY_SECONDS
+    nattempts = 1
+    while True:
+        try:
+            return fn()
+        except sqlite3.OperationalError as oe:
+            if not _is_lock_error(oe):
+                raise
+            if monotonic() >= deadline:
+                raise RemakeError(
+                    f'{what}: database still locked after {LOCK_RETRY_SECONDS}s '
+                    f'— is another remake process stuck? ({oe})'
+                ) from oe
+            logger.debug(f'{what}: {oe} (attempt {nattempts}); retrying')
+        nattempts += 1
+        sleep(min(30, 2**nattempts * random.random()))
+
+
 def retry_lock_commit(fn):
-    """Run fn in an EXCLUSIVE transaction, retrying with exponential backoff
-    on lock contention (concurrent workers/SLURM jobs share the DB)."""
+    """Run fn in an EXCLUSIVE transaction, retrying with backoff on lock
+    contention (concurrent workers/SLURM jobs share the DB)."""
 
     def inner(self, *args, **kwargs):
-        nattempts = 1
-        while True:
-            try:
-                with self.conn:
-                    self.conn.execute('BEGIN EXCLUSIVE')
-                    ret = fn(self, *args, **kwargs)
-                    self.conn.commit()
-                return ret
-            except sqlite3.OperationalError as oe:
-                logger.debug(f'OperationalError: {oe}')
-            nattempts += 1
-            sleep(2**nattempts * random.random())
+        def attempt():
+            with self.conn:
+                self.conn.execute('BEGIN EXCLUSIVE')
+                ret = fn(self, *args, **kwargs)
+                self.conn.commit()
+            return ret
+
+        return _retry_locked(attempt, fn.__name__)
 
     return inner
 
@@ -127,18 +186,16 @@ class Sqlite3Backend(MetadataManager):
     def __init__(self, dbloc='.remake/remake.db'):
         self.dbloc = str(dbloc)
         self.code_comparer = CodeComparer()
-        in_memory = self.dbloc == ':memory:'
-        create_db = in_memory or not Path(self.dbloc).exists()
-        if create_db and not in_memory:
-            logger.info(f'Creating sqlite3 database: {self.dbloc}')
+        if self.dbloc != ':memory:':
             Path(self.dbloc).parent.mkdir(parents=True, exist_ok=True)
         # No detect_types: timestamps are read as plain strings (TaskRecord
         # .timestamp), and the implicit converter is deprecated in 3.12.
         self.conn = sqlite3.connect(self.dbloc)
-        if create_db:
-            self.conn.executescript(SQL_SCHEMA)
-        else:
-            self._add_missing_columns()
+        try:
+            self._init_schema()
+        except BaseException:
+            self.conn.close()
+            raise
         self.conn.isolation_level = 'EXCLUSIVE'
         # rule name -> (rule_id, run_code_id, uses_code_id, io_code_id):
         # the rule's row plus this invocation's current interned code ids.
@@ -169,18 +226,65 @@ class Sqlite3Backend(MetadataManager):
             except Exception:
                 pass
 
+    def _init_schema(self):
+        """Create the schema, or migrate an existing DB, in ONE exclusive
+        transaction (review 2026-09-24 M5/M6).
+
+        Whether to create is decided by the presence of the `task` table,
+        checked inside the lock — not by the file existing: sqlite3.connect
+        creates the file before any schema is written, so a first run killed
+        mid-create (disk/quota full, Ctrl-C) used to leave a 0-byte file that
+        bricked every later command. Holding the lock across check + DDL also
+        serialises concurrent first openers (continuation jobs, `info` next
+        to `run`), which used to race to ALTER the same columns; and a crash
+        mid-migration now rolls back cleanly and is redone on the next open,
+        instead of leaving a half-migrated DB that is skipped forever."""
+        conn = self.conn
+        conn.isolation_level = None  # explicit transaction control below
+        _retry_locked(lambda: conn.execute('BEGIN EXCLUSIVE'), 'opening the database')
+        try:
+            tables = {row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+            if 'task' not in tables and self.dbloc != ':memory:':
+                logger.info(f'Creating sqlite3 database: {self.dbloc}')
+            # Old-shape tables that exist are left alone here (IF NOT EXISTS)
+            # and brought up to date column by column below.
+            for stmt in _schema_statements():
+                conn.execute(stmt)
+            needs_vacuum = self._add_missing_columns()
+            conn.execute('COMMIT')
+        except BaseException:
+            # SQLite may already have rolled back by itself (disk full, I/O
+            # error); an unconditional ROLLBACK would then raise "no
+            # transaction is active" and hide the real error.
+            if conn.in_transaction:
+                conn.execute('ROLLBACK')
+            raise
+        if needs_vacuum:
+            # VACUUM can't run inside a transaction, so it follows the
+            # (committed) migration. Best effort: if another process holds
+            # the DB it is skipped — the space is reclaimed on a later VACUUM.
+            logger.info('Vacuuming (one-time; reclaims the inline-hash space)')
+            try:
+                conn.execute('VACUUM')
+            except sqlite3.OperationalError as e:
+                logger.warning(f'VACUUM skipped ({e}); the DB is correct, just larger')
+
     def _add_missing_columns(self):
         """Lightweight forward-compat for columns added after a DB was first
         created (still no general migration support — see the module docstring).
         A pre-existing record left with io_code_id/run_seq NULL is treated as
         'not yet tracked' by the planner, so upgrading does not force a mass
-        rerun."""
+        rerun. Runs inside _init_schema's exclusive transaction: no commits
+        here. Returns True when a VACUUM should follow."""
+        needs_vacuum = False
         cols = {row[1] for row in self.conn.execute('PRAGMA table_info(task)')}
         if 'run_seq' not in cols:
             logger.info('Adding task.run_seq column to existing DB')
             self.conn.execute('ALTER TABLE task ADD COLUMN run_seq INTEGER')
         if 'uses_code_id' not in cols:
             self._migrate_inline_hashes_to_code_ids(cols)
+            needs_vacuum = True
         rule_cols = {row[1] for row in self.conn.execute('PRAGMA table_info(rule)')}
         if 'remakefile' not in rule_cols:
             logger.info('Adding rule.remakefile column to existing DB')
@@ -201,14 +305,15 @@ class Sqlite3Backend(MetadataManager):
             self.conn.execute(
                 'CREATE TABLE meta (key TEXT NOT NULL PRIMARY KEY, value INTEGER NOT NULL)')
             self.conn.execute("INSERT INTO meta(key, value) VALUES ('run_seq', 0)")
-            self.conn.commit()
+        return needs_vacuum
 
     def _migrate_inline_hashes_to_code_ids(self, cols):
         """One-time in-place migration: the old task.uses_hash/io_hash columns
         stored the full normalised uses/io strings inline per row — duplicated
         across every task of a rule (measured at 99.8% of a 272 MB field DB).
         Intern each distinct value into `code` once, point integer FKs at it,
-        drop the text columns, and VACUUM to return the space."""
+        drop the text columns; the caller VACUUMs afterwards to return the
+        space."""
         logger.info('Migrating task.uses_hash/io_hash to code-table FKs')
         self.conn.execute('ALTER TABLE task ADD COLUMN uses_code_id INTEGER')
         self.conn.execute('ALTER TABLE task ADD COLUMN io_code_id INTEGER')
@@ -242,9 +347,6 @@ class Sqlite3Backend(MetadataManager):
                 # frees the space (after the VACUUM below) and nothing reads
                 # it any more.
                 self.conn.execute(f'UPDATE task SET {col} = NULL')
-        self.conn.commit()
-        logger.info('Vacuuming (one-time; reclaims the inline-hash space)')
-        self.conn.execute('VACUUM')
 
     @retry_lock_commit
     def _allocate_run_seq(self):
