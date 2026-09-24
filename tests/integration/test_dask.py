@@ -2,6 +2,7 @@
 
 Mirrors test_multiproc.py: the executors share their execution model.
 """
+from contextlib import closing
 import json
 from pathlib import Path
 
@@ -109,7 +110,7 @@ def test_dask_records_run_seq_for_durable_propagation(tmp_path, monkeypatch):
     monkeypatch.setenv('PYTHONDONTWRITEBYTECODE', '1')
     Path('pipeline.py').write_text(PROPAGATION)
     assert cli('run', 'pipeline.py', '-E', 'dask', '-j', '1') == 0
-    with sqlite3.connect('.remake/remake.db') as conn:
+    with closing(sqlite3.connect('.remake/remake.db')) as conn, conn:
         seqs = [r[0] for r in conn.execute('SELECT run_seq FROM task')]
     assert seqs and None not in seqs
 

@@ -1,4 +1,5 @@
 """Multiproc executor — spawned workers, sidecar results, per-rule barriers."""
+from contextlib import closing
 import json
 from pathlib import Path
 
@@ -152,7 +153,7 @@ def test_multiproc_records_run_seq_for_durable_propagation(tmp_path, monkeypatch
     monkeypatch.setenv('PYTHONDONTWRITEBYTECODE', '1')
     Path('pipeline.py').write_text(PROPAGATION)
     assert cli('run', 'pipeline.py', '-E', 'multiproc', '-j', '2') == 0
-    with sqlite3.connect('.remake/remake.db') as conn:
+    with closing(sqlite3.connect('.remake/remake.db')) as conn, conn:
         seqs = [r[0] for r in conn.execute('SELECT run_seq FROM task')]
     assert seqs and None not in seqs
 
