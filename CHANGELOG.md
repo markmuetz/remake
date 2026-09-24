@@ -74,6 +74,15 @@ Fixes from the 2026-09-24 full-implementation review (IDs refer to
   `str`, `set`, … — so `-Q "year in range(2000, 2005)"` works (it silently
   matched nothing before). A query that matches no tasks at all is warned
   about. (The restricted-parser replacement for `eval` remains a todo.)
+- **An older sidecar result can no longer overwrite a newer record** (M17).
+  A result file left un-ingested (a SLURM element, or a multiproc run whose
+  parent died) was applied unconditionally on the next ingest, reverting a
+  later direct write — e.g. a successful `remake run-task` flipped back to
+  failed. Ingest now only applies results at least as new as the record.
+- **Malformed sidecar results are quarantined** (L14). A result file of
+  valid JSON but the wrong shape crashed every `plan`/`info`/`run` until
+  deleted by hand, and an unreadable one was warned about on every command.
+  Both are now renamed to `*.json.bad` with a single warning.
 
 ## [0.8.3] — 2026-07-14
 

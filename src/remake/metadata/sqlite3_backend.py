@@ -137,6 +137,17 @@ def _idempotent(stmt):
 LOCK_RETRY_SECONDS = 600
 
 
+def _quarantine(path, why):
+    """Move a bad sidecar aside (`*.json.bad`, outside the ingest glob) with
+    one warning, instead of failing or re-warning on every command."""
+    bad = path.with_name(path.name + '.bad')
+    try:
+        path.replace(bad)
+    except FileNotFoundError:
+        return  # another process got there first
+    logger.warning(f'Quarantined {why} sidecar result: {bad}')
+
+
 def _is_lock_error(exc):
     msg = str(exc).lower()
     return 'locked' in msg or 'busy' in msg
@@ -573,8 +584,15 @@ class Sqlite3Backend(MetadataManager):
                     payload = json.loads(path.read_text())
                 except FileNotFoundError:
                     continue  # another process ingested it first
-                except json.JSONDecodeError:
-                    logger.warning(f'Skipping unreadable sidecar: {path}')
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    _quarantine(path, 'unreadable')
+                    continue
+                if not (isinstance(payload, dict)
+                        and isinstance(payload.get('status'), int)):
+                    # Valid JSON of the wrong shape (hand-edited, another
+                    # remake version) used to crash every plan/info/run
+                    # inside the ingest transaction (review 2026-09-24 L14).
+                    _quarantine(path, 'malformed (no integer "status")')
                     continue
                 logger.trace('sidecar {} ({}): {}', key, rule.name, payload.get('status'))
                 pending.append((rule, key, payload, path))
@@ -619,7 +637,19 @@ class Sqlite3Backend(MetadataManager):
                 '    run_seq = excluded.run_seq, '
                 '    last_run_timestamp = excluded.last_run_timestamp, '
                 '    last_run_status = excluded.last_run_status, '
-                '    exception = excluded.exception',
+                '    exception = excluded.exception '
+                # Never let an older result overwrite a newer one (review
+                # 2026-09-24 M17): a sidecar left un-ingested (SLURM element,
+                # dead multiproc parent) must not revert a later direct write
+                # such as `remake run-task`. Timestamps are UTC
+                # 'YYYY-MM-DD HH:MM:SS' on both paths, so they compare as
+                # text; run_seq breaks same-second ties; legacy sidecars
+                # without a timestamp still apply.
+                'WHERE task.last_run_timestamp IS NULL '
+                '   OR excluded.last_run_timestamp IS NULL '
+                '   OR excluded.last_run_timestamp > task.last_run_timestamp '
+                '   OR (excluded.last_run_timestamp = task.last_run_timestamp '
+                '       AND COALESCE(excluded.run_seq, 0) >= COALESCE(task.run_seq, 0))',
                 (
                     key,
                     rule_id,

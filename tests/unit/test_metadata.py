@@ -418,3 +418,60 @@ def test_partially_created_legacy_db_is_completed(tmp_path):
     with Sqlite3Backend(db) as meta:
         names = {r[0] for r in meta.conn.execute('SELECT name FROM sqlite_master')}
     assert {'task', 'meta', 'task_key_index'} <= names
+
+
+# --- review 2026-09-24 M17/L14: sidecar ingest ---
+
+
+def _one_task_pipeline(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    @rule(outputs={'o': 'x.txt'})
+    def only(outputs):
+        Path(outputs['o']).write_text('ok')
+
+    meta = Sqlite3Backend('.remake/remake.db')
+    rmk = Remake(rules=[only], metadata=meta)
+    rmk.finalize()
+    return rmk, rmk.tasks()[0]
+
+
+def test_older_sidecar_does_not_overwrite_newer_record(tmp_path, monkeypatch):
+    # M17: an un-ingested FAILED sidecar from an earlier attempt reverted a
+    # later direct success (e.g. `remake run-task`) on the next ingest.
+    import json
+
+    from remake.metadata import TASK_STATUS_FAILED
+    from remake.metadata.sidecar import SidecarWriter, task_result_path
+
+    rmk, task = _one_task_pipeline(tmp_path, monkeypatch)
+    SidecarWriter(run_seq=1).update_task(task, TASK_STATUS_FAILED, exception='old')
+    path = task_result_path(task.rule.name, task.key)
+    payload = json.loads(path.read_text())
+    payload['timestamp'] = '2000-01-01 00:00:00'
+    path.write_text(json.dumps(payload))
+
+    rmk.metadata.begin_invocation()
+    rmk.run_task(task)  # direct write: SUCCESS, now
+    assert rmk.metadata.ingest_sidecars(rmk.rules) == 1  # consumed...
+    rec = rmk.metadata.get_tasks_status([task])[task.key]
+    assert rec.status == TASK_STATUS_SUCCESS  # ...but did not win
+    rmk.metadata.close()
+
+
+def test_malformed_sidecars_are_quarantined(tmp_path, monkeypatch):
+    # L14: valid JSON of the wrong shape crashed every plan/info/run; an
+    # unreadable one was re-warned on every command, forever.
+    from remake.metadata.sidecar import task_result_path
+
+    rmk, task = _one_task_pipeline(tmp_path, monkeypatch)
+    path = task_result_path(task.rule.name, task.key)
+    path.parent.mkdir(parents=True)
+    path.write_text('[]')
+    other = path.with_name('ff' + path.name)
+    other.write_text('{not json')
+    assert rmk.metadata.ingest_sidecars(rmk.rules) == 0
+    assert not path.exists() and path.with_name(path.name + '.bad').exists()
+    assert not other.exists() and other.with_name(other.name + '.bad').exists()
+    rmk.plan()  # no longer raises
+    rmk.metadata.close()
