@@ -20,14 +20,11 @@ same review are scoped in [releases/v0.9.0.md](releases/v0.9.0.md).
   upstream failed, not the same-kwargs one (full fix is 0.9).
 - [ ] **H6** `SystemExit`/`KeyboardInterrupt` in a task aborts the run
   silently (exit 0 on `sys.exit(0)`).
-- [ ] **H7** worker crash (OOM/segfault) aborts multiproc; dask re-executes
-  completed tasks.
 - [ ] **H8** duplicate rule names within one `Remake` → error.
 - [ ] **M5** zero-byte/partial DB bricks the pipeline.
 - [ ] **M6** migrations non-atomic, racy, not resumable.
 - [ ] **M9** `run` exits 0 with blocked (never-ready) rules; surface
   `Defer.paths`.
-- [ ] **M10** Ctrl-C/SIGTERM don't stop multiproc; orphan workers.
 - [ ] **M11** failures before the rule function (mkdir, io resolution) not
   recorded.
 - [ ] **M12** tracebacks missing from per-task logs; worker task events
@@ -40,6 +37,15 @@ same review are scoped in [releases/v0.9.0.md](releases/v0.9.0.md).
 - [ ] **L14** malformed sidecar crashes every command; quarantine bad files.
 - [ ] **L25–L27** colour ignores `--colour never`/`NO_COLOR`; BrokenPipe;
   user errors as tracebacks with exit 1.
+
+## 0.8.5 patch lane
+
+Deferred from 0.8.4 (2026-09-24): process/signal handling, whose tests
+are the slow, flaky part.
+
+- [ ] **H7** worker crash (OOM/segfault) aborts multiproc; dask re-executes
+  completed tasks.
+- [ ] **M10** Ctrl-C/SIGTERM don't stop multiproc; orphan workers.
 
 ## Performance / scaling
 

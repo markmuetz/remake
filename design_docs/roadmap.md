@@ -71,15 +71,19 @@ executor-heavy range, still consider one.)
 Non-breaking bug fixes and safe robustness shipped as patches. Patch rules
 (no API/DSL/schema breaks, no reruns caused by the upgrade itself) in
 [compatibility.md](compatibility.md). **0.8.4** is the review's patch list:
-multiproc/dask `run_seq` (H1), `SystemExit` in tasks (H6), worker-crash
-tolerance (H7) and clean Ctrl-C/SIGTERM (M10), duplicate rule names (H8), atomic DB create + migrations
+multiproc/dask `run_seq` (H1), `SystemExit` in tasks (H6), duplicate rule
+names (H8), atomic DB create + migrations
 (M5, M6), non-zero exit for blocked rules (M9), recording pre-`fn` failures
 (M11), tracebacks in per-task logs (M12), query errors/typos (M14), a local
 run lock (M15), ingest monotonicity (M17), bad-sidecar quarantine (L14),
 colour/BrokenPipe/exit-code hygiene (L25–L27), and the failure-skip part of
 H3. Plus the older debts in [todos.md](todos.md) (`retry_lock_commit`, zarr
-v3). Cut from `main` while it is fix-only; branch from the latest tag if
-feature work has landed.
+v3). **0.8.5** follows with worker-crash tolerance (H7) and clean
+Ctrl-C/SIGTERM (M10) — deferred 2026-09-24 because their process/signal
+tests are the slow, flaky part. Cut from `main` while it is fix-only; branch
+from the latest tag if feature work has landed — as of 0.8.4 it has
+(resource capture), so the lane is the `maint/0.8.x` branch from `v0.8.3`,
+with each fix merged forward to `main`.
 
 ### 0.9.x — correctness of the core + DSL shape
 Everything that changes what is *stored* or what the *DSL* looks like, so it
