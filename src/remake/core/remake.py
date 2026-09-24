@@ -14,6 +14,7 @@ from ..metadata.metadata_manager import (
     RecordCache,
 )
 from ..util import task_log_path
+from ..util.run_lock import run_lock
 from .dag import build_rule_dag, expand_rule, iter_expand_rule
 from .exceptions import Defer, RemakeError, TaskExit
 from .planner import (
@@ -725,9 +726,15 @@ class Remake:
         """Run all tasks that need running, replanning after each wave so
         dynamic (deferred) matrices resolve as their upstreams complete.
         Returns the number of failed tasks (0 for asynchronous executors,
-        which don't know at submission time)."""
+        which don't know at submission time). Holds `.remake/run.lock` for
+        the duration: a second concurrent run in the same directory is a
+        RemakeError."""
         if not self._finalized:
             self.finalize()
+        with run_lock(self.metadata):
+            return self._run(executor, query, force, ignore_code_changes)
+
+    def _run(self, executor, query, force, ignore_code_changes):
         # One run_seq for this whole invocation (shared across replanning
         # waves); committed onto every task so downstream propagation survives
         # to later invocations. See bugs/01_durable_rerun_propagation.md.

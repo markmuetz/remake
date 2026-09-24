@@ -107,6 +107,12 @@ Fixes from the 2026-09-24 full-implementation review (IDs refer to
   executors now also skip any task whose declared inputs include an output
   of a task that failed this run. (Rerun propagation for such pipelines is
   the 0.9 fix.)
+- **Concurrent local runs in one directory are prevented** (M15). Two
+  `remake run`s started together both executed every task and raced on the
+  same outputs. `run` now holds `.remake/run.lock`; a second run gets a clear
+  error (exit 2). A lock left by a crashed run on the same host is detected
+  and replaced; one from another host must be deleted by hand if stale (the
+  error says so).
 
 ## [0.8.3] — 2026-07-14
 

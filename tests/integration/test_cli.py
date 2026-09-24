@@ -893,3 +893,27 @@ rmk.rules_from_current_module()
     err = proc.stderr.read().decode()
     proc.wait(timeout=60)
     assert 'Traceback' not in err and 'BrokenPipeError' not in err
+
+
+def test_run_lock_blocks_concurrent_runs(pipeline_dir, capsys):
+    # Review 2026-09-24 M15: two local runs in one directory both executed
+    # every task and raced on the same outputs.
+    import os
+    import socket
+
+    lock = Path('.remake/run.lock')
+    Path('.remake').mkdir(exist_ok=True)
+    # A live holder (this very process) blocks a second run.
+    lock.write_text(json.dumps({'host': socket.gethostname(), 'pid': os.getpid()}))
+    cli_error(capsys, 'run', 'pipeline.py', match='another remake run is active')
+    assert not Path('data/out_1.txt').exists()
+
+    # A holder on another host can't be checked: refused, with the fix named.
+    lock.write_text(json.dumps({'host': 'elsewhere', 'pid': 1}))
+    cli_error(capsys, 'run', 'pipeline.py', match='delete')
+
+    # A dead holder on this host is stale: taken over, and the run proceeds.
+    lock.write_text(json.dumps({'host': socket.gethostname(), 'pid': 2**22 + 12345}))
+    assert cli('run', 'pipeline.py') == 0
+    assert Path('data/out_1.txt').exists()
+    assert not lock.exists()  # released when the run ends
