@@ -798,3 +798,13 @@ def test_run_exits_nonzero_when_rules_stay_blocked(tmp_path, monkeypatch, capsys
     assert Path('a.txt').exists()
     err = capsys.readouterr().err
     assert 'Blocked rule b' in err and 'never_made.txt' in err
+
+
+def test_query_typos_and_syntax_errors_are_clean_errors(pipeline_dir, capsys):
+    # Review 2026-09-24 M14: a typo'd name silently matched nothing ("Nothing
+    # to do", exit 0) and bad syntax was a raw traceback.
+    cli_error(capsys, 'run', 'pipeline.py', '-Q', 'nn == 1', match='unknown name')
+    cli_error(capsys, 'info', 'pipeline.py', '-Q', 'n ==', match='invalid query')
+    cli_error(capsys, 'set-state', 'pipeline.py', '-Q', 'nn == 1', '--pending',
+              match='unknown name')
+    cli_error(capsys, 'ls-tasks', 'pipeline.py', '-Q', 'nn == 1', match='unknown name')

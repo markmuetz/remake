@@ -64,6 +64,16 @@ Fixes from the 2026-09-24 full-implementation review (IDs refer to
   is reported with the reason: the paths its `Defer` is waiting on, or that
   an upstream rule did not complete. `Remake.blocked_rules` lists them after
   `run()` (whose return value is unchanged: the number of failed tasks).
+- **Queries (`-Q`) no longer fail silently** (M14). A name that is no
+  rule's matrix key — almost always a typo, e.g. `-Q "yera == 2000"` — used
+  to match nothing, so `run` said "Nothing to do" (exit 0) and `set-state`
+  quietly changed nothing; it is now an error listing the valid keys.
+  Syntax errors and evaluation errors (e.g. comparing an int to a str) are
+  clean `error:` messages (exit 2) instead of tracebacks. A few safe
+  builtins are available — `range`, `len`, `min`, `max`, `abs`, `int`,
+  `str`, `set`, … — so `-Q "year in range(2000, 2005)"` works (it silently
+  matched nothing before). A query that matches no tasks at all is warned
+  about. (The restricted-parser replacement for `eval` remains a todo.)
 
 ## [0.8.3] — 2026-07-14
 

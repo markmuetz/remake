@@ -603,11 +603,12 @@ class RemakeCLI:
     def remake_ls_tasks(self, args):
         from .core.dag import iter_expand_rule
         from .core.exceptions import Defer
-        from .core.planner import make_predicate
+        from .core.planner import make_predicate, rule_kwarg_names
 
         rmk = self._load(args)
         rmk.finalize()
-        predicate = make_predicate(args.query) if args.query else None
+        predicate = (make_predicate(args.query, rule_kwarg_names(rmk.rules))
+                     if args.query else None)
         paint = Painter(args.colour)
 
         def input_files(task):

@@ -531,3 +531,42 @@ def test_always_mode_detects_deleted_output(tmp_path):
     rmk.check_outputs = 'always'
     runnable, _ = rmk.plan()
     assert {t.kwargs.get('n') for t in runnable if t.rule.name == 'rule_a'} == {1}
+
+
+# --- review 2026-09-24 M14: query errors and typos ---
+
+
+def test_query_builtins_available():
+    from remake.core.planner import make_predicate
+
+    pred = make_predicate('year in range(2000, 2002)', {'year'})
+    assert pred({'year': 2001, 'rule': 'r'}) and not pred({'year': 2003, 'rule': 'r'})
+    assert make_predicate('len(site) == 2', {'site'})({'site': 'ox', 'rule': 'r'})
+
+
+def test_query_unknown_name_is_an_error():
+    import pytest
+
+    from remake import RemakeError
+    from remake.core.planner import make_predicate
+
+    with pytest.raises(RemakeError, match=r"unknown name\(s\) \['yera'\]"):
+        make_predicate('yera == 2000', {'year', 'site'})
+    # Names bound inside the query itself are not unknown.
+    make_predicate('any(y > 2000 for y in [year])', {'year'})
+    make_predicate("rule == 'a'", {'year'})
+    # Without known names (library use), a missing name is still a no-match.
+    assert make_predicate('nope == 1')({'year': 1, 'rule': 'r'}) is False
+
+
+def test_query_syntax_and_eval_errors_are_remake_errors():
+    import pytest
+
+    from remake import RemakeError
+    from remake.core.planner import make_predicate
+
+    with pytest.raises(RemakeError, match='invalid query'):
+        make_predicate('year ==', {'year'})
+    pred = make_predicate("year > '2000'", {'year'})
+    with pytest.raises(RemakeError, match='TypeError'):
+        pred({'year': 2001, 'rule': 'r'})

@@ -16,7 +16,13 @@ from ..metadata.metadata_manager import (
 from ..util import task_log_path
 from .dag import build_rule_dag, expand_rule, iter_expand_rule
 from .exceptions import Defer, RemakeError, TaskExit
-from .planner import cascade_settled, explain_task, make_predicate, plan
+from .planner import (
+    cascade_settled,
+    explain_task,
+    make_predicate,
+    plan,
+    rule_kwarg_names,
+)
 from .rule import Rule
 from .scope import check_scope, exec_function
 from .task import Task
@@ -236,7 +242,7 @@ class Remake:
         dynamic matrix is deferred."""
         if not self._finalized:
             self.finalize()
-        predicate = make_predicate(query) if query else None
+        predicate = make_predicate(query, rule_kwarg_names(self.rules)) if query else None
         for rule in self.rules:
             try:
                 yield from iter_expand_rule(rule, predicate)
@@ -335,7 +341,7 @@ class Remake:
         remaining = Counter(task.rule.name for task in runnable)
         runnable_keys = {task.key for task in runnable}
         deferred_names = {rule.name for rule in deferred}
-        predicate = make_predicate(query) if query else None
+        predicate = make_predicate(query, rule_kwarg_names(self.rules)) if query else None
 
         # Per-rule tally of why the to-run tasks would rerun. One plan() is
         # already done (`runnable`); reuse it per task so this is plan-cost,
