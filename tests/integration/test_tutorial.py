@@ -239,3 +239,26 @@ def test_reset_leaves_logging_usable(ws):
     for handler in logger._core.handlers.values():
         stream = getattr(handler._sink, '_stream', None)
         assert not isinstance(stream, io.StringIO)
+
+
+def test_tutor_reference_covers_the_cli(ws):
+    # The tutor answers questions from reference.md, not remake's source:
+    # it must name every command, info column, why reason and check_outputs
+    # mode, so a new one can't be added without the tutor knowing.
+    import re
+
+    from remake.remake_cmd import RemakeCLI
+
+    ref = (ws / '.claude/skills/remake-tutor/reference.md').read_text()
+    parser = RemakeCLI().parser
+    subparsers = next(a for a in parser._actions if a.__class__.__name__ == '_SubParsersAction')
+    for command in subparsers.choices:
+        assert f'`{command}`' in ref, command
+    for column in ('up-to-date', 'stale', 'failed', 'pending', 'to run'):
+        assert f'**{column}**' in ref, column
+    planner = (Path(__file__).parents[2] / 'src/remake/core/planner.py').read_text()
+    reasons = set(re.findall(r"Reason\('([a-z-]+)'", planner)) | {'last-run-failed', 'last-run-pending'}
+    for reason in reasons:
+        assert f'**{reason}**' in ref, reason
+    for mode in ('never', 'fallback', 'always'):
+        assert f'**{mode}**' in ref, mode

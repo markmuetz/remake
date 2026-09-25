@@ -26,7 +26,7 @@ from pathlib import Path
 from .lessons import LESSONS, SETUP, lesson
 
 FILES = resources.files('remake.tutorial') / 'files'
-SKILL = resources.files('remake.tutorial') / 'skill' / 'SKILL.md'
+SKILL_DIR = resources.files('remake.tutorial') / 'skill'
 GITIGNORE = '.remake/\ndata/\n.tutorial/\n.claude/\n__pycache__/\n'
 GIT_ID = ['-c', 'user.name=remake tutorial', '-c', 'user.email=tutorial@remake.invalid']
 
@@ -90,7 +90,8 @@ def init(ws):
     (ws / '.tutorial' / 'workspace.json').write_text(json.dumps({'lesson': 1}) + '\n')
     skill_dir = ws / '.claude' / 'skills' / 'remake-tutor'
     skill_dir.mkdir(parents=True)
-    (skill_dir / 'SKILL.md').write_text(SKILL.read_text())
+    for name in ('SKILL.md', 'reference.md'):  # the skill + the tutor's reference
+        (skill_dir / name).write_text((SKILL_DIR / name).read_text())
     return ws
 
 

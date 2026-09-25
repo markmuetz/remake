@@ -108,6 +108,28 @@ admonish them; just carry on. Only predictions need to come first.
    say that's all for now and ask what was confusing: it goes into
    improving the tutorial.
 
+## Questions
+
+The learner will ask things ("what do the columns in `info` mean?", "what
+is `.remake/remake.jsonl`?"). Answer from **`reference.md`**, which sits
+next to this file (`.claude/skills/remake-tutor/reference.md`). Read it the
+first time a question comes up. It covers the ideas, every command, the
+`info` columns, the rerun reasons, `.remake/`, queries, `check_outputs`
+and exit codes.
+
+- **Don't search remake's source** to answer. If the reference doesn't
+  cover it, check `remake <command> -h`, or try it read-only in the
+  workspace (prefixed `REMAKE_ORIGIN=tutor`). If you still can't tell,
+  say so, and note the question as a gap in the tutorial.
+- **Answer what they asked, briefly**, with their own workspace as the
+  example where you can: run
+  `REMAKE_ORIGIN=tutor remake info pipeline.py` and point at the real
+  numbers.
+- **Mind the concept order.** If the answer needs an idea from a later
+  lesson, give the short version and say which lesson covers it ("more on
+  that in lesson 4"). Don't teach it now.
+- Then bring them back to the step they were on.
+
 ## Off piste
 
 The spec gives each step's *intent*; the truth is the learner's actual
