@@ -11,7 +11,7 @@ import pytest
 
 from remake.tutorial import watch, workspace
 from remake.tutorial.cli import main as tutorial_cli
-from remake.tutorial.lessons import LESSONS
+from remake.tutorial.lessons import LESSONS, SETUP, final_snapshot
 
 pytestmark = pytest.mark.skipif(shutil.which('git') is None, reason='needs git')
 
@@ -27,6 +27,8 @@ def last_invocation(ws):
 
 
 def test_lessons_replay_as_specified(ws):
+    for cmd in SETUP:
+        assert workspace.run_command(ws, cmd) == 0
     for les in LESSONS:
         assert (ws / 'pipeline.py').read_text() == \
             workspace.git(ws, 'show', f'lesson-{les.number}:pipeline.py') + '\n'
@@ -48,9 +50,15 @@ def test_lessons_replay_as_specified(ws):
             workspace.git(ws, 'reset', '-q', f'lesson-{next_les.number}')
 
 
+def test_each_lesson_starts_where_the_last_ended():
+    # Going on to the next lesson must never undo the learner's edits.
+    for prev, les in zip(LESSONS, LESSONS[1:]):
+        assert les.snapshot == final_snapshot(prev), les.number
+
+
 def test_init_tags_and_starts_at_lesson_1(ws):
     tags = workspace.git(ws, 'tag').split()
-    assert {'lesson-1', 'lesson-2', 'snapshot-2-durham'} <= set(tags)
+    assert {'lesson-1', 'lesson-2', 'snapshot-2', 'snapshot-2-durham'} <= set(tags)
     assert workspace.git(ws, 'status', '--porcelain') == ''  # clean, at lesson 1
     assert (ws / '.claude/skills/remake-tutor/SKILL.md').exists()
     with pytest.raises(SystemExit, match='not an empty directory'):
@@ -63,10 +71,10 @@ def test_reset_stashes_and_rebuilds(ws, monkeypatch):
     assert tutorial_cli(['reset', '2']) == 0
     assert 'before reset to lesson 2' in workspace.git(ws, 'stash', 'list')
     assert workspace.git(ws, 'diff', 'lesson-2') == ''
-    # Lesson 1 was replayed: aberdeen/2020 is clean, the lesson-2 run plans 12.
+    # Lesson 1 was replayed: its task is done, so lesson 2 opens up to date.
     assert (ws / 'data/clean/aberdeen/2020.csv').exists()
     assert workspace.run_command(ws, 'remake run pipeline.py -n') == 0
-    assert last_invocation(ws)['planned'] == 12
+    assert last_invocation(ws)['planned'] == 0
     assert json.loads((ws / '.tutorial/workspace.json').read_text()) == {'lesson': 2}
 
 
@@ -132,7 +140,7 @@ def test_init_relative_path_and_file(tmp_path, monkeypatch):
 
 def test_unknown_lesson_is_a_clean_error():
     with pytest.raises(SystemExit, match='no lesson 99'):
-        tutorial_cli(['lesson', '99'])
+        tutorial_cli(['spec', '99'])
 
 
 def test_log_skips_a_partial_last_line(ws):
@@ -167,3 +175,67 @@ def test_watcher_reads_records_written_just_before_rotation(tmp_path):
     while '[remake]' not in out.getvalue() and time.time() < deadline:
         time.sleep(0.05)
     assert '[remake] remake run p.py -> exit 0' in out.getvalue()
+
+
+def test_reset_is_reported_to_the_watcher(ws, monkeypatch):
+    # The tutor starts a lesson when it sees the reset finish; the reset's
+    # own replays and its moving .remake/ aside are not reported.
+    import threading
+    import time
+
+    monkeypatch.chdir(ws)
+    assert tutorial_cli(['reset', '1']) == 0
+    out = io.StringIO()
+    threading.Thread(target=watch.follow, args=(watch.LOG, 0.05, out), daemon=True).start()
+    time.sleep(0.2)
+    assert tutorial_cli(['reset', '2']) == 0
+    deadline = time.time() + 10
+    while 'ready' not in out.getvalue() and time.time() < deadline:
+        time.sleep(0.05)
+    lines = out.getvalue().splitlines()[1:]  # after "[watch] following ..."
+    assert len(lines) == 1, lines  # no replayed commands, no ".remake/ is gone"
+    assert lines[0].startswith('[tutorial] remake-tutorial reset 2 -> lesson 2 ready')
+    assert watch.history()[-1].startswith('[tutorial] remake-tutorial reset 2 -> lesson 2 ready')
+    with pytest.raises(SystemExit, match='no lesson 99'):
+        tutorial_cli(['reset', '99'])
+
+
+def test_every_raw_file_shows_a_missing_reading_in_head(ws):
+    # Lesson 1 opens with `head` on a raw file: an NA must be in view there.
+    workspace.run_command(ws, 'python make_data.py')
+    files = sorted((ws / 'data/raw').glob('*/*.csv'))
+    assert len(files) == 16
+    for f in files:
+        assert any(line.endswith(',NA') for line in f.read_text().splitlines()[:10]), f
+
+
+def test_watcher_not_muted_by_a_reset_that_was_killed(tmp_path):
+    # A reset killed outright never emits its end event; a later, real
+    # deletion of .remake/ must still be reported.
+    out, state = io.StringIO(), {'resetting': None}
+    dead = subprocess.Popen([sys.executable, '-c', 'pass'])
+    dead.wait()
+    watch._handle_event(json.dumps({'event': 'reset_started', 'pid': dead.pid}), state, out)
+    assert not watch._alive(state['resetting'])
+    watch._handle_event('{"event": "reset", "lesson": 1}', state, out)  # malformed: no crash
+    watch._handle_event('not json', state, out)
+
+
+def test_reset_claims_only_a_stash_it_made(ws):
+    # Only commits differ from the lesson: nothing to stash, so no stash claim.
+    (ws / 'notes.txt').write_text('mine')
+    workspace.git(ws, 'add', 'notes.txt')
+    workspace.git(ws, 'commit', '-q', '-m', 'mine')
+    kept = workspace.reset(ws, 1)
+    assert not any('stash' in k for k in kept)
+    assert any(k.startswith('your commits') for k in kept)
+
+
+def test_reset_leaves_logging_usable(ws):
+    # The quiet replay must not leave loguru writing into a dead buffer.
+    from loguru import logger
+
+    workspace.reset(ws, 2)
+    for handler in logger._core.handlers.values():
+        stream = getattr(handler._sink, '_stream', None)
+        assert not isinstance(stream, io.StringIO)

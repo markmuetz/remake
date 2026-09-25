@@ -12,17 +12,18 @@ uncommitted changes are stashed, the learner's own commits are kept on a
 the earlier lessons (tagged REMAKE_ORIGIN=tutor, so the watcher ignores
 them) and checks out the lesson's remakefile.
 """
+import io
 import json
 import os
 import shlex
 import shutil
 import subprocess
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 from importlib import resources
 from pathlib import Path
 
-from .lessons import LESSONS, lesson
+from .lessons import LESSONS, SETUP, lesson
 
 FILES = resources.files('remake.tutorial') / 'files'
 SKILL = resources.files('remake.tutorial') / 'skill' / 'SKILL.md'
@@ -30,8 +31,8 @@ GITIGNORE = '.remake/\ndata/\n.tutorial/\n.claude/\n__pycache__/\n'
 GIT_ID = ['-c', 'user.name=remake tutorial', '-c', 'user.email=tutorial@remake.invalid']
 
 
-def git(ws, *args, env=None, input=None):
-    return subprocess.run(['git', *GIT_ID, *args], cwd=ws, check=True, capture_output=True,
+def git(ws, *args, env=None, input=None, check=True):
+    return subprocess.run(['git', *GIT_ID, *args], cwd=ws, check=check, capture_output=True,
                           text=True, env=env, input=input).stdout.strip()
 
 
@@ -103,14 +104,16 @@ def _in(ws):
         os.chdir(old)
 
 
-def run_command(ws, cmd):
+def run_command(ws, cmd, quiet=False):
     """Run one lesson command in the workspace; returns the exit code.
     `remake ...` runs in-process (the same CLI entry point); anything else
-    through the shell."""
+    through the shell. `quiet`: warnings only on stderr (the log files are
+    unaffected)."""
     if cmd.startswith('remake '):
         from ..remake_cmd import remake_cmd
         with _in(ws):
-            return remake_cmd(['remake', *shlex.split(cmd)[1:]])
+            return remake_cmd(['remake', *(['--warning'] if quiet else []),
+                               *shlex.split(cmd)[1:]])
     return subprocess.run(cmd, shell=True, cwd=ws, capture_output=True).returncode
 
 
@@ -120,25 +123,40 @@ def apply_snapshot(ws, snapshot):
             Path(ws, name).write_text(text)
 
 
+def emit(ws, event, **fields):
+    """Append a `remake-tutorial` event for the watcher (watch.EVENTS)."""
+    path = Path(ws, '.tutorial', 'events.jsonl')
+    record = {'event': event, 'time': time.time(), 'pid': os.getpid(), **fields}
+    with open(path, 'a', encoding='utf-8') as f:
+        f.write(json.dumps(record) + '\n')
+
+
 def replay(ws, until_lesson):
-    """Replay every lesson before `until_lesson` from scratch, as the
-    tutor's origin (the watcher skips these)."""
+    """Run the setup, then replay every lesson before `until_lesson`,
+    silently and as the tutor's origin (the watcher skips these)."""
     old = os.environ.get('REMAKE_ORIGIN')
     os.environ['REMAKE_ORIGIN'] = 'tutor'
+    # The replayed commands' output isn't the learner's. Only stdout is
+    # redirected: loguru binds its stderr sink to the stream object itself,
+    # so a redirected stderr would leave it logging into a dead buffer.
     try:
-        for les in LESSONS:
-            if les.number >= until_lesson:
-                break
-            apply_snapshot(ws, les.snapshot)
-            for s in les.steps:
-                if s.snapshot:
-                    apply_snapshot(ws, s.snapshot)
-                for c in s.commands:
-                    code = run_command(ws, c.cmd)
-                    if code != c.expect.get('exit', 0):
-                        raise SystemExit(
-                            f'replaying step {s.id}: `{c.cmd}` exited {code}; '
-                            f'the workspace is only partly rebuilt')
+        with redirect_stdout(io.StringIO()):
+            for cmd in SETUP:
+                if run_command(ws, cmd, quiet=True) != 0:
+                    raise SystemExit(f'setup: `{cmd}` failed')
+            for les in LESSONS:
+                if les.number >= until_lesson:
+                    break
+                apply_snapshot(ws, les.snapshot)
+                for s in les.steps:
+                    if s.snapshot:
+                        apply_snapshot(ws, s.snapshot)
+                    for c in s.commands:
+                        code = run_command(ws, c.cmd, quiet=True)
+                        if code != c.expect.get('exit', 0):
+                            raise SystemExit(
+                                f'replaying step {s.id}: `{c.cmd}` exited {code}; '
+                                f'the workspace is only partly rebuilt')
     finally:
         if old is None:
             os.environ.pop('REMAKE_ORIGIN', None)
@@ -153,10 +171,18 @@ def reset(ws, number):
     les = lesson(number)
     stamp = time.strftime('%Y%m%d-%H%M%S')
     kept = []
-    if git(ws, 'status', '--porcelain'):
+    # Stash only real changes: a tree that already matches the lesson's
+    # start (the learner just finished the previous lesson) has none.
+    changed = (git(ws, 'diff', f'lesson-{les.number}', '--name-only')
+               or git(ws, 'ls-files', '--others', '--exclude-standard'))
+    if changed:
         message = f'before reset to lesson {number}'
+        before = git(ws, 'rev-parse', '-q', '--verify', 'refs/stash', check=False)
         git(ws, 'stash', 'push', '-u', '-m', message)
-        kept.append(f"uncommitted changes: git stash ('{message}')")
+        # Nothing to stash when the difference is the learner's own commits
+        # (kept on a backup branch below): only claim a stash that was made.
+        if git(ws, 'rev-parse', '-q', '--verify', 'refs/stash', check=False) != before:
+            kept.append(f"uncommitted changes: git stash ('{message}')")
     # The learner's own commits: HEAD not reachable from any lesson tag.
     if git(ws, 'rev-list', 'HEAD', '--not', '--tags'):
         branch = f'backup/before-reset-{stamp}'
@@ -168,7 +194,8 @@ def reset(ws, number):
             backup.mkdir(parents=True, exist_ok=True)
             shutil.move(ws / d, backup / d)
     if backup.exists():
-        kept.append(f'the old .remake/ and data/: {backup.relative_to(ws)}/')
+        kept.append(f'the previous .remake/ and data/ (rebuilt for this lesson): '
+                    f'{backup.relative_to(ws)}/')
     git(ws, 'reset', '-q', '--hard', f'lesson-{les.number}')
     replay(ws, number)
     git(ws, 'reset', '-q', '--hard', f'lesson-{les.number}')
