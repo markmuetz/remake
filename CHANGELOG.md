@@ -39,6 +39,32 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   trigger. `set-state` does not clear them: they describe the last actual
   execution, not the task's current state.
 
+### Fixed
+
+- **Rerun propagation follows paths, not matrices** (review 2026-09-24 H3).
+  Which upstream tasks a task depends on is now derived from its declared
+  `inputs`: the upstream tasks whose outputs it reads. Previously a rule
+  sharing its upstream's matrix was assumed to read only its same-kwargs
+  upstream task, so a task reading upstream `year-1` (or a stencil of
+  neighbours) did **not** rerun when that upstream task did — and the
+  same-kwargs task reran instead. This applies to same-run propagation, the
+  cross-run `run_seq` backstop, `set-state --success`'s downstream cascade,
+  skipping downstream tasks after a failure, and `remake why` (which now
+  names the upstream task read). Fan-ins across different matrices become
+  precise too: `aggregate[site]` reruns only for the site whose inputs
+  changed. SLURM's `aftercorr`/`afterok` choice uses the same map. After
+  upgrading, tasks that were wrongly left looking up to date by the old rule
+  are rerun; nothing else is.
+
+### Changed
+
+- A task with **no path link** to an upstream rule (a `depends_on` used only
+  for ordering), or one reading an output several upstream tasks share,
+  depends on *every* upstream task: any upstream rerun reruns it, any
+  upstream failure skips it. Previously, with a shared matrix, this was
+  element-wise by kwargs. After upgrading, such a task also reruns once if
+  any upstream task last ran in a later invocation than it did.
+
 ## [0.8.5] — 2026-09-24
 
 The 0.8.5 lane: the process-handling fixes deferred from 0.8.4 (review IDs

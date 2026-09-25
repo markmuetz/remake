@@ -41,6 +41,7 @@ from pathlib import Path
 
 from loguru import logger
 
+from ..core.deps import Edge, task_id
 from ..core.exceptions import RemakeError
 from .executor import Executor
 
@@ -323,22 +324,15 @@ def _elementwise(upstream_tasks, tasks):
     kwargs lists are NOT sufficient: a stencil rule (task t reads upstream
     t-1, t, t+1) has an identical matrix, yet aftercorr would start element
     t while its neighbours' inputs are unwritten — silent partial data
-    (review finding 7). Derived from resolved task inputs/outputs, plain
-    paths available at generation time."""
-    if len(upstream_tasks) != len(tasks):
+    (review finding 7). The same path-derived map the planner uses
+    (core/deps.py): an element reading nothing upstream (ordering-only
+    depends_on) or an output its siblings share (one zarr store
+    region-written by all) depends on ALL, which is not element-wise."""
+    if len(upstream_tasks) != len(tasks) or not tasks:
         return False
-    up_outputs = [{str(p) for p in t.outputs.values()} for t in upstream_tasks]
-    all_up = set().union(*up_outputs)
-    if sum(len(outs) for outs in up_outputs) != len(all_up):
-        # Elements share an output (e.g. one zarr store region-written by
-        # all): "element i's file" is every element's file, so the subset
-        # test below would pass vacuously while element i's data is still
-        # being written by its siblings.
-        return False
-    reads = [{str(p) for p in task.inputs.values()} & all_up for task in tasks]
-    # Every element must actually read from its counterpart (an empty
-    # intersection — ordering-only depends_on — proves nothing).
-    return all(read and read <= up_outputs[i] for i, read in enumerate(reads))
+    edge = Edge(upstream_tasks[0].rule, tasks[0].rule, lambda: upstream_tasks)
+    return all(edge.upstream_of(task) == frozenset([task_id(up)])
+               for up, task in zip(upstream_tasks, tasks))
 
 
 class _SubmittedRule:

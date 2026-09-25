@@ -502,12 +502,15 @@ Because these are pure functions they are trivially unit-testable.
 
 The rule-level DAG is the only graph remake3 builds. Task-level ordering is
 derived from it: rules run in topological order, and within a rule, tasks
-form an independent, embarrassingly-parallel wave. Rerun propagation is
-element-wise by kwargs when a rule shares its upstream's matrix, and
-conservative (any upstream rerun marks all downstream tasks) otherwise —
-over-rerunning is possible in odd matrix relationships, but never
-under-rerunning. On SLURM, `aftercorr`/`afterok` express exactly these two
-patterns natively.
+form an independent, embarrassingly-parallel wave. Rerun propagation
+follows paths: a task depends on the upstream tasks whose outputs are among
+its declared inputs (`core/deps.py`; review 2026-09-24 H3 — before 0.9 it
+was element-wise by kwargs whenever the matrices matched, which
+under-reran shifted/stencil inputs). A task with no path link to an
+upstream rule, or reading an output several upstream tasks share, depends
+on all of it — over-rerunning is possible, never under-rerunning, given
+declared inputs. On SLURM, `aftercorr` is used exactly when every element
+depends only on its counterpart, `afterok` otherwise.
 
 The deliberate consequence: **intra-rule task dependencies are
 inexpressible**. A rule whose task for `year` consumes the same rule's
@@ -637,8 +640,8 @@ inline-text→FK backfill + VACUUM) — the on-disk carve-out in
    is not in the unchanged set reruns. This is what keeps plan cost from
    scaling with task count × source size.
 4. Propagate: if any relevant upstream task reruns, so does this one
-   (element-wise when matrices are shared, conservative otherwise) — plus the
-   durable cross-pass `run_seq` backstop (bugs/01).
+   (which upstream tasks a task reads is derived from paths — `core/deps.py`)
+   — plus the durable cross-pass `run_seq` backstop (bugs/01).
 
 The metadata manager is always injected:
 
@@ -791,7 +794,8 @@ at the corresponding array index.
 ```
 use_array = True
   if rule has no intra-rule task dependencies
-  and all depends_on rules use the same matrix  →  aftercorr applies
+  and each element reads only its upstream counterpart's outputs
+      (resolved paths, core/deps.py)  →  aftercorr applies
   and matrix size >= configurable threshold (default: 10)
 ```
 

@@ -23,6 +23,7 @@ import os
 from loguru import logger
 
 from ..core.exceptions import RemakeError
+from ..core.deps import Edges
 from ..core.planner import record_failure, upstream_failed
 from ..metadata import TASK_STATUS_FAILED
 from .multiproc_executor import RUNNING_ROOT, WORKER_DIED
@@ -118,6 +119,7 @@ class DaskExecutor(Executor):
         nskipped = 0
         done = 0
         failures = {}  # see planner.record_failure
+        edges = Edges()  # which upstream tasks each task reads (upstream_failed)
         run_seq = self.rmk.metadata.current_run_seq()
         client, cluster = self._client()
         futures = {}
@@ -125,7 +127,7 @@ class DaskExecutor(Executor):
             for rule, rule_tasks in groups:
                 to_run = []
                 for task in rule_tasks:
-                    if upstream_failed(task, failures):
+                    if upstream_failed(task, failures, edges):
                         record_failure(failures, task)
                         nskipped += 1
                         done += 1

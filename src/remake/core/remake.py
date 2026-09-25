@@ -18,6 +18,7 @@ from ..util import task_log_path
 from ..util.resources import capture_for_config
 from ..util.run_lock import run_lock
 from .dag import build_rule_dag, expand_rule, iter_expand_rule
+from .deps import Edges
 from .exceptions import Defer, RemakeError, TaskExit
 from .planner import (
     cascade_settled,
@@ -25,6 +26,7 @@ from .planner import (
     make_predicate,
     plan,
     rule_kwarg_names,
+    upstream_run_seqs,
 )
 from .rule import Rule
 from .scope import check_scope, exec_function
@@ -225,10 +227,13 @@ class Remake:
         runnable, _ = plan(
             self.rules, self.dag, cache, check_outputs=self.check_outputs
         )
+        # One edge map and run_seq view for the batch (the same N × M trap).
+        edges, seqs = Edges(), upstream_run_seqs(cache)
         for task in runnable if tasks is None else tasks:
             will_run, reasons = explain_task(
                 self.rules, self.dag, cache, task,
                 check_outputs=self.check_outputs, runnable=runnable,
+                edges=edges, upstream_seqs=seqs,
             )
             yield task, will_run, reasons
 
@@ -367,10 +372,12 @@ class Remake:
         # changed *and* upstream rerun), so counts may exceed the to-run total.
         reasons_by_rule = {}
         if reasons:
+            edges, seqs = Edges(), upstream_run_seqs(cache)
             for task in runnable:
                 _, rs = explain_task(
                     self.rules, self.dag, cache, task,
                     check_outputs=self.check_outputs, runnable=runnable,
+                    edges=edges, upstream_seqs=seqs,
                 )
                 bucket = reasons_by_rule.setdefault(task.rule.name, Counter())
                 for r in rs:
@@ -739,7 +746,8 @@ class Remake:
         selected = {}
         for t in selected_tasks:
             selected.setdefault(t.rule, set()).add(frozenset(t.kwargs.items()))
-        settled = cascade_settled(set(self.rules), self.dag, selected, run_seq, status)
+        edges = Edges(lambda r: list(task_of[r].values()) if r in task_of else expand_rule(r))
+        settled = cascade_settled(set(self.rules), self.dag, selected, run_seq, status, edges)
         cascaded = []
         for rule, ids in settled.items():
             for tid in ids - selected.get(rule, set()):

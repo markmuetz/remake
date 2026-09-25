@@ -136,6 +136,31 @@ def aggregate(inputs, outputs, site):
 
 This is fan-in: one `aggregate` task per site, each consuming every year.
 
+## Which upstream tasks a task depends on
+
+`depends_on` links *rules*. Which upstream *tasks* a task needs comes from
+its declared `inputs`: a task depends on the upstream tasks whose outputs
+appear among its inputs. So when `extract[year=2001]` reruns (or fails), only
+the tasks that read its outputs rerun (or are skipped) — `process[year=2001]`
+above, a `process[year=2002]` that reads the previous year, or the one
+`aggregate` task for that site — whatever the matrices look like.
+
+Two cases fall back to "depends on every upstream task":
+
+- **No path link** — the task's inputs include none of the upstream's outputs
+  (`depends_on` used only for ordering). Any upstream rerun reruns it.
+- **Shared outputs** — it reads an output that several upstream tasks write
+  (e.g. one zarr store each task writes a region of).
+
+The contract: **declare what you read.** A task that reads upstream files
+it doesn't list in `inputs` (say, by globbing a directory) is invisible to
+this, and won't rerun when they change. The `inputs=upstream.outputs` idiom
+is recognised from the templates alone, so it costs nothing at plan time;
+other shapes resolve the paths, once per plan and only when an upstream task
+is actually rerunning or newer. That shortcut assumes matrix values are
+plain names or numbers: keep `/`, `.` and `..` out of string values used in
+paths.
+
 When the set of inputs can't be known at module load — it depends on the matrix
 value, or on upstream outputs that don't exist yet — pass a *callable* of the
 matrix keys instead, returning the dict per task. See

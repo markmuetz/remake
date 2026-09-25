@@ -19,6 +19,7 @@ from loguru import logger
 from ..metadata.metadata_manager import TASK_STATUS_FAILED, TASK_STATUS_SUCCESS
 from ..util.code_compare import CodeComparer
 from .dag import expand_rule
+from .deps import ALL, Edges, downstream_task, task_id
 from .exceptions import Defer, RemakeError
 from .rule import is_deferrable
 from .scope import (
@@ -111,22 +112,43 @@ def _upstream_rerunning(rule, rerun_kwargs):
     return any(rerun_kwargs.get(dep) for dep in rule.depends_on)
 
 
-def _same_matrix(rule, dep):
-    """Element-wise rerun propagation applies when a rule shares its
-    upstream's matrix (the matrix=upstream.matrix idiom)."""
-    return rule.matrix is dep.matrix or rule.matrix == dep.matrix
+def _reads_rerun(upstream, dep_rerun):
+    """Does a task reading `upstream` (deps.ALL or a set of upstream task
+    ids) read any of `dep_rerun` (a non-empty set of rerunning task ids)?"""
+    return upstream is ALL or not upstream.isdisjoint(dep_rerun)
 
 
-def _max_upstream_run_seq(rule, task_kwargs, run_seq_by_rule):
-    """Highest run_seq among the upstream tasks feeding this task — element-wise
-    when the matrices match, else the max over all of the upstream rule's tasks
-    (conservative, mirroring rerun propagation). `run_seq_by_rule` maps a rule
-    to {frozenset(kwargs.items()): run_seq or None}. Returns None when no
-    upstream run_seq is known (nothing to compare against)."""
+class _UpstreamSeqs:
+    """run_seq per upstream task — {rule: {task id: run_seq or None}} —
+    fetched lazily per rule by `fetch(rule)` (None: not known), with each
+    rule's max cached so the backstop's cheap pre-check is O(1) per task."""
+
+    def __init__(self, fetch):
+        self._fetch = fetch
+        self._cache = {}
+
+    def get(self, rule):
+        if rule not in self._cache:
+            seqs = self._fetch(rule)
+            top = None
+            if seqs:
+                top = max((s for s in seqs.values() if s is not None), default=None)
+            self._cache[rule] = (seqs, top)
+        return self._cache[rule]
+
+
+def _max_upstream_run_seq(task, upstream_seqs, edges, above=None):
+    """Highest run_seq among the upstream tasks this task reads (see
+    deps.Edge; every upstream task when it reads ALL). Returns None when no
+    upstream run_seq is known. `above` short-circuits: an upstream rule whose
+    newest task is not above it can't matter, so its edge is never built."""
     best = None
-    for dep in rule.depends_on:
-        seqs = run_seq_by_rule.get(dep, {})
-        candidates = [seqs.get(task_kwargs)] if _same_matrix(rule, dep) else seqs.values()
+    for dep in task.rule.depends_on:
+        seqs, top = upstream_seqs.get(dep)
+        if top is None or (above is not None and top <= above):
+            continue
+        upstream = edges.upstream_of(dep, task)
+        candidates = seqs.values() if upstream is ALL else (seqs.get(u) for u in upstream)
         for s in candidates:
             if s is not None and (best is None or s > best):
                 best = s
@@ -138,7 +160,7 @@ def _outputs_complete(task):
     return bool(outputs) and all(token.is_complete() for token in outputs.values())
 
 
-def cascade_settled(rule_set, dag, selected, run_seq, status):
+def cascade_settled(rule_set, dag, selected, run_seq, status, edges=None):
     """Guarded downstream cascade for `set-state --success`.
 
     Stamping a task with the current (highest) run_seq makes it newer than its
@@ -158,7 +180,11 @@ def cascade_settled(rule_set, dag, selected, run_seq, status):
     The cascade is local and needs no subtree pruning: a descendant skipped by
     the guard reruns through normal propagation and re-stamps higher when it
     does, re-triggering its own descendants on the next pass.
+
+    `edges` (deps.Edges) says which upstream tasks each task reads; built
+    from the rules' matrices if not given.
     """
+    edges = edges or Edges()
     settled = {rule: set(ids) for rule, ids in selected.items()}
     for rule in nx.topological_sort(dag):
         if rule not in rule_set or not rule.depends_on:
@@ -168,9 +194,10 @@ def cascade_settled(rule_set, dag, selected, run_seq, status):
                 continue
             this_seq = run_seq.get(rule, {}).get(task_kwargs)
             downstream_of_settled = independent_newer = False
+            task = downstream_task(rule, task_kwargs)
             for dep in rule.depends_on:
-                dep_ids = ([task_kwargs] if _same_matrix(rule, dep)
-                           else list(run_seq.get(dep, {})))
+                upstream = edges.upstream_of(dep, task)
+                dep_ids = list(run_seq.get(dep, {})) if upstream is ALL else upstream
                 for did in dep_ids:
                     if did in settled.get(dep, set()):
                         downstream_of_settled = True
@@ -209,27 +236,20 @@ def record_failure(failures, task):
     failures.setdefault(_FAILED_OUTPUTS, set()).update(_io_paths(task, 'outputs'))
 
 
-def upstream_failed(task, failures):
+def upstream_failed(task, failures, edges):
     """Should task be skipped because upstream tasks failed this run?
 
-    failures: built by record_failure. Mirrors the planner's rerun
-    propagation — element-wise when the matrices are shared, conservative
-    (any failure taints all downstream tasks) otherwise — and additionally
-    skips any task whose declared inputs include an output of a failed task.
-    A shared matrix doesn't mean each task reads only its same-kwargs
-    upstream (e.g. inputs of year-1): without the path check such a task ran
-    on its failed upstream's stale or missing output (review 2026-09-24 H3,
-    failure-skip part; the full fix is 0.9).
+    failures: built by record_failure; edges: a deps.Edges for the run.
+    Mirrors the planner's rerun propagation: skipped when the task reads a
+    failed upstream task's outputs, or reads ALL of a rule with failures
+    (ordering-only or shared outputs). The direct path check also catches a
+    failed task's outputs read across rules the edge map doesn't cover.
     """
+    if _io_paths(task, 'inputs') & failures.get(_FAILED_OUTPUTS, set()):
+        return True
     for dep in task.rule.depends_on:
         failed = failures.get(dep)
-        if not failed:
-            continue
-        if not _same_matrix(task.rule, dep):
-            return True
-        if frozenset(task.kwargs.items()) in failed:
-            return True
-        if _io_paths(task, 'inputs') & failures.get(_FAILED_OUTPUTS, set()):
+        if failed and _reads_rerun(edges.upstream_of(dep, task), failed):
             return True
     return False
 
@@ -290,14 +310,40 @@ def _uses_change_message(stored_hash, uses, old_manifest=None):
     return 'uses= changed since last run: ' + ', '.join(bits)
 
 
-def explain_task(rules, dag, metadata, task, *, check_outputs='never', runnable=None):
+def _task_label(task):
+    kstr = ', '.join(f'{k}={v}' for k, v in task.kwargs.items())
+    return f'{task.rule.name}[{kstr}]'
+
+
+def _fetch_run_seqs(metadata, rule, tasks=None):
+    """{task id: run_seq or None} for all of `rule`'s tasks (None if its
+    matrix defers)."""
+    if tasks is None:
+        try:
+            tasks = expand_rule(rule)
+        except Defer:
+            return None
+    recs = metadata.get_tasks_status(tasks)
+    return {task_id(t): (recs[t.key].run_seq if t.key in recs else None) for t in tasks}
+
+
+def upstream_run_seqs(metadata):
+    """Per-rule run_seqs fetched lazily from `metadata` — share one across
+    a batch of explain_task calls."""
+    return _UpstreamSeqs(lambda dep: _fetch_run_seqs(metadata, dep))
+
+
+def explain_task(rules, dag, metadata, task, *, check_outputs='never', runnable=None,
+                 edges=None, upstream_seqs=None):
     """Why would (or wouldn't) this task run? Returns (will_run, reasons),
     each reason a `Reason(category, message)` in the order the planner checks
     them. The `remake why` command (messages) and `info --reasons` (categories).
 
     `runnable` is the precomputed `plan()` runnable list; pass it to explain
     many tasks without re-planning per task (one plan() shared across them).
-    Computed internally when not supplied (the single-task case)."""
+    Computed internally when not supplied (the single-task case). Likewise
+    `edges` (deps.Edges) and `upstream_seqs` (upstream_run_seqs): without
+    them each call re-resolves the upstream paths and refetches run_seqs."""
     if runnable is None:
         runnable, _ = plan(rules, dag, metadata, check_outputs=check_outputs)
     will_run = any(t.key == task.key for t in runnable)
@@ -352,21 +398,26 @@ def explain_task(rules, dag, metadata, task, *, check_outputs='never', runnable=
                 'outputs missing/incomplete (check_outputs=always)'))
 
     in_pass_upstream = False
+    edges = edges or Edges()
     for dep in task.rule.depends_on:
         dep_running = [t for t in runnable if t.rule is dep]
         if not dep_running:
             continue
-        if _same_matrix(task.rule, dep):
-            match = [t for t in dep_running if t.kwargs == task.kwargs]
-            if match:
-                in_pass_upstream = True
-                reasons.append(Reason('upstream-rerun',
-                    f'upstream {match[0]} reruns (shared matrix: element-wise)'))
-        else:
+        upstream = edges.upstream_of(dep, task)
+        if upstream is ALL:
             in_pass_upstream = True
             reasons.append(Reason('upstream-rerun',
-                f'{len(dep_running)} upstream {dep.name} task(s) rerun '
-                f'(different matrix: conservative, all downstream tasks rerun)'))
+                f'{len(dep_running)} upstream {dep.name} task(s) rerun (this task reads '
+                f'no output of {dep.name} that only one task writes: depends on all of it)'))
+        else:
+            match = [t for t in dep_running if task_id(t) in upstream]
+            if match:
+                in_pass_upstream = True
+                names = ', '.join(_task_label(t) for t in match[:3])
+                more = f' (+{len(match) - 3} more)' if len(match) > 3 else ''
+                reasons.append(Reason('upstream-rerun',
+                    f'upstream {names}{more} rerun{"s" if len(match) == 1 else ""} '
+                    f'(this task reads {"its" if len(match) == 1 else "their"} outputs)'))
 
     # Durable cross-pass propagation: an upstream was committed in a later
     # invocation than this task without rerunning it in the same pass (the gap
@@ -374,20 +425,8 @@ def explain_task(rules, dag, metadata, task, *, check_outputs='never', runnable=
     # is rerunning *this* pass — otherwise the upstream-rerun reason above is
     # the live cause. Mirrors the planner's `_max_upstream_run_seq` check.
     if rec is not None and rec.run_seq is not None and not in_pass_upstream:
-        run_seq_by_rule = {}
-        for dep in task.rule.depends_on:
-            try:
-                dep_tasks = expand_rule(dep)
-            except Defer:
-                continue
-            dep_recs = metadata.get_tasks_status(dep_tasks)
-            run_seq_by_rule[dep] = {
-                frozenset(t.kwargs.items()):
-                    (dep_recs[t.key].run_seq if t.key in dep_recs else None)
-                for t in dep_tasks
-            }
         up_seq = _max_upstream_run_seq(
-            task.rule, frozenset(task.kwargs.items()), run_seq_by_rule)
+            task, upstream_seqs or upstream_run_seqs(metadata), edges)
         if up_seq is not None and up_seq > rec.run_seq:
             reasons.append(Reason('upstream-newer',
                 f'an upstream ran more recently (run_seq {up_seq} > {rec.run_seq}) '
@@ -425,6 +464,30 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
     # order so a task can compare its stored run_seq against its upstreams'
     # (durable cross-pass propagation; see bugs/01_durable_rerun_propagation.md).
     task_run_seq = {}
+    planned = {}  # rule -> its expanded tasks this plan
+
+    # Under a query, an upstream task a selected task reads may itself be
+    # filtered out: the edge map and the backstop see the upstream's full
+    # task set (one extra expansion + status fetch per upstream rule, paid
+    # only when an edge or the backstop needs it).
+    full_tasks = {}
+
+    def tasks_of(dep):
+        if predicate is None and dep in planned:
+            return planned[dep]
+        if dep not in full_tasks:
+            full_tasks[dep] = expand_rule(dep)
+        return full_tasks[dep]
+
+    def fetch_run_seqs(dep):
+        if dep not in task_run_seq:
+            return None  # deferred, or outside `rules`
+        if predicate is None:
+            return task_run_seq[dep]
+        return _fetch_run_seqs(metadata, dep, tasks_of(dep))
+
+    edges = Edges(tasks_of)
+    upstream_seqs = _UpstreamSeqs(fetch_run_seqs)
 
     for rule in nx.topological_sort(dag):
         if rule not in rules:
@@ -486,18 +549,17 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
             io_unchanged = {cid for cid in io_ids
                             if cid is None or codes.get(cid) == current_io_hash}
 
-        # MM: what does this block do?
-        upstream_all = any(rerun_kwargs.get(dep) == 'all' for dep in rule.depends_on)
-        elementwise_deps = []
+        # Same-pass propagation inputs: an upstream rerunning 'all' (deferred
+        # or unknown task set) reruns every task here; one rerunning some
+        # tasks reruns the tasks that read them (deps.Edge, per task below).
+        upstream_all = False
+        partial_deps = []
         for dep in rule.depends_on:
             dep_rerun = rerun_kwargs.get(dep, set())
-            if dep_rerun == 'all' or not dep_rerun:
-                continue
-            if _same_matrix(rule, dep):
-                elementwise_deps.append(dep_rerun)
-            else:
-                # Fan-in or differing matrices: conservative.
+            if dep_rerun == 'all':
                 upstream_all = True
+            elif dep_rerun:
+                partial_deps.append((dep, dep_rerun))
 
         for task in tasks:
             rec = records.get(task.key)
@@ -536,15 +598,17 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
                         rerun, reason = True, 'outputs missing (check_outputs=always)'
 
             if not rerun:
-                if upstream_all or any(task_kwargs in dep_rerun for dep_rerun in elementwise_deps):
+                if upstream_all or any(_reads_rerun(edges.upstream_of(dep, task), dep_rerun)
+                                       for dep, dep_rerun in partial_deps):
                     rerun, reason = True, 'upstream reruns'
             # Durable cross-pass backstop: an upstream committed in a later
             # invocation than this task (e.g. an upstream rerun via `run -Q`,
             # or after a crash) without rerunning it in the same pass. run_seq
             # None = not-yet-tracked (pre-upgrade): don't rerun on that alone.
-            # MM: Can't quite see how task_run_seq works here.
+            # task_run_seq holds every planned task's stored run_seq, by rule
+            # (filled in below as each rule is planned, in topo order).
             if not rerun and rec is not None and rec.run_seq is not None:
-                up_seq = _max_upstream_run_seq(rule, task_kwargs, task_run_seq)
+                up_seq = _max_upstream_run_seq(task, upstream_seqs, edges, above=rec.run_seq)
                 if up_seq is not None and up_seq > rec.run_seq:
                     rerun, reason = True, 'upstream ran more recently'
 
@@ -554,7 +618,7 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
                 runnable.append(task)
 
         rerun_kwargs[rule] = rule_rerun
-        # MM: oh, it's a dict of all currently know tasks grouped by rule I think.
+        planned[rule] = tasks
         task_run_seq[rule] = {
             frozenset(task.kwargs.items()):
                 (records[task.key].run_seq if task.key in records else None)

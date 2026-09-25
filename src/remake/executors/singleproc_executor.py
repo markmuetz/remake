@@ -2,6 +2,7 @@ import math
 
 from loguru import logger
 
+from ..core.deps import Edges
 from ..core.planner import record_failure, upstream_failed
 from .executor import Executor
 
@@ -13,9 +14,10 @@ class SingleprocExecutor(Executor):
         nfailed = 0
         nskipped = 0
         failures = {}  # see planner.record_failure
+        edges = Edges()  # which upstream tasks each task reads (upstream_failed)
         for i, task in enumerate(tasks):
             prefix = f'{i + 1:>{ndigits}}/{ntasks}'
-            if upstream_failed(task, failures):
+            if upstream_failed(task, failures, edges):
                 # Don't run tasks whose upstream failed this run — they'd
                 # fail noisily on missing inputs. Left unrecorded (pending):
                 # fixing the upstream makes the next run pick them up.

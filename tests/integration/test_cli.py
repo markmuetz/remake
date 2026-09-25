@@ -738,7 +738,7 @@ def test_why_code_change_and_upstream_propagation(pipeline_dir, capsys):
     cli('why', 'pipeline.py', '-Q', 'rule == "process" and n == 1')
     out = capsys.readouterr().out
     assert 'will run: yes' in out
-    assert 'upstream' in out and 'element-wise' in out
+    assert 'upstream' in out and 'reads its outputs' in out
     assert 'generate[n=1]' in out and 'generate[n=2]' not in out
 
 

@@ -33,6 +33,7 @@ from pathlib import Path
 from loguru import logger
 
 from ..core.exceptions import RemakeError
+from ..core.deps import Edges
 from ..core.planner import record_failure, upstream_failed
 from ..metadata import TASK_STATUS_FAILED
 from .executor import Executor
@@ -137,6 +138,7 @@ class MultiprocExecutor(Executor):
         nfailed = 0
         nskipped = 0
         failures = {}  # see planner.record_failure
+        edges = Edges()  # which upstream tasks each task reads (upstream_failed)
         run_seq = self.rmk.metadata.current_run_seq()
         pool = self._new_pool(self.nproc)
         try:
@@ -146,7 +148,7 @@ class MultiprocExecutor(Executor):
                 # them into missing inputs (left pending for a later run).
                 to_run = []
                 for task in rule_tasks:
-                    if upstream_failed(task, failures):
+                    if upstream_failed(task, failures, edges):
                         record_failure(failures, task)
                         nskipped += 1
                         self._done += 1
