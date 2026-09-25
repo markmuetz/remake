@@ -70,7 +70,10 @@ gate requires a particular model — only a fresh, adversarial context — so
 match the model to what a miss costs:
 
 - **Per-commit hook reviews** (>200 changed Python lines): **Sonnet**, at
-  medium effort, scoped to `src/`. Frequent and narrow, and a miss is likely
+  medium effort, scoped to `src/`. **On `main` and `maint/**` only**
+  (decided 2026-09-25, MM): a feature branch is reviewed once, when it merges
+  into `main`, via `git merge --no-ff --no-commit` + `git commit` so the
+  hook sees the whole branch diff (it blocks a direct merge commit there). Frequent and narrow, and a miss is likely
   caught by the pre-tag review. Run it as a review agent with a model
   override: `/code-review` runs as a fork of the session and always uses the
   session's model.
