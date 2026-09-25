@@ -358,6 +358,18 @@ def test_log_streams_split_and_structured(pipeline_dir):
     assert len({r['extra']['run_id'] for r in records}) == 2
 
 
+def test_invocation_end_records_exit_code(pipeline_dir):
+    # Pairs with the invocation event so a watcher can tell a finished
+    # command (and how it ended) from a running one.
+    assert cli('run', 'pipeline.py') == 0
+    assert cli('why', 'pipeline.py', '-Q', 'nosuchname == 1') == 2
+    ends = [json.loads(line)['record']['extra']
+            for line in (pipeline_dir / '.remake/remake.jsonl').read_text().splitlines()
+            if '"invocation_end"' in line]
+    assert [e['exit_code'] for e in ends] == [0, 2]
+    assert all(e['seconds'] >= 0 and e['run_id'] for e in ends)
+
+
 def test_run_logs_task_durations_and_summary(pipeline_dir):
     cli('run', 'pipeline.py')
     # Run narrative (INFO): one summary line with counts and elapsed time.

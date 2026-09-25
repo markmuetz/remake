@@ -45,6 +45,7 @@ markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.superfences
+  - pymdownx.details
   - pymdownx.inlinehilite
   - pymdownx.snippets:
       base_path: [.]
@@ -54,6 +55,10 @@ nav:
   - Home: index.md
   - Installation: installation.md
   - Getting started: getting-started.md
+  - Tutorial:
+      - Start here: tutorial/index.md
+      - 1. Your first rule: tutorial/lesson-1.md
+      - 2. A matrix of tasks: tutorial/lesson-2.md
   - User guide:
       - Rules and tasks: guide/rules-and-tasks.md
       - Running pipelines: guide/running.md

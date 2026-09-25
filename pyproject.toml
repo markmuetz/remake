@@ -81,9 +81,13 @@ docs = [
 
 [project.scripts]
 remake = "remake.remake_cmd:remake_cmd"
+remake-tutorial = "remake.tutorial.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"remake.tutorial" = ["files/*/*.py", "skill/SKILL.md"]
 
 [tool.setuptools.dynamic]
 version = { attr = "remake.version.__version__" }

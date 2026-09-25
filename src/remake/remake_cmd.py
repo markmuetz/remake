@@ -10,6 +10,7 @@ import re
 import signal
 import sys
 import threading
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -1006,7 +1007,13 @@ def remake_cmd(argv=None):
         # Every record from this invocation shares one run_id (surfaced in the
         # structured sink), so a miner can group an invocation's lines and
         # correlate e.g. a plan total with its constituent status queries.
-        logger.configure(extra={'run_id': uuid.uuid4().hex[:12]})
+        # REMAKE_ORIGIN (optional) tags every record too, so a log watcher
+        # can tell who issued a command — the tutorial's tutor sets it on its
+        # own read-only checks so its watcher skips them.
+        extra = {'run_id': uuid.uuid4().hex[:12]}
+        if os.environ.get('REMAKE_ORIGIN'):
+            extra['origin'] = os.environ['REMAKE_ORIGIN']
+        logger.configure(extra=extra)
         try:
             Path('.remake').mkdir(parents=True, exist_ok=True)
         except OSError as e:
@@ -1045,6 +1052,11 @@ def remake_cmd(argv=None):
     # SIGTERM killed the parent outright and left its workers running.
     received = {}
     old_sigterm = None
+    # invocation_end pairs with the invocation event: the exit code and
+    # duration, so a watcher (e.g. the tutorial's tutor) can tell "finished
+    # and failed" from "still running". An uncaught exception exits 1.
+    started = time.perf_counter()
+    code = 1
 
     def _on_sigterm(signum, frame):
         received['signal'] = signum
@@ -1057,13 +1069,15 @@ def remake_cmd(argv=None):
         # can never skip the cwd restore below.
         if args.subcmd_name == 'run' and threading.current_thread() is threading.main_thread():
             old_sigterm = signal.signal(signal.SIGTERM, _on_sigterm)
-        return cli.dispatch()
+        code = cli.dispatch() or 0
+        return code
     except KeyboardInterrupt:
         signum = received.get('signal', signal.SIGINT)
         if getattr(args, 'debug_exception', False):
             raise
         print(f'interrupted ({signal.Signals(signum).name})', file=sys.stderr)
-        return 128 + signum  # the shell convention: 130 Ctrl-C, 143 SIGTERM
+        code = 128 + signum
+        return code  # the shell convention: 130 Ctrl-C, 143 SIGTERM
     except BrokenPipeError:
         # Output piped into something that stopped reading (`| head`): stop
         # quietly like other CLI tools, not with a traceback (review L26).
@@ -1071,14 +1085,16 @@ def remake_cmd(argv=None):
         # raise again.
         devnull = os.open(os.devnull, os.O_WRONLY)
         os.dup2(devnull, sys.stdout.fileno())
-        return 141  # 128 + SIGPIPE, what a shell reports for a killed writer
+        code = 141
+        return code  # 128 + SIGPIPE, what a shell reports for a killed writer
     except RemakeError as e:
         # User-facing errors (bad query, >1-task match, unknown rule, ...)
         # print cleanly and exit 2; keep the traceback only under -X.
         if getattr(args, 'debug_exception', False):
             raise
         print(f'error: {e}', file=sys.stderr)
-        return 2
+        code = 2
+        return code
     finally:
         if old_sigterm is not None:
             signal.signal(signal.SIGTERM, old_sigterm)
@@ -1087,6 +1103,15 @@ def remake_cmd(argv=None):
             if close is not None:
                 close()
         os.chdir(orig_cwd)
+        # Last, and never allowed to fail the command: logging is a side
+        # channel. (The file sinks' paths are relative, but loguru opened
+        # them before the chdir back.)
+        try:
+            elapsed = time.perf_counter() - started
+            logger.bind(event='invocation_end', exit_code=code,
+                        seconds=round(elapsed, 6)).debug('exit {} after {:.3f}s', code, elapsed)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 if __name__ == '__main__':
