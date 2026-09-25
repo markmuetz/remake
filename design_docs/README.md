@@ -52,7 +52,7 @@ todos.md by review ID once scheduled.
 ## Working
 
 - [todos.md](todos.md) — concrete known problems and debts, checkbox
-  state; the 0.8.4 patch list by review ID.
+  state; review findings tracked by ID.
 - [discussion.md](discussion.md) — ideas by theme, with an index of the
   ones the roadmap schedules, plus Parked and Rejected sections.
 - [MM_review.md](MM_review.md) — running log of Mark's source reviews

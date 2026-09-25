@@ -94,7 +94,7 @@ names (H8), atomic DB create + migrations
 run lock (M15), ingest monotonicity (M17), bad-sidecar quarantine (L14),
 colour/BrokenPipe/exit-code hygiene (L25–L27), and the failure-skip part of
 H3. Plus the older debts in [todos.md](todos.md) (`retry_lock_commit`, zarr
-v3). **0.8.5** follows with worker-crash tolerance (H7) and clean
+v3). **0.8.5** (released 2026-09-24) followed with worker-crash tolerance (H7) and clean
 Ctrl-C/SIGTERM (M10) — deferred 2026-09-24 because their process/signal
 tests are the slow, flaky part. Cut from `main` while it is fix-only; branch
 from the latest tag if feature work has landed — as of 0.8.4 it has

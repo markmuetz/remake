@@ -5,6 +5,36 @@ kept verbatim for the record. Class: **Record** — frozen; trust the code.
 Open remainders noted inside archived items were re-stubbed in the live list
 at prune time.
 
+## Pruned at 0.8.5 (2026-09-24) — release
+
+Deferred from 0.8.4 (2026-09-24): process/signal handling, whose tests
+are the slow, flaky part.
+
+- [x] **H7** worker crash (OOM/segfault) aborts multiproc; dask re-executes
+  completed tasks.
+- [x] **M10** Ctrl-C/SIGTERM don't stop multiproc; orphan workers.
+  Both shipped in 0.8.5 (review 2026-09-24 H7, M10).
+
+- [x] **`ResourceWarning: unclosed database` on Python 3.14 under dask.**
+  Four of them in CI (run 30668511521, 2026-07-31), 3.14 only, all from
+  `tests/integration/test_dask.py`; the tracebacks point at gc during the
+  dask event loop (`asyncio/locks.py`, `importlib._bootstrap`), not at a
+  test assertion. Not a failure — the warnings-are-errors gate covers
+  `test_examples.py` only — but CI should be warning-clean before 3.14 is
+  the common runtime. **Cause not yet established**; candidates worth
+  checking first: a `Sqlite3Backend` in the *parent* finalised mid-event-
+  loop where `__del__`'s close (added 0.8.3) lands after sqlite3 has
+  already warned, or a worker process inheriting the parent's connection
+  if `distributed`'s start method is not `spawn` on the runner. Diagnose
+  before fixing — the obvious "close it in the worker" fix is wrong if the
+  connection is the parent's. Explicit close at `DaskExecutor.run_tasks`
+  teardown (next to `client.close()`/`cluster.close()`) is the likely
+  shape. 0.8.x patch-lane candidate: no API/schema change, no new rerun
+  trigger.
+  **Closed 2026-09-25:** not reproduced since the CLI closes its metadata
+  backends in `finally` (0.8.4); CI on py3.14 for 0.8.4 and 0.8.5 was
+  warning-free. Reopen with a traceback if it recurs.
+
 ## Pruned at 0.8.4 (2026-09-24) — release
 
 The 0.8.4 patch list from the 2026-09-24 full-implementation review

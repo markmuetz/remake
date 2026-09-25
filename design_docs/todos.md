@@ -2,7 +2,7 @@
 
 Concrete known problems and debts, ordered roughly by severity. Completed
 entries are pruned to [todos_archive.md](records/todos_archive.md) at each release
-(last prune: 2026-09-24, at 0.8.4).
+(last prune: 2026-09-25, at 0.8.5).
 
 Findings from [code_reviews/](code_reviews/) are tracked here by their
 review ID once scheduled; the review doc keeps the full scenario and fix.
@@ -12,14 +12,10 @@ review ID once scheduled; the review doc keeps the full scenario and fix.
 All items shipped; archived verbatim in
 [records/todos_archive.md](records/todos_archive.md) ("Pruned at 0.8.4").
 
-## 0.8.5 patch lane
+## 0.8.5 — released 2026-09-24
 
-Deferred from 0.8.4 (2026-09-24): process/signal handling, whose tests
-are the slow, flaky part.
-
-- [ ] **H7** worker crash (OOM/segfault) aborts multiproc; dask re-executes
-  completed tasks.
-- [ ] **M10** Ctrl-C/SIGTERM don't stop multiproc; orphan workers.
+All items shipped; archived verbatim in
+[records/todos_archive.md](records/todos_archive.md) ("Pruned at 0.8.5").
 
 ## Performance / scaling
 
@@ -73,23 +69,6 @@ are the slow, flaky part.
   frame), rules already know their module; both scans filter to
   objects *defined* in the scanned file. Worth doing independently of
   the parked feature.
-
-- [ ] **`ResourceWarning: unclosed database` on Python 3.14 under dask.**
-  Four of them in CI (run 30668511521, 2026-07-31), 3.14 only, all from
-  `tests/integration/test_dask.py`; the tracebacks point at gc during the
-  dask event loop (`asyncio/locks.py`, `importlib._bootstrap`), not at a
-  test assertion. Not a failure — the warnings-are-errors gate covers
-  `test_examples.py` only — but CI should be warning-clean before 3.14 is
-  the common runtime. **Cause not yet established**; candidates worth
-  checking first: a `Sqlite3Backend` in the *parent* finalised mid-event-
-  loop where `__del__`'s close (added 0.8.3) lands after sqlite3 has
-  already warned, or a worker process inheriting the parent's connection
-  if `distributed`'s start method is not `spawn` on the runner. Diagnose
-  before fixing — the obvious "close it in the worker" fix is wrong if the
-  connection is the parent's. Explicit close at `DaskExecutor.run_tasks`
-  teardown (next to `client.close()`/`cluster.close()`) is the likely
-  shape. 0.8.x patch-lane candidate: no API/schema change, no new rerun
-  trigger.
 
 - [ ] `eval`-based query filter (the review 2026-09-24 M14 quick fix — clean errors, unknown names, safe builtins — shipped in 0.8.4; see MM comment in `core/planner.py:27`):
   `make_predicate` does `eval(compile(query, ...))` against task kwargs.
