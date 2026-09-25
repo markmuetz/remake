@@ -39,6 +39,38 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   trigger. `set-state` does not clear them: they describe the last actual
   execution, not the task's current state.
 
+## [0.8.5] — 2026-09-24
+
+The 0.8.5 lane: the process-handling fixes deferred from 0.8.4 (review IDs
+refer to `design_docs/code_reviews/2026-09-24_review.md` on `main`).
+
+### Fixed
+
+- **A worker crash no longer aborts a multiproc or dask run** (H7). When a
+  worker process died mid-task — killed for using too much memory, a
+  segfault in native code, `os._exit()` — multiproc aborted the whole run
+  with a `BrokenProcessPool` traceback, the crashing task was never recorded
+  (so the next run crashed again), and the rest of the rule never ran; dask
+  retried the crasher on three more workers (killing each) and re-executed
+  tasks that had already finished. Now only the task that killed its worker
+  is recorded as failed, with an explanation, and the run carries on: under
+  multiproc, tasks in flight at the crash are re-run one at a time to find
+  the culprit and tasks that never started are resubmitted; under dask
+  every task executes at most once.
+- **Ctrl-C and SIGTERM stop a multiproc or dask run promptly and cleanly**
+  (M10). Ctrl-C let every queued task of the current rule run to
+  completion before stopping, and SIGTERM (`kill`, a CI or scheduler
+  timeout) killed remake but left its worker processes running — starting
+  new tasks, and racing a later run on the same outputs. Now queued tasks
+  are cancelled, workers are terminated, the run lock is released, and
+  `remake run` prints `interrupted (SIGINT|SIGTERM)` and exits 130/143
+  instead of a traceback.
+- **The CLI closes the metadata database when a command ends**, instead of
+  leaving the SQLite connection to garbage collection — the source of the
+  `ResourceWarning: unclosed database` seen in the test suite (notably under
+  dask on Python 3.14), and an open DB handle for in-process callers of
+  `remake_cmd`.
+
 ## [0.8.4] — 2026-09-24
 
 Fixes from the 2026-09-24 full-implementation review (IDs refer to
@@ -454,6 +486,7 @@ the `remake` Claude skill (`references/remake2_to_remake3.md`). The rewrite was
 validated by reproducing a real multi-figure paper pipeline (`mcs_prime`)
 end-to-end on JASMIN with outputs identical to the remake2 reference.
 
+[0.8.5]: https://github.com/markmuetz/remake/releases/tag/v0.8.5
 [0.8.4]: https://github.com/markmuetz/remake/releases/tag/v0.8.4
 [0.8.3]: https://github.com/markmuetz/remake/releases/tag/v0.8.3
 [0.8.2]: https://github.com/markmuetz/remake/releases/tag/v0.8.2
