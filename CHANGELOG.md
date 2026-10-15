@@ -55,6 +55,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   changed. SLURM's `aftercorr`/`afterok` choice uses the same map. After
   upgrading, tasks that were wrongly left looking up to date by the old rule
   are rerun; nothing else is.
+- **Scope check understands PEP 810 lazy imports** (Python 3.15). A module
+  bound by `lazy import numpy as np` was reported as an undeclared
+  outer-scope name, because the scope check saw the unresolved lazy proxy
+  rather than a module. Lazy imports are now classified without resolving
+  them (so loading a remakefile still skips the import cost):
+  `lazy import x[.y] [as z]` is environment like an eager module import, and
+  `lazy from x import y` is environment only when `x` is stdlib, otherwise
+  reported like an eager `from helpers import normalise`. One difference from
+  eager imports: `lazy from pkg import submodule` is reported.
 
 ### Changed
 

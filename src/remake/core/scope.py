@@ -12,8 +12,12 @@ This is detection only — there is no runtime scope isolation. Names in
 import ast
 import builtins
 import dis
+import functools
 import inspect
+import os
+import re
 import sys
+import tokenize
 import types
 import warnings
 
@@ -85,9 +89,16 @@ def undeclared_names(fn, uses):
             if _is_environment(closure_values[name]):
                 continue
             undeclared.append(name)
-        # Module global: same environment check.
+        # Module global: same environment check. A PEP 810 `lazy import`
+        # (3.15+) is still an unresolved proxy here; classify it without
+        # resolving it, or loading the remakefile would pay the import cost
+        # that `lazy` exists to avoid.
         elif name in fn.__globals__:
-            if _is_environment(fn.__globals__[name]):
+            value = fn.__globals__[name]
+            if _is_lazy_import(value):
+                if _lazy_import_is_environment(name, value, fn.__globals__):
+                    continue
+            elif _is_environment(value):
                 continue
             undeclared.append(name)
         # In co_freevars but with no inspectable value (empty cell above):
@@ -109,6 +120,79 @@ def _is_environment(value):
     # package name (before the first dot) is a known stdlib module.
     defining_module = getattr(value, '__module__', '') or ''
     return defining_module.split('.')[0] in _STDLIB_MODULE_NAMES
+
+
+# Python 3.15+ only; on older Pythons nothing is ever a lazy import.
+_LAZY_IMPORT_TYPE = getattr(types, 'LazyImportType', None)
+_LAZY_REPR_RE = re.compile(r"^<lazy_import '([\w.]+)'>$")
+
+
+def _is_lazy_import(value):
+    return _LAZY_IMPORT_TYPE is not None and type(value) is _LAZY_IMPORT_TYPE
+
+
+def _lazy_import_is_environment(name, value, fn_globals):
+    """`_is_environment` for an unresolved lazy import, without resolving it.
+
+    The proxy only exposes its dotted target through its repr
+    (`<lazy_import 'matplotlib.pyplot'>`), which is the same for
+    `lazy import a.b as c` (a module) and `lazy from a import b as c` (any
+    object, possibly user code worth tracking). So the binding statement is
+    read from the module's source:
+
+    - `lazy import x[.y] [as z]` binds a module: environment.
+    - `lazy from x import y`: environment if `x` is stdlib, as for an eager
+      import of a stdlib object. Otherwise reported, as an eager
+      `from helpers import normalise` would be. (Unlike the eager check, this
+      also reports `lazy from pkg import submodule`; telling those apart
+      would mean importing `pkg`.)
+    - No source available: fall back on the target alone. An undotted target
+      can only come from `lazy import x`.
+    """
+    match = _LAZY_REPR_RE.match(repr(value))
+    if not match:
+        return False
+    target = match.group(1)
+    if target.split('.')[0] in _STDLIB_MODULE_NAMES:
+        return True
+    kind = _lazy_import_kinds(fn_globals.get('__file__')).get(name)
+    if kind is None:
+        return '.' not in target
+    return kind == 'import'
+
+
+def _lazy_import_kinds(path):
+    """{bound name: 'import' | 'from'} for the lazy imports in a source file.
+
+    A name bound by both kinds maps to 'from' (the conservative verdict)."""
+    if not path:
+        return {}
+    try:
+        mtime_ns = os.stat(path).st_mtime_ns
+    except OSError:
+        return {}
+    return _lazy_import_kinds_cached(path, mtime_ns)
+
+
+@functools.lru_cache(maxsize=32)
+def _lazy_import_kinds_cached(path, mtime_ns):
+    try:
+        with tokenize.open(path) as f:
+            tree = ast.parse(f.read(), filename=path)
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return {}
+    kinds = {}
+    for node in ast.walk(tree):
+        if not getattr(node, 'is_lazy', False):
+            continue
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                bound = alias.asname or alias.name.split('.')[0]
+                kinds.setdefault(bound, 'import')
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                kinds[alias.asname or alias.name] = 'from'
+    return kinds
 
 
 def check_scope(fn, uses, strict):

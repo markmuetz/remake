@@ -1,3 +1,5 @@
+import sys
+import textwrap
 import warnings
 
 import pytest
@@ -200,3 +202,53 @@ def test_exec_function_without_uses_is_identity():
         return 1
 
     assert exec_function(fn, {}) is fn
+
+
+# PEP 810 lazy imports (3.15+). `lazy` is a SyntaxError before 3.15, so the
+# rule functions live in a module written to tmp_path. `heavy` raises if it is
+# ever imported, proving the check classifies the proxies without resolving them.
+needs_lazy_imports = pytest.mark.skipif(
+    sys.version_info < (3, 15), reason='PEP 810 lazy imports need Python 3.15+'
+)
+
+
+def _load_lazy_module(tmp_path, monkeypatch, body):
+    from remake.loader import load_module
+
+    pkg = tmp_path / 'heavy'
+    pkg.mkdir()
+    (pkg / '__init__.py').write_text("raise RuntimeError('heavy was imported')\n")
+    (pkg / 'sub.py').write_text('')
+    (tmp_path / 'helpers.py').write_text('def normalise(x):\n    return x\n')
+    monkeypatch.syspath_prepend(str(tmp_path))
+    (tmp_path / 'lazy_rules.py').write_text(textwrap.dedent(body))
+    return load_module(tmp_path / 'lazy_rules.py')
+
+
+@needs_lazy_imports
+def test_lazy_module_imports_are_safe_and_stay_unresolved(tmp_path, monkeypatch):
+    mod = _load_lazy_module(tmp_path, monkeypatch, """
+        lazy import heavy
+        lazy import heavy.sub as hs
+        lazy import json as js
+        lazy from pathlib import Path
+
+        def fn():
+            return heavy, hs, js, Path
+    """)
+    assert undeclared_names(mod.fn, {}) == []
+    assert 'heavy' not in sys.modules
+
+
+@needs_lazy_imports
+def test_lazy_from_import_of_user_code_is_flagged(tmp_path, monkeypatch):
+    mod = _load_lazy_module(tmp_path, monkeypatch, """
+        lazy from helpers import normalise
+        lazy from heavy import thing
+
+        def fn():
+            return normalise, thing
+    """)
+    assert undeclared_names(mod.fn, {}) == ['normalise', 'thing']
+    assert 'helpers' not in sys.modules
+    assert 'heavy' not in sys.modules
