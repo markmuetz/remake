@@ -60,5 +60,7 @@ nav:
       - SLURM: guide/slurm.md
       - Debugging: guide/debugging.md
   - CLI reference: cli.md
+  - Field notes:
+      - Porting scaffold_analysis from omnium: notes/scaffold-omnium-port.md
   - API reference: api/index.md
   - Changelog: changelog.md
