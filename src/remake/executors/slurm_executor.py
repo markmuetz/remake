@@ -394,7 +394,11 @@ class SlurmExecutor(Executor):
                 'SlurmExecutor needs the remakefile path to generate scripts: '
                 'run via the remake CLI, or set rmk.remakefile'
             )
+        # The built-in defaults are layer (a) of the config cascade, so
+        # rmk.config['slurm'] already includes them; DEFAULT_SLURM_CONFIG is
+        # kept as a base for hand-built Remake objects with a replaced config.
         config = {**DEFAULT_SLURM_CONFIG, **rmk.config.get('slurm', {})}
+        self._check_profile_and_account(rmk, config)
         # Obsolete since arrays-everywhere; popped so it doesn't leak into
         # #SBATCH opts for configs that still set it.
         config.pop('array_threshold', None)
@@ -403,6 +407,26 @@ class SlurmExecutor(Executor):
         self.slurm_dir = Path('.remake/slurm')
         self.output_dir = self.slurm_dir / 'output'
         self.submit_path = Path('.remake/submit.sh')
+
+    @staticmethod
+    def _check_profile_and_account(rmk, config):
+        eff = rmk.effective_config
+        if eff.profile == 'jasmin':
+            missing = [r.name for r in rmk.rules
+                       if not (config.get('account')
+                               or r.config.get('slurm', {}).get('account'))]
+            if missing:
+                raise RemakeError(
+                    "The 'jasmin' profile does not set a SLURM account (it is "
+                    'per-user) and none is configured. Set it in your user '
+                    f'file ({eff.files[0][1]}):\n\n    [slurm]\n'
+                    '    account = "<your account>"\n')
+        elif eff.profile is None and eff.provenance.get('slurm.partition') == 'builtin default':
+            logger.warning(
+                "No profile selected and no 'partition' set: using remake's "
+                "built-in SLURM defaults, which are JASMIN LOTUS2's. Use "
+                '`--profile jasmin` (or set the slurm options explicitly in '
+                'your config); the built-in defaults will be removed at 1.0.')
 
     # --- generation ---
 

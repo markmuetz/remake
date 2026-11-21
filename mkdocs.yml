@@ -57,6 +57,7 @@ nav:
   - User guide:
       - Rules and tasks: guide/rules-and-tasks.md
       - Running pipelines: guide/running.md
+      - Configuration: guide/configuration.md
       - SLURM: guide/slurm.md
       - Debugging: guide/debugging.md
   - CLI reference: cli.md

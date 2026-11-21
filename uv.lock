@@ -1825,6 +1825,7 @@ dependencies = [
     { name = "loguru" },
     { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 
 [package.optional-dependencies]
@@ -1885,6 +1886,7 @@ requires-dist = [
     { name = "netcdf4", marker = "extra == 'examples'", specifier = ">=1.7.2" },
     { name = "networkx" },
     { name = "pyyaml", marker = "extra == 'examples'" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "xarray", marker = "extra == 'examples'", specifier = ">=2024.7.0" },
     { name = "zarr", marker = "extra == 'examples'", specifier = "<3" },
 ]

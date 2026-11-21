@@ -8,6 +8,24 @@ array and wiring up dependencies between rules with SLURM's `afterok`/
 remake run pipeline.py -E slurm
 ```
 
+## Profiles and accounts
+
+On JASMIN use the shipped profile, with your account in your user file
+(`~/.config/remake/config.toml`):
+
+```toml
+profile = "jasmin"
+
+[slurm]
+account = "my_group_workspace"
+```
+
+or `remake --profile jasmin run pipeline.py -E slurm`. With that profile
+active and no `slurm.account` anywhere, remake fails before submitting. Without
+any profile the built-in LOTUS2 defaults are still used (with a warning) until
+1.0. See [Configuration](configuration.md) for the full cascade (user file,
+`remake.toml`, `Remake(config=)`, per-rule).
+
 ## Per-rule resources
 
 Configure resources in the pipeline's `config`, per rule:

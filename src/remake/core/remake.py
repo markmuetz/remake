@@ -121,7 +121,14 @@ class Remake:
         check_outputs='never',
         strict_scope=False,
     ):
-        self.config = config or {}
+        # What the caller passed; the effective config (defaults < profile <
+        # user file < project file < this) is built lazily — see `config`.
+        self._programmatic_config = dict(config) if config else {}
+        if config:
+            from ..util.config import validate_programmatic
+
+            validate_programmatic(self._programmatic_config)
+        self._effective = None
         self.metadata = metadata
         self.check_outputs = check_outputs
         # Rules the last run() left unresolved (deferred matrix never ready,
@@ -135,6 +142,40 @@ class Remake:
         self._finalized = False
         if rules:
             self.add_rules(rules)
+
+    # --- configuration ---
+
+    def resolve_config(self, project_dir=None, profile=None):
+        """(Re)build the effective config (util/config.py): `remake.toml` is
+        looked for in `project_dir` (default cwd); `profile` is the CLI
+        selection. The CLI calls this once at load time."""
+        from ..util.config import resolve
+
+        self._effective = resolve(
+            project_dir, programmatic=self._programmatic_config, profile=profile)
+        return self._effective
+
+    @property
+    def effective_config(self):
+        """The `EffectiveConfig` (values + per-key provenance), built on first use."""
+        if self._effective is None:
+            self.resolve_config()
+        return self._effective
+
+    @property
+    def config(self):
+        """The merged config as a plain dict (what executors read)."""
+        return self.effective_config.values
+
+    @config.setter
+    def config(self, value):
+        # Compatibility: replace the programmatic layer and re-merge.
+        self._programmatic_config = dict(value or {})
+        self._effective = None
+
+    def _record_run(self, command):
+        self.metadata.record_run(
+            remakefile=self.remakefile, command=command, config=self.config)
 
     # --- registration ---
 
@@ -758,6 +799,8 @@ class Remake:
         if not self._finalized:
             self.finalize()
         self.metadata.begin_invocation()  # fresh run_seq for this set-state
+        if not dry_run:
+            self._record_run('set-state')
         tasks = self.tasks(query=query)
         skipped = 0
         if check_outputs:
@@ -917,6 +960,13 @@ class Remake:
             from ..executors import SingleprocExecutor
 
             executor = SingleprocExecutor(self)
+        if not getattr(executor, 'dry_run', False):
+            self._record_run('run')
+        eff = self.effective_config
+        logger.info(
+            f'Run: executor={type(executor).__name__} '
+            f'nproc={getattr(executor, "nproc", None)} '
+            f'profile={eff.profile or "none"}')
 
         def _plan():
             # Records stored by remake <= 0.9.0a1 that still match are

@@ -35,7 +35,7 @@ def load_module(local_filename: Union[str, Path], module_attrs=None):
     return module
 
 
-def load_remake(filename, finalize=True):
+def load_remake(filename, finalize=True, profile=None):
     """Load a pipeline file and return its Remake instance."""
     # Avoids circular import.
     from ..core.exceptions import RemakeLoadError
@@ -60,6 +60,9 @@ def load_remake(filename, finalize=True):
     # The path the user refers to this pipeline by — executors that generate
     # scripts re-invoking remake (SLURM) need it.
     rmk.remakefile = str(filename)
+    # Merge the config cascade once, with remake.toml from the remakefile's
+    # directory (before finalize: nothing may read a stale config).
+    rmk.resolve_config((Path.cwd() / filename).parent, profile=profile)
     if finalize:
         rmk.finalize()
     return rmk
