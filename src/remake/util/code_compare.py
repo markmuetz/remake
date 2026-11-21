@@ -38,6 +38,16 @@ def _compare_ast(
         return node1 == node2
 
 
+def _normalise(code):
+    """Parse run code for comparison, dropping what doesn't change what runs:
+    the `@rule(...)` decorator (and any above it; review 2026-09-24 H2 — its
+    matrix=/config=/name= are not the function body) and the docstring (L7).
+    Applied to both the stored and the current source, so no migration."""
+    from ..core.canonical import normalise_def
+
+    return normalise_def(ast.parse(dedent(code)), strip_rule_decorator=True)
+
+
 class CodeComparer:
     def __init__(self):
         self.compare_cache = {}
@@ -55,7 +65,7 @@ class CodeComparer:
                          'unchanged' if self.compare_cache[key] else 'changed')
             return self.compare_cache[key]
         try:
-            res = _compare_ast(ast.parse(dedent(code1)), ast.parse(dedent(code2)))
+            res = _compare_ast(_normalise(code1), _normalise(code2))
         except SyntaxError:
             # Unparseable source (e.g. bytecode-digest fallbacks mixed with
             # real source): strings differ, so treat as changed.

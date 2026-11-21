@@ -12,12 +12,17 @@ This is detection only — there is no runtime scope isolation. Names in
 import ast
 import builtins
 import dis
+import functools
 import inspect
+import os
+import re
 import sys
+import tokenize
 import types
 import warnings
 
 from ..util.code_compare import dedent
+from . import canonical
 from .exceptions import ScopeError
 
 _BUILTIN_NAMES = frozenset(dir(builtins))
@@ -49,16 +54,19 @@ def _loaded_globals(code):
 def undeclared_names(fn, uses):
     """Names `fn` reaches from outer scope that are not covered by `uses`.
 
-    Safe (not reported): builtins, names declared in `uses`, globals that
-    resolve to modules (changing libraries is environment, not code), and
-    names not resolvable at all (left to fail naturally at run time).
+    Safe (not reported): names declared in `uses`, builtins that aren't
+    shadowed, environment (see `_is_environment`: library modules and the
+    classes, functions and objects imported from them), and names not
+    resolvable at all (left to fail naturally at run time).
+
+    Review 2026-09-24 M1: a name is never skipped just for *being called*
+    like a stdlib module or builtin (`site = 'CHIL'`, `input = ...`): the
+    bound value decides. Instances created in project code (`DATA_DIR =
+    Path(...)`) and project-local modules are reported.
     """
     # Resolve closed-over names to their values up front: each freevar is
-    # backed by a cell in __closure__, and we need the value (not just the
-    # name) to apply the environment filter below. An *empty* cell — the name
-    # is closed over but its enclosing assignment never ran — raises ValueError
-    # on cell_contents; skip it here, and it falls through to the freevar
-    # branch below (reported, since we have no value to inspect).
+    # backed by a cell in __closure__. An *empty* cell (the enclosing
+    # assignment never ran) raises ValueError; it is reported below.
     closure_values = {}
     if fn.__closure__:
         for name, cell in zip(fn.__code__.co_freevars, fn.__closure__):
@@ -67,48 +75,152 @@ def undeclared_names(fn, uses):
             except ValueError:  # cell not yet filled (recursive def)
                 pass
 
-    # The two ways a function reaches outer scope: module globals (LOAD_GLOBAL)
-    # and closure free variables (co_freevars). Their union is every name it
-    # could pull from a higher scope.
     names = _loaded_globals(fn.__code__) | set(fn.__code__.co_freevars)
     undeclared = []
     for name in sorted(names):
-        # Builtins and stdlib module names are environment, not the rule's code.
-        if name in _BUILTIN_NAMES or name in _STDLIB_MODULE_NAMES:
-            continue
-        # Already opted in to change tracking.
+        # Already opted in to change tracking (a closure variable of the same
+        # name is overridden at run time and warned about: check_shadowing).
         if name in uses:
             continue
-        # Closed-over value we could read: report unless it's environment
-        # (a module, or a stdlib-defined object like Path/datetime).
         if name in closure_values:
-            if _is_environment(closure_values[name]):
-                continue
-            undeclared.append(name)
-        # Module global: same environment check.
+            value = closure_values[name]
         elif name in fn.__globals__:
-            if _is_environment(fn.__globals__[name]):
+            value = fn.__globals__[name]
+            # A PEP 810 `lazy import` (3.15+) is still an unresolved proxy:
+            # classify it without resolving it, or loading the remakefile
+            # would pay the import cost that `lazy` exists to avoid.
+            if _is_lazy_import(value):
+                if not _lazy_import_is_environment(name, value, fn.__globals__):
+                    undeclared.append(name)
                 continue
-            undeclared.append(name)
-        # In co_freevars but with no inspectable value (empty cell above):
-        # a real outer-scope reference, so report it rather than drop it.
         elif name in fn.__code__.co_freevars:
+            undeclared.append(name)  # empty cell: no value to inspect
+            continue
+        else:
+            # Unbound: a builtin, or left to fail naturally at run time.
+            continue
+        if not _is_environment(value, fn):
             undeclared.append(name)
-        # Otherwise: a LOAD_GLOBAL name with no current binding (not in globals
-        # or closure) — left to fail naturally at run time, not reported.
     return undeclared
 
 
-def _is_environment(value):
-    """Modules, and objects imported from the stdlib (e.g. Path, datetime),
-    are environment, not trackable code."""
-    # A module reference itself (e.g. `import numpy as np`).
+def _module_dir(fn):
+    path = fn.__globals__.get('__file__')
+    return os.path.dirname(os.path.abspath(path)) if path else None
+
+
+def _imported_from_library(value, module_name):
+    """Is `value` an object a library module exports (e.g. loguru's
+    `logger`), rather than one created in project code?"""
+    root = sys.modules.get((module_name or '').split('.')[0])
+    if root is None:
+        return False
+    for mod in (sys.modules.get(module_name), root):
+        if mod is not None and any(v is value for v in vars(mod).values()):
+            return True
+    return False
+
+
+def _is_environment(value, fn):
+    """Environment is what a remakefile imports from outside its project:
+    library modules, and the classes, functions and objects they define or
+    export. Project code — the rule's own module, modules under its
+    directory (see canonical.is_project_module) — and values created in it
+    (`DATA_DIR = Path(...)`, `PATTERN = re.compile(...)`) are not."""
+    project_dir = _module_dir(fn)
     if isinstance(value, types.ModuleType):
+        return not canonical.is_project_module(value, project_dir)
+    if inspect.isclass(value) or inspect.isroutine(value):
+        module_name = getattr(value, '__module__', None) or ''
+        if module_name == fn.__module__:
+            return False
+        if module_name.split('.')[0] in _STDLIB_MODULE_NAMES or module_name == 'builtins':
+            return True
+        module = sys.modules.get(module_name)
+        if module is None:
+            return False
+        return not canonical.is_project_module(module, project_dir)
+    # An instance: environment only if a library hands it out.
+    module_name = getattr(type(value), '__module__', None) or ''
+    if module_name == 'builtins' or module_name == fn.__module__:
+        return False
+    module = sys.modules.get(module_name)
+    if module is not None and canonical.is_project_module(module, project_dir):
+        return False
+    return _imported_from_library(value, module_name)
+
+
+# Python 3.15+ only; on older Pythons nothing is ever a lazy import.
+_LAZY_IMPORT_TYPE = getattr(types, 'LazyImportType', None)
+_LAZY_REPR_RE = re.compile(r"^<lazy_import '([\w.]+)'>$")
+
+
+def _is_lazy_import(value):
+    return _LAZY_IMPORT_TYPE is not None and type(value) is _LAZY_IMPORT_TYPE
+
+
+def _lazy_import_is_environment(name, value, fn_globals):
+    """`_is_environment` for an unresolved lazy import, without resolving it.
+
+    The proxy only exposes its dotted target through its repr
+    (`<lazy_import 'matplotlib.pyplot'>`), which is the same for
+    `lazy import a.b as c` (a module) and `lazy from a import b as c` (any
+    object, possibly user code worth tracking). So the binding statement is
+    read from the module's source:
+
+    - `lazy import x[.y] [as z]` binds a module: environment.
+    - `lazy from x import y`: environment if `x` is stdlib, as for an eager
+      import of a stdlib object. Otherwise reported, as an eager
+      `from helpers import normalise` would be. (Unlike the eager check, this
+      also reports `lazy from pkg import submodule`; telling those apart
+      would mean importing `pkg`.)
+    - No source available: fall back on the target alone. An undotted target
+      can only come from `lazy import x`.
+    """
+    match = _LAZY_REPR_RE.match(repr(value))
+    if not match:
+        return False
+    target = match.group(1)
+    if target.split('.')[0] in _STDLIB_MODULE_NAMES:
         return True
-    # An object whose defining module is rooted in the stdlib — its top-level
-    # package name (before the first dot) is a known stdlib module.
-    defining_module = getattr(value, '__module__', '') or ''
-    return defining_module.split('.')[0] in _STDLIB_MODULE_NAMES
+    kind = _lazy_import_kinds(fn_globals.get('__file__')).get(name)
+    if kind is None:
+        return '.' not in target
+    return kind == 'import'
+
+
+def _lazy_import_kinds(path):
+    """{bound name: 'import' | 'from'} for the lazy imports in a source file.
+
+    A name bound by both kinds maps to 'from' (the conservative verdict)."""
+    if not path:
+        return {}
+    try:
+        mtime_ns = os.stat(path).st_mtime_ns
+    except OSError:
+        return {}
+    return _lazy_import_kinds_cached(path, mtime_ns)
+
+
+@functools.lru_cache(maxsize=32)
+def _lazy_import_kinds_cached(path, mtime_ns):
+    try:
+        with tokenize.open(path) as f:
+            tree = ast.parse(f.read(), filename=path)
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return {}
+    kinds = {}
+    for node in ast.walk(tree):
+        if not getattr(node, 'is_lazy', False):
+            continue
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                bound = alias.asname or alias.name.split('.')[0]
+                kinds.setdefault(bound, 'import')
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                kinds[alias.asname or alias.name] = 'from'
+    return kinds
 
 
 def check_scope(fn, uses, strict):
@@ -136,10 +248,20 @@ def check_shadowing(fn, uses):
     stays silent; equal-but-distinct values (a re-typed literal) are also
     tolerated — only a genuinely different value is worth a warning."""
     shadowed = []
+    closure = {}
+    if fn.__closure__:
+        for name, cell in zip(fn.__code__.co_freevars, fn.__closure__):
+            try:
+                closure[name] = cell.cell_contents
+            except ValueError:
+                pass
     for name, value in uses.items():
-        if name not in fn.__globals__:
+        if name in closure:
+            current = closure[name]
+        elif name in fn.__globals__:
+            current = fn.__globals__[name]
+        else:
             continue
-        current = fn.__globals__[name]
         if current is value:
             continue
         try:
@@ -150,10 +272,10 @@ def check_shadowing(fn, uses):
         shadowed.append(name)
     if shadowed:
         warnings.warn(
-            f'{fn.__name__}: uses= name(s) shadow module globals bound to '
-            f'different values: {", ".join(shadowed)}. Inside the rule the '
-            f'uses= value wins — rename the uses key or update the module '
-            f'global if this is unintended.',
+            f'{fn.__name__}: uses= name(s) shadow module globals or enclosing-'
+            f'function (closure) variables bound to different values: '
+            f'{", ".join(shadowed)}. Inside the rule the uses= value wins — '
+            f'rename the uses key or the other variable if this is unintended.',
             ScopeWarning, stacklevel=4,
         )
 
@@ -201,7 +323,7 @@ def _normalised_src(src):
         return src
 
 
-def io_hash(rule):
+def legacy_io_hash(rule):
     """Stable string for a rule's inputs/outputs declarations, AST-normalised
     the same way run code and uses are. Editing the inputs/outputs spec (the
     dict or the callable that defines dataflow) changes it, so a completed
@@ -217,7 +339,7 @@ def io_hash(rule):
     )
 
 
-def parse_io_hash(stored):
+def parse_legacy_io_hash(stored):
     """Inverse of `io_hash`: recover the {'inputs': ..., 'outputs': ...}
     normalised segments from a stored string. Split on the first
     '\\noutputs=' — normalised segments are single-line (ast.dump), and even
@@ -229,7 +351,7 @@ def parse_io_hash(stored):
     }
 
 
-def uses_parts(uses):
+def legacy_uses_parts(uses):
     """{name: rendered-value} for a `uses` dict, name-sorted.
 
     Functions are rendered as their AST-normalised source (a body change is
@@ -272,13 +394,13 @@ def raw_uses_parts(uses):
     return parts
 
 
-def uses_hash(uses):
+def legacy_uses_hash(uses):
     """Stable string representing the current state of a `uses` dict: one
     `name=<rendered>` line per key (see `uses_parts`)."""
-    return '\n'.join(f'{name}={rendered}' for name, rendered in uses_parts(uses).items())
+    return '\n'.join(f'{name}={rendered}' for name, rendered in legacy_uses_parts(uses).items())
 
 
-def parse_uses_hash(stored):
+def parse_legacy_uses_hash(stored):
     """Inverse of `uses_hash`: recover {name: rendered-value} from a stored
     hash string. A rendered value may span several lines (a callable whose
     source didn't parse standalone, e.g. a lambda), so a new key begins only
@@ -306,8 +428,125 @@ def exec_function(fn, uses):
         return fn
     exec_globals = dict(fn.__globals__)
     exec_globals.update(uses)
+    closure = fn.__closure__
+    if closure and any(name in uses for name in fn.__code__.co_freevars):
+        # A closure variable of the same name as a uses key (a rule factory's
+        # parameter) would otherwise win over the uses value, so the code
+        # that ran was not the code that was tracked (field note 1, October
+        # 2026). Give those names fresh cells holding the uses value.
+        closure = tuple(
+            types.CellType(uses[name]) if name in uses else cell
+            for name, cell in zip(fn.__code__.co_freevars, closure)
+        )
     new_fn = types.FunctionType(
-        fn.__code__, exec_globals, fn.__name__, fn.__defaults__, fn.__closure__
+        fn.__code__, exec_globals, fn.__name__, fn.__defaults__, closure
     )
     new_fn.__kwdefaults__ = fn.__kwdefaults__
     return new_fn
+
+
+# --- 0.9.0 canonical renderings, and matching legacy stored state ----------
+#
+# The functions above starting `legacy_` are the renderings remake <= 0.9.0a1
+# stored; they are kept only to recognise those records (see core/canonical).
+
+def project_dir_of(rule):
+    """The directory a rule's project lives in: its remakefile's directory,
+    else the current directory."""
+    rmk = getattr(rule, 'remake', None)
+    remakefile = getattr(rmk, 'remakefile', None)
+    return os.path.dirname(os.path.abspath(remakefile)) if remakefile else os.getcwd()
+
+
+def uses_parts(uses, project_dir=None):
+    return canonical.uses_parts(uses, project_dir)
+
+
+def uses_hash(uses, project_dir=None):
+    return canonical.uses_hash(uses, project_dir)
+
+
+def rule_uses_hash(rule):
+    return canonical.uses_hash(rule.uses, project_dir_of(rule))
+
+
+def io_hash(rule):
+    return canonical.io_hash(rule)
+
+
+def parse_uses_hash(stored):
+    """{name: rendering} from a stored uses string, either format."""
+    if not stored:
+        return {}
+    if canonical.is_canonical(stored):
+        return canonical.parse_canonical(stored)
+    return parse_legacy_uses_hash(stored)
+
+
+def parse_io_hash(stored):
+    """{'inputs': ..., 'outputs': ...} from a stored io string, either format."""
+    if stored and canonical.is_canonical(stored):
+        return canonical.parse_canonical(stored)
+    return parse_legacy_io_hash(stored or '')
+
+
+def legacy_uses_part_matches(text, value, legacy_current, current):
+    """Does a legacy stored rendering of one uses value match the value now?
+    Either it equals what the old code renders for the value on this Python
+    (same interpreter, nothing changed), or it re-renders canonically to the
+    current canonical text (e.g. a set's order, or an ast.dump from another
+    Python)."""
+    if text == legacy_current:
+        return True
+    if text.startswith('Module('):
+        normalised = canonical.normalise_legacy_dump(text, dict_spec=False)
+        return normalised is not None and current == f'source {normalised}'
+    return canonical.normalise_legacy_value(text) == current
+
+
+def uses_match(stored, rule):
+    """'exact' when a stored uses string equals the current state, 'legacy'
+    when it is a pre-0.9 string matching it (restamp it), None if changed."""
+    current = rule_uses_hash(rule)
+    stored = stored or ''
+    if stored == current:
+        return 'exact'
+    if not stored or canonical.is_canonical(stored):
+        return None
+    old = parse_legacy_uses_hash(stored)
+    if set(old) != set(rule.uses):
+        return None
+    legacy = legacy_uses_parts(rule.uses)
+    new = uses_parts(rule.uses, project_dir_of(rule))
+    for name, text in old.items():
+        if not legacy_uses_part_matches(text, rule.uses[name], legacy[name], new[name]):
+            return None
+    return 'legacy'
+
+
+def io_match(stored, rule):
+    """As uses_match, for the stored inputs/outputs string. None stored is
+    a pre-io-tracking record: 'exact' (never a rerun cause)."""
+    if stored is None:
+        return 'exact'
+    current = io_hash(rule)
+    if stored == current:
+        return 'exact'
+    if canonical.is_canonical(stored):
+        return None
+    old = parse_legacy_io_hash(stored)
+    legacy = parse_legacy_io_hash(legacy_io_hash(rule))
+    new = canonical.parse_canonical(current)
+    for part in ('inputs', 'outputs'):
+        if old[part] == legacy[part]:
+            continue
+        spec = getattr(rule, part)
+        if spec is None:
+            return None
+        is_dict = isinstance(spec, dict)
+        normalised = canonical.normalise_legacy_dump(old[part], dict_spec=is_dict)
+        if normalised is None:
+            return None
+        if new[part] != (normalised if is_dict else f'callable {normalised}'):
+            return None
+    return 'legacy'

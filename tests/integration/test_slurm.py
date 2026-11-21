@@ -766,7 +766,8 @@ def test_no_continuation_when_nothing_to_wait_on(slurm_dir, capsys):
     nsubmitted = len(sbatch_calls(slurm_dir))
 
     cli('run', 'dynamic.py', '-E', 'slurm')
-    assert 'continuation' not in Path('.remake/submit.sh').read_text()
+    # (the header now records paths, which can contain the test name)
+    assert 'continuation.sbatch' not in Path('.remake/submit.sh').read_text()
     assert len(sbatch_calls(slurm_dir)) == nsubmitted  # no self-replication
 
 
@@ -807,3 +808,26 @@ def test_slurm_executor_needs_remakefile():
 
     with pytest.raises(RemakeError, match='remakefile'):
         SlurmExecutor(Remake())
+
+
+def test_info_failed_falls_back_to_slurm_err(slurm_dir):
+    """A task that failed before it started (e.g. an import error) has no
+    exception in the DB; `info --failed` reads the last line of its .err."""
+    from remake.remake_cmd import _failed_line
+
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    specs = json.loads(specs_file('gen').read_text())
+    key = specs[3]['task_key']
+    (Path('.remake/slurm/output/gen') / '3.err').write_text(
+        'Traceback (most recent call last):\n  ...\nImportError: no module x\n\n')
+    line = _failed_line({'rule': 'gen', 'key': key, 'exception': '', 'log': 'LOG'})
+    assert line['error'] == 'ImportError: no module x'
+    assert line['log'] == 'LOG'
+    # The DB exception wins when there is one.
+    line = _failed_line({'rule': 'gen', 'key': key,
+                         'exception': 'Traceback\nValueError: db wins\n', 'log': 'LOG'})
+    assert line['error'] == 'ValueError: db wins'
+    # Nothing anywhere.
+    line = _failed_line({'rule': 'gen', 'key': specs[0]['task_key'],
+                         'exception': '', 'log': 'LOG'})
+    assert line['error'] == '(no recorded error)'

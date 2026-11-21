@@ -14,6 +14,7 @@ These go *before* the command name (`remake -D run pipeline.py`):
 | Option | Meaning |
 |---|---|
 | `-T, --trace` / `-D, --debug` / `-I, --info` / `-W, --warning` | console log level (default: info) |
+| `--profile NAME` | config profile (e.g. `jasmin`); beats `$REMAKE_PROFILE` and config files — see [Configuration](guide/configuration.md) |
 | `--colour {auto,always,never}` | colourise output; `auto` (the default) colours TTYs only and honours `NO_COLOR`/`FORCE_COLOR` |
 
 ## Commands
@@ -24,13 +25,17 @@ These go *before* the command name (`remake -D run pipeline.py`):
 | `set-state` | Set tasks' recorded state by query, without running them |
 | `info` | Per-rule summary of task statuses |
 | `ls-tasks` | List tasks (key prefix + name), materialising matrices |
+| `export-task` | Write a task's fully resolved spec as JSON |
 | `rule-info` | Detail view of one rule: docstring, matrix, input/output templates, uses |
 | `task-info` | Detail view of one task: status, paths, log, SLURM job |
 | `task-log` | Print a task's per-task log |
 | `why` | Explain why task(s) would (or would not) rerun |
 | `lint` | Check input/output wiring between rules |
 | `rule-dag` | Print the rule dependency DAG in topological order |
+| `dag` | Export the rule or task graph as Graphviz DOT |
+| `run-all` | Run every remakefile found in a directory |
 | `slurm-status` | Live SLURM queue state of the last submission, per rule |
+| `check-env` | Check a SLURM job would import the same code as this process (`--srun`, `--json`) |
 | `resubmit` | Re-execute `.remake/submit.sh` without replanning |
 | `version` | Print remake version |
 
@@ -86,8 +91,48 @@ always satisfy `up-to-date + stale + failed + pending = tasks` and
 | `-t, --tasks` | list individual tasks with status |
 | `-F, --show-failures` | show failures grouped by unique traceback signature + count |
 | `--all-failures` | with `-F`, show every failed task individually (not grouped) |
+| `--failed` | one line per failed task (and nothing else): rule, short key, last line of its error, log path. The error is the stored exception's last line; if none is stored, the last non-empty line of the task's SLURM `.err` (`.remake/slurm/output/<rule>/<index>.err`). With `--json`, a list of `{rule, key, error, log}` |
 | `--reasons` | per-rule tally of *why* the to-run tasks would rerun |
 | `--json` | machine-readable output |
+
+## `dag`
+
+`remake dag [--rules | --tasks] [-o FILE] REMAKEFILE` writes the graph as
+Graphviz DOT text (stdout by default; no Graphviz install needed to produce
+it, e.g. `remake dag p.py | dot -Tsvg -o dag.svg`). Nothing is run and no
+metadata is read.
+
+| Option | Meaning |
+|---|---|
+| `--rules` | the rule-level graph (the default) |
+| `--tasks` | one node per task, with edges derived from the tasks' declared input/output paths; a task that depends on every task of an upstream rule gets an edge from each; a rule whose matrix is deferred appears as one node labelled `(deferred)` |
+| `-o, --output FILE` | write to FILE instead of stdout |
+
+`--tasks` expands every matrix, so it is only sensible for modest pipelines.
+
+## `run-all`
+
+`remake run-all [DIR]` (default: the current directory) finds the remakefiles
+in DIR and runs each as if by `remake run <file>`, in sorted-filename order.
+
+- Discovery is an AST scan of `DIR/*.py` for a `Remake(...)` call; files are
+  never imported to decide (so `make_example_data.py` is not run). `-r`
+  also searches subdirectories (needed for `examples/ex5_multifile/pipeline.py`).
+- Remakefiles are treated as independent: **no ordering promises** beyond the
+  sort order, and no dependencies between them. Generate any input data first
+  (e.g. `python make_example_data.py`), then `remake run-all`.
+- It continues past a failing remakefile, prints a summary (ran / failed /
+  skipped) and exits non-zero if any failed. A remakefile that cannot be
+  imported (e.g. a missing `xarray`) is reported as skipped.
+- `-E/--executor`, `-j/--nproc`, `-f/--force`, `-n/--dry-run`,
+  `--ignore-code-changes` and `--check-outputs` are passed to each `run`.
+
+## `config`
+
+`remake config pipeline.py [--json]` prints the effective merged config: the
+selected profile, the config files consulted (found or not), and, per key,
+the layer that set it. Does not touch the metadata database. See
+[Configuration](guide/configuration.md).
 
 ## Inspecting rules and tasks
 
@@ -98,6 +143,8 @@ always satisfy `up-to-date + stale + failed + pending = tasks` and
 | `rule-dag -N, --number-of-tasks` | annotate each rule with its task count as `rule[N]` (`?` when a dynamic matrix isn't resolvable yet) |
 | `rule-dag -M, --matrix-keys` | annotate each rule with its matrix keys as `rule(m1, m2)` |
 | `task-log --path` | print the log path only |
+| `export-task <key>` / `-Q` | write the task's resolved spec (rule, key, kwargs, input/output paths, rule function module and qualname, remakefile path, `uses`) as JSON to stdout; `-o FILE` writes a file instead. `uses` values that aren't JSON-serialisable are given as their `repr`. See [Debugging](guide/debugging.md#running-a-task-body-from-another-python) |
+| `ls-tasks --json` | the same per-task identity (`key`, `rule`, `kwargs`; plus `inputs`/`outputs` with `-i`/`-o`) for every task, as one JSON list |
 
 ## Selecting tasks for `task-info`, `task-log` and `why`
 

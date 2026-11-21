@@ -15,6 +15,27 @@ timestamp. Add `--all-failures` to list every failed task individually instead
 of grouping. `remake info pipeline.py --reasons` gives the complementary view:
 a per-rule tally of *why* the to-run tasks would rerun.
 
+For a quick list rather than tracebacks:
+
+```bash
+remake info pipeline.py --failed
+```
+
+prints one line per failed task: rule, short key, the last line of its error,
+and the path of its per-task log. When the database holds no exception for a
+failed task — typically a SLURM job that died before the task started (an
+import error, a bad environment) — the error shown is the last non-empty line
+of that task's `.remake/slurm/output/<rule>/<index>.err`. `--json` gives the
+same as a list of `{rule, key, error, log}` objects.
+
+## Jobs import the wrong code
+
+If SLURM tasks fail with errors your local run doesn't show (a missing
+function, an old version of your package), the job probably imported a
+different copy of it. `remake check-env pipeline.py [--srun]` compares what the
+remakefile imports locally with what a fresh job-style process imports, and
+reports each difference; see [SLURM](slurm.md#the-job-environment).
+
 ## Why did (or didn't) a task run?
 
 ```bash
@@ -83,6 +104,40 @@ not attach the `pdb`/`ipdb` excepthook.
 ```bash
 remake run pipeline.py --raise
 ```
+
+## Running a task body from another Python
+
+remake needs Python 3.10 or later. If a rule's body has to run in an older or
+otherwise different interpreter (say, a legacy analysis environment) that cannot
+import remake, export the task's resolved spec and drive the function yourself:
+
+```bash
+remake export-task pipeline.py <key-prefix> -o task.json     # or -Q "n == 2"
+```
+
+`task.json` holds the rule name, task key, `kwargs`, the resolved `inputs` and
+`outputs` (path strings) and `function.module` / `function.qualname`. It also
+holds the `remakefile` path and the rule's `uses` (the value if it is
+JSON-serialisable, otherwise its `repr`, which you would need to rebuild by
+hand). Then, from the other interpreter:
+
+```python
+import json, sys
+
+spec = json.load(open('task.json'))
+sys.path.insert(0, '/path/to/your/analysis/code')
+from my_analysis import compute   # plain module: no remake import
+
+compute(spec['inputs'], spec['outputs'], **spec['kwargs'])
+```
+
+The remakefile itself imports remake, so it cannot be imported from an
+interpreter that lacks it; the rule function in it is a `remake.Rule` there,
+not a plain function. The usual route is to keep the analysis code in an
+ordinary module that the rule body calls, and import that module from the other
+Python, passing the exported `inputs`, `outputs` and `kwargs` (only those the
+function takes; `kwargs` holds every matrix value). `function.module` and
+`function.qualname` tell you which rule function the spec came from.
 
 ## Fixing one failure and continuing
 

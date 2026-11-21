@@ -117,6 +117,36 @@ def _check_scalar_kwargs(rule, kwargs):
             )
 
 
+def _canonical_scalar(value):
+    """A matrix value as its exact plain type: numpy scalars via .item(),
+    enum members via .value, str/int/float subclasses as the base type
+    (review 2026-09-24 M19). Their reprs — and so task keys — otherwise
+    change across the SLURM JSON round-trip and numpy 1 -> 2. Anything else
+    is returned as is (and rejected by _check_scalar_kwargs)."""
+    import enum
+
+    t = type(value)
+    if value is None or t in (str, int, float, bool):
+        return value
+    if isinstance(value, enum.Enum):
+        value = value.value
+    if (getattr(type(value), '__module__', '') or '').split('.')[0] == 'numpy' \
+            and hasattr(value, 'item'):
+        value = value.item()
+    for base in (bool, int, float):
+        if isinstance(value, base):
+            return base(value)
+    if isinstance(value, str):
+        return ''.join([value])  # the base str, bypassing a subclass __str__
+    return value
+
+
+def _canonical_kwargs(kwargs):
+    out = {k: _canonical_scalar(v) for k, v in kwargs.items()}
+    changed = any(type(out[k]) is not type(v) for k, v in kwargs.items())
+    return out, changed
+
+
 def iter_expand_rule(rule, predicate=None):
     """Generator form of expand_rule — yields Tasks one at a time."""
     kwargs_list = resolve_matrix(rule.matrix)
@@ -124,10 +154,18 @@ def iter_expand_rule(rule, predicate=None):
         # Deferred half of the signature contract: parameter names were
         # unknowable at decoration time for callable matrices.
         _check_expanded_kwargs(rule, kwargs_list[0])
-    for kw in kwargs_list:
+    from .task import task_key
+
+    for original in kwargs_list:
+        kw, changed = _canonical_kwargs(original)
         _check_scalar_kwargs(rule, kw)
         if predicate is None or predicate({**kw, 'rule': rule.name}):
-            yield Task(rule=rule, kwargs=kw)
+            task = Task(rule=rule, kwargs=kw)
+            if changed:
+                legacy = task_key(rule.name, original)
+                if legacy != task.key:
+                    task.legacy_key = legacy
+            yield task
 
 
 def _check_expanded_kwargs(rule, kwargs):

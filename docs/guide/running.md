@@ -55,7 +55,30 @@ remake run pipeline.py --ignore-code-changes
 |---|---|
 | `0` | success — everything needed completed |
 | `1` | one or more tasks failed (see [Debugging](debugging.md)), or rules were left blocked — a deferred matrix that never became ready; each is logged with what it is waiting on |
-| `2` | usage error — bad arguments, an invalid or unknown-name `-Q` query, a missing or broken remakefile, bad rule dependencies — printed as `error: ...` |
+| `2` | usage error — bad arguments, missing external inputs, an invalid or unknown-name `-Q` query, a missing or broken remakefile, bad rule dependencies — printed as `error: ...` |
+
+## Missing external inputs
+
+Before running anything, `remake run` checks the inputs of the tasks about
+to run. If any are missing **and no rule produces them** (the `external`
+class of `remake lint`), it stops with one error instead of one
+`FileNotFoundError` per task, listing them grouped by rule (a few examples
+each, then "... and N more", with a total count) and exits `2`. Inputs that
+another rule makes are never checked, even if absent: they will exist by the
+time they are needed. Plain paths are checked with `os.path.exists`, custom
+tokens with `is_complete()`; each distinct path is stat'ed once, and only for
+tasks that are actually going to run. The check runs on the first planning
+wave only, and for the SLURM executor it runs at submission time on the
+login node, before any job is submitted.
+
+With `-n/--dry-run` the problem is reported as a warning but the plan is
+still shown and the exit code is unaffected.
+
+To add a pipeline-specific nudge to the error, set a hint in the remakefile:
+
+```python
+rmk = Remake(config={'external_inputs_hint': 'Run download.py first.'})
+```
 
 ## One run at a time
 
@@ -126,6 +149,16 @@ Some caveats worth knowing before you act on the numbers:
   to the OS) counts towards the next task's peak. It is the right number for
   "how much do I request for this task", but a cheap task following an
   expensive one in the same worker can look dearer than it is.
+- Memory used by **child processes** (a task that shells out to `cdo`, `ncks`
+  and the like) is measured as the *largest single child* the process has
+  reaped, not the sum of children running at once, and the figure is the
+  **max** of that and the task process's own peak, not their sum. Three
+  300 MiB children in parallel read as roughly 300 MiB. The operating system
+  also only reports a child high-water mark that never decreases, so in a
+  worker that already ran a bigger child, a later task's smaller children
+  cannot be seen. When that happens remake records the method as
+  `sample-self` (or `rusage-self`): the figure covers the task process only
+  and the child peak was **not measured**. Treat it as a lower bound.
 - Tasks run **concurrently inside one process** cannot be told apart —
   memory and CPU are per-process facts. remake detects this and records only
   wall time. It affects a dask run pointed at an external cluster whose
@@ -135,12 +168,15 @@ Some caveats worth knowing before you act on the numbers:
   **nothing** — it never gets to report. Its state stays as if it never ran;
   use `sacct` for those.
 - The numbers describe the **last execution**, not the current state:
-  `set-state` does not clear them.
+  `set-state` (including `--pending`) does not clear them.
 - Where remake cannot measure memory reliably it records nothing rather than
   a wrong number, and annotates any non-sampled figure — `peak rss 1.4G
   (rusage)` is a whole-process reading, which includes the interpreter.
 
 Sampling is on by default and costs a background thread per running task.
+That thread makes the process multi-threaded, so on Python 3.12+ a task that
+calls `os.fork()` directly gets a `DeprecationWarning` (an error under
+`-W error`); `capture: False` avoids it.
 Turn it off (keeping the free wall/CPU timings) with:
 
 ```python

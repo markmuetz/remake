@@ -11,4 +11,4 @@ from .remake import Remake
 from .rule import Rule, deferrable, rule
 from .scope import ScopeWarning
 from .task import Task
-from .tokens import FileToken, OutputToken, PathToken, S3Object, ZarrStore
+from .tokens import Ensure, FileToken, OutputToken, PathToken, S3Object, ZarrStore

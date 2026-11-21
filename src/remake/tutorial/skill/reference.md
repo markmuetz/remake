@@ -41,8 +41,25 @@ checks this file names every CLI command, `info` column, `why` reason and
   **Declare what you read.**
 - **uses=**: module-level values and helper functions a rule's code
   relies on. They are tracked, so a change to one reruns the rule. Globals
-  the code reads that aren't in `uses=` produce a scope warning, and
-  changes to them are **not** tracked.
+  the code reads that aren't in `uses=` produce a scope warning when the
+  remakefile has loaded, and changes to them are **not** tracked. Library
+  modules and what they provide (`np`, `Path`, `logger`) need no `uses=`;
+  values made in the remakefile (`DATA_DIR = Path(...)`) and your own
+  modules do. Values are compared by content: a set's order or a dict's key
+  order doesn't count, numpy arrays are compared by their data.
+- **Ensure**: `outputs={'o': Ensure('out/{year}.csv', min_size=100)}` checks an
+  output when its task finishes (not empty, at least N bytes; `checksum=True`
+  records its sha256). A failed check fails the task. Adding a check doesn't
+  rerun anything.
+- **Dir**: `outputs={'plots': Dir('plots/{year}')}` declares a directory a
+  task fills with any number of files. remake writes a hidden manifest in it
+  when the task succeeds; that manifest, not the directory, marks it done,
+  and remake never deletes your files.
+- **Config files**: `remake.toml` beside the remakefile (committed) and a
+  per-user `~/.config/remake/config.toml` (e.g. the SLURM account) set
+  options; `--profile jasmin` picks a shipped set of cluster defaults.
+  `remake config` shows the merged result and where each value came from.
+  Config never makes a task rerun.
 
 ## What makes a task run
 
@@ -52,9 +69,10 @@ remake runs a task when (these are the `why` reason categories):
 |---|---|
 | **never-run** | no record in the DB |
 | **last-run-failed** / **last-run-pending** | its last run failed, or is recorded as unfinished |
-| **code-changed** | the rule function's code changed (compared as an AST: comments and formatting don't count) |
+| **code-changed** | the rule function's code changed (compared as an AST: comments, formatting and the docstring don't count, and neither does the `@rule(...)` line itself, e.g. its `matrix=` or `config=`) |
 | **uses-changed** | a `uses=` value or helper changed |
-| **io-changed** | the rule's inputs/outputs spec changed |
+| **io-changed** | the rule's inputs/outputs spec changed (reordering dict keys doesn't count) |
+| **paths-changed** | an inputs/outputs *function* now gives different files (e.g. it loops over a list that changed), so the task reruns even though the function's code didn't change |
 | **outputs-missing** | outputs are missing and outputs are being checked (`--check-outputs`, or `check_outputs='always'`) |
 | **upstream-rerun** | an upstream task it reads from reruns this run |
 | **upstream-newer** | an upstream task it reads from ran in a later invocation than it did, so its output may be stale |
@@ -100,6 +118,7 @@ would do. Options:
 - `-t/--tasks` lists each task with its status;
 - `-F/--show-failures` groups failures by traceback, and `--all-failures`
   lists each one;
+- `--failed` prints one line per failed task (rule, key, last error line, log);
 - `--reasons` tallies why the to-run tasks would run;
 - `--json` gives machine-readable output.
 
@@ -107,7 +126,7 @@ would do. Options:
 
 Global options go **before** the command: `-T/--trace`, `-D/--debug`,
 `-I/--info`, `-W/--warning` (console log level);
-`--colour {auto,always,never}`.
+`--colour {auto,always,never}`; `--profile NAME` (a config profile).
 
 | command | what it does |
 |---|---|
@@ -119,12 +138,17 @@ Global options go **before** the command: `-T/--trace`, `-D/--debug`,
 | `task-log` | print one task's log (`--path`: just the path) |
 | `rule-info` | one rule in detail: docstring, matrix, templates, uses |
 | `rule-dag` | the rule dependency graph in order (`-N` task counts, `-M` matrix keys) |
+| `dag` | the rule graph (or `--tasks`: the task graph) as Graphviz DOT, for drawing |
+| `config` | the effective configuration, and which file or profile set each value |
+| `export-task` | one task's resolved spec (matrix values, input/output paths) as JSON |
+| `check-env` | check that a SLURM job would import the same code you plan with |
+| `run-all` | run every remakefile in a directory, one after another |
 | `lint` | check input/output wiring between rules (near-miss paths, missing depends_on) |
 | `set-state` | record task state without running (below) |
 | `slurm-status` | live SLURM queue state of the last submission |
 | `resubmit` | re-run `.remake/submit.sh` without replanning (SLURM) |
 | `version` | print the version |
-| `run-task`, `run-array-task` | internal: run one task (used by executors and SLURM scripts) |
+| `run-task`, `run-array-task`, `_env-report` | internal: run one task (used by executors and SLURM scripts); `check-env`'s job side |
 
 `run` options:
 
@@ -172,7 +196,7 @@ would silently re-adopt the old output.
 
 Records state without running anything:
 - `--success` stamps the tasks with the current code;
-- `--pending` deletes their records, so they will run;
+- `--pending` marks them pending, so they will run (their timings are kept);
 - `-Q` is required.
 
 `--success --check-outputs` stamps only the tasks whose outputs exist: the
@@ -195,7 +219,7 @@ failed tasks (and anything skipped) run, and the successes don't.
 |---|---|
 | `0` | success |
 | `1` | a task failed, or a rule was left blocked (a deferred matrix never became ready) |
-| `2` | usage error: bad arguments, bad query, broken remakefile, bad rule dependencies (`error: ...`) |
+| `2` | usage error: bad arguments, bad query, broken remakefile, bad rule dependencies, or inputs that no rule makes are missing (`error: ...`) |
 | `130` / `143` | interrupted by Ctrl-C / SIGTERM (running tasks stopped, workers cleaned up) |
 
 ## Running
@@ -206,5 +230,8 @@ failed tasks (and anything skipped) run, and the successes don't.
   submits a job array per rule. A worker killed by the OOM killer only
   fails its own task.
 - Output directories are created for you.
+- Before running, remake checks that the input files no rule produces
+  exist; if any are missing it stops with one list of them (exit 2) instead
+  of failing task after task.
 - remake runs from the remakefile's own directory, so relative paths and
   `.remake/` sit next to it.

@@ -73,3 +73,12 @@ def test_no_declarations_resolve_empty():
 
     t = Task(rule=r, kwargs={'n': 1})
     assert t.inputs == {} and t.outputs == {}
+
+
+def test_placeholder_format_spec_with_int_matrix_value():
+    @rule(outputs={"o": "atmos.{runid:03d}.pp1.nc"}, matrix={"runid": [7, 240]})
+    def fmt(outputs, runid):
+        pass
+
+    assert str(Task(rule=fmt, kwargs={"runid": 7}).outputs["o"]) .endswith("atmos.007.pp1.nc")
+    assert str(Task(rule=fmt, kwargs={"runid": 240}).outputs["o"]).endswith("atmos.240.pp1.nc")

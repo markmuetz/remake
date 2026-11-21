@@ -8,6 +8,24 @@ array and wiring up dependencies between rules with SLURM's `afterok`/
 remake run pipeline.py -E slurm
 ```
 
+## Profiles and accounts
+
+On JASMIN use the shipped profile, with your account in your user file
+(`~/.config/remake/config.toml`):
+
+```toml
+profile = "jasmin"
+
+[slurm]
+account = "my_group_workspace"
+```
+
+or `remake --profile jasmin run pipeline.py -E slurm`. With that profile
+active and no `slurm.account` anywhere, remake fails before submitting. Without
+any profile the built-in LOTUS2 defaults are still used (with a warning) until
+1.0. See [Configuration](configuration.md) for the full cascade (user file,
+`remake.toml`, `Remake(config=)`, per-rule).
+
 ## Per-rule resources
 
 Configure resources in the pipeline's `config`, per rule:
@@ -55,8 +73,50 @@ Symptom of getting this wrong: every element fails immediately with exit code
 package is only on `PYTHONPATH` (a dev checkout), the `remake` executable is
 still resolved from `PATH` — install both into the env you submit from.
 
+Before submitting thousands of tasks, check what a job will import (see also
+[pixi and `PYTHONPATH`](#pixi-and-pythonpath) below):
+
+```bash
+remake check-env pipeline.py          # job side runs locally, in a fresh subprocess
+remake check-env pipeline.py --srun   # job side runs on a compute node
+```
+
+`check-env` loads the remakefile, then starts a fresh `remake` (resolved from
+`PATH`, with your environment exported and the remakefile's directory as the
+working directory, as a job would) and compares the two: Python executable
+and version, remake's version and file, and the file and version of every
+project module or package the remakefile imported. It prints `OK` lines and
+one `MISMATCH` line per difference, and exits 0 if all match, 1 on any
+mismatch (including `remake` missing from `PATH`), 2 on usage errors. `--json`
+prints both reports and the list of mismatches. `--srun` wraps the job-side
+command in `srun --ntasks=1 --time=00:05:00` (plus `partition`, `account` and
+`qos` from the `slurm` config), so it needs a free slot on the cluster.
+
 The job also reloads the remakefile, so anything it does at import time (e.g.
 scanning input directories to build a matrix) happens again in every element.
+
+### pixi and `PYTHONPATH`
+
+With pixi, setting `PYTHONPATH` *outside* `pixi run` does not work. Pixi
+activates the environment inside the command and replaces the variable, so the
+remakefile can silently import a different checkout of your package from the
+one you meant:
+
+```bash
+PYTHONPATH=$PWD pixi run -e myenv remake run pipeline.py -E slurm     # PYTHONPATH overridden
+pixi run -e myenv env PYTHONPATH=$PWD remake run pipeline.py -E slurm # works
+```
+
+The second form sets the variable *after* activation, using `env`. The jobs
+inherit it from the submitting shell as usual.
+
+To check what was used, look at the header of `.remake/submit.sh`. From 0.9.0
+remake writes there, as comments, the `sys.executable`, `sys.version`,
+`PYTHONPATH` and `sys.path` of the submitting process, and the resolved file of
+each top-level module the remakefile has imported that is not stdlib or in
+site-packages (your own packages and dev checkouts). The same lines go to the run
+log at the start of a submission. If a job imports the wrong code, compare them
+with what you expected.
 
 ## Checking a submission before sending it
 
@@ -86,6 +146,46 @@ On submission remake writes, under `.remake/`:
 | `jobs/<rule>.jobids.json` | submitted job ids + the submission's `run_seq` (written at submission) |
 | `tasks/results/...` | per-task result **sidecars**, absorbed into the DB by the next remake invocation |
 
+## Running again while a submission is in flight
+
+Results from SLURM jobs reach the database late (a task's sidecar is read in by
+the *next* remake command), so a task that is still queued or running has no
+record and no output yet. A second `remake run -E slurm` therefore plans it as
+pending. What stops a duplicate submission is a check **per rule**:
+
+- remake reads the rule's last-submission file, `.remake/jobs/<rule>.jobids.json`,
+  and asks `squeue` (once, for your user) whether any element of that array is
+  still active. Pending, running, held, suspended and requeued elements all
+  count; so does any state remake does not recognise.
+- If so, the **whole rule is skipped**: no new spec file, no `sbatch`. The log
+  says `<rule>: already queued (job N), skipping`.
+- Rules downstream of a skipped rule are still submitted, and wait on the queued
+  job id with `afterok`. Rules that are not queued are submitted as normal.
+- If `squeue` fails or times out and any planned rule has a recorded
+  submission, remake refuses to submit, rather than guess that the queue is
+  empty. In a directory with no recorded submissions it warns and goes ahead.
+- `remake resubmit` runs the same kind of check and refuses if anything it
+  would submit is still queued.
+
+So re-running while an array is going is safe for the rules in flight. It is
+also coarse. What is **not** guarded:
+
+- **Individual tasks.** Skipping is all-or-nothing per rule. Tasks that are new
+  since the queued submission (for example the matrix grew) are not submitted
+  until a later run, after the queued array has left the queue.
+- **Submissions remake has no record of.** Only the *last* submission of each
+  rule is recorded. If you deleted `.remake/jobs/`, ran from another directory,
+  or submitted with a different user, the jobs are not seen.
+- **The gap after a job ends.** Between a job leaving the queue and its results
+  being read in, there is a short window in which its tasks look pending and
+  its rule is not skipped. It is seconds long, and a duplicate run then costs
+  compute but writes the same outputs. It is not a protection against two
+  people running at the same moment.
+
+If you want certainty, restrict the second run with `-Q`, e.g. `remake run
+pipeline.py -E slurm -Q "rule in ['a', 'b']"`, to the rules that are not
+running. `remake slurm-status` shows what is in the queue.
+
 ## Monitoring
 
 ```bash
@@ -102,3 +202,17 @@ Each task writes a per-task log under
 `.remake/tasks/log/<rule>/` (sharded by key; not a shared file — that
 interleaves and corrupts under a wide array). Retrieve one with
 [`remake task-log`](../cli.md) — or `task-log --path` to get its location.
+
+Failures that happen before the task starts (an import error, a broken
+environment) never reach the per-task log or the database; they land in the
+job's own `.remake/slurm/output/<rule>/<array index>.err`.
+`remake info pipeline.py --failed` lists every failed task on one line with its
+last error line, falling back to that `.err` when the database has none.
+
+## Querying `sacct` yourself
+
+remake itself only calls `squeue`. If you check finished jobs with
+`sacct -j <jobid>`, also pass `-S <submission time>` (for example
+`sacct -j 123456 -S 2026-10-14T09:00`): on LOTUS2 job ids are reused, and
+without `-S` sacct can return an unrelated old job with the same id. The
+submission time is the modification time of `.remake/jobs/<rule>.jobids.json`.
