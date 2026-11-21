@@ -263,6 +263,16 @@ class Sqlite3Backend(MetadataManager):
         conn.isolation_level = None  # explicit transaction control below
         _retry_locked(lambda: conn.execute('BEGIN EXCLUSIVE'), 'opening the database')
         try:
+            # remake >= 0.9 stamps its schema version here and stores state
+            # this version would misread as changed (mass rerun) or clobber.
+            (found_version,) = conn.execute('PRAGMA user_version').fetchone()
+            if found_version:
+                raise RemakeError(
+                    f'{self.dbloc} was written by remake 0.9 or later (schema '
+                    f'version {found_version}). Upgrade remake to use it '
+                    f'(e.g. `pip install -U remake`): remake 0.8 would treat its '
+                    f'records as changed and rerun everything.'
+                )
             tables = {row[0] for row in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'")}
             if 'task' not in tables and self.dbloc != ':memory:':

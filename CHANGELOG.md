@@ -6,6 +6,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Opening a database written by remake 0.9 or later is now refused with an
+  upgrade hint. 0.9 stamps a schema version (`PRAGMA user_version`) and
+  stores uses/io state in a new canonical form, which 0.8 would read as
+  changed and rerun every task.
+
 ## [0.8.5] — 2026-09-24
 
 The 0.8.5 lane: the process-handling fixes deferred from 0.8.4 (review IDs

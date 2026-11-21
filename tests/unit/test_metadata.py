@@ -479,3 +479,16 @@ def test_malformed_sidecars_are_quarantined(tmp_path, monkeypatch):
     assert not other.exists() and other.with_name(other.name + '.bad').exists()
     rmk.plan()  # no longer raises
     rmk.metadata.close()
+
+
+def test_db_from_remake_0_9_is_refused(tmp_path):
+    from remake.core.exceptions import RemakeError
+
+    db = tmp_path / 'remake.db'
+    Sqlite3Backend(db).close()
+    conn = sqlite3.connect(db)
+    conn.execute('PRAGMA user_version = 1000')
+    conn.commit()
+    conn.close()
+    with pytest.raises(RemakeError, match='0.9 or later'):
+        Sqlite3Backend(db)
