@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-11-21
+
+Canonical change detection, a config file cascade with profiles, output
+checks (`Ensure`), directory outputs (`Dir`), and the October 2026 field
+notes. Upgrading reruns nothing: records from 0.8 are matched and restamped.
+The database schema is now versioned (see Changed). Keep 0.8 and 0.9 off
+the same `.remake/` directory.
+
 ### Added
 
 - **Output checks with `Ensure`** (0.9.0 item 4):
@@ -134,8 +142,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that ran was not the code that was tracked. A different value warns.
 - **Schema versioning** (0.9.0 item 3): the DB records its schema version
   (`PRAGMA user_version`, major·1000 + minor). A DB from a newer major is
-  refused with an upgrade hint; a newer minor still opens. remake 0.8.6
-  refuses a DB written by 0.9. Job specs and sidecars carry a format `"v"`.
+  refused with an upgrade hint; a newer minor still opens. A coming 0.8.6
+  will refuse a DB written by 0.9 (0.8.5 and earlier don't check). Job specs and sidecars carry a format `"v"`.
 - **Schema (additive, migrated in place):** `task.paths_digest`, and new
   tables `output_stat` and `run`. Nothing reruns on upgrade.
 - `set-state --pending` keeps a task's measured resources (it records a
@@ -657,6 +665,7 @@ the `remake` Claude skill (`references/remake2_to_remake3.md`). The rewrite was
 validated by reproducing a real multi-figure paper pipeline (`mcs_prime`)
 end-to-end on JASMIN with outputs identical to the remake2 reference.
 
+[0.9.0]: https://github.com/markmuetz/remake/releases/tag/v0.9.0
 [0.8.5]: https://github.com/markmuetz/remake/releases/tag/v0.8.5
 [0.8.4]: https://github.com/markmuetz/remake/releases/tag/v0.8.4
 [0.8.3]: https://github.com/markmuetz/remake/releases/tag/v0.8.3
