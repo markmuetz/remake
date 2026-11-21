@@ -86,3 +86,15 @@ def test_unresolvable_output_spec_elsewhere_does_not_crash(tmp_path, monkeypatch
     rmk.finalize()
     (task,) = [t for t in rmk.tasks() if t.rule is needs_raw]
     assert rmk.missing_external_inputs([task]) == {'needs_raw': ['raw.txt']}
+
+
+def test_path_wrapped_url_is_not_flagged(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    @rule(inputs={'u': Path('s3://bucket/x.nc')}, outputs={'o': 'o.txt'})
+    def r(inputs, outputs):
+        pass
+
+    rmk = Remake(rules=[r])
+    rmk.finalize()
+    assert rmk.missing_external_inputs(list(rmk.tasks())) == {}

@@ -107,7 +107,9 @@ def _same_definition(a, b):
 
 
 # A scheme prefix (s3://, https://, gs://): an input that is a URL.
-_URL_RE = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]*://')
+# Path('s3://b/k') stringifies as 's3:/b/k', hence :// or :/ (but not a
+# Windows drive, C:\\).
+_URL_RE = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]+:/')
 
 
 def _accepts_output_stats(metadata):

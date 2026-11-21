@@ -973,7 +973,16 @@ class RemakeCLI:
         # Pass the top-level logging flags on to each invocation.
         top = [f for on, f in [(args.trace, '-T'), (args.debug, '-D'),
                                (args.warning, '-W')] if on]
-        top += ['--colour', args.colour]
+        # The child's stderr is a pipe, so 'auto' would detect no colour:
+        # decide it here, from our own terminal.
+        colour = args.colour
+        if colour == 'auto':
+            from .util.colour import _auto_enabled
+            colour = 'always' if _auto_enabled(sys.stdout) else 'never'
+        top += ['--colour', colour]
+        # Unbuffered, so task prints and log lines keep their order; safe
+        # path (3.11+), so a remake.py in the cwd can't shadow the package.
+        env = dict(os.environ, PYTHONUNBUFFERED='1', PYTHONSAFEPATH='1')
         results = []  # (file, status, detail)
         for f in files:
             print(f'=== {f}', flush=True)
@@ -981,15 +990,28 @@ class RemakeCLI:
             # second project's `import common` (or a same-named remakefile)
             # would resolve to the first one's module from sys.modules, and
             # run - and hash - the wrong code (code review 2026-11-21).
+            # stdout goes straight through; stderr (logs, errors) is echoed
+            # line by line so an import failure can be recognised.
             proc = subprocess.Popen(
                 [sys.executable, '-m', 'remake', *top, 'run', str(f), *flags],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                stderr=subprocess.PIPE, text=True, env=env)
             import_error = None
-            for line in proc.stdout:
-                print(line, end='', flush=True)
-                if import_error is None and 'could not import remakefile' in line:
-                    import_error = line.strip().removeprefix('error: ')
-            code = proc.wait()
+            try:
+                for line in proc.stderr:
+                    sys.stderr.write(line)
+                    sys.stderr.flush()
+                    if import_error is None and 'could not import remakefile' in line:
+                        import_error = line.strip().removeprefix('error: ')
+                code = proc.wait()
+            finally:
+                # Ctrl-C / SIGTERM to run-all: stop the child, don't orphan it.
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=30)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
             if code == 2 and import_error:
                 results.append((f, 'skipped', f'import failed: {import_error}'))
             else:
@@ -1358,7 +1380,8 @@ def remake_cmd(argv=None):
         # caller running `run` from another thread keeps the default SIGTERM
         # behaviour rather than failing. Inside the try so a failure here
         # can never skip the cwd restore below.
-        if args.subcmd_name == 'run' and threading.current_thread() is threading.main_thread():
+        if (args.subcmd_name in ('run', 'run-all')
+                and threading.current_thread() is threading.main_thread()):
             old_sigterm = signal.signal(signal.SIGTERM, _on_sigterm)
         if args.profile:
             # Also seen by the SLURM jobs this process submits (sbatch

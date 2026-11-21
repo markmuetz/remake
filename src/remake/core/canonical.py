@@ -287,7 +287,9 @@ def canonical_value(value, *, project_dir=None, _depth=0):
     # inside one would order randomly per process (code review 2026-11-21).
     name = _qualname(t)
     if dataclasses.is_dataclass(value):
-        fields = {f.name: getattr(value, f.name) for f in dataclasses.fields(value)}
+        missing = object()  # an unset field(init=False) has no attribute
+        fields = {f.name: v for f in dataclasses.fields(value)
+                  if (v := getattr(value, f.name, missing)) is not missing}
         return f'{name}{canonical_value(fields, **kw)}'
     if isinstance(value, tuple) and hasattr(value, '_asdict'):
         return f'{name}{canonical_value(dict(value._asdict()), **kw)}'
@@ -515,8 +517,9 @@ def _literal(node):
 def normalise_legacy_value(text):
     """Canonical text for a legacy `repr` rendering of a plain value: parsed
     back when it is a literal (so a set's random order or a dict's key order
-    stops mattering); otherwise the repr itself, which is what
-    `canonical_value` renders for an object with a stable repr."""
+    stops mattering); otherwise the repr itself. (A legacy dataclass or
+    namedtuple therefore doesn't match here; it matches on the exact repr
+    comparison tried first, and is then restamped.)"""
     try:
         node = ast.parse(text, mode='eval').body
         return canonical_value(_literal(node))

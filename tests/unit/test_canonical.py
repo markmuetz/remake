@@ -383,3 +383,14 @@ def test_bound_method_of_self_referencing_object_terminates():
     obj = Obj()
     obj.cb = obj.process
     assert 'method' in uses_hash({'f': obj.process})
+
+
+def test_dataclass_with_unset_init_false_field_renders():
+    import dataclasses
+
+    @dataclasses.dataclass
+    class C:
+        a: int
+        b: int = dataclasses.field(init=False)
+
+    assert 'a' in uses_hash({'c': C(1)}) or uses_hash({'c': C(1)})

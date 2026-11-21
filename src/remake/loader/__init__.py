@@ -32,9 +32,11 @@ def load_module(local_filename: Union[str, Path], module_attrs=None):
         sys.modules[module_name] = module
     try:
         spec.loader.exec_module(module)
-    except ImportError as e:
+    except ModuleNotFoundError as e:
         # A missing package is a setup problem, not a remake bug: report it
-        # as a clean error (exit 2), with the traceback at DEBUG.
+        # as a clean error (exit 2), with the traceback at DEBUG. Other
+        # ImportErrors (circular imports, `cannot import name` deep in user
+        # code) keep their traceback.
         from loguru import logger
 
         from ..core.exceptions import RemakeLoadError
