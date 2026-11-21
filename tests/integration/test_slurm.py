@@ -831,3 +831,31 @@ def test_info_failed_falls_back_to_slurm_err(slurm_dir):
     line = _failed_line({'rule': 'gen', 'key': specs[0]['task_key'],
                          'exception': '', 'log': 'LOG'})
     assert line['error'] == '(no recorded error)'
+
+
+def test_dir_output_stats_travel_through_the_sidecar(slurm_dir, capsys):
+    Path('dirs.py').write_text('''
+from pathlib import Path
+from remake import Dir, Remake, rule
+
+@rule(outputs={'d': Dir('data/tiles/{n}')}, matrix={'n': [1, 2]})
+def tiles(outputs, n):
+    for i in range(n):
+        (Path(outputs['d']) / f'{i}.txt').write_text('abc')
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    cli('run', 'dirs.py', '-E', 'slurm', '--dry-run')
+    cli('run-array-task', 'dirs.py', 'tiles', '1')  # the n=2 spec
+    payload = json.loads(next(Path('.remake/tasks/results').rglob('*.json')).read_text())
+    assert payload['output_stats']['d'] == {
+        'dir': True, 'n_files': 2, 'total_bytes': 6, 'checksum': None}
+    assert Path('data/tiles/2/.remake-manifest.json').exists()
+
+    capsys.readouterr()
+    cli('info', 'dirs.py', '--json')  # ingests the sidecar into the DB
+    data = json.loads(capsys.readouterr().out)
+    assert data['rules'][0]['output_bytes'] == 6
+    cli('task-info', 'dirs.py', '-Q', 'rule == "tiles" and n == 2')
+    assert 'size:     d: 2 file(s), 6B' in capsys.readouterr().out

@@ -234,7 +234,11 @@ def check_scope(fn, uses, strict):
     )
     if strict:
         raise ScopeError(msg)
-    warnings.warn(msg, ScopeWarning, stacklevel=3)
+    # Attributed to the rule's own definition: the check runs at finalize,
+    # far from it.
+    code = fn.__code__
+    warnings.warn_explicit(msg, ScopeWarning, code.co_filename, code.co_firstlineno,
+                           module=fn.__module__)
 
 
 def check_shadowing(fn, uses):

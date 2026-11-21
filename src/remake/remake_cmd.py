@@ -8,6 +8,7 @@ import json
 import os
 import re
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -342,6 +343,10 @@ class RemakeCLI:
                     action='store_true'),
                 Arg('--reasons',
                     help='Per-rule tally of why the to-run tasks would rerun',
+                    action='store_true'),
+                Arg('--sizes',
+                    help='Add a column with each rule\'s recorded output size '
+                         '(--json always has output_bytes)',
                     action='store_true'),
                 Arg('--json', help='Machine-readable output', action='store_true'),
             ],
@@ -732,15 +737,25 @@ class RemakeCLI:
             'TOTAL', totals['tasks'], totals['up_to_date'], totals['stale'],
             totals['failed'], totals['pending'], totals['to_run'],
         )
+        # An 'output' size column on request (--sizes): the default table is stable.
+        col_style = (None, None, ('green',), ('cyan',), ('red', 'bold'),
+                     ('yellow',), ('cyan',))
+        if args.sizes:
+            header += ('output',)
+            col_style += (None,)
+            rows = [
+                row + ('?' if r['deferred'] else _format_bytes(r.get('output_bytes', 0)),)
+                for row, r in zip(rows, rule_rows)
+            ]
+            totals_row += (_format_bytes(totals['output_bytes']),)
         widths = [
             max(len(str(r[i])) for r in rows + [header, totals_row])
             for i in range(len(header))
         ]
 
-        # Per-column styling for the count columns (rule name + tasks count are
-        # left plain). A zero count is dimmed so non-zero cells stand out.
-        col_style = (None, None, ('green',), ('cyan',), ('red', 'bold'),
-                     ('yellow',), ('cyan',))
+        # Per-column styling (col_style, above) for the count columns: rule
+        # name, tasks count and sizes are left plain. A zero count is dimmed
+        # so non-zero cells stand out.
 
         def render_row(row, *, emphasise=False):
             cells = []
@@ -858,7 +873,7 @@ class RemakeCLI:
     def remake_lint(self, args):
         rmk = self._load(args)
         rows = rmk.lint()
-        problems = [r for r in rows if r['kind'] in ('near_miss', 'missing_dependency')]
+        problems = [r for r in rows if r['kind'] != 'external']
         if args.json:
             print(json.dumps(rows, indent=1))
             return 1 if problems else 0
@@ -876,6 +891,18 @@ class RemakeCLI:
                     f"MISSING DEPENDENCY  {row['rule']}: input {row['example']!r} is "
                     f"produced by {row['other_rule']}, which {row['rule']} does not "
                     f"depend_on ({row['count']} task(s))"
+                )
+            elif row['kind'] == 'dir_nested':
+                ex = row['example']
+                print(
+                    f"DIR NESTED          {row['rule']}: Dir {ex['dir']!r} is inside "
+                    f"{row['other_rule']}'s Dir {ex['inside']!r} ({row['count']} task(s))"
+                )
+            elif row['kind'] == 'file_in_dir':
+                ex = row['example']
+                print(
+                    f"FILE IN DIR         {row['rule']}: output {ex['file']!r} is inside "
+                    f"{row['other_rule']}'s Dir {ex['inside']!r} ({row['count']} task(s))"
                 )
             else:
                 print(
@@ -947,20 +974,50 @@ class RemakeCLI:
         # Pass the top-level logging flags on to each invocation.
         top = [f for on, f in [(args.trace, '-T'), (args.debug, '-D'),
                                (args.warning, '-W')] if on]
-        top += ['--colour', args.colour]
+        # The child's stderr is a pipe, so 'auto' would detect no colour:
+        # decide it here, from our own terminal.
+        colour = args.colour
+        if colour == 'auto':
+            from .util.colour import _auto_enabled
+            colour = 'always' if _auto_enabled(sys.stdout) else 'never'
+        top += ['--colour', colour]
+        # Unbuffered, so task prints and log lines keep their order; safe
+        # path (3.11+), so a remake.py in the cwd can't shadow the package.
+        env = dict(os.environ, PYTHONUNBUFFERED='1', PYTHONSAFEPATH='1')
         results = []  # (file, status, detail)
         for f in files:
             print(f'=== {f}', flush=True)
+            # Each remakefile in its own process: in one interpreter, a
+            # second project's `import common` (or a same-named remakefile)
+            # would resolve to the first one's module from sys.modules, and
+            # run - and hash - the wrong code (code review 2026-11-21).
+            # stdout goes straight through; stderr (logs, errors) is echoed
+            # line by line so an import failure can be recognised.
+            proc = subprocess.Popen(
+                [sys.executable, '-m', 'remake', *top, 'run', str(f), *flags],
+                stderr=subprocess.PIPE, text=True, env=env)
+            import_error = None
             try:
-                code = remake_cmd(['remake', *top, 'run', str(f), *flags])
-            except ImportError as e:
-                results.append((f, 'skipped', f'import failed: {e}'))
-                continue
-            except Exception as e:  # one remakefile must not stop the rest
-                results.append((f, 'failed', f'{type(e).__name__}: {e}'))
-                continue
-            results.append((f, 'ran' if not code else 'failed',
-                            '' if not code else f'exit {code}'))
+                for line in proc.stderr:
+                    sys.stderr.write(line)
+                    sys.stderr.flush()
+                    if import_error is None and 'could not import remakefile' in line:
+                        import_error = line.strip().removeprefix('error: ')
+                code = proc.wait()
+            finally:
+                # Ctrl-C / SIGTERM to run-all: stop the child, don't orphan it.
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=30)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+            if code == 2 and import_error:
+                results.append((f, 'skipped', f'import failed: {import_error}'))
+            else:
+                results.append((f, 'ran' if not code else 'failed',
+                                '' if not code else f'exit {code}'))
         print('\n=== run-all summary')
         for f, status, detail in results:
             print(f'{status:<8} {f}' + (f'  ({detail})' if detail else ''))
@@ -1053,6 +1110,18 @@ class RemakeCLI:
             mark = (paint('complete', 'green') if path_info['complete']
                     else paint('missing', 'red', 'bold'))
             print(f'output:   {path_info["path"]}  [{mark}]  ({name})')
+            dir_info = path_info.get('dir')
+            if dir_info and dir_info['n_stale']:
+                print(paint(f'          {dir_info["n_stale"]} stale file(s), '
+                            f'{_format_bytes(dir_info["stale_bytes"])}, not produced by '
+                            f'the last run (see the manifest; remake never deletes them)',
+                            'yellow'))
+        for name, st in data.get('output_stats', {}).items():
+            label = 'plain file outputs' if name == '*' else name
+            line = f'{st["n_files"]} file(s), {_format_bytes(st["total_bytes"] or 0)}'
+            if st.get('checksum'):
+                line += f', sha256 {st["checksum"]}'
+            print(f'size:     {label}: {line}')
         log = data['log']
         mark = '' if log['exists'] else paint('  [no log yet]', 'dim')
         print(f'log:      {log["path"]}{mark}')
@@ -1189,7 +1258,10 @@ class RemakeCLI:
     def remake__env_report(self, args):
         from . import envcheck
 
-        self._load(args)
+        # finalize=False: only the imports matter here, and under --srun this
+        # runs on a compute node, which must not open the shared DB (as
+        # run-array-task doesn't).
+        load_remake(args.remakefile, finalize=False, profile=args.profile)
         print(json.dumps(envcheck.environment_report()))
 
     def remake_version(self, args):
@@ -1233,8 +1305,11 @@ def remake_cmd(argv=None):
     # run-array-task <remakefile>` from the submit dir) stay consistent.
     # Restored after dispatch so in-process/library callers don't see cwd move.
     orig_cwd = os.getcwd()
-    if getattr(args, 'output', None) and args.subcmd_name == 'dag':
-        args.output = os.path.abspath(args.output)  # relative to where invoked
+    # An output *file* (dag, export-task) is relative to where remake was
+    # invoked, not the remakefile's directory it chdirs into below. (Some
+    # commands' `output` is a show-outputs flag, not a path.)
+    if isinstance(getattr(args, 'output', None), str):
+        args.output = os.path.abspath(args.output)
     if getattr(args, 'remakefile', None):
         rf = Path(args.remakefile).expanduser()
         if str(rf.parent) not in ('', '.'):
@@ -1317,7 +1392,8 @@ def remake_cmd(argv=None):
         # caller running `run` from another thread keeps the default SIGTERM
         # behaviour rather than failing. Inside the try so a failure here
         # can never skip the cwd restore below.
-        if args.subcmd_name == 'run' and threading.current_thread() is threading.main_thread():
+        if (args.subcmd_name in ('run', 'run-all')
+                and threading.current_thread() is threading.main_thread()):
             old_sigterm = signal.signal(signal.SIGTERM, _on_sigterm)
         if args.profile:
             # Also seen by the SLURM jobs this process submits (sbatch

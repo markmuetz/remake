@@ -43,3 +43,58 @@ def test_existing_inputs_clean_and_hint(tmp_path, monkeypatch):
     runnable, _ = rmk.plan()
     assert rmk.missing_external_inputs(runnable) == {}
     assert rmk.external_inputs_error({}) is None
+
+
+# --- code review 2026-11-21 ----------------------------------------------------
+
+def test_inputs_inside_a_produced_dir_and_urls_are_not_flagged(tmp_path, monkeypatch):
+    from remake import Dir
+
+    monkeypatch.chdir(tmp_path)
+
+    @rule(outputs={'d': Dir('out/{y}')}, matrix={'y': [2020]})
+    def make(outputs, y):
+        pass
+
+    @rule(inputs={'f': 'out/{y}/index.json', 'url': 's3://bucket/{y}.nc'},
+          outputs={'o': 'o_{y}.txt'}, matrix={'y': [2020]}, depends_on=[make])
+    def use(inputs, outputs, y):
+        pass
+
+    Path('missing_trigger').write_text('')
+    rmk = Remake(rules=[make, use])
+    rmk.finalize()
+    runnable, _ = rmk.plan()
+    assert rmk.missing_external_inputs(runnable) == {}
+
+
+def test_unresolvable_output_spec_elsewhere_does_not_crash(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    def bad_outputs():
+        raise FileNotFoundError('cfg.json')
+
+    @rule(outputs=bad_outputs)
+    def other(outputs):
+        pass
+
+    @rule(inputs={'raw': 'raw.txt'}, outputs={'o': 'o.txt'})
+    def needs_raw(inputs, outputs):
+        pass
+
+    rmk = Remake(rules=[other, needs_raw])
+    rmk.finalize()
+    (task,) = [t for t in rmk.tasks() if t.rule is needs_raw]
+    assert rmk.missing_external_inputs([task]) == {'needs_raw': ['raw.txt']}
+
+
+def test_path_wrapped_url_is_not_flagged(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    @rule(inputs={'u': Path('s3://bucket/x.nc')}, outputs={'o': 'o.txt'})
+    def r(inputs, outputs):
+        pass
+
+    rmk = Remake(rules=[r])
+    rmk.finalize()
+    assert rmk.missing_external_inputs(list(rmk.tasks())) == {}

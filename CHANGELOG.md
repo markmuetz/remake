@@ -19,8 +19,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   completion, also through SLURM sidecars; they are recorded, never
   compared. `remake task-info` shows output stats.
 - **`Dir` outputs** (0.9.0 item 5, `design_docs/designs/dir_outputs.md`):
-  declare a directory a task fills with a variable number of files. See the
-  `Dir` entry below.
+  `outputs={'plots': Dir('plots/{year}')}` declares a directory a task fills
+  with a variable number of files. Completion is a hidden
+  `.remake-manifest.json` written after success; a rerun deletes only the
+  manifest, never your files; files the run didn't produce are recorded as
+  stale, with a warning. Works with `Ensure(Dir(...), nonempty=, min_size=,
+  checksum=)` (per-file checksums in the manifest). Two tasks declaring the
+  same `Dir` is an error; `remake lint` matches inputs inside a `Dir` and
+  reports nested Dirs and file outputs inside one; `set-state --success
+  --check-outputs` adopts an existing `Dir`. `task-info` shows output stats
+  and stale counts; `info --json` has per-rule `output_bytes` and
+  `info --sizes` a size column. Example: `examples/ex14_dir_outputs.py`.
 - **Configuration profiles and config files** (0.9.0 item 7,
   `docs/guide/configuration.md`): a TOML cascade — built-in defaults →
   profile → user file (`$XDG_CONFIG_HOME/remake/config.toml`) → project file
@@ -108,6 +117,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   str/int/float subclasses in a matrix become plain values at expansion, so
   keys survive the SLURM JSON round-trip and numpy 1 → 2. Rule code receives
   plain values. Records under the old key are found and re-keyed.
+  **Breaking for enum matrices:** a rule body given `kind` from
+  `matrix={'kind': list(Kind)}` now gets `kind.value`, not the member, so
+  `kind.name` fails; use `Kind(kind)`. This is what SLURM jobs already
+  received after the JSON round-trip, so local and SLURM runs now agree.
 - **Scope checks look at values, after the remakefile has run** (review M1,
   M2): helpers defined below a rule are checked; a name called like a stdlib
   module or builtin (`site = 'CHIL'`) is checked by its value; project
@@ -137,8 +150,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   selected (a warning; removed at 1.0 — use `--profile jasmin`).
 - New dependency: `tomli` on Python < 3.11.
 
-### Changed
-
 - `MetadataManager.update_task()` gained an optional `resources=None`
   keyword. Third-party backends overriding it need the extra keyword in their
   signature; nothing else changes.
@@ -151,6 +162,18 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   planner never reads these columns, so they can never become a rerun
   trigger. `set-state` does not clear them: they describe the last actual
   execution, not the task's current state.
+
+- A task with **no path link** to an upstream rule (a `depends_on` used only
+  for ordering), or one reading an output several upstream tasks share,
+  depends on *every* upstream task: any upstream rerun reruns it, any
+  upstream failure skips it. Previously, with a shared matrix, this was
+  element-wise by kwargs. After upgrading, such a task also reruns once if
+  any upstream task last ran in a later invocation than it did.
+- `run-all` runs each remakefile in its own process (`python -m remake`), so
+  same-named helper modules in different project dirs no longer collide.
+- A remakefile that fails to import (a missing package) is a clean error
+  (exit 2) with the traceback at `-D`, not an uncaught traceback.
+- `export-task -o` writes relative to where remake was invoked, like `dag -o`.
 
 ### Fixed
 
@@ -179,15 +202,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `lazy from x import y` is environment only when `x` is stdlib, otherwise
   reported like an eager `from helpers import normalise`. One difference from
   eager imports: `lazy from pkg import submodule` is reported.
-
-### Changed
-
-- A task with **no path link** to an upstream rule (a `depends_on` used only
-  for ordering), or one reading an output several upstream tasks share,
-  depends on *every* upstream task: any upstream rerun reruns it, any
-  upstream failure skips it. Previously, with a shared matrix, this was
-  element-wise by kwargs. After upgrading, such a task also reruns once if
-  any upstream task last ran in a later invocation than it did.
 
 ## [0.8.5] — 2026-09-24
 

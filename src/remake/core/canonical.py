@@ -24,6 +24,7 @@ matches those through `legacy_*` (see `uses_match`/`io_match`) so upgrading
 does not rerun everything, and restamps matched records to the new form.
 """
 import ast
+import dataclasses
 import enum
 import functools
 import hashlib
@@ -280,7 +281,24 @@ def canonical_value(value, *, project_dir=None, _depth=0):
             return rendered
     if (inspect.isfunction(value) or inspect.ismethod(value) or inspect.isclass(value)
             or inspect.isbuiltin(value) or inspect.isroutine(value)):
-        return _callable_rendering(value)
+        return _callable_rendering(value, kw)
+    # Containers that aren't the exact builtins (dataclasses, namedtuples,
+    # dict/list/set subclasses) render through their contents too, or a set
+    # inside one would order randomly per process (code review 2026-11-21).
+    name = _qualname(t)
+    if dataclasses.is_dataclass(value):
+        missing = object()  # an unset field(init=False) has no attribute
+        fields = {f.name: v for f in dataclasses.fields(value)
+                  if (v := getattr(value, f.name, missing)) is not missing}
+        return f'{name}{canonical_value(fields, **kw)}'
+    if isinstance(value, tuple) and hasattr(value, '_asdict'):
+        return f'{name}{canonical_value(dict(value._asdict()), **kw)}'
+    if isinstance(value, dict):
+        return f'{name}{canonical_value(dict(value), **kw)}'
+    if isinstance(value, (set, frozenset)):
+        return f'{name}{canonical_value(set(value), **kw)}'
+    if isinstance(value, (list, tuple)):
+        return f'{name}{canonical_value(list(value), **kw)}'
     text = repr(value)
     if _has_address(text):
         # The repr embeds a memory address: it would differ every process.
@@ -293,9 +311,11 @@ def canonical_value(value, *, project_dir=None, _depth=0):
     return text
 
 
-def _callable_rendering(fn):
+def _callable_rendering(fn, kw=None):
     if inspect.ismethod(fn):
-        return f'method {_qualname(fn)} of {canonical_value(fn.__self__)}'
+        # Pass the depth on: an object holding a bound method of itself
+        # would otherwise recurse without limit.
+        return f'method {_qualname(fn)} of {canonical_value(fn.__self__, **(kw or {}))}'
     src = callable_source_ast(fn)
     if src is not None:
         return f'source {src}'
@@ -497,8 +517,9 @@ def _literal(node):
 def normalise_legacy_value(text):
     """Canonical text for a legacy `repr` rendering of a plain value: parsed
     back when it is a literal (so a set's random order or a dict's key order
-    stops mattering); otherwise the repr itself, which is what
-    `canonical_value` renders for an object with a stable repr."""
+    stops mattering); otherwise the repr itself. (A legacy dataclass or
+    namedtuple therefore doesn't match here; it matches on the exact repr
+    comparison tried first, and is then restamped.)"""
     try:
         node = ast.parse(text, mode='eval').body
         return canonical_value(_literal(node))

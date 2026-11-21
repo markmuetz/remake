@@ -897,6 +897,14 @@ class Sqlite3Backend(MetadataManager):
         return {name: {'n_files': n, 'total_bytes': b, 'checksum': c}
                 for name, n, b, c in rows}
 
+    def get_rule_output_bytes(self, rules):
+        wanted = set(rules)
+        rows = self.conn.execute(
+            'SELECT r.name, SUM(s.total_bytes) FROM output_stat s '
+            'JOIN task t ON s.task_id = t.id JOIN rule r ON t.rule_id = r.id '
+            'GROUP BY r.name')
+        return {name: total or 0 for name, total in rows if name in wanted}
+
     def update_tasks(self, tasks, status, exception=''):
         self._commit_updates(tasks, status, exception, self.current_run_seq())
 
