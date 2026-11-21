@@ -501,7 +501,9 @@ class SlurmExecutor(Executor):
     def _write_job_specs(self, rule, tasks, run_seq):
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
         specs = [
-            {'task_key': task.key, 'rule': rule.name, 'kwargs': task.kwargs,
+            # v: the spec format version (bump when fields change meaning;
+            # readers ignore unknown fields).
+            {'v': 1, 'task_key': task.key, 'rule': rule.name, 'kwargs': task.kwargs,
              'run_seq': run_seq}
             for task in tasks
         ]

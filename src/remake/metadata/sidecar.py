@@ -51,6 +51,8 @@ class SidecarWriter(MetadataManager):
         path = task_result_path(task.rule.name, task.key)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
+            # Format version (absent = pre-0.9). Readers ignore unknown fields.
+            'v': 1,
             'status': status,
             'exception': exception,
             # Measured on the compute node; written to the DB at ingest.
