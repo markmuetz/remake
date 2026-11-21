@@ -70,7 +70,9 @@ def test_pooled_worker_does_not_inherit_an_earlier_peak():
     with ResourceCapture(interval=0.005) as small:
         time.sleep(0.05)
     assert big.result()['max_rss_bytes'] > 150 * MB
-    assert small.result()['max_rss_bytes'] < big.result()['max_rss_bytes'] / 2
+    # Against the block, not a ratio: the process's own baseline RSS (the
+    # suite's imports: ~230 MB on py3.14 CI) is in both readings.
+    assert small.result()['max_rss_bytes'] < big.result()['max_rss_bytes'] - 150 * MB
 
 
 @needs_proc
