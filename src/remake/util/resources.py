@@ -71,6 +71,16 @@ def _rusage_maxrss_bytes(who):
     return resource.getrusage(who).ru_maxrss * _MAXRSS_SCALE
 
 
+def _children_reaped():
+    """Cumulative count of child processes this process has reaped, or None
+    if that cannot be told. Page faults of reaped children (ru_minflt) are
+    summed into RUSAGE_CHILDREN and any started child incurs at least a few,
+    so a rise means "a child was reaped"; used only to notice the case where
+    the child high-water mark did not move."""
+    ru = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return ru.ru_minflt + ru.ru_majflt
+
+
 def _cpu_seconds():
     """CPU time (user+sys) of this process and its waited-for children."""
     total = 0.0
@@ -105,6 +115,7 @@ class _RssSampler:
     def __init__(self, interval):
         self.interval = interval
         self.peak = _statm_rss_bytes() or 0
+        self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
@@ -114,8 +125,11 @@ class _RssSampler:
 
     def _sample(self):
         rss = _statm_rss_bytes()
-        if rss is not None and rss > self.peak:
-            self.peak = rss
+        if rss is None:
+            return
+        with self._lock:  # read-compare-write: never let a stale write lower it
+            if rss > self.peak:
+                self.peak = rss
 
     def start(self):
         """Start sampling; False if no thread could be started. Measurement
@@ -128,11 +142,16 @@ class _RssSampler:
         return True
 
     def stop(self):
-        # Force a final sample: a task shorter than one interval would
-        # otherwise be described only by the reading taken before it ran.
-        self._sample()
+        # Stop and join the thread *first*, then take the final sample from
+        # this thread alone: sampling before the join races the sampler
+        # thread's read-compare-write of `peak` (a stale write can lower it),
+        # and a final sample taken while it runs is not deterministic. After
+        # the join (or if it timed out, under the lock) the last word is a
+        # fresh reading, so a task shorter than one interval is still
+        # described by a sample taken after it ran.
         self._stop.set()
         self._thread.join(timeout=self.interval + 1)
+        self._sample()
         return self.peak
 
 
@@ -185,6 +204,7 @@ class ResourceCapture:
         self._start_wall = perf_counter()
         self._start_cpu = 0.0
         self._start_children_rss = 0
+        self._start_children_reaped = 0
         self._shared_process = False
         self._result = {
             'wall_s': None, 'cpu_s': None, 'max_rss_bytes': None, 'rss_method': None}
@@ -194,6 +214,7 @@ class ResourceCapture:
         # with it (and run_task's failure handler needs a usable result).
         self._start_cpu = _cpu_seconds()
         self._start_children_rss = _rusage_maxrss_bytes(resource.RUSAGE_CHILDREN)
+        self._start_children_reaped = _children_reaped()
         _enter_capture(self)
         try:
             if self.sample_rss and _statm_rss_bytes() is not None:
@@ -242,16 +263,22 @@ class ResourceCapture:
         # *grew* during the task.
         children = _rusage_maxrss_bytes(resource.RUSAGE_CHILDREN)
         grew = children if children > self._start_children_rss else None
+        # Children were reaped but the (never-decreasing) high-water mark did
+        # not move: a smaller child than an earlier one in this process. Its
+        # peak is unknown, so the figure covers this process only and says so.
+        unmeasured_child = (
+            grew is None and _children_reaped() > self._start_children_reaped)
+        suffix = '-self' if unmeasured_child else ''
         if self._sampler is not None:
             peak = self._sampler.peak  # stopped (final sample taken) in __exit__
             if grew is not None:
                 peak = max(peak, grew)
-            return {'max_rss_bytes': peak, 'rss_method': 'sample'}
+            return {'max_rss_bytes': peak, 'rss_method': 'sample' + suffix}
         if self.one_task_per_process:
             peak = _rusage_maxrss_bytes(resource.RUSAGE_SELF)
             if grew is not None:
                 peak = max(peak, grew)
-            return {'max_rss_bytes': peak, 'rss_method': 'rusage'}
+            return {'max_rss_bytes': peak, 'rss_method': 'rusage' + suffix}
         return {'max_rss_bytes': None, 'rss_method': None}
 
     def result(self):

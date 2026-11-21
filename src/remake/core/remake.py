@@ -11,6 +11,7 @@ from loguru import logger
 from ..metadata.metadata_manager import (
     STATUS_NAMES,
     TASK_STATUS_FAILED,
+    TASK_STATUS_PENDING,
     TASK_STATUS_SUCCESS,
     RecordCache,
 )
@@ -724,7 +725,10 @@ class Remake:
                 # no intra-batch ordering false-triggers (equal run_seq, strict >).
                 self.metadata.update_tasks(tasks + cascaded, TASK_STATUS_SUCCESS)
             else:
-                self.metadata.delete_tasks(tasks)
+                # A PENDING row, not a deleted one: the planner reruns any
+                # non-SUCCESS record, and the row keeps the last execution's
+                # measured resources (resource_capture.md, Settled 4).
+                self.metadata.update_tasks(tasks, TASK_STATUS_PENDING)
         return {'state': state, 'tasks': tasks, 'cascaded': cascaded, 'skipped': skipped}
 
     def _cascade_descendants(self, selected_tasks):
