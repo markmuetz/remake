@@ -146,9 +146,6 @@ class Remake:
                     f'{_where(existing)} and {_where(rule)}. Rule names must be '
                     f'unique within a pipeline (rename one, or pass name=...)'
                 )
-            # Resolve tri-state strict_scope against the Remake default.
-            if rule.strict_scope is None and self.strict_scope:
-                check_scope(rule.fn, rule.uses, strict=True)
             rule.remake = self
             if existing is not None:
                 # The same function re-defined — a notebook cell or script
@@ -177,10 +174,22 @@ class Remake:
             from ..metadata.sqlite3_backend import Sqlite3Backend
 
             self.metadata = Sqlite3Backend()
+        self._check_scopes()
         self.dag = build_rule_dag(self.rules)
         self.metadata.ensure_rules(self.rules, remakefile=self.remakefile)
         self._finalized = True
         return self
+
+    def _check_scopes(self):
+        """Scope-check every rule once, now that the remakefile has fully
+        executed (see rule()); strictness is the rule's own, else the
+        Remake default."""
+        for rule in self.rules:
+            if getattr(rule, '_scope_checked', False):
+                continue
+            strict = rule.strict_scope if rule.strict_scope is not None else self.strict_scope
+            check_scope(rule.fn, rule.uses, strict=bool(strict))
+            rule._scope_checked = True
 
     def plan(self, query=None, force=False, ignore_code_changes=False, restamp=None):
         if not self._finalized:

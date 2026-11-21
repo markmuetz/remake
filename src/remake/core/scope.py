@@ -54,16 +54,19 @@ def _loaded_globals(code):
 def undeclared_names(fn, uses):
     """Names `fn` reaches from outer scope that are not covered by `uses`.
 
-    Safe (not reported): builtins, names declared in `uses`, globals that
-    resolve to modules (changing libraries is environment, not code), and
-    names not resolvable at all (left to fail naturally at run time).
+    Safe (not reported): names declared in `uses`, builtins that aren't
+    shadowed, environment (see `_is_environment`: library modules and the
+    classes, functions and objects imported from them), and names not
+    resolvable at all (left to fail naturally at run time).
+
+    Review 2026-09-24 M1: a name is never skipped just for *being called*
+    like a stdlib module or builtin (`site = 'CHIL'`, `input = ...`): the
+    bound value decides. Instances created in project code (`DATA_DIR =
+    Path(...)`) and project-local modules are reported.
     """
     # Resolve closed-over names to their values up front: each freevar is
-    # backed by a cell in __closure__, and we need the value (not just the
-    # name) to apply the environment filter below. An *empty* cell — the name
-    # is closed over but its enclosing assignment never ran — raises ValueError
-    # on cell_contents; skip it here, and it falls through to the freevar
-    # branch below (reported, since we have no value to inspect).
+    # backed by a cell in __closure__. An *empty* cell (the enclosing
+    # assignment never ran) raises ValueError; it is reported below.
     closure_values = {}
     if fn.__closure__:
         for name, cell in zip(fn.__code__.co_freevars, fn.__closure__):
@@ -72,55 +75,79 @@ def undeclared_names(fn, uses):
             except ValueError:  # cell not yet filled (recursive def)
                 pass
 
-    # The two ways a function reaches outer scope: module globals (LOAD_GLOBAL)
-    # and closure free variables (co_freevars). Their union is every name it
-    # could pull from a higher scope.
     names = _loaded_globals(fn.__code__) | set(fn.__code__.co_freevars)
     undeclared = []
     for name in sorted(names):
-        # Builtins and stdlib module names are environment, not the rule's code.
-        if name in _BUILTIN_NAMES or name in _STDLIB_MODULE_NAMES:
-            continue
-        # Already opted in to change tracking.
+        # Already opted in to change tracking (a closure variable of the same
+        # name is overridden at run time and warned about: check_shadowing).
         if name in uses:
             continue
-        # Closed-over value we could read: report unless it's environment
-        # (a module, or a stdlib-defined object like Path/datetime).
         if name in closure_values:
-            if _is_environment(closure_values[name]):
-                continue
-            undeclared.append(name)
-        # Module global: same environment check. A PEP 810 `lazy import`
-        # (3.15+) is still an unresolved proxy here; classify it without
-        # resolving it, or loading the remakefile would pay the import cost
-        # that `lazy` exists to avoid.
+            value = closure_values[name]
         elif name in fn.__globals__:
             value = fn.__globals__[name]
+            # A PEP 810 `lazy import` (3.15+) is still an unresolved proxy:
+            # classify it without resolving it, or loading the remakefile
+            # would pay the import cost that `lazy` exists to avoid.
             if _is_lazy_import(value):
-                if _lazy_import_is_environment(name, value, fn.__globals__):
-                    continue
-            elif _is_environment(value):
+                if not _lazy_import_is_environment(name, value, fn.__globals__):
+                    undeclared.append(name)
                 continue
-            undeclared.append(name)
-        # In co_freevars but with no inspectable value (empty cell above):
-        # a real outer-scope reference, so report it rather than drop it.
         elif name in fn.__code__.co_freevars:
+            undeclared.append(name)  # empty cell: no value to inspect
+            continue
+        else:
+            # Unbound: a builtin, or left to fail naturally at run time.
+            continue
+        if not _is_environment(value, fn):
             undeclared.append(name)
-        # Otherwise: a LOAD_GLOBAL name with no current binding (not in globals
-        # or closure) — left to fail naturally at run time, not reported.
     return undeclared
 
 
-def _is_environment(value):
-    """Modules, and objects imported from the stdlib (e.g. Path, datetime),
-    are environment, not trackable code."""
-    # A module reference itself (e.g. `import numpy as np`).
+def _module_dir(fn):
+    path = fn.__globals__.get('__file__')
+    return os.path.dirname(os.path.abspath(path)) if path else None
+
+
+def _imported_from_library(value, module_name):
+    """Is `value` an object a library module exports (e.g. loguru's
+    `logger`), rather than one created in project code?"""
+    root = sys.modules.get((module_name or '').split('.')[0])
+    if root is None:
+        return False
+    for mod in (sys.modules.get(module_name), root):
+        if mod is not None and any(v is value for v in vars(mod).values()):
+            return True
+    return False
+
+
+def _is_environment(value, fn):
+    """Environment is what a remakefile imports from outside its project:
+    library modules, and the classes, functions and objects they define or
+    export. Project code — the rule's own module, modules under its
+    directory (see canonical.is_project_module) — and values created in it
+    (`DATA_DIR = Path(...)`, `PATTERN = re.compile(...)`) are not."""
+    project_dir = _module_dir(fn)
     if isinstance(value, types.ModuleType):
-        return True
-    # An object whose defining module is rooted in the stdlib — its top-level
-    # package name (before the first dot) is a known stdlib module.
-    defining_module = getattr(value, '__module__', '') or ''
-    return defining_module.split('.')[0] in _STDLIB_MODULE_NAMES
+        return not canonical.is_project_module(value, project_dir)
+    if inspect.isclass(value) or inspect.isroutine(value):
+        module_name = getattr(value, '__module__', None) or ''
+        if module_name == fn.__module__:
+            return False
+        if module_name.split('.')[0] in _STDLIB_MODULE_NAMES or module_name == 'builtins':
+            return True
+        module = sys.modules.get(module_name)
+        if module is None:
+            return False
+        return not canonical.is_project_module(module, project_dir)
+    # An instance: environment only if a library hands it out.
+    module_name = getattr(type(value), '__module__', None) or ''
+    if module_name == 'builtins' or module_name == fn.__module__:
+        return False
+    module = sys.modules.get(module_name)
+    if module is not None and canonical.is_project_module(module, project_dir):
+        return False
+    return _imported_from_library(value, module_name)
 
 
 # Python 3.15+ only; on older Pythons nothing is ever a lazy import.
@@ -221,10 +248,20 @@ def check_shadowing(fn, uses):
     stays silent; equal-but-distinct values (a re-typed literal) are also
     tolerated — only a genuinely different value is worth a warning."""
     shadowed = []
+    closure = {}
+    if fn.__closure__:
+        for name, cell in zip(fn.__code__.co_freevars, fn.__closure__):
+            try:
+                closure[name] = cell.cell_contents
+            except ValueError:
+                pass
     for name, value in uses.items():
-        if name not in fn.__globals__:
+        if name in closure:
+            current = closure[name]
+        elif name in fn.__globals__:
+            current = fn.__globals__[name]
+        else:
             continue
-        current = fn.__globals__[name]
         if current is value:
             continue
         try:
@@ -235,10 +272,10 @@ def check_shadowing(fn, uses):
         shadowed.append(name)
     if shadowed:
         warnings.warn(
-            f'{fn.__name__}: uses= name(s) shadow module globals bound to '
-            f'different values: {", ".join(shadowed)}. Inside the rule the '
-            f'uses= value wins — rename the uses key or update the module '
-            f'global if this is unintended.',
+            f'{fn.__name__}: uses= name(s) shadow module globals or enclosing-'
+            f'function (closure) variables bound to different values: '
+            f'{", ".join(shadowed)}. Inside the rule the uses= value wins — '
+            f'rename the uses key or the other variable if this is unintended.',
             ScopeWarning, stacklevel=4,
         )
 
@@ -391,8 +428,18 @@ def exec_function(fn, uses):
         return fn
     exec_globals = dict(fn.__globals__)
     exec_globals.update(uses)
+    closure = fn.__closure__
+    if closure and any(name in uses for name in fn.__code__.co_freevars):
+        # A closure variable of the same name as a uses key (a rule factory's
+        # parameter) would otherwise win over the uses value, so the code
+        # that ran was not the code that was tracked (field note 1, October
+        # 2026). Give those names fresh cells holding the uses value.
+        closure = tuple(
+            types.CellType(uses[name]) if name in uses else cell
+            for name, cell in zip(fn.__code__.co_freevars, closure)
+        )
     new_fn = types.FunctionType(
-        fn.__code__, exec_globals, fn.__name__, fn.__defaults__, fn.__closure__
+        fn.__code__, exec_globals, fn.__name__, fn.__defaults__, closure
     )
     new_fn.__kwdefaults__ = fn.__kwdefaults__
     return new_fn
