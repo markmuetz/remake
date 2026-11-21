@@ -342,8 +342,19 @@ def _pandas_rendering(value):
     import pandas as pd
 
     if isinstance(value, (pd.DataFrame, pd.Series, pd.Index)):
-        hashed = pd.util.hash_pandas_object(value, index=not isinstance(value, pd.Index))
-        digest = hashlib.sha256(hashed.values.tobytes()).hexdigest()
+        try:
+            hashed = pd.util.hash_pandas_object(value, index=not isinstance(value, pd.Index))
+            digest = hashlib.sha256(hashed.values.tobytes()).hexdigest()
+        except TypeError:
+            # Unhashable object cells (lists, dicts): render the contents
+            # instead (ultrareview 2026-11-21).
+            if isinstance(value, pd.DataFrame):
+                data = value.to_dict(orient='split')
+            elif isinstance(value, pd.Series):
+                data = {'index': list(value.index), 'data': list(value)}
+            else:
+                data = list(value)
+            digest = hashlib.sha256(canonical_value(data).encode()).hexdigest()
         if isinstance(value, pd.DataFrame):
             meta = repr([(str(c), str(d)) for c, d in value.dtypes.items()])
         else:

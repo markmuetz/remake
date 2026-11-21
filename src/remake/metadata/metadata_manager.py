@@ -165,6 +165,11 @@ class MetadataManager(abc.ABC):
         for task in tasks:
             self.update_task(task, status, exception)
 
+    def mark_pending(self, tasks):
+        """Record tasks as PENDING without making them look newly run
+        (keep their run_seq). Backends that can't should override."""
+        self.update_tasks(tasks, TASK_STATUS_PENDING)
+
     def delete_tasks(self, tasks):
         """Remove stored records (tasks become never-run/pending)."""
         raise NotImplementedError(f'{type(self).__name__} cannot delete records')

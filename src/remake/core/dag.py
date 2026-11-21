@@ -132,6 +132,13 @@ def _canonical_scalar(value):
         value = value.value
     if (getattr(type(value), '__module__', '') or '').split('.')[0] == 'numpy' \
             and hasattr(value, 'item'):
+        import numpy as np
+
+        # Only numbers, bools and strings: datetime64/timedelta64 .item()
+        # gives an int of ns (or a datetime), silently changing the value;
+        # they stay rejected, as in 0.8 (ultrareview 2026-11-21).
+        if not isinstance(value, (np.number, np.bool_, np.str_)):
+            return value
         value = value.item()
     for base in (bool, int, float):
         if isinstance(value, base):

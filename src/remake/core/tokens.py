@@ -116,6 +116,11 @@ class FileToken(PathToken):
         return f'{self.path} {problem}' if problem else None
 
     def after_success(self, checksum=False):
+        if os.path.isdir(self.path):
+            # A plain path the task made a directory (a .zarr written by
+            # xarray, say): no file stats or checksum (use Dir for those);
+            # never fail a task that succeeded (ultrareview 2026-11-21).
+            return None
         try:
             size = os.stat(self.path).st_size
         except FileNotFoundError:
@@ -361,6 +366,12 @@ def Ensure(output, *, nonempty=True, min_size=None, checksum=False):
     doesn't rerun the task, and `check_outputs`/`set-state --check-outputs`
     apply them before adopting an output."""
     token = copy.copy(as_token(output))
+    if type(token).validate is OutputToken.validate:
+        # ZarrStore, S3Object, ...: nothing would run the checks, and a
+        # silent no-op is worse than an error (ultrareview 2026-11-21).
+        raise TypeError(
+            f'Ensure() cannot check a {type(token).__name__} output: it supports '
+            f'file paths and Dir (or a token class that implements validate())')
     token.nonempty = nonempty
     token.min_size = min_size
     token.checksum = checksum

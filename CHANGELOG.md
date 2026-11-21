@@ -174,6 +174,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A remakefile that fails to import (a missing package) is a clean error
   (exit 2) with the traceback at `-D`, not an uncaught traceback.
 - `export-task -o` writes relative to where remake was invoked, like `dag -o`.
+- `Ensure()` raises `TypeError` for an output it can't check (`ZarrStore`,
+  `S3Object`, or any token without `validate()`), instead of silently doing
+  nothing.
+- numpy `datetime64`/`timedelta64` matrix values are still rejected (encode
+  them as strings); only numpy numbers, bools and strings become plain values.
+- `set-state --pending` keeps each record's run counter, so it doesn't make
+  up-to-date downstream tasks look stale.
 
 ### Fixed
 
