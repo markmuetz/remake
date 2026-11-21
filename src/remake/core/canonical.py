@@ -150,6 +150,7 @@ def ast_from_dump(text):
 
 @functools.lru_cache(maxsize=64)
 def _module_tree(path, mtime_ns):
+    linecache.checkcache(path)  # the file may have changed since it was cached
     lines = linecache.getlines(path)
     if not lines:
         return None
@@ -396,12 +397,6 @@ def _module_rendering(module, project_dir):
 
 
 # --- uses ----------------------------------------------------------------------
-
-def _uses_kind(value):
-    if callable(value) and not isinstance(value, type) or inspect.isclass(value):
-        return 'callable'
-    return 'value'
-
 
 def uses_parts(uses, project_dir=None):
     """{name: rendering} for a uses dict, name-sorted."""
