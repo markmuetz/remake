@@ -111,6 +111,7 @@ rmk.rules_from_current_module()
     cli('info', 'failing.py', '-F', '--json')
     data = json.loads(capsys.readouterr().out)
     by_rule = {r['rule']: r for r in data['rules']}
+    assert by_rule['g'].pop('output_bytes') == 2  # g_1.txt
     assert by_rule['g'] == {
         'rule': 'g', 'deferred': False, 'tasks': 2,
         'up_to_date': 1, 'stale': 0, 'failed': 0, 'pending': 1, 'to_run': 1,

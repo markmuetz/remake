@@ -332,6 +332,10 @@ class RemakeCLI:
                 Arg('--reasons',
                     help='Per-rule tally of why the to-run tasks would rerun',
                     action='store_true'),
+                Arg('--sizes',
+                    help='Add a column with each rule\'s recorded output size '
+                         '(--json always has output_bytes)',
+                    action='store_true'),
                 Arg('--json', help='Machine-readable output', action='store_true'),
             ],
         },
@@ -705,15 +709,25 @@ class RemakeCLI:
             'TOTAL', totals['tasks'], totals['up_to_date'], totals['stale'],
             totals['failed'], totals['pending'], totals['to_run'],
         )
+        # An 'output' size column on request (--sizes): the default table is stable.
+        col_style = (None, None, ('green',), ('cyan',), ('red', 'bold'),
+                     ('yellow',), ('cyan',))
+        if args.sizes:
+            header += ('output',)
+            col_style += (None,)
+            rows = [
+                row + ('?' if r['deferred'] else _format_bytes(r.get('output_bytes', 0)),)
+                for row, r in zip(rows, rule_rows)
+            ]
+            totals_row += (_format_bytes(totals['output_bytes']),)
         widths = [
             max(len(str(r[i])) for r in rows + [header, totals_row])
             for i in range(len(header))
         ]
 
-        # Per-column styling for the count columns (rule name + tasks count are
-        # left plain). A zero count is dimmed so non-zero cells stand out.
-        col_style = (None, None, ('green',), ('cyan',), ('red', 'bold'),
-                     ('yellow',), ('cyan',))
+        # Per-column styling (col_style, above) for the count columns: rule
+        # name, tasks count and sizes are left plain. A zero count is dimmed
+        # so non-zero cells stand out.
 
         def render_row(row, *, emphasise=False):
             cells = []
@@ -831,7 +845,7 @@ class RemakeCLI:
     def remake_lint(self, args):
         rmk = self._load(args)
         rows = rmk.lint()
-        problems = [r for r in rows if r['kind'] in ('near_miss', 'missing_dependency')]
+        problems = [r for r in rows if r['kind'] != 'external']
         if args.json:
             print(json.dumps(rows, indent=1))
             return 1 if problems else 0
@@ -849,6 +863,18 @@ class RemakeCLI:
                     f"MISSING DEPENDENCY  {row['rule']}: input {row['example']!r} is "
                     f"produced by {row['other_rule']}, which {row['rule']} does not "
                     f"depend_on ({row['count']} task(s))"
+                )
+            elif row['kind'] == 'dir_nested':
+                ex = row['example']
+                print(
+                    f"DIR NESTED          {row['rule']}: Dir {ex['dir']!r} is inside "
+                    f"{row['other_rule']}'s Dir {ex['inside']!r} ({row['count']} task(s))"
+                )
+            elif row['kind'] == 'file_in_dir':
+                ex = row['example']
+                print(
+                    f"FILE IN DIR         {row['rule']}: output {ex['file']!r} is inside "
+                    f"{row['other_rule']}'s Dir {ex['inside']!r} ({row['count']} task(s))"
                 )
             else:
                 print(
@@ -1026,6 +1052,18 @@ class RemakeCLI:
             mark = (paint('complete', 'green') if path_info['complete']
                     else paint('missing', 'red', 'bold'))
             print(f'output:   {path_info["path"]}  [{mark}]  ({name})')
+            dir_info = path_info.get('dir')
+            if dir_info and dir_info['n_stale']:
+                print(paint(f'          {dir_info["n_stale"]} stale file(s), '
+                            f'{_format_bytes(dir_info["stale_bytes"])}, not produced by '
+                            f'the last run (see the manifest; remake never deletes them)',
+                            'yellow'))
+        for name, st in data.get('output_stats', {}).items():
+            label = 'plain file outputs' if name == '*' else name
+            line = f'{st["n_files"]} file(s), {_format_bytes(st["total_bytes"] or 0)}'
+            if st.get('checksum'):
+                line += f', sha256 {st["checksum"]}'
+            print(f'size:     {label}: {line}')
         log = data['log']
         mark = '' if log['exists'] else paint('  [no log yet]', 'dim')
         print(f'log:      {log["path"]}{mark}')

@@ -77,6 +77,7 @@ def test_example_loads_and_plans(filename, n_rules, n_tasks, tmp_path, monkeypat
     ('ex11', 'data/results.db'),                   # self-generating
     ('ex12', 'data/stage0/alpha.txt'),              # self-generating
     ('ex13', 'data/results/summary13.txt'),         # self-generating
+    ('ex14', 'data/results/summary14.txt'),         # self-generating
 ])
 def test_light_examples_run_end_to_end(example, result_file, tmp_path, monkeypatch, memory_backend):
     """These need no heavy deps: generate synthetic data (if any) and run."""

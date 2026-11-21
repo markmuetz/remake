@@ -439,6 +439,7 @@ def test_set_state_success_adopts_outputs(pipeline_dir, capsys):
     cli('info', 'pipeline.py', '--json')
     by_rule = {r['rule']: r for r in json.loads(capsys.readouterr().out)['rules']}
     assert by_rule['generate']['up_to_date'] == 2
+    assert by_rule['process'].pop('output_bytes') >= 0
     assert by_rule['process'] == {
         'rule': 'process', 'deferred': False, 'tasks': 2,
         'up_to_date': 1, 'stale': 0, 'failed': 0, 'pending': 1, 'to_run': 1,

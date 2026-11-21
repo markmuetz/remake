@@ -342,6 +342,76 @@ From 0.9.0, remake warns at decoration when a `uses` key is shadowed by a
 closure variable of an enclosing function. Name the factory parameters
 differently (`group_names` above) and the warning, and the bug, go away.
 
+## Directory outputs
+
+A task that writes a variable number of files (a plot per detected event, a
+tile per region that had data) can declare a directory as its output with
+`Dir`. Every file in it is attributed to that task, and each `Dir` belongs to
+exactly one task:
+
+```python
+from remake import Dir, Ensure
+
+@rule(outputs={'plots': Ensure(Dir('data/plots/{year}'))}, matrix={'year': YEARS})
+def find_peaks(outputs, year):
+    (Path(outputs['plots']) / 'peak_0.png').write_bytes(...)   # the dir exists already
+```
+
+A `Dir` is a path, so rule code writes into it directly; remake creates it
+before the rule runs. Downstream rules that need to know which files turned
+up use a `@deferrable` matrix that lists the directory once the task is
+complete (see `examples/ex14_dir_outputs.py`).
+
+**Completion is a manifest, not the directory.** After the rule returns
+successfully, remake scans the directory and writes a hidden
+`.remake-manifest.json` into it (atomically): each file's relative path, size
+and mtime, plus file and byte totals. The `Dir` is complete when the manifest
+exists, so a task killed part-way (a directory with half its files) is never
+mistaken for finished, and `--check-outputs` / `set-state --check-outputs`
+never adopt it. `Ensure(Dir(...), nonempty=True, min_size=...)` fails the task
+unless the directory holds at least one file (or `min_size` bytes in total);
+`Ensure(Dir(...), checksum=True)` (or `checksum_outputs=True` in the config)
+adds a sha256 per file to the manifest.
+
+**remake never deletes your files.** When a task reruns, only the manifest is
+removed (the directory is "incomplete" while the task runs). Files that the
+latest run did not produce (written before it started, under a name that
+already existed) are recorded as *stale* in the manifest, and remake warns
+when it finds any. The recorded size is for the produced files only. Clearing
+stale files is up to you. `remake task-info` shows the file and byte counts
+and how many files are stale; `remake info --sizes` adds an output-size
+column (and `info --json` always carries `output_bytes` per rule).
+
+**Limitation: mtime-preserving copies.** To tell produced from stale, remake
+compares each file's mtime with the task's start time, and also notes which
+names were already present. A file written by `shutil.copy2`, `rsync -a` or
+`cp -p` keeps its source's old mtime: if its name is new it is still counted
+as produced, but if it *replaces* an existing name it looks stale and
+triggers the warning. Write such files under new names (or use plain
+`shutil.copy`) to avoid that.
+
+**Don't wrap a `ZarrStore` in a `Dir`.** A `ZarrStore` is already a
+directory output with its own completion marker (`.zmetadata`).
+
+**Checks.** Two tasks declaring the same `Dir` is an error when you run (the
+message names both tasks); `remake lint` also reports a `Dir` nested inside
+another rule's `Dir`, a plain output file inside another rule's `Dir`, and
+treats an input that lies inside another rule's `Dir` as produced by that
+rule (flagging it as a missing dependency if the rule is not in `depends_on`).
+
+**Converting an existing rule from N files to one `Dir`.** Changing a rule's
+outputs is an io change, so the whole rule would rerun. If the files are
+already on disk and good, edit the remakefile, then restamp and write the
+manifests:
+
+```
+remake set-state pipeline.py -Q 'rule == "gen"' --success --check-outputs
+```
+
+`--check-outputs` scans an existing `Dir` that has no manifest and claims
+everything in it as produced (a missing directory is skipped), and the
+restamp records the new outputs definition, so nothing reruns.
+
 ## Registering rules
 
 End the module with:
