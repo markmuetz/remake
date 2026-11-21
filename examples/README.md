@@ -17,6 +17,7 @@ API, in roughly increasing order of complexity:
 | `ex10_dynamic_matrix.py` | Dynamic matrices (`@deferrable` + `Defer`), non-cartesian `list[dict]` matrices, dynamic fan-in |
 | `ex11_custom_token.py` | A custom `OutputToken` (a sqlite table row) and `--check-outputs` verification |
 | `ex12_chained_loop_rules.py` | Loop-generated rules with chained dependencies, `name=`, string `depends_on=` |
+| `ex13_rule_factory.py` | Rule factory: one function generating several rules with `name=`, analyser passed through `uses`, no closure shadowing, `add_rules` |
 
 ## Running
 
@@ -45,7 +46,7 @@ clobber each other's recorded state (causing spurious reruns) — that's a
 prompt to rename one or split directories, and it's why every rule here has
 a distinct name.
 
-ex1, ex3, ex6, ex7, ex10, ex11 and ex12 need only the stdlib. The rest need
+ex1, ex3, ex6, ex7, ex10, ex11, ex12 and ex13 need only the stdlib. The rest need
 the scientific stack (`xarray netCDF4 h5netcdf zarr dask`, plus pyyaml for
 ex4) — install everything in one go with the `examples` extra:
 
