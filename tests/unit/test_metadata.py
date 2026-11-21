@@ -538,3 +538,11 @@ def test_db_from_newer_major_is_refused(tmp_path):
     with pytest.raises(RemakeError, match='newer remake'):
         Sqlite3Backend(db)
     assert _user_version(db) == SCHEMA_VERSION + 1000  # untouched
+
+
+def test_record_run_stores_effective_config(tmp_path):
+    db = Sqlite3Backend(tmp_path / 'remake.db')
+    db.begin_invocation()
+    db.record_run(remakefile='p.py', command='run', config={'slurm': {'mem': '1G'}})
+    rec = db.get_run(db.current_run_seq())
+    assert rec['config'] == {'slurm': {'mem': '1G'}} and rec['command'] == 'run'

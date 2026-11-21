@@ -115,6 +115,15 @@ class MetadataManager(abc.ABC):
         verdict; it only lets later plans compare ids exactly. No-op for
         backends without a code store."""
 
+    def record_run(self, *, remakefile=None, command=None, config=None):
+        """Record this invocation (its run_seq) with the effective merged
+        configuration it ran with. No-op for backends without a store."""
+
+    def get_run(self, run_seq):
+        """The recorded invocation for a run_seq: {run_seq, started,
+        remakefile, command, config} or None."""
+        return None
+
     def begin_invocation(self):
         """Start a new logical invocation: allocate a fresh run_seq so tasks
         committed from here share one stamp, distinct from earlier invocations.

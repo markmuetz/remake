@@ -127,6 +127,17 @@ CREATE TABLE uses_manifest (
     FOREIGN KEY(code_id) REFERENCES code (id)
 );
 
+-- One row per invocation that wrote (run/set-state): when, from which
+-- remakefile, and the effective merged configuration it ran with (JSON) —
+-- reproducibility, and the anchor for 0.10's provenance capture.
+CREATE TABLE run (
+    run_seq INTEGER NOT NULL PRIMARY KEY,
+    started TIMESTAMP NOT NULL,
+    remakefile TEXT,
+    command TEXT,
+    config TEXT
+);
+
 -- Key/value store. run_seq: a monotonic counter, one value allocated per
 -- `remake run`/`set-state` invocation, stamped onto every task that
 -- invocation commits. The planner reruns a task when an upstream's stamp is
@@ -390,6 +401,11 @@ class Sqlite3Backend(MetadataManager):
                 '    uses_code_id INTEGER NOT NULL, name VARCHAR(200) NOT NULL, '
                 '    code_id INTEGER NOT NULL, kind VARCHAR(10) NOT NULL, '
                 '    PRIMARY KEY (uses_code_id, name))')
+        if 'run' not in tables:
+            logger.info('Adding run table to existing DB')
+            self.conn.execute(
+                'CREATE TABLE run (run_seq INTEGER NOT NULL PRIMARY KEY, '
+                'started TIMESTAMP NOT NULL, remakefile TEXT, command TEXT, config TEXT)')
         if 'meta' not in tables:
             logger.info('Adding meta table to existing DB')
             self.conn.execute(
@@ -460,6 +476,29 @@ class Sqlite3Backend(MetadataManager):
         if self._run_seq is None:
             self._run_seq = self._allocate_run_seq()
         return self._run_seq
+
+    @retry_lock_commit
+    def _record_run(self, run_seq, remakefile, command, config_json):
+        self.conn.execute(
+            "INSERT OR REPLACE INTO run(run_seq, started, remakefile, command, config) "
+            "VALUES (?, datetime('now'), ?, ?, ?)",
+            (run_seq, remakefile, command, config_json))
+
+    def record_run(self, *, remakefile=None, command=None, config=None):
+        self._record_run(self.current_run_seq(), remakefile, command,
+                         json.dumps(config, sort_keys=True, default=repr)
+                         if config is not None else None)
+
+    def get_run(self, run_seq):
+        row = self.conn.execute(
+            'SELECT run_seq, started, remakefile, command, config FROM run '
+            'WHERE run_seq = ?', (run_seq,)).fetchone()
+        if row is None:
+            return None
+        keys = ('run_seq', 'started', 'remakefile', 'command', 'config')
+        rec = dict(zip(keys, row))
+        rec['config'] = json.loads(rec['config']) if rec['config'] else None
+        return rec
 
     def _insert_code(self, code):
         cur = self.conn.execute('INSERT INTO code(code) VALUES (?)', (code,))
