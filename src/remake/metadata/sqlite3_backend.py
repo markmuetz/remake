@@ -19,7 +19,7 @@ from loguru import logger
 from ..core.exceptions import RemakeError
 from ..core.scope import io_hash as compute_io_hash
 from ..core.scope import raw_uses_parts
-from ..core.scope import uses_hash as compute_uses_hash
+from ..core.scope import rule_uses_hash
 from ..util.code_compare import CodeComparer
 from .metadata_manager import MetadataManager, TaskRecord
 
@@ -479,6 +479,22 @@ class Sqlite3Backend(MetadataManager):
                 'VALUES (?, ?, ?, ?)',
                 (uses_code_id, name, self._intern_code(raw), kind))
 
+    @retry_lock_commit
+    def restamp_codes(self, restamp):
+        for (rule, kind), old_ids in restamp.items():
+            if rule.name not in self.rule_ids or not old_ids:
+                continue
+            rule_id, _, uses_code_id, io_code_id = self.rule_ids[rule.name]
+            column, new_id = (('uses_code_id', uses_code_id) if kind == 'uses'
+                              else ('io_code_id', io_code_id))
+            old = sorted(old_ids)
+            placeholders = ','.join('?' * len(old))
+            cur = self.conn.execute(
+                f'UPDATE task SET {column} = ? WHERE rule_id = ? '
+                f'AND {column} IN ({placeholders})', [new_id, rule_id, *old])
+            logger.debug('restamped {} {} record(s) of {} to the 0.9 rendering',
+                         cur.rowcount, kind, rule.name)
+
     def get_uses_manifest(self, uses_code_id):
         rows = self.conn.execute(
             'SELECT m.name, c.code, m.kind '
@@ -497,7 +513,7 @@ class Sqlite3Backend(MetadataManager):
         # Current uses/io state, interned once per rule per invocation: tasks
         # committed this invocation point at these ids, and the planner
         # detects change by comparing a record's stored ids against them.
-        uses_code_id = self._intern_code(compute_uses_hash(rule.uses))
+        uses_code_id = self._intern_code(rule_uses_hash(rule))
         io_code_id = self._intern_code(compute_io_hash(rule))
         self._ensure_uses_manifest(uses_code_id, rule.uses)
         if row is None:

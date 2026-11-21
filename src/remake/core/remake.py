@@ -182,7 +182,7 @@ class Remake:
         self._finalized = True
         return self
 
-    def plan(self, query=None, force=False, ignore_code_changes=False):
+    def plan(self, query=None, force=False, ignore_code_changes=False, restamp=None):
         if not self._finalized:
             self.finalize()
         # Results recorded by SLURM array elements live in sidecar files
@@ -197,6 +197,7 @@ class Remake:
             force=force,
             check_outputs=self.check_outputs,
             ignore_code_changes=ignore_code_changes,
+            restamp=restamp,
         )
 
     def explain_task(self, task):
@@ -902,9 +903,16 @@ class Remake:
             executor = SingleprocExecutor(self)
 
         def _plan():
-            return self.plan(
-                query=query, force=force, ignore_code_changes=ignore_code_changes
+            # Records stored by remake <= 0.9.0a1 that still match are
+            # re-pointed at the 0.9 renderings, once (core/canonical.py).
+            restamp = {}
+            planned = self.plan(
+                query=query, force=force, ignore_code_changes=ignore_code_changes,
+                restamp=restamp,
             )
+            if restamp:
+                self.metadata.restamp_codes(restamp)
+            return planned
 
         if executor.handles_deferred:
             # Asynchronous executors (SLURM) get the whole plan in one call;

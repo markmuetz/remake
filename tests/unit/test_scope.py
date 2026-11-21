@@ -170,11 +170,11 @@ def test_uses_hash_class_body_change(tmp_path):
 
 def test_uses_hash_handles_sourceless_class():
     # A class defined via exec has no source AND no __code__: must not
-    # crash; falls back to repr (body changes undetected, documented).
+    # crash; falls back to its name (body changes undetected, documented).
     ns = {}
     exec('class C:\n    pass\n', ns)
     h = uses_hash({'C': ns['C']})
-    assert 'unsourced:' in h
+    assert '"class ' in h
 
 
 def test_uses_hash_handles_sourceless_functions():
@@ -182,7 +182,7 @@ def test_uses_hash_handles_sourceless_functions():
     ns = {}
     exec('def f(x):\n    return x * 2\n', ns)
     h = uses_hash({'f': ns['f']})
-    assert 'bytecode:' in h
+    assert '"code ' in h  # digest of the whole code object (review L8)
     assert function_source(ns['f']).startswith("'<bytecode:")
 
 

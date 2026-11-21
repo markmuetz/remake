@@ -105,6 +105,13 @@ class MetadataManager(abc.ABC):
         or records predating the manifest table)."""
         return {}
 
+    def restamp_codes(self, restamp):
+        """Re-point records whose stored uses/io code is a pre-0.9 rendering
+        that matched the current state ({(rule, 'uses'|'io'): {old code
+        ids}}, filled by `planner.plan`) at the current code. Changes no
+        verdict; it only lets later plans compare ids exactly. No-op for
+        backends without a code store."""
+
     def begin_invocation(self):
         """Start a new logical invocation: allocate a fresh run_seq so tasks
         committed from here share one stamp, distinct from earlier invocations.

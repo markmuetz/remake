@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 from ..core.scope import io_hash as compute_io_hash
-from ..core.scope import uses_hash as compute_uses_hash
+from ..core.scope import rule_uses_hash
 from .metadata_manager import MetadataManager
 
 RESULTS_ROOT = Path('.remake/tasks/results')
@@ -55,7 +55,7 @@ class SidecarWriter(MetadataManager):
             # Measured on the compute node; written to the DB at ingest.
             # Absent in pre-0.9 sidecars, which ingest as NULLs.
             'resources': resources or {},
-            'uses_hash': compute_uses_hash(task.rule.uses),
+            'uses_hash': rule_uses_hash(task.rule),
             'io_hash': compute_io_hash(task.rule),
             # Run source as it exists on the compute node: ingest must record
             # what actually ran, not what the ingesting process has on disk

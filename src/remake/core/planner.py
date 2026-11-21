@@ -22,12 +22,16 @@ from .dag import expand_rule
 from .deps import ALL, Edges, downstream_task, task_id
 from .exceptions import Defer, RemakeError
 from .rule import is_deferrable
+from .canonical import is_canonical
 from .scope import (
-    io_hash,
+    io_match,
+    legacy_uses_part_matches,
+    legacy_uses_parts,
     parse_io_hash,
     parse_uses_hash,
+    project_dir_of,
     raw_uses_parts,
-    uses_hash,
+    uses_match,
     uses_parts,
 )
 
@@ -261,15 +265,18 @@ def upstream_failed(task, failures, edges):
 Reason = namedtuple('Reason', 'category message')
 
 
+_NON_PLAIN_PREFIXES = ('Module(', 'source ', 'code ', 'builtin ', 'method ', 'module ',
+                       'partial(', 'ndarray(', 'DataFrame(', 'Series(', 'Index(')
+
+
 def _plain_rendering(rendered):
     """A `uses` value rendered as a plain `repr` (showable inline) rather
-    than a callable's AST-normalised source (an `ast.dump`, single-line but
-    starting with `Module(`) or a multi-line source fallback (e.g. a lambda
-    whose source didn't parse standalone)."""
-    return '\n' not in rendered and not rendered.startswith('Module(')
+    than a callable's source AST, a digest, or a multi-line source fallback
+    (e.g. a lambda whose source didn't parse standalone)."""
+    return '\n' not in rendered and not rendered.startswith(_NON_PLAIN_PREFIXES)
 
 
-def _uses_change_message(stored_hash, uses, old_manifest=None):
+def _uses_change_message(stored_hash, rule, old_manifest=None):
     """Human description of which `uses` keys changed between the stored hash
     and the current `uses` dict. Names the keys; for plain (repr) values it
     shows before → after. For callables: a raw-source unified diff when the
@@ -277,8 +284,10 @@ def _uses_change_message(stored_hash, uses, old_manifest=None):
     `metadata.get_uses_manifest` — {name: (raw, kind)}); "source unavailable"
     for sourceless (bytecode-tracked) callables; bare "(body)" when the old
     raw source is unknown (records predating the manifest table)."""
+    uses = rule.uses
     old = parse_uses_hash(stored_hash)
-    new = uses_parts(uses)
+    new = uses_parts(uses, project_dir_of(rule))
+    legacy = None if is_canonical(stored_hash or '') else legacy_uses_parts(uses)
     old_manifest = old_manifest or {}
     new_raw = raw_uses_parts(uses) if old_manifest else {}
     bits = []
@@ -287,7 +296,8 @@ def _uses_change_message(stored_hash, uses, old_manifest=None):
             bits.append(f'{name} (removed)')
         elif name not in old:
             bits.append(f'{name} (added)')
-        elif old[name] != new[name]:
+        elif (old[name] != new[name] if legacy is None else not
+              legacy_uses_part_matches(old[name], uses[name], legacy[name], new[name])):
             if _plain_rendering(old[name]) and _plain_rendering(new[name]):
                 bits.append(f'{name}: {old[name]} → {new[name]}')
                 continue
@@ -308,6 +318,17 @@ def _uses_change_message(stored_hash, uses, old_manifest=None):
     if any('\n' in bit for bit in bits):
         return 'uses= changed since last run:\n' + '\n'.join(bits)
     return 'uses= changed since last run: ' + ', '.join(bits)
+
+
+def _io_changed_parts(stored_io, rule):
+    """Which of 'inputs'/'outputs' differ between a stored io string and
+    the rule now (both when it can't tell)."""
+    from .scope import io_hash
+
+    old, new = parse_io_hash(stored_io or ''), parse_io_hash(io_hash(rule))
+    if is_canonical(stored_io or ''):
+        return [p for p in ('inputs', 'outputs') if old[p] != new[p]] or ['inputs', 'outputs']
+    return ['inputs', 'outputs']
 
 
 def _task_label(task):
@@ -376,20 +397,17 @@ def explain_task(rules, dag, metadata, task, *, check_outputs='never', runnable=
             )
             reasons.append(Reason('code-changed', f'run code changed since last run:\n{diff}'))
         stored_uses = codes.get(rec.uses_code_id) or ''
-        if stored_uses != uses_hash(task.rule.uses):
+        if not uses_match(stored_uses, task.rule):
             old_manifest = (metadata.get_uses_manifest(rec.uses_code_id)
                             if rec.uses_code_id is not None else {})
             reasons.append(Reason('uses-changed',
-                _uses_change_message(stored_uses, task.rule.uses, old_manifest)))
+                _uses_change_message(stored_uses, task.rule, old_manifest)))
         stored_io = codes.get(rec.io_code_id)
-        current_io = io_hash(task.rule)
-        if rec.io_code_id is not None and stored_io != current_io:
+        if rec.io_code_id is not None and not io_match(stored_io, task.rule):
             # Name which segment differs — diagnosing an io-changed rerun
             # previously meant pulling the stored string from the DB and
             # diffing its segments by hand (todos.md, wescon 2026-06-17).
-            old_segs, new_segs = parse_io_hash(stored_io or ''), parse_io_hash(current_io)
-            changed = [part for part in ('inputs', 'outputs')
-                       if old_segs[part] != new_segs[part]] or ['inputs', 'outputs']
+            changed = _io_changed_parts(stored_io, task.rule)
             reasons.append(Reason('io-changed',
                 f'inputs/outputs spec changed since last run: '
                 f'{" and ".join(changed)} segment(s) differ'))
@@ -436,7 +454,7 @@ def explain_task(rules, dag, metadata, task, *, check_outputs='never', runnable=
 
 
 def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never',
-         ignore_code_changes=False):
+         ignore_code_changes=False, restamp=None):
     """Return (runnable_tasks, deferred_rules).
 
     runnable_tasks: ordered (rule-topologically) list of tasks needing a run.
@@ -448,6 +466,11 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
     comparisons are skipped, so a task reruns only if it has never
     *succeeded* (failed counts as not run) or an upstream task reruns
     this wave (a fan-in must still pick up newly-run elements).
+
+    restamp: optional dict, filled with {(rule, 'uses'|'io'): set of stored
+    code ids} that are pre-0.9 renderings matching the current state. A
+    caller that writes (run) re-points those records at the current ids
+    (`metadata.restamp_codes`), so the legacy path is paid once.
     """
     # MM: this is a core piece of logic, but I find it hard to understand end-to-end.
     # MM: also quite a long func.
@@ -535,19 +558,24 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
         run_unchanged = uses_unchanged = io_unchanged = frozenset()
         if not force and not ignore_code_changes:
             run_src = rule.source['run']
-            current_uses_hash = uses_hash(rule.uses)
-            current_io_hash = io_hash(rule)
             run_ids = {rec.run_code_id for rec in records.values()}
             uses_ids = {rec.uses_code_id for rec in records.values()}
             io_ids = {rec.io_code_id for rec in records.values()}
             codes = metadata.get_codes(run_ids | uses_ids | io_ids)
             run_unchanged = {cid for cid in run_ids
                              if code_comparer(codes.get(cid) or '', run_src)}
-            uses_unchanged = {cid for cid in uses_ids
-                              if (codes.get(cid) or '') == current_uses_hash}
+            uses_verdicts = {cid: uses_match(codes.get(cid) or '', rule) for cid in uses_ids}
+            uses_unchanged = {cid for cid, v in uses_verdicts.items() if v}
             # io id None = pre-upgrade record, not tracked: never a rerun cause.
-            io_unchanged = {cid for cid in io_ids
-                            if cid is None or codes.get(cid) == current_io_hash}
+            io_verdicts = {cid: (io_match(codes.get(cid), rule) if cid is not None
+                                 else 'exact') for cid in io_ids}
+            io_unchanged = {cid for cid, v in io_verdicts.items() if v}
+            if restamp is not None:
+                for kind, verdicts in (('uses', uses_verdicts), ('io', io_verdicts)):
+                    legacy_ids = {cid for cid, v in verdicts.items()
+                                  if v == 'legacy' and cid is not None}
+                    if legacy_ids:
+                        restamp.setdefault((rule, kind), set()).update(legacy_ids)
 
         # Same-pass propagation inputs: an upstream rerunning 'all' (deferred
         # or unknown task set) reruns every task here; one rerunning some

@@ -22,6 +22,7 @@ import types
 import warnings
 
 from ..util.code_compare import dedent
+from . import canonical
 from .exceptions import ScopeError
 
 _BUILTIN_NAMES = frozenset(dir(builtins))
@@ -285,7 +286,7 @@ def _normalised_src(src):
         return src
 
 
-def io_hash(rule):
+def legacy_io_hash(rule):
     """Stable string for a rule's inputs/outputs declarations, AST-normalised
     the same way run code and uses are. Editing the inputs/outputs spec (the
     dict or the callable that defines dataflow) changes it, so a completed
@@ -301,7 +302,7 @@ def io_hash(rule):
     )
 
 
-def parse_io_hash(stored):
+def parse_legacy_io_hash(stored):
     """Inverse of `io_hash`: recover the {'inputs': ..., 'outputs': ...}
     normalised segments from a stored string. Split on the first
     '\\noutputs=' — normalised segments are single-line (ast.dump), and even
@@ -313,7 +314,7 @@ def parse_io_hash(stored):
     }
 
 
-def uses_parts(uses):
+def legacy_uses_parts(uses):
     """{name: rendered-value} for a `uses` dict, name-sorted.
 
     Functions are rendered as their AST-normalised source (a body change is
@@ -356,13 +357,13 @@ def raw_uses_parts(uses):
     return parts
 
 
-def uses_hash(uses):
+def legacy_uses_hash(uses):
     """Stable string representing the current state of a `uses` dict: one
     `name=<rendered>` line per key (see `uses_parts`)."""
-    return '\n'.join(f'{name}={rendered}' for name, rendered in uses_parts(uses).items())
+    return '\n'.join(f'{name}={rendered}' for name, rendered in legacy_uses_parts(uses).items())
 
 
-def parse_uses_hash(stored):
+def parse_legacy_uses_hash(stored):
     """Inverse of `uses_hash`: recover {name: rendered-value} from a stored
     hash string. A rendered value may span several lines (a callable whose
     source didn't parse standalone, e.g. a lambda), so a new key begins only
@@ -395,3 +396,110 @@ def exec_function(fn, uses):
     )
     new_fn.__kwdefaults__ = fn.__kwdefaults__
     return new_fn
+
+
+# --- 0.9.0 canonical renderings, and matching legacy stored state ----------
+#
+# The functions above starting `legacy_` are the renderings remake <= 0.9.0a1
+# stored; they are kept only to recognise those records (see core/canonical).
+
+def project_dir_of(rule):
+    """The directory a rule's project lives in: its remakefile's directory,
+    else the current directory."""
+    rmk = getattr(rule, 'remake', None)
+    remakefile = getattr(rmk, 'remakefile', None)
+    return os.path.dirname(os.path.abspath(remakefile)) if remakefile else os.getcwd()
+
+
+def uses_parts(uses, project_dir=None):
+    return canonical.uses_parts(uses, project_dir)
+
+
+def uses_hash(uses, project_dir=None):
+    return canonical.uses_hash(uses, project_dir)
+
+
+def rule_uses_hash(rule):
+    return canonical.uses_hash(rule.uses, project_dir_of(rule))
+
+
+def io_hash(rule):
+    return canonical.io_hash(rule)
+
+
+def parse_uses_hash(stored):
+    """{name: rendering} from a stored uses string, either format."""
+    if not stored:
+        return {}
+    if canonical.is_canonical(stored):
+        return canonical.parse_canonical(stored)
+    return parse_legacy_uses_hash(stored)
+
+
+def parse_io_hash(stored):
+    """{'inputs': ..., 'outputs': ...} from a stored io string, either format."""
+    if stored and canonical.is_canonical(stored):
+        return canonical.parse_canonical(stored)
+    return parse_legacy_io_hash(stored or '')
+
+
+def legacy_uses_part_matches(text, value, legacy_current, current):
+    """Does a legacy stored rendering of one uses value match the value now?
+    Either it equals what the old code renders for the value on this Python
+    (same interpreter, nothing changed), or it re-renders canonically to the
+    current canonical text (e.g. a set's order, or an ast.dump from another
+    Python)."""
+    if text == legacy_current:
+        return True
+    if text.startswith('Module('):
+        normalised = canonical.normalise_legacy_dump(text, dict_spec=False)
+        return normalised is not None and current == f'source {normalised}'
+    return canonical.normalise_legacy_value(text) == current
+
+
+def uses_match(stored, rule):
+    """'exact' when a stored uses string equals the current state, 'legacy'
+    when it is a pre-0.9 string matching it (restamp it), None if changed."""
+    current = rule_uses_hash(rule)
+    stored = stored or ''
+    if stored == current:
+        return 'exact'
+    if not stored or canonical.is_canonical(stored):
+        return None
+    old = parse_legacy_uses_hash(stored)
+    if set(old) != set(rule.uses):
+        return None
+    legacy = legacy_uses_parts(rule.uses)
+    new = uses_parts(rule.uses, project_dir_of(rule))
+    for name, text in old.items():
+        if not legacy_uses_part_matches(text, rule.uses[name], legacy[name], new[name]):
+            return None
+    return 'legacy'
+
+
+def io_match(stored, rule):
+    """As uses_match, for the stored inputs/outputs string. None stored is
+    a pre-io-tracking record: 'exact' (never a rerun cause)."""
+    if stored is None:
+        return 'exact'
+    current = io_hash(rule)
+    if stored == current:
+        return 'exact'
+    if canonical.is_canonical(stored):
+        return None
+    old = parse_legacy_io_hash(stored)
+    legacy = parse_legacy_io_hash(legacy_io_hash(rule))
+    new = canonical.parse_canonical(current)
+    for part in ('inputs', 'outputs'):
+        if old[part] == legacy[part]:
+            continue
+        spec = getattr(rule, part)
+        if spec is None:
+            return None
+        is_dict = isinstance(spec, dict)
+        normalised = canonical.normalise_legacy_dump(old[part], dict_spec=is_dict)
+        if normalised is None:
+            return None
+        if new[part] != (normalised if is_dict else f'callable {normalised}'):
+            return None
+    return 'legacy'
