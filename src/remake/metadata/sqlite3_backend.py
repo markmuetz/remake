@@ -8,6 +8,7 @@ tasks, 99.8% of it duplicated uses text) and made status queries scale with
 task count (design_docs/records/logs_analysis/README.md). Older DBs are migrated in
 place by `_add_missing_columns`.
 """
+import dataclasses
 import json
 import random
 import sqlite3
@@ -96,6 +97,10 @@ CREATE TABLE task (
     cpu_s REAL,
     max_rss_bytes INTEGER,
     rss_method TEXT,
+    -- core.task.paths_digest of the resolved input/output paths the task
+    -- last ran with (review 2026-09-24 M8): a fan-in whose callable spec
+    -- now resolves to fewer/other paths reruns. NULL = not recorded.
+    paths_digest TEXT,
     PRIMARY KEY (id),
     FOREIGN KEY(rule_id) REFERENCES rule (id),
     FOREIGN KEY(run_code_id) REFERENCES code (id),
@@ -223,6 +228,14 @@ def retry_lock_commit(fn):
         return _retry_locked(attempt, fn.__name__)
 
     return inner
+
+
+class _KeyOnly:
+    """Stand-in task for a lookup by key alone."""
+    legacy_key = None
+
+    def __init__(self, key):
+        self.key = key
 
 
 class Sqlite3Backend(MetadataManager):
@@ -357,7 +370,8 @@ class Sqlite3Backend(MetadataManager):
         # Resource-capture columns (0.9.0). Additive and nullable: an existing
         # DB gains NULLs and nothing reruns.
         for col, coltype in (('wall_s', 'REAL'), ('cpu_s', 'REAL'),
-                             ('max_rss_bytes', 'INTEGER'), ('rss_method', 'TEXT')):
+                             ('max_rss_bytes', 'INTEGER'), ('rss_method', 'TEXT'),
+                             ('paths_digest', 'TEXT')):
             if col not in cols:
                 logger.info(f'Adding task.{col} column to existing DB')
                 self.conn.execute(f'ALTER TABLE task ADD COLUMN {col} {coltype}')
@@ -484,6 +498,12 @@ class Sqlite3Backend(MetadataManager):
         for (rule, kind), old_ids in restamp.items():
             if rule.name not in self.rule_ids or not old_ids:
                 continue
+            if kind == 'paths':
+                # Backfill: {task key: digest} for records predating it.
+                self.conn.executemany(
+                    'UPDATE task SET paths_digest = ? WHERE key = ? AND paths_digest IS NULL',
+                    [(d, k) for k, d in old_ids.items() if d is not None])
+                continue
             rule_id, _, uses_code_id, io_code_id = self.rule_ids[rule.name]
             column, new_id = (('uses_code_id', uses_code_id) if kind == 'uses'
                               else ('io_code_id', io_code_id))
@@ -598,6 +618,7 @@ class Sqlite3Backend(MetadataManager):
         # ids; callers resolve the few distinct ones via get_codes.
         start = perf_counter()
         records = {}
+        tasks = list(tasks)
         keys = [task.key for task in tasks]
         nchunks = (len(keys) + self.SELECT_CHUNK - 1) // self.SELECT_CHUNK
         for i in range(0, len(keys), self.SELECT_CHUNK):
@@ -606,13 +627,13 @@ class Sqlite3Backend(MetadataManager):
             rows = self.conn.execute(
                 'SELECT key, last_run_status, last_run_timestamp, '
                 '       run_code_id, uses_code_id, io_code_id, run_seq, exception, '
-                '       wall_s, cpu_s, max_rss_bytes, rss_method '
+                '       wall_s, cpu_s, max_rss_bytes, rss_method, paths_digest '
                 f'FROM task WHERE key IN ({placeholders})',
                 chunk,
             ).fetchall()
             for (key, status, timestamp, run_code_id, uses_code_id,
                  io_code_id, run_seq, exception,
-                 wall_s, cpu_s, max_rss_bytes, rss_method) in rows:
+                 wall_s, cpu_s, max_rss_bytes, rss_method, paths_digest) in rows:
                 records[key] = TaskRecord(
                     key=key,
                     status=status,
@@ -628,7 +649,18 @@ class Sqlite3Backend(MetadataManager):
                     cpu_s=cpu_s,
                     max_rss_bytes=max_rss_bytes,
                     rss_method=rss_method,
+                    paths_digest=paths_digest,
                 )
+        # Records stored under a pre-canonical key (M19: numpy/enum matrix
+        # values) are found under that key and returned under the new one;
+        # the next commit of the task re-keys the row (_upsert_task).
+        legacy = {t.legacy_key: t.key for t in tasks
+                  if t.legacy_key and t.key not in records}
+        if legacy:
+            found = self.get_tasks_status(
+                [_KeyOnly(k) for k in legacy])
+            for old_key, rec in found.items():
+                records[legacy[old_key]] = dataclasses.replace(rec, key=legacy[old_key])
         elapsed = perf_counter() - start
         # ~1857 of these dominated a field DEBUG log (logs_analysis §3.3):
         # only slow outliers earn DEBUG; the rest are TRACE. Fields are bound
@@ -721,8 +753,8 @@ class Sqlite3Backend(MetadataManager):
             self.conn.execute(
                 'INSERT INTO task(key, rule_id, run_code_id, uses_code_id, io_code_id, '
                 '                 run_seq, last_run_timestamp, last_run_status, exception, '
-                '                 wall_s, cpu_s, max_rss_bytes, rss_method) '
-                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
+                '                 wall_s, cpu_s, max_rss_bytes, rss_method, paths_digest) '
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
                 'ON CONFLICT(key) DO UPDATE SET '
                 '    run_code_id = excluded.run_code_id, '
                 '    uses_code_id = excluded.uses_code_id, '
@@ -733,6 +765,7 @@ class Sqlite3Backend(MetadataManager):
                 '    cpu_s = excluded.cpu_s, '
                 '    max_rss_bytes = excluded.max_rss_bytes, '
                 '    rss_method = excluded.rss_method, '
+                '    paths_digest = excluded.paths_digest, '
                 '    last_run_status = excluded.last_run_status, '
                 '    exception = excluded.exception '
                 # Never let an older result overwrite a newer one (review
@@ -767,6 +800,7 @@ class Sqlite3Backend(MetadataManager):
                     res.get('cpu_s'),
                     res.get('max_rss_bytes'),
                     res.get('rss_method'),
+                    payload.get('paths_digest'),
                 ),
             )
 
@@ -799,6 +833,14 @@ class Sqlite3Backend(MetadataManager):
         # per-task compute_uses_hash was 1e6 AST renders on a big run).
         rule_id, run_code_id, uses_code_id, io_code_id = self.rule_ids[task.rule.name]
         res = resources or {}
+        if getattr(task, 'legacy_key', None):
+            # Re-key a record stored under the task's pre-canonical key (M19).
+            self.conn.execute(
+                'UPDATE task SET key = ? WHERE key = ? AND NOT EXISTS '
+                '(SELECT 1 FROM task WHERE key = ?)',
+                (task.key, task.legacy_key, task.key))
+        from ..core.task import paths_digest
+        digest = paths_digest(task)
         # An execution replaces all four resource columns verbatim, NULLs
         # included, so a fresh wall_s is never left paired with a peak RSS
         # from an earlier run. A bulk state change (resources=None) measured
@@ -813,8 +855,8 @@ class Sqlite3Backend(MetadataManager):
         self.conn.execute(
             'INSERT INTO task(key, rule_id, run_code_id, uses_code_id, io_code_id, '
             '                 run_seq, last_run_timestamp, last_run_status, exception, '
-            '                 wall_s, cpu_s, max_rss_bytes, rss_method) '
-            "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?) "
+            '                 wall_s, cpu_s, max_rss_bytes, rss_method, paths_digest) '
+            "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?) "
             'ON CONFLICT(key) DO UPDATE SET '
             '    run_code_id = excluded.run_code_id, '
             '    uses_code_id = excluded.uses_code_id, '
@@ -822,6 +864,7 @@ class Sqlite3Backend(MetadataManager):
             '    run_seq = excluded.run_seq, '
             "    last_run_timestamp = datetime('now'), "
             f'{resource_update}'
+            '    paths_digest = excluded.paths_digest, '
             '    last_run_status = excluded.last_run_status, '
             '    exception = excluded.exception',
             (
@@ -837,5 +880,6 @@ class Sqlite3Backend(MetadataManager):
                 res.get('cpu_s'),
                 res.get('max_rss_bytes'),
                 res.get('rss_method'),
+                digest,
             ),
         )

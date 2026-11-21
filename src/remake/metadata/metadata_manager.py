@@ -44,6 +44,9 @@ class TaskRecord:
     cpu_s: Optional[float] = None
     max_rss_bytes: Optional[int] = None
     rss_method: Optional[str] = None
+    # Digest of the resolved input/output paths last run with
+    # (core.task.paths_digest); None = not recorded (pre-0.9 record).
+    paths_digest: Optional[str] = None
 
 
 class RecordCache:

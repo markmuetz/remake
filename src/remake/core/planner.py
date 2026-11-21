@@ -22,6 +22,7 @@ from .dag import expand_rule
 from .deps import ALL, Edges, downstream_task, task_id
 from .exceptions import Defer, RemakeError
 from .rule import is_deferrable
+from .task import paths_digest
 from .canonical import is_canonical
 from .scope import (
     io_match,
@@ -411,6 +412,16 @@ def explain_task(rules, dag, metadata, task, *, check_outputs='never', runnable=
             reasons.append(Reason('io-changed',
                 f'inputs/outputs spec changed since last run: '
                 f'{" and ".join(changed)} segment(s) differ'))
+        if (rec.paths_digest is not None and rec.status == TASK_STATUS_SUCCESS
+                and any(callable(spec) and not isinstance(spec, dict)
+                        for spec in (task.rule.inputs, task.rule.outputs))):
+            digest = paths_digest(task)
+            if digest != rec.paths_digest:
+                old_n = rec.paths_digest.split(':')[:2]
+                new_n = (digest or '?:?').split(':')[:2]
+                reasons.append(Reason('paths-changed',
+                    f'resolved input/output paths changed since last run '
+                    f'(inputs {old_n[0]} → {new_n[0]}, outputs {old_n[1]} → {new_n[1]})'))
         if check_outputs == 'always' and task.outputs and not _outputs_complete(task):
             reasons.append(Reason('outputs-missing',
                 'outputs missing/incomplete (check_outputs=always)'))
@@ -468,7 +479,9 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
     this wave (a fan-in must still pick up newly-run elements).
 
     restamp: optional dict, filled with {(rule, 'uses'|'io'): set of stored
-    code ids} that are pre-0.9 renderings matching the current state. A
+    code ids} that are pre-0.9 renderings matching the current state, and
+    {(rule, 'paths'): {task key: digest}} for records with no paths digest
+    yet (backfilled, so they are protected from the next change). A
     caller that writes (run) re-points those records at the current ids
     (`metadata.restamp_codes`), so the legacy path is paid once.
     """
@@ -577,6 +590,9 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
                     if legacy_ids:
                         restamp.setdefault((rule, kind), set()).update(legacy_ids)
 
+        callable_io = any(callable(spec) and not isinstance(spec, dict)
+                          for spec in (rule.inputs, rule.outputs))
+
         # Same-pass propagation inputs: an upstream rerunning 'all' (deferred
         # or unknown task set) reruns every task here; one rerunning some
         # tasks reruns the tasks that read them (deps.Edge, per task below).
@@ -621,6 +637,16 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
                         changed.append('inputs/outputs spec changed')
                     if changed:
                         rerun, reason = True, ' + '.join(changed)
+                if not rerun and not ignore_code_changes and callable_io:
+                    # A callable spec can resolve to other paths with its
+                    # source unchanged (it reads a global, e.g. YEARS): compare
+                    # what it resolves to (review 2026-09-24 M8).
+                    digest = paths_digest(task)
+                    if rec.paths_digest is None:
+                        if restamp is not None and digest is not None:
+                            restamp.setdefault((rule, 'paths'), {})[task.key] = digest
+                    elif digest != rec.paths_digest:
+                        rerun, reason = True, 'resolved input/output paths changed'
                 if not rerun and check_outputs == 'always' and task.outputs:
                     if not _outputs_complete(task):
                         rerun, reason = True, 'outputs missing (check_outputs=always)'

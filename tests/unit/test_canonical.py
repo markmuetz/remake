@@ -262,3 +262,92 @@ def test_real_change_after_upgrade_still_reruns(tmp_path):
     db.conn.commit()
     runnable, _ = rmk.plan()
     assert len(runnable) == 2
+
+
+# --- M8: resolved-path digest --------------------------------------------------
+
+YEARS = [2000, 2001, 2002]
+
+
+def _fan_in(tmp_path):
+    @rule(inputs=lambda: {y: str(tmp_path / f'in_{y}.txt') for y in YEARS},
+          outputs={'o': str(tmp_path / 'agg.txt')})
+    def agg(inputs, outputs):
+        Path(outputs['o']).write_text(str(len(inputs)))
+
+    for y in (2000, 2001, 2002):
+        (tmp_path / f'in_{y}.txt').write_text('x')
+    db = Sqlite3Backend(tmp_path / 'remake.db')
+    return Remake(rules=[agg], metadata=db), agg, db
+
+
+def test_fan_in_reruns_when_its_callable_spec_resolves_differently(tmp_path):
+    global YEARS
+    rmk, agg, db = _fan_in(tmp_path)
+    assert rmk.run() == 0
+    assert rmk.plan()[0] == []
+    YEARS = [2000, 2001]
+    try:
+        runnable, _ = rmk.plan()
+        assert len(runnable) == 1
+        _, reasons = rmk.explain_task(runnable[0])
+        assert any('inputs 3 → 2' in r.message for r in reasons)
+    finally:
+        YEARS = [2000, 2001, 2002]
+
+
+def test_paths_digest_is_backfilled_for_old_records(tmp_path):
+    global YEARS
+    rmk, agg, db = _fan_in(tmp_path)
+    assert rmk.run() == 0
+    db.conn.execute('UPDATE task SET paths_digest = NULL')
+    db.conn.commit()
+    assert rmk.plan()[0] == []  # NULL: not a rerun cause
+    assert rmk.run() == 0       # ...but backfilled
+    assert db.conn.execute('SELECT paths_digest FROM task').fetchone()[0] is not None
+    YEARS = [2000]
+    try:
+        assert len(rmk.plan()[0]) == 1
+    finally:
+        YEARS = [2000, 2001, 2002]
+
+
+# --- M19: canonical task keys ----------------------------------------------------
+
+def test_numpy_and_enum_matrix_values_get_plain_keys(tmp_path):
+    import enum
+    np = pytest.importorskip('numpy')
+
+    class Site(str, enum.Enum):
+        A = 'oxford'
+
+    @rule(outputs={'o': str(tmp_path / 'o_{x}_{s}.txt')},
+          matrix={'x': [np.float64(0.5)], 's': [Site.A]})
+    def r(outputs, x, s):
+        assert type(x) is float and type(s) is str
+        Path(outputs['o']).write_text('x')
+
+    from remake.core.dag import expand_rule
+    (task,) = expand_rule(r)
+    assert task.kwargs == {'x': 0.5, 's': 'oxford'}
+    assert task.legacy_key is not None and task.legacy_key != task.key
+
+
+def test_record_under_legacy_key_is_found_and_rekeyed(tmp_path):
+    np = pytest.importorskip('numpy')
+
+    @rule(outputs={'o': str(tmp_path / 'o_{x}.txt')}, matrix={'x': [np.float64(0.5)]})
+    def r(outputs, x):
+        Path(outputs['o']).write_text('x')
+
+    db = Sqlite3Backend(tmp_path / 'remake.db')
+    rmk = Remake(rules=[r], metadata=db)
+    assert rmk.run() == 0
+    from remake.core.dag import expand_rule
+    (task,) = expand_rule(r)
+    # As stored by remake <= 0.9.0a1 under numpy 2: the np.float64 repr key.
+    db.conn.execute('UPDATE task SET key = ?', (task.legacy_key,))
+    db.conn.commit()
+    assert rmk.plan()[0] == []
+    rmk.run(force=True)
+    assert [k for (k,) in db.conn.execute('SELECT key FROM task')] == [task.key]

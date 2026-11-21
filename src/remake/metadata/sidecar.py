@@ -18,6 +18,7 @@ from pathlib import Path
 
 from ..core.scope import io_hash as compute_io_hash
 from ..core.scope import rule_uses_hash
+from ..core.task import paths_digest
 from .metadata_manager import MetadataManager
 
 RESULTS_ROOT = Path('.remake/tasks/results')
@@ -62,6 +63,8 @@ class SidecarWriter(MetadataManager):
             # (design_docs/bugs/05_slurm_sidecar_run_code_not_recorded.md).
             'run_hash': task.rule.source['run'],
             'run_seq': self.run_seq,
+            # Resolved on the compute node, as run (review 2026-09-24 M8).
+            'paths_digest': paths_digest(task),
             # Matches the format sqlite's datetime('now') stores (UTC).
             'timestamp': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
         }

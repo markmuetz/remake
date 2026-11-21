@@ -32,15 +32,24 @@ def _resolve(spec, kwargs, wrap_tokens):
     return resolved
 
 
+def task_key(rule_name, kwargs):
+    kwargs_repr = repr(dict(sorted(kwargs.items())))
+    return sha1(f'{rule_name}:{kwargs_repr}'.encode()).hexdigest()
+
+
 @dataclass(eq=False)
 class Task:
     rule: Rule
     kwargs: dict = field(default_factory=dict)
+    # The key this task had before its matrix values were canonicalised
+    # (numpy scalars, enums: review 2026-09-24 M19), when that differs. The
+    # backend finds and re-keys a record stored under it, so canonical keys
+    # don't orphan existing state.
+    legacy_key: str = None
 
     @cached_property
     def key(self):
-        kwargs_repr = repr(dict(sorted(self.kwargs.items())))
-        return sha1(f'{self.rule.name}:{kwargs_repr}'.encode()).hexdigest()
+        return task_key(self.rule.name, self.kwargs)
 
     @cached_property
     def inputs(self):
@@ -59,3 +68,22 @@ class Task:
     def __repr__(self):
         kstr = ', '.join(f'{k}={v}' for k, v in self.kwargs.items())
         return f'{self.key[:8]} {self.rule.name}[{kstr}]'
+
+
+def paths_digest(task):
+    """A digest of a task's resolved input and output paths (review
+    2026-09-24 M8), as '<ninputs>:<noutputs>:<sha1>', or None if they can't
+    be resolved. Order-insensitive (keys sorted, as the io hash ignores dict
+    order) and on the paths as declared, not resolved on disk, so moving the
+    project doesn't change it."""
+    try:
+        inputs = task.inputs
+        outputs = task.outputs
+    except Exception:
+        return None
+    items = sorted(
+        [('i', repr(k), str(v)) for k, v in inputs.items()]
+        + [('o', repr(k), str(v)) for k, v in outputs.items()]
+    )
+    digest = sha1(repr(items).encode()).hexdigest()
+    return f'{len(inputs)}:{len(outputs)}:{digest}'
