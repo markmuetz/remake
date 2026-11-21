@@ -17,6 +17,7 @@ requires-python = ">=3.10"
 dependencies = [
     "loguru",
     "networkx",
+    "tomli; python_version < '3.11'",
 ]
 dynamic = ["version"]
 classifiers = [
@@ -84,6 +85,9 @@ remake = "remake.remake_cmd:remake_cmd"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+remake = ["profiles/*.toml"]
 
 [tool.setuptools.dynamic]
 version = { attr = "remake.version.__version__" }

@@ -229,8 +229,18 @@ class RemakeCLI:
             default='auto',
             help='Colourise output: auto (TTY only, the default), always, or '
                  'never. NO_COLOR/FORCE_COLOR env vars are honoured under auto.'),
+        Arg('--profile', default=None, metavar='NAME',
+            help='Config profile to use (e.g. jasmin); beats $REMAKE_PROFILE '
+                 'and the profile set in config files'),
     ]
     sub_cmds = {
+        'config': {
+            'help': 'Print the effective merged config and where each key came from',
+            'args': [
+                Arg('remakefile'),
+                Arg('--json', help='Machine-readable output', action='store_true'),
+            ],
+        },
         'run': {
             'help': 'Run all pending tasks',
             'args': [
@@ -498,7 +508,7 @@ class RemakeCLI:
         return rmk
 
     def _load(self, args):
-        rmk = self._track(load_remake(args.remakefile))
+        rmk = self._track(load_remake(args.remakefile, profile=args.profile))
         if getattr(args, 'check_outputs', False):
             rmk.check_outputs = 'always'
         return rmk
@@ -569,7 +579,7 @@ class RemakeCLI:
         # SQLite DB (livelock on shared filesystems): load without
         # finalizing (no ensure_rules, no DB connection) and record the
         # result as a sidecar file, ingested by the next plan/info.
-        rmk = self._track(load_remake(args.remakefile, finalize=False))
+        rmk = self._track(load_remake(args.remakefile, finalize=False, profile=args.profile))
         # Generated sbatch scripts pin their submission's spec file via
         # --specs; the fallback (manual retries, in-flight jobs submitted by
         # pre-0.9 scripts) must resolve the last SUBMITTED spec — a dry run
@@ -860,7 +870,7 @@ class RemakeCLI:
         return 1 if problems else 0
 
     def remake_rule_dag(self, args):
-        rmk = self._track(load_remake(args.remakefile))
+        rmk = self._track(load_remake(args.remakefile, profile=args.profile))
         need_matrix = args.number_of_tasks or args.matrix_keys
         info = rmk.rule_dag(with_matrix=need_matrix)
         order, edges = info['order'], info['edges']
@@ -894,7 +904,7 @@ class RemakeCLI:
     def remake_dag(self, args):
         from .core.dot import rule_dot, task_dot
 
-        rmk = self._track(load_remake(args.remakefile))
+        rmk = self._track(load_remake(args.remakefile, profile=args.profile))
         text = task_dot(rmk) if args.tasks else rule_dot(rmk)
         if args.output:
             Path(args.output).write_text(text)
@@ -944,7 +954,7 @@ class RemakeCLI:
         return 1 if counts['failed'] else 0
 
     def remake_rule_info(self, args):
-        rmk = self._track(load_remake(args.remakefile))
+        rmk = self._track(load_remake(args.remakefile, profile=args.profile))
         rule = rmk.rule_from_name(args.rule_name)
         data = rmk.rule_info(rule)
         if args.json:
@@ -1074,6 +1084,36 @@ class RemakeCLI:
         if len(results) > 1:
             print(f'{len(results)} task(s): {n_run} would run, '
                   f'{len(results) - n_run} up to date')
+
+    def remake_config(self, args):
+        import json
+
+        rmk = self._track(load_remake(args.remakefile, finalize=False, profile=args.profile))
+        eff = rmk.effective_config
+        if args.json:
+            print(json.dumps(eff.to_json(), indent=2, sort_keys=True, default=repr))
+            return 0
+        print(f'profile: {eff.profile or "(none)"}'
+              + (f' (from {eff.profile_source})' if eff.profile else ''))
+        print('files consulted:')
+        for layer, path, exists in eff.files:
+            print(f'  {layer}: {path} ({"found" if exists else "not found"})')
+        print('config (layer that set each key):')
+
+        def walk(d, prefix=''):
+            for k in sorted(d):
+                v = d[k]
+                if isinstance(v, dict):
+                    yield from walk(v, f'{prefix}{k}.')
+                else:
+                    yield f'{prefix}{k}', v
+
+        rows = list(walk(eff.values))
+        for key, v in rows:
+            print(f'  {key} = {v!r}  [{eff.provenance.get(key, "?")}]')
+        if not rows:
+            print('  (empty)')
+        return 0
 
     def remake_slurm_status(self, args):
         from .executors.slurm_executor import last_submission, squeue_snapshot
@@ -1216,6 +1256,7 @@ def remake_cmd(argv=None):
     # SIGTERM killed the parent outright and left its workers running.
     received = {}
     old_sigterm = None
+    old_profile_env = os.environ.get('REMAKE_PROFILE')
 
     def _on_sigterm(signum, frame):
         received['signal'] = signum
@@ -1228,6 +1269,10 @@ def remake_cmd(argv=None):
         # can never skip the cwd restore below.
         if args.subcmd_name == 'run' and threading.current_thread() is threading.main_thread():
             old_sigterm = signal.signal(signal.SIGTERM, _on_sigterm)
+        if args.profile:
+            # Also seen by the SLURM jobs this process submits (sbatch
+            # exports the environment), so continuation jobs use it too.
+            os.environ['REMAKE_PROFILE'] = args.profile
         return cli.dispatch()
     except KeyboardInterrupt:
         signum = received.get('signal', signal.SIGINT)
@@ -1251,6 +1296,11 @@ def remake_cmd(argv=None):
         print(f'error: {e}', file=sys.stderr)
         return 2
     finally:
+        if args.profile:
+            if old_profile_env is None:
+                os.environ.pop('REMAKE_PROFILE', None)
+            else:
+                os.environ['REMAKE_PROFILE'] = old_profile_env
         if old_sigterm is not None:
             signal.signal(signal.SIGTERM, old_sigterm)
         for rmk in cli.loaded:

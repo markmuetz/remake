@@ -14,6 +14,7 @@ These go *before* the command name (`remake -D run pipeline.py`):
 | Option | Meaning |
 |---|---|
 | `-T, --trace` / `-D, --debug` / `-I, --info` / `-W, --warning` | console log level (default: info) |
+| `--profile NAME` | config profile (e.g. `jasmin`); beats `$REMAKE_PROFILE` and config files — see [Configuration](guide/configuration.md) |
 | `--colour {auto,always,never}` | colourise output; `auto` (the default) colours TTYs only and honours `NO_COLOR`/`FORCE_COLOR` |
 
 ## Commands
@@ -124,6 +125,13 @@ in DIR and runs each as if by `remake run <file>`, in sorted-filename order.
   imported (e.g. a missing `xarray`) is reported as skipped.
 - `-E/--executor`, `-j/--nproc`, `-f/--force`, `-n/--dry-run`,
   `--ignore-code-changes` and `--check-outputs` are passed to each `run`.
+
+## `config`
+
+`remake config pipeline.py [--json]` prints the effective merged config: the
+selected profile, the config files consulted (found or not), and, per key,
+the layer that set it. Does not touch the metadata database. See
+[Configuration](guide/configuration.md).
 
 ## Inspecting rules and tasks
 
