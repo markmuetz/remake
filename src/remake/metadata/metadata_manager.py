@@ -153,6 +153,12 @@ class MetadataManager(abc.ABC):
         file outputs without a checksum are summed under the name '*'."""
         return {}
 
+    def get_rule_output_bytes(self, rules):
+        """{rule name: total recorded output bytes} for the named rules, from
+        the output_stat table (one aggregate query). Rules with nothing
+        recorded may be absent. {} for backends without stats."""
+        return {}
+
     def update_tasks(self, tasks, status, exception=''):
         """Record the same state for many tasks (backends may batch). No
         resources: this is for bulk state changes, not execution."""

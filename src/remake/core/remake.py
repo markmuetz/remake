@@ -1,5 +1,6 @@
 """The Remake class — wires rules, planner, metadata and executors together."""
 import inspect
+import os
 import traceback
 from collections import Counter
 from pathlib import Path
@@ -32,7 +33,7 @@ from .planner import (
 from .rule import Rule
 from .scope import check_scope, exec_function
 from .task import Task
-from .tokens import OutputToken
+from .tokens import Dir, OutputToken
 
 
 class _TemplatePlaceholder:
@@ -493,11 +494,18 @@ class Remake:
                     if t.key in records and records[t.key].status == TASK_STATUS_FAILED
                 )
 
+        # Bytes of recorded outputs per rule: one aggregate query.
+        output_bytes = self.metadata.get_rule_output_bytes([r.name for r in self.rules])
+        for row in rule_rows:
+            if not row['deferred']:
+                row['output_bytes'] = output_bytes.get(row['rule'], 0)
+
         # Totals across non-deferred rules.
         tallied = [r for r in rule_rows if not r['deferred']]
         totals = {
             field: sum(r[field] for r in tallied)
-            for field in ('tasks', 'up_to_date', 'stale', 'failed', 'pending', 'to_run')
+            for field in ('tasks', 'up_to_date', 'stale', 'failed', 'pending', 'to_run',
+                          'output_bytes')
         }
         out = {'rules': rule_rows, 'totals': totals}
         if list_tasks:
@@ -528,6 +536,10 @@ class Remake:
             if task.rule.outputs is not None
             else {}
         )
+        for name, token in task.outputs.items():
+            if isinstance(token, Dir) and name in outputs:
+                # Stale files (not produced by the last run), from the manifest.
+                outputs[name]['dir'] = token.summary()
         return {
             'task': str(task),
             'rule': task.rule.name,
@@ -547,6 +559,9 @@ class Remake:
             },
             'inputs': inputs,
             'outputs': outputs,
+            # name -> {'n_files', 'total_bytes', 'checksum'} of the last
+            # successful run; '*' sums the plain file outputs.
+            'output_stats': self.metadata.get_output_stats(task),
             'log': {'path': str(log_path), 'exists': log_path.exists()},
             'slurm': {'jobids': jobids, 'array_index': array_index},
         }
@@ -666,6 +681,53 @@ class Remake:
             'config': rule.config,
         }
 
+    def _dir_rules(self):
+        """Rules with a Dir output. A dict spec is read directly; only a
+        callable spec needs a task resolved to find out."""
+        found = []
+        for rule in self.rules:
+            spec = rule.outputs
+            if spec is None:
+                continue
+            if isinstance(spec, dict):
+                if any(isinstance(v, Dir) for v in spec.values()):
+                    found.append(rule)
+                continue
+            try:
+                task = next(iter_expand_rule(rule), None)
+                if task is not None and any(isinstance(v, Dir) for v in task.outputs.values()):
+                    found.append(rule)
+            except Exception:  # Defer, or a spec needing runtime state
+                continue
+        return found
+
+    def _dir_owners(self, rules):
+        """{normalised Dir path: first task declaring it}; a second task (or
+        a second output of one task) with the same Dir is a RemakeError. Rules
+        whose matrix can't be expanded yet are skipped (checked next wave)."""
+        owners = {}
+        for rule in rules:
+            try:
+                for task in iter_expand_rule(rule):
+                    for name, token in task.outputs.items():
+                        if not isinstance(token, Dir):
+                            continue
+                        path = os.path.normpath(token.path)
+                        other = owners.setdefault(path, (task, name))
+                        if other != (task, name):
+                            raise RemakeError(
+                                f'Dir {path!r} is declared by two outputs: '
+                                f'{other[0]} ({other[1]}) and {task} ({name}). '
+                                f'Each Dir belongs to exactly one task.')
+            except Defer:
+                continue
+        return owners
+
+    def _check_duplicate_dirs(self):
+        rules = self._dir_rules()
+        if rules:
+            self._dir_owners(rules)
+
     def lint(self):
         """Wiring check — the data behind `remake lint`: every input of a
         dependent rule should be produced by one of its depends_on rules.
@@ -673,22 +735,33 @@ class Remake:
         {'kind', 'rule', 'other_rule', 'count', 'example'} where kind is
         'near_miss' (input matches a near-identical produced path — a likely
         typo/off-by-one), 'missing_dependency' (input is produced by a rule
-        not in depends_on) or 'external' (input produced by no rule).
-        Materialises all tasks; rules with an unresolved (deferred) matrix are
+        not in depends_on) or 'external' (input produced by no rule). An input
+        inside a rule's `Dir` counts as produced by that rule; 'dir_nested'
+        (a Dir inside another rule's Dir) and 'file_in_dir' (a plain output
+        inside another rule's Dir) are wiring errors too. Two tasks declaring
+        one Dir raise RemakeError. Materialises all tasks; rules with an unresolved (deferred) matrix are
         skipped with a warning."""
         import difflib
 
         if not self._finalized:
             self.finalize()
+        self._check_duplicate_dirs()
 
         producers = {}  # output path -> set of rule names
         rule_outputs = {}  # rule name -> [output paths]
+        dir_owner = {}  # normalised Dir path -> rule name
+        file_outputs = {}  # normalised plain output path -> rule name
         deferred = set()
         for rule in self.rules:
             paths = []
             try:
                 for task in iter_expand_rule(rule):
-                    paths.extend(str(token) for token in task.outputs.values())
+                    for token in task.outputs.values():
+                        paths.append(str(token))
+                        if isinstance(token, Dir):
+                            dir_owner[os.path.normpath(token.path)] = rule.name
+                        elif hasattr(token, '__fspath__'):
+                            file_outputs[os.path.normpath(token.path)] = rule.name
             except Defer:
                 deferred.add(rule.name)
                 logger.warning('{}: matrix not ready, outputs unknown — skipped', rule.name)
@@ -705,6 +778,28 @@ class Remake:
             )
             entry['count'] += 1
 
+        def enclosing_dir(path, *, proper=False):
+            """The nearest Dir output that contains `path` (or is it, unless
+            `proper`): (Dir path, owning rule) or None. A walk up the path's
+            parents, so cost is O(depth) per path, not a scan of all Dirs."""
+            path = os.path.normpath(path)
+            if proper:
+                path = os.path.dirname(path)
+            while path and path not in ('.', '/'):
+                if path in dir_owner:
+                    return path, dir_owner[path]
+                path = os.path.dirname(path)
+            return None
+
+        # Nesting: a Dir inside another task's Dir, or a plain file output
+        # inside a Dir, makes "everything in the Dir came from one task" false.
+        for path, owner in dir_owner.items():
+            if (outer := enclosing_dir(path, proper=True)):
+                record('dir_nested', owner, outer[1], {'dir': path, 'inside': outer[0]})
+        for path, owner in file_outputs.items():
+            if (outer := enclosing_dir(path)) and outer[1] != owner:
+                record('file_in_dir', owner, outer[1], {'file': path, 'inside': outer[0]})
+
         for rule in self.rules:
             if rule.inputs is None or rule.name in deferred:
                 continue
@@ -716,6 +811,9 @@ class Remake:
             for task in iter_expand_rule(rule):
                 for path in map(str, task.inputs.values()):
                     made_by = producers.get(path)
+                    if not made_by and dir_owner and (inside := enclosing_dir(path)):
+                        # An input inside another rule's Dir is that rule's.
+                        made_by = {inside[1]}
                     if made_by:
                         if not made_by & (dep_names | {rule.name}):
                             record('missing_dependency', rule.name, min(made_by), path)
@@ -804,9 +902,17 @@ class Remake:
         tasks = self.tasks(query=query)
         skipped = 0
         if check_outputs:
+            def adoptable(token):
+                # A Dir that exists without a manifest is claimed (scan and
+                # claim everything present), unless this is a dry run.
+                if isinstance(token, Dir):
+                    return token.claim(write=not dry_run)
+                return token.is_complete()
+
             verified = [
                 t for t in tasks
-                if t.outputs and all(token.is_complete() for token in t.outputs.values())
+                if t.outputs and all(adoptable(token) for token in sorted(
+                    t.outputs.values(), key=lambda tk: isinstance(tk, Dir)))
             ]
             skipped = len(tasks) - len(verified)
             tasks = verified
@@ -969,6 +1075,7 @@ class Remake:
             f'profile={eff.profile or "none"}')
 
         def _plan():
+            self._check_duplicate_dirs()
             # Records stored by remake <= 0.9.0a1 that still match are
             # re-pointed at the 0.9 renderings, once (core/canonical.py).
             restamp = {}
