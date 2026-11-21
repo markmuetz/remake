@@ -181,12 +181,17 @@ def process(inputs, outputs, site, year):
 
 Its parameter names must be matrix keys: remake calls it with the matching
 kwargs (extra kwargs it doesn't name are dropped, so `lambda site:` is fine; a
-parameter that *isn't* a matrix key raises `TypeError`). A `lambda` works, but
-change detection is coarser for one than for a named `def` — remake hashes the
-callable's source, and a lambda's source is captured as raw line text rather
-than compared by code structure, so cosmetic edits on that line can trigger
-reruns and two lambdas sharing a line are indistinguishable. Prefer a named
-function for non-trivial wiring.
+parameter that *isn't* a matrix key raises `TypeError`). A `lambda` works as
+well as a named `def`: since 0.9.0 remake cuts the lambda out of the line it
+sits on and compares its code structure, so editing the `matrix=` or
+`outputs=` next to it is not an inputs change. (Two lambdas with the same
+arguments on one line are compared together.) Prefer a named function for
+non-trivial wiring anyway: it reads better in `remake why`.
+
+A callable spec is also re-resolved at plan time and compared with the paths
+the task last ran with, so a fan-in built from a module global —
+`inputs=lambda: {y: f'in/{y}.nc' for y in YEARS}` — reruns when `YEARS`
+shrinks or grows, even though its source didn't change.
 
 !!! warning "Closures are invisible to change detection"
     A callable that closes over an outer variable — `lambda site: {'in':
@@ -213,30 +218,70 @@ def filter_rows(inputs, outputs):
 See `examples/ex3_uses_scope.py` for the full semantics (one level deep;
 classes are supported — the whole class body is hashed).
 
-!!! warning "Values are compared by `repr` — it must be stable across processes"
-    Functions and classes in `uses` are compared by source code. Everything
-    else is compared by `repr()`, and the stored value is compared with the
-    one computed on the *next* invocation, in a fresh process. Anything whose
-    `repr` embeds a memory address — a function or object nested inside a
-    dict or list (`<function f at 0x7f…>`), most objects without a custom
-    `__repr__` — or other per-process state (a logger, a DB connection)
-    therefore looks changed every time, and **every task of the rule reruns on
-    every `remake run`**. It won't show on the first run, only on the next.
+### Undeclared names
 
-    A large config dict holding callables (constraints, processing functions)
-    is the typical case. Either load it inside the rule body (a local import
-    or function call isn't a free global, so it needs no `uses` entry and is
-    not tracked), or declare a stable summary of it instead — a version
-    string, the handful of scalars that matter, or a hash of the config file.
-    To check: after a successful run, `remake run pipeline.py -n` should plan
-    nothing, and `remake why` names any `uses` entry that differs.
+remake checks each rule for names it reads from outside its own body that
+aren't in `uses`, and warns (`ScopeWarning`) — or, with
+`Remake(strict_scope=True)` or `@rule(strict_scope=True)`, raises
+`ScopeError`. The check runs once the remakefile has finished executing, so
+helpers and constants defined *below* a rule are checked too.
+
+Library modules, and the classes, functions and objects they provide
+(`np`, `Path`, `from loguru import logger`), are environment and never
+reported. Your project's values are, even when they look like library
+objects: `DATA_DIR = Path('/data')` or `PATTERN = re.compile(...)` defined in
+the remakefile, a module of your own under the remakefile's directory, or a
+global that happens to be called like a stdlib module (`site = 'CHIL'`).
+Declare them in `uses`.
+
+### What counts as a change
+
+Since 0.9.0 each `uses` value is rendered canonically, so a rerun means
+something really changed:
+
+- **Functions and classes** by their code structure (comments, whitespace and
+  docstrings don't count). Functions without source (defined with `exec` or at
+  a REPL) by their compiled code; builtins and numpy ufuncs by name
+  (`np.log` vs `np.log10` is a change); `functools.partial` by the function and
+  its arguments. Containers are rendered element by element, so
+  `uses={'steps': [clean, regrid]}` tracks both functions' source.
+- **Sets** with their elements sorted and **dicts** with their keys sorted:
+  order is not a change (`==` ignores it), and a set of names no longer looks
+  changed in every new process.
+- **numpy arrays** by dtype, shape and a hash of their bytes (a `repr`
+  truncates past 1000 elements and rounds floats); **pandas** objects by their
+  values, index, column names and dtypes.
+- **Modules** under the remakefile's directory (your own helper modules) by
+  their source, e.g. `uses={'params': params}`. Installed libraries by name
+  only: upgrading them is environment, not code.
+- **Anything else** by its `repr`, if that is stable. An object whose `repr`
+  holds a memory address (`<Foo object at 0x7f…>`) is rendered from its
+  attributes instead; if it has none, only its type is recorded and changes
+  to it go unseen.
+- Your own types can say how they should be compared: give them a
+  `__remake_hash__(self) -> str` method.
+
+The `@rule(...)` decorator itself is not the rule's code: editing `matrix=`,
+`config=` (an OOM `mem` bump) or `name=` doesn't rerun the tasks that already
+ran. Decorators *below* `@rule` wrap the function and do count. Reordering
+the keys of an `inputs`/`outputs` dict is not a change either (see
+[input order](#input-order)), and neither is adding or changing an
+[`Ensure`](#output-checks-with-ensure) check.
+
+Upgrading remake or Python does not rerun anything: records written by
+earlier versions are matched against the new renderings and re-stamped on the
+next `remake run`. To check a pipeline is stable, run it, then
+`remake run pipeline.py -n` should plan nothing; `remake why` names any
+`uses` entry that differs.
 
 !!! warning "A `uses` key that shadows a different module global warns"
     Inside the rule, the `uses=` value wins for that name. If a `uses` key
     matches a module global bound to a *different* value —
     `uses={'normalise': normalise_v1}` in a module that also defines
     `normalise` — the reader sees one definition while another runs, so
-    remake warns at decoration (`ScopeWarning`). The standard idiom
+    remake warns (`ScopeWarning`). The same goes for a variable of an
+    enclosing function — a rule factory's parameter: since 0.9.0 the `uses`
+    value wins there too. The standard idiom
     `uses={'normalise': normalise}` (declaring the same object for tracking)
     stays silent. If the warning fires after an intentional edit, rename the
     uses key or update the global.
@@ -292,6 +337,35 @@ write it. Two options:
 - **Leave it undeclared.** The file is then untracked: remake doesn't check it
   exists, and doesn't rerun anything when it changes or goes missing. Fine for a
   throw-away diagnostic that nothing depends on.
+
+## Output checks with `Ensure`
+
+By default remake trusts a task that returns without raising. Wrap an output
+in `Ensure` to check it when the task finishes; a failed check fails the task:
+
+```python
+from remake import Ensure, rule
+
+@rule(
+    inputs  = {'raw': 'data/raw/{year}.nc'},
+    outputs = {'nc': Ensure('data/out/{year}.nc', min_size=1024, checksum=True)},
+    matrix  = {'year': YEARS},
+)
+def process(inputs, outputs, year):
+    ...
+```
+
+- `nonempty=True` (the default): the file exists and is not empty.
+- `min_size=N`: at least `N` bytes.
+- `checksum=True`: record the output's sha256 (shown by `remake task-info`).
+  It re-reads every byte, so it is opt-in; `config={'checksum_outputs': True}`
+  on a rule or in `remake.toml` turns it on for all outputs. Checksums are
+  recorded, never compared: they are not a rerun trigger.
+
+`Ensure` returns the same kind of output (a path becomes a `FileToken`), so
+rule code uses it as before. Adding, removing or changing a check doesn't
+rerun anything, and `check_outputs`/`set-state --check-outputs` apply the
+checks before adopting a file. Plain outputs are not checked, as before.
 
 ## Rule factories
 
