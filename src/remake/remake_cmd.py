@@ -171,6 +171,32 @@ def _make_executor(name, rmk, nproc=None):
     return cls(rmk)
 
 
+def find_remakefiles(root, recursive=False):
+    """*.py files under `root` that contain a `Remake(...)` call, found by an
+    AST scan — never imported, so side effects (make_example_data.py) don't
+    run. Sorted by path."""
+    import ast
+
+    root = Path(root)
+    found = []
+    for f in sorted(root.rglob('*.py') if recursive else root.glob('*.py')):
+        if any(part.startswith('.') or part == '__pycache__'
+               for part in f.relative_to(root).parts):
+            continue
+        try:
+            tree = ast.parse(f.read_text())
+        except (SyntaxError, ValueError, OSError):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                fn = node.func
+                if (isinstance(fn, ast.Name) and fn.id == 'Remake') or (
+                        isinstance(fn, ast.Attribute) and fn.attr == 'Remake'):
+                    found.append(f)
+                    break
+    return found
+
+
 def exception_info(ex_type, value, tb):
     import traceback
 
@@ -353,6 +379,37 @@ class RemakeCLI:
                 Arg('--matrix-keys', '-M', action='store_true',
                     help='Annotate each rule with its matrix keys as rule(m1, m2)'),
                 Arg('--json', help='Machine-readable output', action='store_true'),
+            ],
+        },
+        'dag': {
+            'help': 'Export the DAG as Graphviz DOT (rule-level by default)',
+            'args': [
+                Arg('remakefile'),
+                MutuallyExclusiveGroup(
+                    Arg('--rules', action='store_true',
+                        help='Rule-level graph (the default)'),
+                    Arg('--tasks', action='store_true',
+                        help='One node per task, edges from path-derived '
+                             'dependencies; deferred rules are one node'),
+                ),
+                Arg('--output', '-o', metavar='FILE',
+                    help='Write to FILE instead of stdout'),
+            ],
+        },
+        'run-all': {
+            'help': 'Run every remakefile found (AST scan, never imported) in a '
+                    'directory, in sorted order; no ordering promises',
+            'args': [
+                Arg('directory', nargs='?', default='.'),
+                Arg('--recursive', '-r', action='store_true',
+                    help='Also search subdirectories'),
+                Arg('--executor', '-E', default='singleproc',
+                    help='As for run'),
+                Arg('--nproc', '-j', type=int, help='As for run'),
+                Arg('--force', '-f', action='store_true', help='As for run'),
+                Arg('--ignore-code-changes', action='store_true', help='As for run'),
+                Arg('--dry-run', '-n', action='store_true', help='As for run'),
+                Arg('--check-outputs', action='store_true', help='As for run'),
             ],
         },
         'rule-info': {
@@ -834,6 +891,58 @@ class RemakeCLI:
                 line += ' -> ' + ', '.join(edges[name])
             print(line)
 
+    def remake_dag(self, args):
+        from .core.dot import rule_dot, task_dot
+
+        rmk = self._track(load_remake(args.remakefile))
+        text = task_dot(rmk) if args.tasks else rule_dot(rmk)
+        if args.output:
+            Path(args.output).write_text(text)
+        else:
+            print(text, end='')
+
+    def remake_run_all(self, args):
+        root = Path(args.directory).expanduser()
+        if not root.is_dir():
+            raise RemakeError(f'Not a directory: {root}')
+        files = find_remakefiles(root, recursive=args.recursive)
+        if not files:
+            print(f'no remakefiles found in {root}')
+            return 0
+        flags = ['-E', args.executor]
+        if args.nproc:
+            flags += ['-j', str(args.nproc)]
+        for on, flag in [(args.force, '-f'), (args.dry_run, '-n'),
+                         (args.ignore_code_changes, '--ignore-code-changes'),
+                         (args.check_outputs, '--check-outputs')]:
+            if on:
+                flags.append(flag)
+        # Pass the top-level logging flags on to each invocation.
+        top = [f for on, f in [(args.trace, '-T'), (args.debug, '-D'),
+                               (args.warning, '-W')] if on]
+        top += ['--colour', args.colour]
+        results = []  # (file, status, detail)
+        for f in files:
+            print(f'=== {f}', flush=True)
+            try:
+                code = remake_cmd(['remake', *top, 'run', str(f), *flags])
+            except ImportError as e:
+                results.append((f, 'skipped', f'import failed: {e}'))
+                continue
+            except Exception as e:  # one remakefile must not stop the rest
+                results.append((f, 'failed', f'{type(e).__name__}: {e}'))
+                continue
+            results.append((f, 'ran' if not code else 'failed',
+                            '' if not code else f'exit {code}'))
+        print('\n=== run-all summary')
+        for f, status, detail in results:
+            print(f'{status:<8} {f}' + (f'  ({detail})' if detail else ''))
+        counts = {k: sum(1 for r in results if r[1] == k)
+                  for k in ('ran', 'failed', 'skipped')}
+        print(f'{counts["ran"]} ran, {counts["failed"]} failed, '
+              f'{counts["skipped"]} skipped')
+        return 1 if counts['failed'] else 0
+
     def remake_rule_info(self, args):
         rmk = self._track(load_remake(args.remakefile))
         rule = rmk.rule_from_name(args.rule_name)
@@ -1045,6 +1154,8 @@ def remake_cmd(argv=None):
     # run-array-task <remakefile>` from the submit dir) stay consistent.
     # Restored after dispatch so in-process/library callers don't see cwd move.
     orig_cwd = os.getcwd()
+    if getattr(args, 'output', None) and args.subcmd_name == 'dag':
+        args.output = os.path.abspath(args.output)  # relative to where invoked
     if getattr(args, 'remakefile', None):
         rf = Path(args.remakefile).expanduser()
         if str(rf.parent) not in ('', '.'):

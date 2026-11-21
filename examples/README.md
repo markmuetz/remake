@@ -34,6 +34,10 @@ remake run  ex1_simple.py        # .remake/ and data/ live here, next to the fil
 remake info ex1_simple.py
 ```
 
+To run every example in one go: `remake run-all -r .` (after
+`make_example_data.py`; `-r` includes `ex5_multifile/pipeline.py`, and
+`-n` shows what would run). Examples whose imports are missing are skipped.
+
 `remake run /tmp/remake-examples/ex1_simple.py` from anywhere else does the
 same thing — `.remake/` and `data/` always land next to the remakefile.
 (`ex5_multifile/` is its own pipeline directory, so its state lands in there.)

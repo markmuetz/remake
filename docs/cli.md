@@ -31,6 +31,8 @@ These go *before* the command name (`remake -D run pipeline.py`):
 | `why` | Explain why task(s) would (or would not) rerun |
 | `lint` | Check input/output wiring between rules |
 | `rule-dag` | Print the rule dependency DAG in topological order |
+| `dag` | Export the rule or task graph as Graphviz DOT |
+| `run-all` | Run every remakefile found in a directory |
 | `slurm-status` | Live SLURM queue state of the last submission, per rule |
 | `resubmit` | Re-execute `.remake/submit.sh` without replanning |
 | `version` | Print remake version |
@@ -90,6 +92,38 @@ always satisfy `up-to-date + stale + failed + pending = tasks` and
 | `--failed` | one line per failed task (and nothing else): rule, short key, last line of its error, log path. The error is the stored exception's last line; if none is stored, the last non-empty line of the task's SLURM `.err` (`.remake/slurm/output/<rule>/<index>.err`). With `--json`, a list of `{rule, key, error, log}` |
 | `--reasons` | per-rule tally of *why* the to-run tasks would rerun |
 | `--json` | machine-readable output |
+
+## `dag`
+
+`remake dag [--rules | --tasks] [-o FILE] REMAKEFILE` writes the graph as
+Graphviz DOT text (stdout by default; no Graphviz install needed to produce
+it, e.g. `remake dag p.py | dot -Tsvg -o dag.svg`). Nothing is run and no
+metadata is read.
+
+| Option | Meaning |
+|---|---|
+| `--rules` | the rule-level graph (the default) |
+| `--tasks` | one node per task, with edges derived from the tasks' declared input/output paths; a task that depends on every task of an upstream rule gets an edge from each; a rule whose matrix is deferred appears as one node labelled `(deferred)` |
+| `-o, --output FILE` | write to FILE instead of stdout |
+
+`--tasks` expands every matrix, so it is only sensible for modest pipelines.
+
+## `run-all`
+
+`remake run-all [DIR]` (default: the current directory) finds the remakefiles
+in DIR and runs each as if by `remake run <file>`, in sorted-filename order.
+
+- Discovery is an AST scan of `DIR/*.py` for a `Remake(...)` call; files are
+  never imported to decide (so `make_example_data.py` is not run). `-r`
+  also searches subdirectories (needed for `examples/ex5_multifile/pipeline.py`).
+- Remakefiles are treated as independent: **no ordering promises** beyond the
+  sort order, and no dependencies between them. Generate any input data first
+  (e.g. `python make_example_data.py`), then `remake run-all`.
+- It continues past a failing remakefile, prints a summary (ran / failed /
+  skipped) and exits non-zero if any failed. A remakefile that cannot be
+  imported (e.g. a missing `xarray`) is reported as skipped.
+- `-E/--executor`, `-j/--nproc`, `-f/--force`, `-n/--dry-run`,
+  `--ignore-code-changes` and `--check-outputs` are passed to each `run`.
 
 ## Inspecting rules and tasks
 

@@ -1067,3 +1067,100 @@ def test_external_inputs_present_runs(external_dir, capsys):
         Path(f'data/raw_{n}.txt').write_text('x')
     assert cli('run', 'pipeline.py') == 0
     assert Path('data/out_7.txt').read_text() == 'x'
+def test_dag_rules_default_and_output_file(pipeline_dir, capsys):
+    assert not cli('dag', 'pipeline.py')
+    out = capsys.readouterr().out
+    assert out.startswith('digraph remake {')
+    assert '"generate" -> "process";' in out
+    assert not cli('dag', '--rules', '-o', 'g.dot', 'pipeline.py')
+    assert Path('g.dot').read_text() == out
+
+
+def test_dag_tasks_elementwise(pipeline_dir, capsys):
+    assert not cli('dag', '--tasks', 'pipeline.py')
+    out = capsys.readouterr().out
+    edges = [line.strip() for line in out.splitlines() if '->' in line]
+    assert len(edges) == 2  # n=1 -> n=1, n=2 -> n=2 (not all-to-all)
+
+
+def test_dag_tasks_all_deferred_and_quoting(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    Path('p.py').write_text('''
+from pathlib import Path
+from remake import Remake, rule, deferrable, Defer
+
+@rule(outputs={'o': 'a_{s}.txt'}, matrix={'s': ['x"y', 'z']})
+def a(outputs, s):
+    Path(outputs['o']).write_text(s)
+
+@rule(inputs={'i': 'a_x"y.txt'}, outputs={'o': 'sum.txt'}, depends_on=[a])
+def total(inputs, outputs):
+    pass
+
+@deferrable
+def later():
+    raise Defer('not yet')
+
+@rule(inputs=total.outputs, outputs={'o': 'd_{k}.txt'}, matrix=later, depends_on=[total])
+def dyn(inputs, outputs, k):
+    pass
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    assert not cli('dag', '--tasks', 'p.py')
+    out = capsys.readouterr().out
+    assert 'dyn (deferred)' in out
+    assert r'x\"y' in out  # quotes escaped
+    assert '"total:' in out and '-> "dyn"' in out
+
+
+def _write_remakefile(path, name, body='pass'):
+    path.write_text(f'''
+from pathlib import Path
+from remake import Remake, rule
+
+@rule(outputs={{'o': '{name}.txt'}})
+def {name}(outputs):
+    {body}
+    Path(outputs['o']).write_text('x')
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+
+
+def test_run_all_runs_in_order_continues_past_failure(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    _write_remakefile(tmp_path / 'b_ok.py', 'b_ok')
+    _write_remakefile(tmp_path / 'a_bad.py', 'a_bad', body='raise ValueError("boom")')
+    # Not remakefiles: must never be imported (side effect would write marker).
+    (tmp_path / 'make_data.py').write_text("open('marker', 'w').write('x')\n")
+    (tmp_path / 'broken.py').write_text('def (:\n')
+    (tmp_path / 'c_imp.py').write_text(
+        'import not_a_real_module_xyz\nfrom remake import Remake\nrmk = Remake()\n')
+    assert cli('run-all') == 1
+    out = capsys.readouterr().out
+    assert out.index('=== a_bad.py') < out.index('=== b_ok.py')
+    assert 'failed   a_bad.py' in out
+    assert 'ran      b_ok.py' in out
+    assert 'skipped  c_imp.py' in out and 'import failed' in out
+    assert '1 ran, 1 failed, 1 skipped' in out
+    assert (tmp_path / 'b_ok.txt').exists()
+    assert not (tmp_path / 'marker').exists()
+
+
+def test_run_all_dry_run_and_recursive(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / 'sub').mkdir()
+    _write_remakefile(tmp_path / 'sub' / 'p.py', 'p')
+    assert cli('run-all', '-n') == 0
+    assert 'no remakefiles found' in capsys.readouterr().out
+    assert cli('run-all', '-r', '-n') == 0
+    out = capsys.readouterr().out
+    assert 'ran      sub/p.py' in out
+    assert not (tmp_path / 'sub' / 'p.txt').exists()
+
+
+def test_run_all_not_a_directory(tmp_path, capsys):
+    cli_error(capsys, 'run-all', str(tmp_path / 'nope'), match='Not a directory')
