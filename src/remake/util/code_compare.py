@@ -41,7 +41,7 @@ def _compare_ast(
 def _normalise(code):
     """Parse run code for comparison, dropping what doesn't change what runs:
     the `@rule(...)` decorator (and any above it; review 2026-09-24 H2 — its
-    matrix=/config=/name= are not the function body) and the docstring (L7).
+    matrix=/config=/name= are not the function body). Docstrings count.
     Applied to both the stored and the current source, so no migration."""
     from ..core.canonical import normalise_def
 

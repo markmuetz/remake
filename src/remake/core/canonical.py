@@ -15,8 +15,9 @@ run with now. The renderings here make that comparison mean what it says:
   their values, index, columns and dtypes; `functools.partial`, numpy ufuncs,
   builtins and sourceless functions render by what they compute, not by a
   type label (M3).
-- **Cosmetic changes are not changes.** Docstrings are dropped from
-  functions (L7); comments and whitespace never reach an AST.
+- **Cosmetic changes are not changes.** Comments and whitespace never
+  reach an AST. Docstrings do count (review L7 proposed dropping them; MM
+  kept them, 2026-11-21: a docstring is part of the code a user reviews).
 
 Stored strings carry a format marker (`FORMAT_MARKER`, the first line). A
 stored string without it was written by remake <= 0.9.0a1; the planner
@@ -67,15 +68,6 @@ def dump_ast(node):
     return repr(node)
 
 
-def strip_docstring(body):
-    """`body` without a leading docstring (a string-constant expression)."""
-    if (body and isinstance(body[0], ast.Expr)
-            and isinstance(body[0].value, ast.Constant)
-            and isinstance(body[0].value.value, str)):
-        return body[1:]
-    return body
-
-
 def _is_rule_decorator(dec):
     target = dec.func if isinstance(dec, ast.Call) else dec
     if isinstance(target, ast.Name):
@@ -86,14 +78,12 @@ def _is_rule_decorator(dec):
 
 
 def normalise_def(tree, *, strip_rule_decorator=False):
-    """Normalise a parsed module holding one def/class in place: drop its
-    docstring (L7) and, for a rule function, the `@rule(...)` decorator and
-    any decorators above it (H2: those configure or wrap the Rule object,
+    """Normalise a parsed module holding one def/class in place: for a rule
+    function, drop the `@rule(...)` decorator and any decorators above it (H2: those configure or wrap the Rule object,
     not the function that runs). Decorators *below* `@rule` wrap the
     function itself and stay. Returns the tree."""
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            node.body = strip_docstring(node.body)
             if strip_rule_decorator:
                 idx = next((i for i, d in enumerate(node.decorator_list)
                             if _is_rule_decorator(d)), None)

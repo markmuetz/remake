@@ -89,11 +89,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - **Change detection is canonical and version-independent** (0.9.0 item 2;
-  review 2026-09-24 H2, H4, H5, M3, M4, L7, L8). Fewer spurious reruns and
+  review 2026-09-24 H2, H4, H5, M3, M4, L8). Fewer spurious reruns and
   fewer missed changes:
-  - Editing the `@rule(...)` decorator (`matrix=`, `config=`, `name=`) or a
-    docstring no longer reruns the rule's tasks; decorators below `@rule`
-    still count.
+  - Editing the `@rule(...)` decorator (`matrix=`, `config=`, `name=`) no
+    longer reruns the rule's tasks; decorators below `@rule` still count, and
+    so do docstrings.
   - `uses` values render deterministically: sets and dict keys sorted (a set
     of names no longer reruns on every invocation), numpy arrays by
     dtype/shape/bytes (no more truncated or rounded reprs), pandas by values,
