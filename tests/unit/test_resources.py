@@ -87,6 +87,83 @@ def test_child_process_allocation_is_attributed():
     assert cap.result()['max_rss_bytes'] > 150 * MB
 
 
+def test_sampler_stop_keeps_peak_and_takes_final_sample_after_join(monkeypatch):
+    # L16: the final sample must come after the thread has stopped, and a
+    # slow in-flight sample by the thread (a spike read, then a stall) must
+    # never lose the peak or be overwritten by a lower reading.
+    import threading
+
+    readings = iter([100, 900])  # constructor, then the thread's spike
+    final = 300
+    in_thread = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def fake_statm():
+        calls.append(threading.current_thread().name)
+        try:
+            return next(readings)
+        except StopIteration:
+            return final
+
+    monkeypatch.setattr(res_mod, '_statm_rss_bytes', fake_statm)
+    sampler = res_mod._RssSampler(interval=0.001)
+    assert sampler.start()
+    deadline = time.time() + 5
+    while sampler.peak < 900 and time.time() < deadline:
+        time.sleep(0.001)
+    assert sampler.peak == 900
+    peak = sampler.stop()
+    assert peak == 900  # lower final reading does not lower the peak
+    assert not sampler._thread.is_alive()
+    # The last statm read was made by the stopping thread, after the join.
+    assert calls[-1] == threading.current_thread().name
+
+
+@needs_proc
+def test_sampler_stop_final_sample_raises_peak():
+    # A task shorter than the interval still gets a post-task reading.
+    sampler = res_mod._RssSampler(interval=60)
+    sampler.peak = 0
+    assert sampler.start()
+    blob = bytearray(100 * MB)
+    blob[::4096] = b'\xff' * len(blob[::4096])
+    assert sampler.stop() > 80 * MB
+    del blob
+
+
+def test_reaped_child_below_high_water_mark_is_marked_self_only(monkeypatch):
+    # M18: a big child earlier in this process sets RUSAGE_CHILDREN's
+    # high-water mark; a smaller child in a later task cannot raise it, so its
+    # peak is unknown and the figure must say "self only".
+    import subprocess as sp
+    import sys
+
+    monkeypatch.setattr(res_mod, '_statm_rss_bytes', lambda: 50 * MB)  # any OS
+    big = ('b = bytearray(300 * 1024 * 1024); '
+           'b[::4096] = b"\\xff" * len(b[::4096])')
+    sp.run([sys.executable, '-c', big], check=True)  # raises the mark
+    with ResourceCapture(interval=0.005) as cap:
+        sp.run([sys.executable, '-c', 'pass'], check=True)
+    assert cap.result()['rss_method'] == 'sample-self'
+
+    # No child at all: plain 'sample'.
+    with ResourceCapture(interval=0.005) as cap:
+        pass
+    assert cap.result()['rss_method'] == 'sample'
+
+
+def test_rusage_fallback_also_marked_self_only(monkeypatch):
+    import subprocess as sp
+    import sys
+
+    monkeypatch.setattr(res_mod, '_statm_rss_bytes', lambda: None)
+    sp.run([sys.executable, '-c', 'b = bytearray(200 * 1024 * 1024)'], check=True)
+    with ResourceCapture(one_task_per_process=True) as cap:
+        sp.run([sys.executable, '-c', 'pass'], check=True)
+    assert cap.result()['rss_method'] == 'rusage-self'
+
+
 @needs_proc
 def test_short_task_still_gets_a_sample():
     # Shorter than one sampling interval: the forced start/stop samples mean
@@ -269,6 +346,25 @@ def test_set_state_does_not_clear_measured_resources(tmp_path, meta):
 
     assert after.wall_s == before.wall_s
     assert after.max_rss_bytes == before.max_rss_bytes
+
+
+def test_set_state_pending_keeps_resources_and_forces_rerun(tmp_path, meta):
+    # L15: `set-state --pending` used to delete the row, and the measurement
+    # with it, contradicting resource_capture.md Settled 4.
+    rmk, _ = _one_task_remake(tmp_path, meta)
+    rmk.run()
+    task = rmk.tasks()[0]
+    before = meta.get_tasks_status([task])[task.key]
+    assert before.wall_s is not None
+
+    rmk.set_state(None, pending=True)
+    after = meta.get_tasks_status([task])[task.key]
+    assert after.status != TASK_STATUS_SUCCESS
+    assert (after.wall_s, after.cpu_s, after.max_rss_bytes, after.rss_method) == (
+        before.wall_s, before.cpu_s, before.max_rss_bytes, before.rss_method)
+    # ...and the task is still pending, i.e. it reruns.
+    rmk.run()
+    assert meta.get_tasks_status([task])[task.key].status == TASK_STATUS_SUCCESS
 
 
 @needs_proc

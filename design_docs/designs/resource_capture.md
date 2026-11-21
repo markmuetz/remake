@@ -158,6 +158,20 @@ task, and both exit paths record (see §4).
   measurement (Settled §1), and the `sacct` audit remains the authoritative
   post-mortem.
 
+  **Child-process semantics (max, not sum).** `RUSAGE_CHILDREN.ru_maxrss` is
+  the largest single child ever reaped by the process and never decreases.
+  So the recorded figure is `max(own peak, largest child)`, never a sum;
+  concurrent children are not added (3 x 300 MiB reads as ~300 MiB); and a
+  child smaller than one reaped earlier in the same process cannot raise the
+  mark. That last case is detected (children were reaped during the task
+  but the mark did not grow) and recorded honestly as `rss_method`
+  `'sample-self'` / `'rusage-self'` = "this process only; child peak not
+  measured", a lower bound. Real fixes (process-tree sampling, cgroup
+  `memory.peak`) stay deferred (Settled §1). The sampler thread also makes
+  the process multi-threaded, so a task that `os.fork()`s gets Python
+  3.12+'s fork `DeprecationWarning`; `capture: False` opts out (documented,
+  review L17).
+
 Sampler cost at scale: one thread and one small `/proc` read per 100 ms
 *per concurrently running task* — bounded by `nproc`, not by task count.
 Negligible against the tasks remake exists to run; still disable-able (§6).
@@ -282,6 +296,9 @@ nobody enables is worthless. The knob exists for the pathological case
    execution, and `rss_method` NULL already means "unmeasured". Consumers
    (the report) must therefore read them as *last execution*, not as
    "current state" — worth a line in the docs page (step 7).
+   Implementation note: `set-state --pending` writes a PENDING-status row
+   (the planner reruns any non-SUCCESS record) rather than deleting it, so
+   the columns survive; `delete_tasks` is no longer used by it.
 
 ## Release
 
