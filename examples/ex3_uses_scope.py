@@ -17,7 +17,9 @@ from remake import Remake, rule
 # Use Remake(strict_scope=True) to enforce hard boundary
 # If you do this, any variable declared outside a rule's body then used in
 # the body will raise an Exception.
-rmk = Remake()
+rmk = Remake(config={
+    'external_inputs_hint': 'Run make_example_data.py from this directory first to generate the example inputs.',
+})
 
 YEARS = list(range(2000, 2010))
 

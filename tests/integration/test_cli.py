@@ -1016,3 +1016,54 @@ def test_run_from_a_thread_works_and_restores_cwd(tmp_path, monkeypatch):
     assert result['code'] == 0
     assert Path(os.getcwd()) == tmp_path
     assert (tmp_path / 'proj' / 'data' / 'out_1.txt').exists()
+
+
+EXTERNAL = '''
+from pathlib import Path
+from remake import Remake, rule
+
+@rule(inputs={'raw': 'data/raw_{n}.txt'}, outputs={'mid': 'data/mid_{n}.txt'},
+      matrix={'n': [0, 1, 2, 3, 4, 5, 6, 7]})
+def first(inputs, outputs, n):
+    Path(outputs['mid']).write_text(Path(inputs['raw']).read_text())
+
+@rule(inputs={'mid': 'data/mid_{n}.txt'}, outputs={'out': 'data/out_{n}.txt'},
+      matrix={'n': [0, 1, 2, 3, 4, 5, 6, 7]}, depends_on=[first])
+def second(inputs, outputs, n):
+    Path(outputs['out']).write_text(Path(inputs['mid']).read_text())
+
+rmk = Remake(config={'external_inputs_hint': 'Run make_data.py first.'})
+rmk.rules_from_current_module()
+'''
+
+
+@pytest.fixture
+def external_dir(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    Path('pipeline.py').write_text(EXTERNAL)
+    return tmp_path
+
+
+def test_missing_external_inputs_fail_fast(external_dir, capsys):
+    err = cli_error(capsys, 'run', 'pipeline.py', match='8 input file(s) are missing')
+    assert 'first: 8 missing' in err
+    assert 'and 3 more' in err  # truncated listing
+    assert 'Run make_data.py first.' in err
+    # The other rule's (absent) outputs are not flagged, and nothing ran.
+    assert 'second' not in err and 'mid_' not in err
+    assert not Path('data/mid_0.txt').exists()
+
+
+def test_missing_external_inputs_dry_run_reports_not_fails(external_dir, capsys):
+    assert not cli('run', 'pipeline.py', '-n')  # None/0: not an error
+    cap = capsys.readouterr()
+    assert '16 task(s) would run' in cap.out
+    assert '8 input file(s) are missing' in cap.err
+
+
+def test_external_inputs_present_runs(external_dir, capsys):
+    Path('data').mkdir()
+    for n in range(8):
+        Path(f'data/raw_{n}.txt').write_text('x')
+    assert cli('run', 'pipeline.py') == 0
+    assert Path('data/out_7.txt').read_text() == 'x'

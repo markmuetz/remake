@@ -436,6 +436,7 @@ class RemakeCLI:
                 for task in runnable:
                     print(task)
                 print(f'{len(runnable)} task(s) would run')
+                rmk._check_external_inputs(runnable, dry_run=True)
                 for rule in deferred:
                     print(f'{rule.name}: deferred (matrix not ready)')
                 return
