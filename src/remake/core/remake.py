@@ -20,7 +20,7 @@ from ..util.resources import capture_for_config
 from ..util.run_lock import run_lock
 from .dag import build_rule_dag, expand_rule, iter_expand_rule
 from .deps import Edges
-from .exceptions import Defer, RemakeError, TaskExit
+from .exceptions import Defer, OutputValidationError, RemakeError, TaskExit
 from .planner import (
     cascade_settled,
     explain_task,
@@ -102,6 +102,13 @@ def _same_definition(a, b):
     one factory function, which share a single code object and differ only
     in closure values."""
     return _where(a) == _where(b) and a.fn.__code__ is not b.fn.__code__
+
+
+def _accepts_output_stats(metadata):
+    try:
+        return 'output_stats' in inspect.signature(metadata.update_task).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 class Remake:
@@ -1009,6 +1016,7 @@ class Remake:
             for token in task.outputs.values():
                 if hasattr(token, '__fspath__'):
                     Path(token).parent.mkdir(parents=True, exist_ok=True)
+                token.before_run()
 
             fn = exec_function(task.rule.fn, task.rule.uses)
             args = []
@@ -1032,6 +1040,7 @@ class Remake:
                 # sys.exit(0.0) or sys.exit('msg') exit 1.
                 if not (exc.code is None or (isinstance(exc.code, int) and exc.code == 0)):
                     raise
+            output_stats = self._check_outputs_after_run(task)
         except (Exception, SystemExit) as exc:
             # SystemExit from task code (a CLI main() calling sys.exit) is a
             # task failure, not a request to end the run (review H6).
@@ -1066,4 +1075,26 @@ class Remake:
                     key=task.key, seconds=round(elapsed, 6),
                     **_resource_fields(resources),
                     ).debug('completed {} in {:.2f}s', task, elapsed)
-        self.metadata.update_task(task, TASK_STATUS_SUCCESS, resources=resources)
+        # Always passed (an empty dict clears the last run's stats), except to
+        # a third-party backend whose update_task predates the keyword.
+        extra = ({'output_stats': output_stats}
+                 if _accepts_output_stats(self.metadata) else {})
+        self.metadata.update_task(task, TASK_STATUS_SUCCESS, resources=resources, **extra)
+
+    def _check_outputs_after_run(self, task):
+        """Validate a successful task's outputs (`Ensure`), then collect
+        their stats: {output name: {'n_files', 'total_bytes', 'checksum'}}.
+        A failed check raises OutputValidationError (the task fails)."""
+        problems = [f'{name}: {msg}' for name, token in task.outputs.items()
+                    if (msg := token.validate())]
+        if problems:
+            raise OutputValidationError(
+                f'{task}: output check(s) failed:\n  ' + '\n  '.join(problems))
+        checksum = bool(task.rule.config.get(
+            'checksum_outputs', self.config.get('checksum_outputs', False)))
+        stats = {}
+        for name, token in task.outputs.items():
+            st = token.after_success(checksum=checksum)
+            if st is not None:
+                stats[name] = st
+        return stats

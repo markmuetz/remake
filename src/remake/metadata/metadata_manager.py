@@ -136,13 +136,22 @@ class MetadataManager(abc.ABC):
         return None
 
     @abc.abstractmethod
-    def update_task(self, task, status, exception='', resources=None):
+    def update_task(self, task, status, exception='', resources=None, output_stats=None):
         """Record a task execution result.
 
         `resources` is the measurement from `util.resources` — a dict of
         wall_s/cpu_s/max_rss_bytes/rss_method, or None where nothing was
         measured (bulk state changes like `set-state` never ran anything).
+
+        `output_stats` ({output name: {'n_files', 'total_bytes', 'checksum'}},
+        from the tokens' `after_success`) replaces the stats of the last run.
         """
+
+    def get_output_stats(self, task):
+        """{name: {'n_files', 'total_bytes', 'checksum'}} recorded for a
+        task's last successful execution (see the output_stat table). Plain
+        file outputs without a checksum are summed under the name '*'."""
+        return {}
 
     def update_tasks(self, tasks, status, exception=''):
         """Record the same state for many tasks (backends may batch). No

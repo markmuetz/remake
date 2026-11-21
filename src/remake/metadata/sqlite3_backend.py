@@ -22,7 +22,7 @@ from ..core.scope import io_hash as compute_io_hash
 from ..core.scope import raw_uses_parts
 from ..core.scope import rule_uses_hash
 from ..util.code_compare import CodeComparer
-from .metadata_manager import MetadataManager, TaskRecord
+from .metadata_manager import TASK_STATUS_SUCCESS, MetadataManager, TaskRecord
 
 # On-disk schema version, stored in the SQLite header (`PRAGMA user_version`)
 # as MAJOR * 1000 + MINOR (0.9.0 item 3). 0 is every DB written before 0.9.0:
@@ -125,6 +125,20 @@ CREATE TABLE uses_manifest (
     PRIMARY KEY (uses_code_id, name),
     FOREIGN KEY(uses_code_id) REFERENCES code (id),
     FOREIGN KEY(code_id) REFERENCES code (id)
+);
+
+-- Output stats of a task's last successful execution (0.9.0 items 4/5):
+-- one row per Dir output or checksummed output, and one row named '*'
+-- summing a task's other (plain file) outputs, so a 1e4-task x 100-file
+-- pipeline adds 1e4 rows, not 1e6. checksum: sha256 hex, opt-in.
+CREATE TABLE output_stat (
+    task_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    n_files INTEGER,
+    total_bytes INTEGER,
+    checksum TEXT,
+    PRIMARY KEY (task_id, name),
+    FOREIGN KEY(task_id) REFERENCES task (id)
 );
 
 -- One row per invocation that wrote (run/set-state): when, from which
@@ -401,6 +415,12 @@ class Sqlite3Backend(MetadataManager):
                 '    uses_code_id INTEGER NOT NULL, name VARCHAR(200) NOT NULL, '
                 '    code_id INTEGER NOT NULL, kind VARCHAR(10) NOT NULL, '
                 '    PRIMARY KEY (uses_code_id, name))')
+        if 'output_stat' not in tables:
+            logger.info('Adding output_stat table to existing DB')
+            self.conn.execute(
+                'CREATE TABLE output_stat (task_id INTEGER NOT NULL, name TEXT NOT NULL, '
+                'n_files INTEGER, total_bytes INTEGER, checksum TEXT, '
+                'PRIMARY KEY (task_id, name))')
         if 'run' not in tables:
             logger.info('Adding run table to existing DB')
             self.conn.execute(
@@ -789,7 +809,7 @@ class Sqlite3Backend(MetadataManager):
             # A sidecar always records an execution, so its resources replace
             # the columns verbatim (a pre-0.9 sidecar has none: NULLs).
             res = payload.get('resources') or {}
-            self.conn.execute(
+            cur = self.conn.execute(
                 'INSERT INTO task(key, rule_id, run_code_id, uses_code_id, io_code_id, '
                 '                 run_seq, last_run_timestamp, last_run_status, exception, '
                 '                 wall_s, cpu_s, max_rss_bytes, rss_method, paths_digest) '
@@ -842,21 +862,53 @@ class Sqlite3Backend(MetadataManager):
                     payload.get('paths_digest'),
                 ),
             )
+            # Only when the sidecar's result was applied (not an older one
+            # the run_seq guard skipped); a successful result's stats replace
+            # the last run's.
+            if cur.rowcount and payload['status'] == TASK_STATUS_SUCCESS and 'output_stats' in payload:
+                self._write_output_stats(key, payload['output_stats'])
 
-    def update_task(self, task, status, exception='', resources=None):
+    def update_task(self, task, status, exception='', resources=None, output_stats=None):
         # Allocate run_seq (own txn) before opening the upsert's EXCLUSIVE txn.
         self._commit_updates(
-            [task], status, exception, self.current_run_seq(), resources)
+            [task], status, exception, self.current_run_seq(), resources, output_stats)
+
+    def _write_output_stats(self, key, output_stats):
+        (task_id,) = self.conn.execute('SELECT id FROM task WHERE key = ?', (key,)).fetchone()
+        self.conn.execute('DELETE FROM output_stat WHERE task_id = ?', (task_id,))
+        rows, plain_n, plain_bytes = [], 0, 0
+        for name, st in sorted(output_stats.items()):
+            if st.get('checksum') is None and not st.get('dir'):
+                plain_n += st.get('n_files') or 0
+                plain_bytes += st.get('total_bytes') or 0
+                continue
+            rows.append((task_id, name, st.get('n_files'), st.get('total_bytes'),
+                         st.get('checksum')))
+        if plain_n:
+            rows.append((task_id, '*', plain_n, plain_bytes, None))
+        self.conn.executemany(
+            'INSERT INTO output_stat(task_id, name, n_files, total_bytes, checksum) '
+            'VALUES (?, ?, ?, ?, ?)', rows)
+
+    def get_output_stats(self, task):
+        rows = self.conn.execute(
+            'SELECT s.name, s.n_files, s.total_bytes, s.checksum FROM output_stat s '
+            'JOIN task t ON s.task_id = t.id WHERE t.key = ?', (task.key,))
+        return {name: {'n_files': n, 'total_bytes': b, 'checksum': c}
+                for name, n, b, c in rows}
 
     def update_tasks(self, tasks, status, exception=''):
         self._commit_updates(tasks, status, exception, self.current_run_seq())
 
     @retry_lock_commit
-    def _commit_updates(self, tasks, status, exception, run_seq, resources=None):
+    def _commit_updates(self, tasks, status, exception, run_seq, resources=None,
+                        output_stats=None):
         # One EXCLUSIVE transaction for the lot (bulk state changes:
         # set-state, migration adoption).
         for task in tasks:
             self._upsert_task(task, status, exception, run_seq, resources)
+            if output_stats is not None:
+                self._write_output_stats(task.key, output_stats)
 
     @retry_lock_commit
     def delete_tasks(self, tasks):

@@ -450,6 +450,11 @@ def io_part(spec):
         if src is not None:
             return 'callable ' + src
         return 'callable ' + _callable_rendering(spec)
+    from .tokens import FileToken
+
+    # A FileToken is what a plain path string becomes anyway, and Ensure
+    # options are not identity: `Ensure('a.nc')` and `'a.nc'` hash the same.
+    spec = {k: (v.path if type(v) is FileToken else v) for k, v in spec.items()}
     try:
         tree = ast.parse(repr(spec))
     except SyntaxError:

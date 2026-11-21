@@ -53,3 +53,7 @@ class Defer(Exception):
     def __init__(self, *paths):
         self.paths = [str(p) for p in paths]
         super().__init__(', '.join(self.paths) if self.paths else 'deferred')
+
+
+class OutputValidationError(RemakeError):
+    """A task's outputs failed the checks declared with `Ensure`."""
