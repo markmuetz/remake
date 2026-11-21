@@ -69,7 +69,7 @@ remake runs a task when (these are the `why` reason categories):
 |---|---|
 | **never-run** | no record in the DB |
 | **last-run-failed** / **last-run-pending** | its last run failed, or is recorded as unfinished |
-| **code-changed** | the rule function's code changed (compared as an AST: comments, formatting and the docstring don't count, and neither does the `@rule(...)` line itself, e.g. its `matrix=` or `config=`) |
+| **code-changed** | the rule function's code changed (compared as an AST: comments and formatting don't count, nor does the `@rule(...)` line itself, e.g. its `matrix=` or `config=`; the docstring does count) |
 | **uses-changed** | a `uses=` value or helper changed |
 | **io-changed** | the rule's inputs/outputs spec changed (reordering dict keys doesn't count) |
 | **paths-changed** | an inputs/outputs *function* now gives different files (e.g. it loops over a list that changed), so the task reruns even though the function's code didn't change |

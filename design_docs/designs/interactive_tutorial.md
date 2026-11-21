@@ -22,7 +22,7 @@ across the lessons:
 2. Matrix: sites × years, `ls-tasks`, `-Q`.
 3. Chaining and fan-in; a task reading the previous year; "declare what you
    read" (path-derived dependencies, review 2026-09-24 H3).
-4. Change detection: code edits vs comments/formatting/docstrings, editing
+4. Change detection: code and docstring edits vs comments/formatting, editing
    `matrix=`/`config=` in the decorator (not a code change since 0.9.0),
    `uses=` (a set or dict in `uses` and why order doesn't count), scope
    warnings (now raised once the remakefile has loaded), `why`, and the
