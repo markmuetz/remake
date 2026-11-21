@@ -22,15 +22,24 @@ across the lessons:
 2. Matrix: sites × years, `ls-tasks`, `-Q`.
 3. Chaining and fan-in; a task reading the previous year; "declare what you
    read" (path-derived dependencies, review 2026-09-24 H3).
-4. Change detection: code edits vs comments/formatting, `uses=`, scope
-   warnings, `why`.
+4. Change detection: code edits vs comments/formatting/docstrings, editing
+   `matrix=`/`config=` in the decorator (not a code change since 0.9.0),
+   `uses=` (a set or dict in `uses` and why order doesn't count), scope
+   warnings (now raised once the remakefile has loaded), `why`, and the
+   `paths-changed` reason for a fan-in whose inputs function reads a list.
 5. Failure and recovery: skip of downstream, exit codes, per-task logs,
-   `task-info`, rerunning only what failed.
+   `task-info`, `info --failed`, rerunning only what failed; the
+   missing-external-inputs error (exit 2) and an `Ensure` check failing a
+   task that wrote an empty file.
 6. The DB and existing outputs: `.remake/`, `check_outputs`, adopting
    outputs with `set-state --success --check-outputs`,
    `--ignore-code-changes` (bug 03's trap).
-7. Scaling up: executors, resources, Ctrl-C; SLURM via dry run.
-8. (Optional) dynamic matrices, `@deferrable`.
+7. Scaling up: executors, resources, Ctrl-C; `remake.toml` and
+   `remake config`; SLURM via dry run, `--profile jasmin`, `check-env`.
+8. (Optional) dynamic matrices, `@deferrable`, `Dir` outputs (ex14).
+
+(Lessons 3–8 revised for 0.9.0, 2026-11-21: what 0.9.0 changed or added
+that the lessons should teach. Lessons 1–2 replay unchanged on 0.9.0.)
 
 Ends with a cheat sheet and a "why did this rerun?" checklist.
 
