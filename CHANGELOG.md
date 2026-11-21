@@ -19,8 +19,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   completion, also through SLURM sidecars; they are recorded, never
   compared. `remake task-info` shows output stats.
 - **`Dir` outputs** (0.9.0 item 5, `design_docs/designs/dir_outputs.md`):
-  declare a directory a task fills with a variable number of files. See the
-  `Dir` entry below.
+  `outputs={'plots': Dir('plots/{year}')}` declares a directory a task fills
+  with a variable number of files. Completion is a hidden
+  `.remake-manifest.json` written after success; a rerun deletes only the
+  manifest, never your files; files the run didn't produce are recorded as
+  stale, with a warning. Works with `Ensure(Dir(...), nonempty=, min_size=,
+  checksum=)` (per-file checksums in the manifest). Two tasks declaring the
+  same `Dir` is an error; `remake lint` matches inputs inside a `Dir` and
+  reports nested Dirs and file outputs inside one; `set-state --success
+  --check-outputs` adopts an existing `Dir`. `task-info` shows output stats
+  and stale counts; `info --json` has per-rule `output_bytes` and
+  `info --sizes` a size column. Example: `examples/ex14_dir_outputs.py`.
 - **Configuration profiles and config files** (0.9.0 item 7,
   `docs/guide/configuration.md`): a TOML cascade — built-in defaults →
   profile → user file (`$XDG_CONFIG_HOME/remake/config.toml`) → project file
