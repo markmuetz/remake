@@ -28,6 +28,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Sync dependencies
+        # numcodecs has no py3.14 wheel and builds from source; its bundled
+        # blosc typedefs `bool`, which gcc's C23 default (runner image,
+        # Nov 2026) rejects. Pin the C standard for that build.
+        env:
+          CFLAGS: -std=gnu17
         run: uv sync --group dev
 
       - name: Run tests
