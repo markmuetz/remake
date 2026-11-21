@@ -424,6 +424,7 @@ class Remake:
                     {
                         'task': str(t),
                         'key': t.key,
+                        'rule': rule.name,
                         'timestamp': records[t.key].timestamp,
                         'exception': records[t.key].exception,
                         'log': str(task_log_path(t)),
@@ -489,6 +490,40 @@ class Remake:
             'log': {'path': str(log_path), 'exists': log_path.exists()},
             'slurm': {'jobids': jobids, 'array_index': array_index},
         }
+
+    def task_spec(self, task, *, uses=True):
+        """A task's fully resolved spec as a JSON-serialisable dict — the data
+        behind `remake export-task`: rule, key, kwargs, resolved input/output
+        paths, and where the rule function lives. With uses=True, also the
+        rule's `uses` (the value when JSON-serialisable, else its repr)."""
+        import json
+
+        if not self._finalized:
+            self.finalize()
+        rule = task.rule
+        fn = rule.fn
+        spec = {
+            'rule': rule.name,
+            'key': task.key,
+            'kwargs': task.kwargs,
+            'inputs': {k: str(v) for k, v in task.inputs.items()},
+            'outputs': {k: str(v) for k, v in task.outputs.items()},
+            'function': {
+                'module': getattr(fn, '__module__', None),
+                'qualname': getattr(fn, '__qualname__', None),
+            },
+            'remakefile': str(Path(self.remakefile).resolve()) if self.remakefile else None,
+        }
+        if uses:
+            def plain(value):
+                try:
+                    json.dumps(value)
+                    return value
+                except (TypeError, ValueError):
+                    return repr(value)
+
+            spec['uses'] = {k: plain(v) for k, v in rule.uses.items()}
+        return spec
 
     def rule_from_name(self, name):
         for rule in self.rules:

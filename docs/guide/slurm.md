@@ -102,3 +102,17 @@ Each task writes a per-task log under
 `.remake/tasks/log/<rule>/` (sharded by key; not a shared file — that
 interleaves and corrupts under a wide array). Retrieve one with
 [`remake task-log`](../cli.md) — or `task-log --path` to get its location.
+
+Failures that happen before the task starts (an import error, a broken
+environment) never reach the per-task log or the database; they land in the
+job's own `.remake/slurm/output/<rule>/<array index>.err`.
+`remake info pipeline.py --failed` lists every failed task on one line with its
+last error line, falling back to that `.err` when the database has none.
+
+## Querying `sacct` yourself
+
+remake itself only calls `squeue`. If you check finished jobs with
+`sacct -j <jobid>`, also pass `-S <submission time>` (for example
+`sacct -j 123456 -S 2026-10-14T09:00`): on LOTUS2 job ids are reused, and
+without `-S` sacct can return an unrelated old job with the same id. The
+submission time is the modification time of `.remake/jobs/<rule>.jobids.json`.
