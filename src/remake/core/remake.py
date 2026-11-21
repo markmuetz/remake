@@ -31,6 +31,7 @@ from .planner import (
 from .rule import Rule
 from .scope import check_scope, exec_function
 from .task import Task
+from .tokens import OutputToken
 
 
 class _TemplatePlaceholder:
@@ -774,6 +775,83 @@ class Remake:
         with run_lock(self.metadata):
             return self._run(executor, query, force, ignore_code_changes)
 
+    def missing_external_inputs(self, tasks):
+        """Inputs of `tasks` that don't exist and that no rule produces —
+        {rule name: [paths]} (each distinct path once, in first-seen order).
+        Plain paths are checked with os.path.exists, tokens with
+        is_complete(). Only inputs of the given tasks are touched, each
+        distinct path once; the (all-rules) producer set is built only if
+        something is missing. Inputs made by another rule are never
+        reported, even if absent now. Tasks that depend on a rule whose
+        matrix is still deferred are skipped (their producers are unknown),
+        as are tasks whose input spec can't be resolved yet."""
+        import os
+
+        checked = {}  # path -> exists
+        suspects = []  # (rule, path)
+        for task in tasks:
+            try:
+                values = list(task.inputs.values())
+            except Exception:
+                continue  # unresolvable here: let the task itself report it
+            for value in values:
+                path = str(value)
+                if path not in checked:
+                    if isinstance(value, OutputToken):
+                        checked[path] = value.is_complete()
+                    else:
+                        checked[path] = os.path.exists(path)
+                    if not checked[path]:
+                        suspects.append((task.rule, path))
+        if not suspects:
+            return {}
+        produced = set()
+        deferred = set()
+        for rule in self.rules:
+            try:
+                for t in iter_expand_rule(rule):
+                    produced.update(str(tok) for tok in t.outputs.values())
+            except Defer:
+                deferred.add(rule)
+        found = {}
+        seen = set()
+        for rule, path in suspects:
+            if path in produced or (path, rule.name) in seen:
+                continue
+            if deferred and (nx.ancestors(self.dag, rule) & deferred):
+                continue
+            seen.add((path, rule.name))
+            found.setdefault(rule.name, []).append(path)
+        return found
+
+    def external_inputs_error(self, found, max_per_rule=5):
+        """Message for `missing_external_inputs` output (config
+        'external_inputs_hint' appended), or None if nothing is missing."""
+        if not found:
+            return None
+        total = sum(len(v) for v in found.values())
+        lines = [f'{total} input file(s) are missing and no rule produces them:']
+        for name, paths in found.items():
+            lines.append(f'  {name}: {len(paths)} missing')
+            for path in paths[:max_per_rule]:
+                lines.append(f'    {path}')
+            if len(paths) > max_per_rule:
+                lines.append(f'    ... and {len(paths) - max_per_rule} more')
+        hint = self.config.get('external_inputs_hint')
+        if hint:
+            lines.append(str(hint))
+        return '\n'.join(lines)
+
+    def _check_external_inputs(self, runnable, executor=None, dry_run=False):
+        message = self.external_inputs_error(self.missing_external_inputs(runnable))
+        if message is None:
+            return
+        if dry_run or getattr(executor, 'dry_run', False):
+            # A dry run reports the problem but still shows the plan.
+            logger.warning(message)
+            return
+        raise RemakeError(message)
+
     def _run(self, executor, query, force, ignore_code_changes):
         # One run_seq for this whole invocation (shared across replanning
         # waves); committed onto every task so downstream propagation survives
@@ -796,6 +874,7 @@ class Remake:
             if not runnable and not deferred:
                 logger.info('Nothing to do')
                 return 0
+            self._check_external_inputs(runnable, executor)
             return executor.run_tasks(runnable, deferred) or 0
 
         nfailed = 0
@@ -822,6 +901,10 @@ class Remake:
                             self.blocked_rules.append(rule)
                             logger.error(f'Blocked rule {rule.name}: {_blocked_reason(rule)}')
                 break
+            if wave == 0:
+                # First wave only: later waves' inputs come from earlier ones
+                # (a failed upstream must not read as a missing external).
+                self._check_external_inputs(runnable, executor)
             wave += 1
             logger.bind(event='wave', wave=wave, ntasks=len(runnable)).debug(
                 'wave {}: running {} task(s)', wave, len(runnable))

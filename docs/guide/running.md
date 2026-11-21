@@ -55,7 +55,30 @@ remake run pipeline.py --ignore-code-changes
 |---|---|
 | `0` | success — everything needed completed |
 | `1` | one or more tasks failed (see [Debugging](debugging.md)), or rules were left blocked — a deferred matrix that never became ready; each is logged with what it is waiting on |
-| `2` | usage error — bad arguments, an invalid or unknown-name `-Q` query, a missing or broken remakefile, bad rule dependencies — printed as `error: ...` |
+| `2` | usage error — bad arguments, missing external inputs, an invalid or unknown-name `-Q` query, a missing or broken remakefile, bad rule dependencies — printed as `error: ...` |
+
+## Missing external inputs
+
+Before running anything, `remake run` checks the inputs of the tasks about
+to run. If any are missing **and no rule produces them** (the `external`
+class of `remake lint`), it stops with one error instead of one
+`FileNotFoundError` per task, listing them grouped by rule (a few examples
+each, then "... and N more", with a total count) and exits `2`. Inputs that
+another rule makes are never checked, even if absent: they will exist by the
+time they are needed. Plain paths are checked with `os.path.exists`, custom
+tokens with `is_complete()`; each distinct path is stat'ed once, and only for
+tasks that are actually going to run. The check runs on the first planning
+wave only, and for the SLURM executor it runs at submission time on the
+login node, before any job is submitted.
+
+With `-n/--dry-run` the problem is reported as a warning but the plan is
+still shown and the exit code is unaffected.
+
+To add a pipeline-specific nudge to the error, set a hint in the remakefile:
+
+```python
+rmk = Remake(config={'external_inputs_hint': 'Run download.py first.'})
+```
 
 ## One run at a time
 

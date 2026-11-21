@@ -13,7 +13,9 @@
 from pathlib import Path
 from remake import Remake, rule
 
-rmk = Remake()
+rmk = Remake(config={
+    'external_inputs_hint': 'Run make_example_data.py from this directory first to generate the example inputs.',
+})
 
 # A lookup table defined at module level — tracked via `uses`
 SENSOR_CALIBRATION = {
