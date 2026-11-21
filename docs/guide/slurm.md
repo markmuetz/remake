@@ -58,6 +58,29 @@ still resolved from `PATH` — install both into the env you submit from.
 The job also reloads the remakefile, so anything it does at import time (e.g.
 scanning input directories to build a matrix) happens again in every element.
 
+### pixi and `PYTHONPATH`
+
+With pixi, setting `PYTHONPATH` *outside* `pixi run` does not work. Pixi
+activates the environment inside the command and replaces the variable, so the
+remakefile can silently import a different checkout of your package from the
+one you meant:
+
+```bash
+PYTHONPATH=$PWD pixi run -e myenv remake run pipeline.py -E slurm     # PYTHONPATH overridden
+pixi run -e myenv env PYTHONPATH=$PWD remake run pipeline.py -E slurm # works
+```
+
+The second form sets the variable *after* activation, using `env`. The jobs
+inherit it from the submitting shell as usual.
+
+To check what was used, look at the header of `.remake/submit.sh`. From 0.9.0
+remake writes there, as comments, the `sys.executable`, `sys.version`,
+`PYTHONPATH` and `sys.path` of the submitting process, and the resolved file of
+each top-level module the remakefile has imported that is not stdlib or in
+site-packages (your own packages and dev checkouts). The same lines go to the run
+log at the start of a submission. If a job imports the wrong code, compare them
+with what you expected.
+
 ## Checking a submission before sending it
 
 A dry run with the SLURM executor writes the sbatch scripts and `submit.sh`
@@ -85,6 +108,46 @@ On submission remake writes, under `.remake/`:
 | `submit.sh` | master submission script (re-run it with `remake resubmit`) |
 | `jobs/<rule>.jobids.json` | submitted job ids + the submission's `run_seq` (written at submission) |
 | `tasks/results/...` | per-task result **sidecars**, absorbed into the DB by the next remake invocation |
+
+## Running again while a submission is in flight
+
+Results from SLURM jobs reach the database late (a task's sidecar is read in by
+the *next* remake command), so a task that is still queued or running has no
+record and no output yet. A second `remake run -E slurm` therefore plans it as
+pending. What stops a duplicate submission is a check **per rule**:
+
+- remake reads the rule's last-submission file, `.remake/jobs/<rule>.jobids.json`,
+  and asks `squeue` (once, for your user) whether any element of that array is
+  still active. Pending, running, held, suspended and requeued elements all
+  count; so does any state remake does not recognise.
+- If so, the **whole rule is skipped**: no new spec file, no `sbatch`. The log
+  says `<rule>: already queued (job N), skipping`.
+- Rules downstream of a skipped rule are still submitted, and wait on the queued
+  job id with `afterok`. Rules that are not queued are submitted as normal.
+- If `squeue` fails or times out and any planned rule has a recorded
+  submission, remake refuses to submit, rather than guess that the queue is
+  empty. In a directory with no recorded submissions it warns and goes ahead.
+- `remake resubmit` runs the same kind of check and refuses if anything it
+  would submit is still queued.
+
+So re-running while an array is going is safe for the rules in flight. It is
+also coarse. What is **not** guarded:
+
+- **Individual tasks.** Skipping is all-or-nothing per rule. Tasks that are new
+  since the queued submission (for example the matrix grew) are not submitted
+  until a later run, after the queued array has left the queue.
+- **Submissions remake has no record of.** Only the *last* submission of each
+  rule is recorded. If you deleted `.remake/jobs/`, ran from another directory,
+  or submitted with a different user, the jobs are not seen.
+- **The gap after a job ends.** Between a job leaving the queue and its results
+  being read in, there is a short window in which its tasks look pending and
+  its rule is not skipped. It is seconds long, and a duplicate run then costs
+  compute but writes the same outputs. It is not a protection against two
+  people running at the same moment.
+
+If you want certainty, restrict the second run with `-Q`, e.g. `remake run
+pipeline.py -E slurm -Q "rule in ['a', 'b']"`, to the rules that are not
+running. `remake slurm-status` shows what is in the queue.
 
 ## Monitoring
 

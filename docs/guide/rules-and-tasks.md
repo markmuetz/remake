@@ -241,6 +241,107 @@ classes are supported — the whole class body is hashed).
     stays silent. If the warning fires after an intentional edit, rename the
     uses key or update the global.
 
+## Placeholders, input order and shared outputs
+
+### Format specs in placeholders
+
+A placeholder is filled with Python's `str.format`, so a format spec works.
+With an integer matrix value, `{runid:03d}` zero-pads it:
+
+```python
+@rule(
+    outputs = {'nc': 'atmos.{runid:03d}.pp1.nc'},
+    matrix  = {'runid': [7, 240]},
+)
+def convert(inputs, outputs, runid):    # runid is the int 7, not '007'
+    ...                                 # outputs['nc'] -> 'atmos.007.pp1.nc'
+```
+
+The task still gets the int; only the path is padded. The spec must suit the
+value: `{runid:03d}` on the string `'240'` fails with `ValueError`. Use `{runid}`
+for strings, or keep the padded strings in the matrix.
+
+### Input order
+
+The `inputs` and `outputs` dicts reach the rule function in the order you
+declared them (or, for a callable, the order it returned them). Order is kept
+through planning and through the job specs on SLURM. From 0.9.0, reordering the
+keys of an `inputs` or `outputs` dict is not a reason to rerun a task, so
+don't rely on the order surviving an edit. If order matters to your code
+(say it takes a list of files), use sortable keys and sort by them:
+
+```python
+inputs = {f'in{i:03d}': f'data/part_{i}.nc' for i in range(n)}
+...
+paths = [inputs[k] for k in sorted(inputs)]
+```
+
+### Shared side outputs
+
+Sometimes every task of a rule writes the same file — a per-rule summary
+figure that each task overwrites. Do **not** declare it in `outputs` on every
+task. Several tasks would then claim one path, which is the "shared outputs"
+case: downstream tasks depend on every task of the rule, SLURM uses `afterok`
+instead of `aftercorr`, and the file is only as good as the last task to
+write it. Two options:
+
+- **A separate fan-in rule that produces it.** Give the rule one task, list the
+  per-task outputs as its `inputs`, and have it write the file. It is tracked,
+  runs once after all the tasks, and reruns when any of them change. This is
+  the right choice if anything reads the file.
+- **Leave it undeclared.** The file is then untracked: remake doesn't check it
+  exists, and doesn't rerun anything when it changes or goes missing. Fine for a
+  throw-away diagnostic that nothing depends on.
+
+## Rule factories
+
+When many rules differ only in a few values, write a function that makes them.
+Pass `name=` so each gets its own identity (they would all be called `run`
+otherwise, which is a duplicate-name error):
+
+```python
+def stats_rule(analyser_name, group_names):
+    @rule(
+        name=f'stats_{analyser_name}',
+        inputs=lambda group: {e: f'data/raw/{e}.txt' for e in GROUPS[group]},
+        outputs={'stat': f'data/stats/{analyser_name}/{{group}}.txt'},
+        matrix={'group': list(group_names)},
+        uses={'analyser': ANALYSERS[analyser_name], 'groups': GROUPS},
+    )
+    def run(inputs, outputs, group):
+        ...analyser.reduce(...groups[group]...)
+    return run
+
+stats_rules = [stats_rule(name, GROUPS) for name in ANALYSERS]
+rmk.add_rules(stats_rules)
+```
+
+See `examples/ex13_rule_factory.py` for a complete pipeline. Three things to
+watch.
+
+**Generated rules share one function source.** Every rule from the factory
+has the same body, so remake can't tell them apart by code. A change to the
+body reruns all of them; a change to what makes one different (the analyser
+class here) is seen only if it is in `uses`. Put everything that varies
+between the generated rules into `uses`.
+
+**Lambdas made in the factory capture values change detection can't see.**
+The [closure warning](#which-upstream-tasks-a-task-depends-on) above applies:
+a lambda hashes only its own source, not what it closed over. If the `inputs`
+lambda above used `analyser_name` or a factory argument, changing that value
+would not rerun anything. Either read only the matrix kwargs (and module-level
+constants) in the lambda, or derive the paths from the kwargs, or put the value
+in `uses`.
+
+**Don't give a factory parameter the same name as a `uses` key.** In the rule
+body a name resolves like any Python name, and the factory's variables are
+closer than `uses`. If the factory is `def stats_rule(name, groups)` and the rule has
+`uses={'groups': GROUPS}`, the body gets the factory's `groups` (a list of
+names), not the dict from `uses`. The failure shows up only when a task runs.
+From 0.9.0, remake warns at decoration when a `uses` key is shadowed by a
+closure variable of an enclosing function. Name the factory parameters
+differently (`group_names` above) and the warning, and the bug, go away.
+
 ## Registering rules
 
 End the module with:
@@ -251,3 +352,23 @@ rmk.rules_from_current_module()
 
 This collects every `@rule` defined in the module onto the `Remake` object.
 For pipelines split across modules, see `examples/ex5_multifile/`.
+
+It finds a rule only if a module-level **name is bound directly to it**. A
+rule held inside a list, dict or other container is not found, and neither is
+a rule made in a loop or factory whose name is rebound each time (only the last
+one survives). Rules made by a factory and kept in a list:
+
+```python
+stats_rules = [stats_rule(name, GROUPS) for name in ANALYSERS]   # a list: not found
+rmk.rules_from_current_module()                                  # registers none of them
+```
+
+register them explicitly instead:
+
+```python
+rmk.add_rules(stats_rules)
+```
+
+Mixing the two is fine: rules registered by both routes are not duplicated.
+Use `rmk.rules_from_modules(mod_a, mod_b)` for rules bound at the top level of
+other modules.

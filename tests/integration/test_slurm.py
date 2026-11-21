@@ -766,7 +766,8 @@ def test_no_continuation_when_nothing_to_wait_on(slurm_dir, capsys):
     nsubmitted = len(sbatch_calls(slurm_dir))
 
     cli('run', 'dynamic.py', '-E', 'slurm')
-    assert 'continuation' not in Path('.remake/submit.sh').read_text()
+    # (the header now records paths, which can contain the test name)
+    assert 'continuation.sbatch' not in Path('.remake/submit.sh').read_text()
     assert len(sbatch_calls(slurm_dir)) == nsubmitted  # no self-replication
 
 
