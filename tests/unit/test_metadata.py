@@ -513,7 +513,7 @@ def test_legacy_db_is_migrated_and_stamped(tmp_path):
     assert _user_version(db) == SCHEMA_VERSION
 
 
-def test_db_from_newer_remake_is_refused(tmp_path):
+def test_db_from_newer_minor_opens_and_keeps_its_version(tmp_path):
     from remake.metadata.sqlite3_backend import SCHEMA_VERSION
 
     db = tmp_path / 'remake.db'
@@ -522,6 +522,19 @@ def test_db_from_newer_remake_is_refused(tmp_path):
     conn.execute(f'PRAGMA user_version = {SCHEMA_VERSION + 1}')
     conn.commit()
     conn.close()
+    Sqlite3Backend(db).close()
+    assert _user_version(db) == SCHEMA_VERSION + 1
+
+
+def test_db_from_newer_major_is_refused(tmp_path):
+    from remake.metadata.sqlite3_backend import SCHEMA_VERSION
+
+    db = tmp_path / 'remake.db'
+    Sqlite3Backend(db).close()
+    conn = sqlite3.connect(db)
+    conn.execute(f'PRAGMA user_version = {SCHEMA_VERSION + 1000}')
+    conn.commit()
+    conn.close()
     with pytest.raises(RemakeError, match='newer remake'):
         Sqlite3Backend(db)
-    assert _user_version(db) == SCHEMA_VERSION + 1  # untouched
+    assert _user_version(db) == SCHEMA_VERSION + 1000  # untouched

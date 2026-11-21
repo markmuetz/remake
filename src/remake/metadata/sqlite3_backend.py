@@ -24,13 +24,24 @@ from ..util.code_compare import CodeComparer
 from .metadata_manager import MetadataManager, TaskRecord
 
 # On-disk schema version, stored in the SQLite header (`PRAGMA user_version`)
-# and bumped by every migration (0.9.0 item 3). 0 is every DB written before
-# 0.9.0: it is migrated in place and stamped. A DB stamped with a *newer*
-# version than this code knows was written by a later remake, which may store
-# things this one would misread or clobber, so it is refused with an upgrade
-# hint rather than opened. Bump on every change to SQL_SCHEMA or
-# _add_missing_columns, and add the migration step there.
-SCHEMA_VERSION = 1
+# as MAJOR * 1000 + MINOR (0.9.0 item 3). 0 is every DB written before 0.9.0:
+# it is migrated in place and stamped.
+#
+# - MINOR changes are additive (a nullable column, a new table): an older
+#   remake of the same MAJOR may still open the DB and simply ignores them.
+# - MAJOR changes are not: a DB of a newer MAJOR than this code knows is
+#   refused with an upgrade hint, since this version would misread or clobber
+#   what it stores.
+#
+# Bump on every change to SQL_SCHEMA or _add_missing_columns, and add the
+# migration step there. Sidecars and job specs carry their own "v" field.
+SCHEMA_MAJOR = 1
+SCHEMA_MINOR = 0
+SCHEMA_VERSION = SCHEMA_MAJOR * 1000 + SCHEMA_MINOR
+
+
+def split_schema_version(user_version):
+    return divmod(user_version, 1000)
 
 SQL_SCHEMA = """
 CREATE TABLE code (
@@ -285,12 +296,13 @@ class Sqlite3Backend(MetadataManager):
         _retry_locked(lambda: conn.execute('BEGIN EXCLUSIVE'), 'opening the database')
         try:
             (found_version,) = conn.execute('PRAGMA user_version').fetchone()
-            if found_version > SCHEMA_VERSION:
+            found_major, found_minor = split_schema_version(found_version)
+            if found_major > SCHEMA_MAJOR:
                 raise RemakeError(
-                    f'{self.dbloc} was written by a newer remake (schema version '
-                    f'{found_version}; this remake understands up to '
-                    f'{SCHEMA_VERSION}). Upgrade remake to use it (e.g. '
-                    f'`pip install -U remake` or `uv add remake@latest`); this '
+                    f'{self.dbloc} was written by a newer remake (schema '
+                    f'{found_major}.{found_minor}; this remake understands '
+                    f'{SCHEMA_MAJOR}.x). Upgrade remake to use it (e.g. '
+                    f'`pip install -U remake` or `uv add remake@latest`): this '
                     f'version would misread or overwrite what it stores.'
                 )
             tables = {row[0] for row in conn.execute(
@@ -302,7 +314,8 @@ class Sqlite3Backend(MetadataManager):
             for stmt in _schema_statements():
                 conn.execute(stmt)
             needs_vacuum = self._add_missing_columns()
-            if found_version != SCHEMA_VERSION:
+            # Never stamp *down*: a newer minor's additive changes stay valid.
+            if found_version < SCHEMA_VERSION:
                 if found_version and 'task' in tables:
                     logger.info(f'Upgrading database schema {found_version} -> '
                                 f'{SCHEMA_VERSION}')
