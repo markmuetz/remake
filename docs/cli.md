@@ -35,6 +35,7 @@ These go *before* the command name (`remake -D run pipeline.py`):
 | `dag` | Export the rule or task graph as Graphviz DOT |
 | `run-all` | Run every remakefile found in a directory |
 | `slurm-status` | Live SLURM queue state of the last submission, per rule |
+| `check-env` | Check a SLURM job would import the same code as this process (`--srun`, `--json`) |
 | `resubmit` | Re-execute `.remake/submit.sh` without replanning |
 | `version` | Print remake version |
 
