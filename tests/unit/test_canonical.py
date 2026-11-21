@@ -122,7 +122,7 @@ def test_remake_hash_hook():
     assert uses_hash({'m': Model(1)}) != uses_hash({'m': Model(2)})
 
 
-def test_function_docstring_is_not_a_change():
+def test_function_docstring_is_a_change():
     def f1(x):
         """One."""
         return x
@@ -132,10 +132,10 @@ def test_function_docstring_is_not_a_change():
         return x
 
     assert (canonical.callable_source_ast(f1).replace('f1', 'f')
-            == canonical.callable_source_ast(f2).replace('f2', 'f'))
+            != canonical.callable_source_ast(f2).replace('f2', 'f'))
 
 
-# --- run code (H2, L7) --------------------------------------------------------
+# --- run code (H2) -----------------------------------------------------------
 
 RUN_V1 = '''
 @rule(outputs={'o': 'o/{year}.txt'}, matrix={'year': [2000, 2001]},
@@ -148,8 +148,12 @@ def proc(outputs, year):
 
 def test_rule_decorator_edits_are_not_run_code_changes():
     v2 = RUN_V1.replace("[2000, 2001]", "[2000, 2001, 2002]").replace("'1G'", "'8G'")
-    v2 = v2.replace('"""Process."""', '"""Process one year."""')
     assert CodeComparer()(RUN_V1, v2)
+
+
+def test_rule_docstring_edit_is_a_run_code_change():
+    v2 = RUN_V1.replace('"""Process."""', '"""Process one year."""')
+    assert not CodeComparer()(RUN_V1, v2)
 
 
 def test_decorator_below_rule_is_a_run_code_change():

@@ -239,8 +239,8 @@ Declare them in `uses`.
 Since 0.9.0 each `uses` value is rendered canonically, so a rerun means
 something really changed:
 
-- **Functions and classes** by their code structure (comments, whitespace and
-  docstrings don't count). Functions without source (defined with `exec` or at
+- **Functions and classes** by their code structure (comments and whitespace
+  don't count; docstrings do). Functions without source (defined with `exec` or at
   a REPL) by their compiled code; builtins and numpy ufuncs by name
   (`np.log` vs `np.log10` is a change); `functools.partial` by the function and
   its arguments. Containers are rendered element by element, so
