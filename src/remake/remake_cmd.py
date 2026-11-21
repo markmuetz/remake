@@ -97,6 +97,32 @@ def _resources_line(resources):
     return ', '.join(parts)
 
 
+def _last_line(text):
+    lines = [line.strip() for line in (text or '').splitlines() if line.strip()]
+    return lines[-1] if lines else ''
+
+
+def _failed_line(failure):
+    """One summary dict per failed task for `info --failed`: the last line of
+    the stored exception, else of the task's SLURM .err (failures before the
+    task starts, e.g. import errors, never reach the DB)."""
+    error = _last_line(failure['exception'])
+    if not error:
+        from .executors.slurm_executor import last_submission
+
+        _, index = last_submission(failure['rule'], failure['key'])
+        if index is not None:
+            err = Path('.remake/slurm/output') / failure['rule'] / f'{index}.err'
+            if err.exists():
+                error = _last_line(err.read_text(errors='replace'))
+    return {
+        'rule': failure['rule'],
+        'key': failure['key'],
+        'error': error or '(no recorded error)',
+        'log': failure['log'],
+    }
+
+
 def _add_task_log_sink(task):
     """One process, one file — safe under concurrent SLURM array elements,
     unlike the shared log."""
@@ -273,10 +299,24 @@ class RemakeCLI:
                 Arg('--all-failures',
                     help='With -F, show every failed task individually (not grouped)',
                     action='store_true'),
+                Arg('--failed',
+                    help='One line per failed task: rule, short key, last line of '
+                         'its error, log path (falls back to the SLURM .err)',
+                    action='store_true'),
                 Arg('--reasons',
                     help='Per-rule tally of why the to-run tasks would rerun',
                     action='store_true'),
                 Arg('--json', help='Machine-readable output', action='store_true'),
+            ],
+        },
+        'export-task': {
+            'help': "Write a task's fully resolved spec as JSON (to run its body "
+                    'without importing remake)',
+            'args': [
+                Arg('remakefile'),
+                Arg('task_key', nargs='?'),
+                Arg('--query', '-Q', help='Select the task by kwargs query instead of key'),
+                Arg('--output', '-o', help='Write to this file instead of stdout'),
             ],
         },
         'ls-tasks': {
@@ -562,7 +602,7 @@ class RemakeCLI:
             query=args.query,
             reasons=args.reasons,
             list_tasks=args.tasks,
-            list_failures=show_failures,
+            list_failures=show_failures or args.failed,
         )
         rule_rows = summary['rules']
         totals = summary['totals']
@@ -572,6 +612,16 @@ class RemakeCLI:
         # Default -F groups failures by traceback signature; --all-failures
         # keeps the exhaustive per-task dump.
         grouped = None if args.all_failures else _group_failures(failures)
+
+        if args.failed:
+            lines = [_failed_line(f) for f in failures]
+            if args.json:
+                print(json.dumps(lines, indent=1))
+            else:
+                for line in lines:
+                    print(f'{line["rule"]}  {line["key"][:8]}  {line["error"]}  '
+                          f'[{line["log"]}]')
+            return
 
         if args.json:
             data = {'rules': rule_rows, 'totals': totals}
@@ -655,6 +705,15 @@ class RemakeCLI:
                     shown = '\n'.join(others[:5])
                     more = f' (+{len(others) - 5} more)' if len(others) > 5 else ''
                     print(f'+ {len(others)} more:\n{shown}{more}')
+
+    def remake_export_task(self, args):
+        rmk = self._load(args)
+        task = rmk.select_task(args.task_key, args.query)
+        text = json.dumps(rmk.task_spec(task), indent=1, default=repr)
+        if args.output:
+            Path(args.output).write_text(text + '\n')
+        else:
+            print(text)
 
     def remake_ls_tasks(self, args):
         from .core.dag import iter_expand_rule
