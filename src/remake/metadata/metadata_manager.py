@@ -44,6 +44,9 @@ class TaskRecord:
     cpu_s: Optional[float] = None
     max_rss_bytes: Optional[int] = None
     rss_method: Optional[str] = None
+    # Digest of the resolved input/output paths last run with
+    # (core.task.paths_digest); None = not recorded (pre-0.9 record).
+    paths_digest: Optional[str] = None
 
 
 class RecordCache:
@@ -105,6 +108,22 @@ class MetadataManager(abc.ABC):
         or records predating the manifest table)."""
         return {}
 
+    def restamp_codes(self, restamp):
+        """Re-point records whose stored uses/io code is a pre-0.9 rendering
+        that matched the current state ({(rule, 'uses'|'io'): {old code
+        ids}}, filled by `planner.plan`) at the current code. Changes no
+        verdict; it only lets later plans compare ids exactly. No-op for
+        backends without a code store."""
+
+    def record_run(self, *, remakefile=None, command=None, config=None):
+        """Record this invocation (its run_seq) with the effective merged
+        configuration it ran with. No-op for backends without a store."""
+
+    def get_run(self, run_seq):
+        """The recorded invocation for a run_seq: {run_seq, started,
+        remakefile, command, config} or None."""
+        return None
+
     def begin_invocation(self):
         """Start a new logical invocation: allocate a fresh run_seq so tasks
         committed from here share one stamp, distinct from earlier invocations.
@@ -117,19 +136,39 @@ class MetadataManager(abc.ABC):
         return None
 
     @abc.abstractmethod
-    def update_task(self, task, status, exception='', resources=None):
+    def update_task(self, task, status, exception='', resources=None, output_stats=None):
         """Record a task execution result.
 
         `resources` is the measurement from `util.resources` — a dict of
         wall_s/cpu_s/max_rss_bytes/rss_method, or None where nothing was
         measured (bulk state changes like `set-state` never ran anything).
+
+        `output_stats` ({output name: {'n_files', 'total_bytes', 'checksum'}},
+        from the tokens' `after_success`) replaces the stats of the last run.
         """
+
+    def get_output_stats(self, task):
+        """{name: {'n_files', 'total_bytes', 'checksum'}} recorded for a
+        task's last successful execution (see the output_stat table). Plain
+        file outputs without a checksum are summed under the name '*'."""
+        return {}
+
+    def get_rule_output_bytes(self, rules):
+        """{rule name: total recorded output bytes} for the named rules, from
+        the output_stat table (one aggregate query). Rules with nothing
+        recorded may be absent. {} for backends without stats."""
+        return {}
 
     def update_tasks(self, tasks, status, exception=''):
         """Record the same state for many tasks (backends may batch). No
         resources: this is for bulk state changes, not execution."""
         for task in tasks:
             self.update_task(task, status, exception)
+
+    def mark_pending(self, tasks):
+        """Record tasks as PENDING without making them look newly run
+        (keep their run_seq). Backends that can't should override."""
+        self.update_tasks(tasks, TASK_STATUS_PENDING)
 
     def delete_tasks(self, tasks):
         """Remove stored records (tasks become never-run/pending)."""

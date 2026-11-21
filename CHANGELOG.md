@@ -8,6 +8,68 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Output checks with `Ensure`** (0.9.0 item 4):
+  `outputs={'nc': Ensure('out/{year}.nc', min_size=1024, checksum=True)}`
+  checks the output when its task finishes (`nonempty`, `min_size`); a
+  failed check fails the task. `Ensure` returns the same kind of token, its
+  options are not part of the output's identity (adding one reruns
+  nothing), and `check_outputs`/`set-state --check-outputs` apply them before
+  adopting a file. **Opt-in checksums** (`checksum=True`, or
+  `checksum_outputs = true` in rule/pipeline config) record sha256 at
+  completion, also through SLURM sidecars; they are recorded, never
+  compared. `remake task-info` shows output stats.
+- **`Dir` outputs** (0.9.0 item 5, `design_docs/designs/dir_outputs.md`):
+  `outputs={'plots': Dir('plots/{year}')}` declares a directory a task fills
+  with a variable number of files. Completion is a hidden
+  `.remake-manifest.json` written after success; a rerun deletes only the
+  manifest, never your files; files the run didn't produce are recorded as
+  stale, with a warning. Works with `Ensure(Dir(...), nonempty=, min_size=,
+  checksum=)` (per-file checksums in the manifest). Two tasks declaring the
+  same `Dir` is an error; `remake lint` matches inputs inside a `Dir` and
+  reports nested Dirs and file outputs inside one; `set-state --success
+  --check-outputs` adopts an existing `Dir`. `task-info` shows output stats
+  and stale counts; `info --json` has per-rule `output_bytes` and
+  `info --sizes` a size column. Example: `examples/ex14_dir_outputs.py`.
+- **Configuration profiles and config files** (0.9.0 item 7,
+  `docs/guide/configuration.md`): a TOML cascade — built-in defaults →
+  profile → user file (`$XDG_CONFIG_HOME/remake/config.toml`) → project file
+  (`remake.toml` beside the remakefile) → `Remake(config=)` → per-rule
+  `config=`. Dicts merge, lists and scalars replace; unknown keys in files
+  are errors. A shipped `jasmin` profile (LOTUS2 defaults, no `account`;
+  SLURM refuses to submit under it until `slurm.account` is set) selected
+  with `--profile`, `$REMAKE_PROFILE` or `profile =`. `remake config
+  [--json]` shows the effective config and which layer set each key. The
+  effective config is recorded per invocation, and the executor, nproc and
+  profile are logged at run start.
+- **Fail fast on missing external inputs** (0.9.0 item 6): before running,
+  missing inputs that no rule produces stop the run with one error, grouped
+  by rule and truncated with a count (exit 2), instead of N
+  FileNotFoundError failures. `Remake(config={'external_inputs_hint': ...})`
+  appends a pipeline-specific nudge; `-n` warns and still shows the plan.
+- **`remake dag [--rules|--tasks] [-o FILE]`** (item 8): the rule graph, or
+  the task graph from path-derived dependencies, as Graphviz DOT.
+- **`remake run-all [DIR] [-r]`** (item 9): runs every remakefile in a
+  directory (found by AST scan, never imported) in sorted order, continues
+  past failures, prints a summary and exits non-zero if any failed.
+- From the October 2026 field notes (`docs/notes/scaffold-omnium-port.md`):
+  - `remake info --failed`: one line per failed task — rule, short key, last
+    error line, log path — falling back to the SLURM `.err` when the DB has
+    no exception; `--json`.
+  - `remake export-task <key>|-Q query [-o FILE]`: a task's resolved spec as
+    JSON, to run its body from an interpreter that can't import remake.
+  - `remake check-env REMAKEFILE [--srun] [--json]`: compares the
+    environment you plan with against a fresh job-style process (optionally
+    on a compute node): Python, remake, and every module the remakefile
+    imports. Exits 1 on any mismatch.
+  - SLURM submissions record the interpreter, `PYTHONPATH`, `sys.path` and
+    the files of your own top-level modules in the `.remake/submit.sh` header
+    and the run log.
+  - `examples/ex13_rule_factory.py`, and guide sections on rule factories,
+    format specs in placeholders, input order, shared side outputs, pixi and
+    `PYTHONPATH`, resubmitting while a submission is in flight, and `sacct -S`
+    on clusters that reuse job ids.
+
+
 - **Per-task resource capture** (0.9.0 item 1,
   `design_docs/designs/resource_capture.md`): every task execution now records wall
   time, CPU time (user+sys, including waited-for children) and peak resident
@@ -26,6 +88,68 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Change detection is canonical and version-independent** (0.9.0 item 2;
+  review 2026-09-24 H2, H4, H5, M3, M4, L8). Fewer spurious reruns and
+  fewer missed changes:
+  - Editing the `@rule(...)` decorator (`matrix=`, `config=`, `name=`) no
+    longer reruns the rule's tasks; decorators below `@rule` still count, and
+    so do docstrings.
+  - `uses` values render deterministically: sets and dict keys sorted (a set
+    of names no longer reruns on every invocation), numpy arrays by
+    dtype/shape/bytes (no more truncated or rounded reprs), pandas by values,
+    index, columns and dtypes, `functools.partial`/ufuncs/builtins/sourceless
+    functions by what they compute, containers element by element, objects
+    with an address in their repr by their attributes, and a
+    `__remake_hash__(self) -> str` hook for your own types. Your own modules
+    in `uses` are tracked by source.
+  - `inputs`/`outputs` specs are compared by a version-independent AST, so
+    moving between Python 3.12 and 3.13+ no longer reruns everything; a
+    lambda spec is cut from the line it sits on; reordering the keys of an
+    evaluated dict spec is not a change.
+  - **Upgrading reruns nothing:** records written by earlier versions are
+    matched against the new renderings and re-stamped on the next run.
+- **Fan-ins rerun when their callable spec resolves differently** (review
+  M8): each task records a digest of its resolved paths, so
+  `inputs=lambda: {y: ... for y in YEARS}` reruns when `YEARS` changes
+  (`remake why`: "inputs 3 → 2"). Older records have no digest: not a
+  trigger, backfilled on the next run.
+- **Task keys are canonical** (review M19): numpy scalars, enum members and
+  str/int/float subclasses in a matrix become plain values at expansion, so
+  keys survive the SLURM JSON round-trip and numpy 1 → 2. Rule code receives
+  plain values. Records under the old key are found and re-keyed.
+  **Breaking for enum matrices:** a rule body given `kind` from
+  `matrix={'kind': list(Kind)}` now gets `kind.value`, not the member, so
+  `kind.name` fails; use `Kind(kind)`. This is what SLURM jobs already
+  received after the JSON round-trip, so local and SLURM runs now agree.
+- **Scope checks look at values, after the remakefile has run** (review M1,
+  M2): helpers defined below a rule are checked; a name called like a stdlib
+  module or builtin (`site = 'CHIL'`) is checked by its value; project
+  values (`DATA_DIR = Path(...)`) and your own modules are reported, while
+  library modules and what they export (`from loguru import logger`) are
+  environment. Warnings now come when the pipeline is finalized, not at
+  decoration (rule-level `strict_scope=True` still errors at decoration too).
+  Expect new `ScopeWarning`s for values that were silently untracked.
+- **A `uses` key beats an enclosing-function variable of the same name**
+  (field note 1): in a rule factory the closure used to win, so the code
+  that ran was not the code that was tracked. A different value warns.
+- **Schema versioning** (0.9.0 item 3): the DB records its schema version
+  (`PRAGMA user_version`, major·1000 + minor). A DB from a newer major is
+  refused with an upgrade hint; a newer minor still opens. remake 0.8.6
+  refuses a DB written by 0.9. Job specs and sidecars carry a format `"v"`.
+- **Schema (additive, migrated in place):** `task.paths_digest`, and new
+  tables `output_stat` and `run`. Nothing reruns on upgrade.
+- `set-state --pending` keeps a task's measured resources (it records a
+  pending state rather than deleting the row), as documented (review L15).
+- `rss_method` is `sample-self`/`rusage-self` when child processes were
+  reaped but their memory peak wasn't measured — a lower bound (review M18).
+  Docs say child memory is the max, not the sum, of children.
+- `MetadataManager.update_task()` gained `output_stats=None`; backends that
+  don't accept it are not passed it. New optional backend methods:
+  `restamp_codes`, `get_output_stats`, `record_run`/`get_run`.
+- **Deprecated:** the built-in JASMIN SLURM defaults when no profile is
+  selected (a warning; removed at 1.0 — use `--profile jasmin`).
+- New dependency: `tomli` on Python < 3.11.
+
 - `MetadataManager.update_task()` gained an optional `resources=None`
   keyword. Third-party backends overriding it need the extra keyword in their
   signature; nothing else changes.
@@ -39,8 +163,29 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   trigger. `set-state` does not clear them: they describe the last actual
   execution, not the task's current state.
 
+- A task with **no path link** to an upstream rule (a `depends_on` used only
+  for ordering), or one reading an output several upstream tasks share,
+  depends on *every* upstream task: any upstream rerun reruns it, any
+  upstream failure skips it. Previously, with a shared matrix, this was
+  element-wise by kwargs. After upgrading, such a task also reruns once if
+  any upstream task last ran in a later invocation than it did.
+- `run-all` runs each remakefile in its own process (`python -m remake`), so
+  same-named helper modules in different project dirs no longer collide.
+- A remakefile that fails to import (a missing package) is a clean error
+  (exit 2) with the traceback at `-D`, not an uncaught traceback.
+- `export-task -o` writes relative to where remake was invoked, like `dag -o`.
+- `Ensure()` raises `TypeError` for an output it can't check (`ZarrStore`,
+  `S3Object`, or any token without `validate()`), instead of silently doing
+  nothing.
+- numpy `datetime64`/`timedelta64` matrix values are still rejected (encode
+  them as strings); only numpy numbers, bools and strings become plain values.
+- `set-state --pending` keeps each record's run counter, so it doesn't make
+  up-to-date downstream tasks look stale.
+
 ### Fixed
 
+- The peak-RSS sampler could lose the peak as a task ended; stopping it is
+  now deterministic (review L16).
 - **Rerun propagation follows paths, not matrices** (review 2026-09-24 H3).
   Which upstream tasks a task depends on is now derived from its declared
   `inputs`: the upstream tasks whose outputs it reads. Previously a rule
@@ -64,15 +209,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `lazy from x import y` is environment only when `x` is stdlib, otherwise
   reported like an eager `from helpers import normalise`. One difference from
   eager imports: `lazy from pkg import submodule` is reported.
-
-### Changed
-
-- A task with **no path link** to an upstream rule (a `depends_on` used only
-  for ordering), or one reading an output several upstream tasks share,
-  depends on *every* upstream task: any upstream rerun reruns it, any
-  upstream failure skips it. Previously, with a shared matrix, this was
-  element-wise by kwargs. After upgrading, such a task also reruns once if
-  any upstream task last ran in a later invocation than it did.
 
 ## [0.8.5] — 2026-09-24
 

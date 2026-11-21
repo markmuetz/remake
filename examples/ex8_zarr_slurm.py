@@ -15,6 +15,7 @@ from remake import Remake, ZarrStore, rule
 
 rmk = Remake(
     config={
+        'external_inputs_hint': 'Run make_example_data.py from this directory first to generate the example inputs.',
         'slurm': {
             'partition': 'standard',
             'time':      '01:00:00',

@@ -62,12 +62,77 @@ def test_closure_variable_is_flagged():
     assert undeclared_names(fn, {}) == ['captured']
 
 
-def test_decoration_warns():
-    with pytest.warns(ScopeWarning, match='CONSTANT'):
+def test_finalize_warns():
+    # Checked when the pipeline is finalized, not at decoration (M2).
+    @rule(outputs={'o': 'o.txt'})
+    def r(outputs):
+        return CONSTANT
 
+    rmk = Remake(rules=[r], metadata=Sqlite3Backend(':memory:'))
+    with pytest.warns(ScopeWarning, match='CONSTANT'):
+        rmk.finalize()
+
+
+def test_helper_defined_below_the_rule_is_checked():
+    # M2: at decoration time LATER_CONSTANT doesn't exist yet.
+    @rule(outputs={'o': 'o.txt'})
+    def r(outputs):
+        return LATER_CONSTANT
+
+    globals()['LATER_CONSTANT'] = 3
+    try:
+        rmk = Remake(rules=[r], metadata=Sqlite3Backend(':memory:'), strict_scope=True)
+        with pytest.raises(ScopeError, match='LATER_CONSTANT'):
+            rmk.finalize()
+    finally:
+        del globals()['LATER_CONSTANT']
+
+
+def test_names_like_stdlib_modules_are_checked_by_value():
+    # M1(b): `site` and `input` are stdlib/builtin names, but here bound to
+    # project values.
+    import pathlib
+    import re as re_mod
+    globals().update(site='CHIL', input=5, DATA_DIR=pathlib.Path('/data'),
+                     PATTERN=re_mod.compile('x'))
+    try:
         @rule(outputs={'o': 'o.txt'})
         def r(outputs):
-            return CONSTANT
+            return site, input, DATA_DIR, PATTERN, pathlib.Path, re_mod.compile
+
+        from remake.core.scope import undeclared_names
+        assert undeclared_names(r.fn, {}) == ['DATA_DIR', 'PATTERN', 'input', 'site']
+    finally:
+        for name in ('site', 'input', 'DATA_DIR', 'PATTERN'):
+            del globals()[name]
+
+
+def test_library_exported_instance_is_environment():
+    from loguru import logger as lib_logger
+    globals()['lib_logger'] = lib_logger
+    try:
+        @rule(outputs={'o': 'o.txt'})
+        def r(outputs):
+            lib_logger.info('x')
+
+        from remake.core.scope import undeclared_names
+        assert undeclared_names(r.fn, {}) == []
+    finally:
+        del globals()['lib_logger']
+
+
+def test_uses_wins_over_a_closure_variable_and_warns():
+    # Field note 1: a rule factory's parameter shadowed the uses key.
+    def factory(groups):
+        @rule(outputs={'o': 'o.txt'}, uses={'groups': {'g1': ['a', 'b']}})
+        def r(outputs):
+            return groups['g1']
+        return r
+
+    with pytest.warns(ScopeWarning, match='closure'):
+        r = factory(['g1', 'g2'])
+    from remake.core.scope import exec_function
+    assert exec_function(r.fn, r.uses)(None) == ['a', 'b']
 
 
 def _helper_v1(x):
@@ -120,8 +185,9 @@ def test_remake_level_strict_raises_at_registration():
         def r(outputs):
             return CONSTANT
 
+    rmk = Remake(strict_scope=True, rules=[r], metadata=Sqlite3Backend(':memory:'))
     with pytest.raises(ScopeError, match='CONSTANT'):
-        Remake(strict_scope=True, rules=[r], metadata=Sqlite3Backend(':memory:'))
+        rmk.finalize()
 
 
 # --- uses_hash ---
@@ -170,11 +236,11 @@ def test_uses_hash_class_body_change(tmp_path):
 
 def test_uses_hash_handles_sourceless_class():
     # A class defined via exec has no source AND no __code__: must not
-    # crash; falls back to repr (body changes undetected, documented).
+    # crash; falls back to its name (body changes undetected, documented).
     ns = {}
     exec('class C:\n    pass\n', ns)
     h = uses_hash({'C': ns['C']})
-    assert 'unsourced:' in h
+    assert '"class ' in h
 
 
 def test_uses_hash_handles_sourceless_functions():
@@ -182,7 +248,7 @@ def test_uses_hash_handles_sourceless_functions():
     ns = {}
     exec('def f(x):\n    return x * 2\n', ns)
     h = uses_hash({'f': ns['f']})
-    assert 'bytecode:' in h
+    assert '"code ' in h  # digest of the whole code object (review L8)
     assert function_source(ns['f']).startswith("'<bytecode:")
 
 

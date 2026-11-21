@@ -101,7 +101,10 @@ def test_uses_change_message_names_changed_keys():
     # The stored hash round-trips back to the per-key parts.
     assert parse_uses_hash(old_hash) == uses_parts(old)
 
-    msg = _uses_change_message(old_hash, {'THRESHOLD': 0.7, 'helper': f2, 'SCALE': 10})
+    from types import SimpleNamespace
+
+    msg = _uses_change_message(
+        old_hash, SimpleNamespace(uses={'THRESHOLD': 0.7, 'helper': f2, 'SCALE': 10}))
     assert 'THRESHOLD: 0.5 → 0.7' in msg  # plain value: before → after
     assert 'helper (body)' in msg  # callable: body change, not an AST dump
     assert 'GONE (removed)' in msg
@@ -181,7 +184,10 @@ def test_uses_change_message_without_manifest_falls_back(tmp_path):
     from remake.core.scope import uses_hash
 
     old_hash = uses_hash({'scale': _scale_v1})
-    msg = _uses_change_message(old_hash, {'scale': _scale_v2}, old_manifest={})
+    from types import SimpleNamespace
+
+    msg = _uses_change_message(old_hash, SimpleNamespace(uses={'scale': _scale_v2}),
+                               old_manifest={})
     assert 'scale (body)' in msg and 'return x * 2' not in msg
 
 

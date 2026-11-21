@@ -1,5 +1,7 @@
 """The Remake class — wires rules, planner, metadata and executors together."""
 import inspect
+import os
+import re
 import traceback
 from collections import Counter
 from pathlib import Path
@@ -11,6 +13,7 @@ from loguru import logger
 from ..metadata.metadata_manager import (
     STATUS_NAMES,
     TASK_STATUS_FAILED,
+    TASK_STATUS_PENDING,
     TASK_STATUS_SUCCESS,
     RecordCache,
 )
@@ -19,7 +22,7 @@ from ..util.resources import capture_for_config
 from ..util.run_lock import run_lock
 from .dag import build_rule_dag, expand_rule, iter_expand_rule
 from .deps import Edges
-from .exceptions import Defer, RemakeError, TaskExit
+from .exceptions import Defer, OutputValidationError, RemakeError, TaskExit
 from .planner import (
     cascade_settled,
     explain_task,
@@ -31,6 +34,7 @@ from .planner import (
 from .rule import Rule
 from .scope import check_scope, exec_function
 from .task import Task
+from .tokens import Dir, OutputToken, PathToken
 
 
 class _TemplatePlaceholder:
@@ -102,6 +106,45 @@ def _same_definition(a, b):
     return _where(a) == _where(b) and a.fn.__code__ is not b.fn.__code__
 
 
+def _config_edits(before, after):
+    """The parts of `after` that differ from `before` (nested dicts walked;
+    deletions are not tracked)."""
+    patch = {}
+    for key, value in after.items():
+        old = before.get(key, _MISSING)
+        if isinstance(value, dict) and isinstance(old, dict):
+            sub = _config_edits(old, value)
+            if sub:
+                patch[key] = sub
+        elif old is _MISSING or old != value:
+            patch[key] = value
+    return patch
+
+
+def _deep_update(base, patch):
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _deep_update(base[key], value)
+        else:
+            base[key] = value
+
+
+_MISSING = object()
+
+
+# A scheme prefix (s3://, https://, gs://): an input that is a URL.
+# Path('s3://b/k') stringifies as 's3:/b/k', hence :// or :/ (but not a
+# Windows drive, C:\\).
+_URL_RE = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]+:/')
+
+
+def _accepts_output_stats(metadata):
+    try:
+        return 'output_stats' in inspect.signature(metadata.update_task).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 class Remake:
     def __init__(
         self,
@@ -112,7 +155,15 @@ class Remake:
         check_outputs='never',
         strict_scope=False,
     ):
-        self.config = config or {}
+        # What the caller passed; the effective config (defaults < profile <
+        # user file < project file < this) is built lazily — see `config`.
+        self._programmatic_config = dict(config) if config else {}
+        if config:
+            from ..util.config import validate_programmatic
+
+            validate_programmatic(self._programmatic_config)
+        self._effective = None
+        self._effective_snapshot = None
         self.metadata = metadata
         self.check_outputs = check_outputs
         # Rules the last run() left unresolved (deferred matrix never ready,
@@ -126,6 +177,51 @@ class Remake:
         self._finalized = False
         if rules:
             self.add_rules(rules)
+
+    # --- configuration ---
+
+    def resolve_config(self, project_dir=None, profile=None):
+        """(Re)build the effective config (util/config.py): `remake.toml` is
+        looked for in `project_dir` (default cwd); `profile` is the CLI
+        selection. The CLI calls this once at load time."""
+        import copy
+
+        from ..util.config import resolve
+
+        if self._effective is not None:
+            # The remakefile may have changed `rmk.config` in place (e.g.
+            # `rmk.config['slurm']['account'] = ...`) before load_remake
+            # re-resolves it: keep those edits as programmatic settings
+            # (ultrareview 2026-11-21).
+            patch = _config_edits(self._effective_snapshot, self._effective.values)
+            if patch:
+                _deep_update(self._programmatic_config, patch)
+        self._effective = resolve(
+            project_dir, programmatic=self._programmatic_config, profile=profile)
+        self._effective_snapshot = copy.deepcopy(self._effective.values)
+        return self._effective
+
+    @property
+    def effective_config(self):
+        """The `EffectiveConfig` (values + per-key provenance), built on first use."""
+        if self._effective is None:
+            self.resolve_config()
+        return self._effective
+
+    @property
+    def config(self):
+        """The merged config as a plain dict (what executors read)."""
+        return self.effective_config.values
+
+    @config.setter
+    def config(self, value):
+        # Compatibility: replace the programmatic layer and re-merge.
+        self._programmatic_config = dict(value or {})
+        self._effective = None
+
+    def _record_run(self, command):
+        self.metadata.record_run(
+            remakefile=self.remakefile, command=command, config=self.config)
 
     # --- registration ---
 
@@ -144,9 +240,6 @@ class Remake:
                     f'{_where(existing)} and {_where(rule)}. Rule names must be '
                     f'unique within a pipeline (rename one, or pass name=...)'
                 )
-            # Resolve tri-state strict_scope against the Remake default.
-            if rule.strict_scope is None and self.strict_scope:
-                check_scope(rule.fn, rule.uses, strict=True)
             rule.remake = self
             if existing is not None:
                 # The same function re-defined — a notebook cell or script
@@ -175,12 +268,24 @@ class Remake:
             from ..metadata.sqlite3_backend import Sqlite3Backend
 
             self.metadata = Sqlite3Backend()
+        self._check_scopes()
         self.dag = build_rule_dag(self.rules)
         self.metadata.ensure_rules(self.rules, remakefile=self.remakefile)
         self._finalized = True
         return self
 
-    def plan(self, query=None, force=False, ignore_code_changes=False):
+    def _check_scopes(self):
+        """Scope-check every rule once, now that the remakefile has fully
+        executed (see rule()); strictness is the rule's own, else the
+        Remake default."""
+        for rule in self.rules:
+            if getattr(rule, '_scope_checked', False):
+                continue
+            strict = rule.strict_scope if rule.strict_scope is not None else self.strict_scope
+            check_scope(rule.fn, rule.uses, strict=bool(strict))
+            rule._scope_checked = True
+
+    def plan(self, query=None, force=False, ignore_code_changes=False, restamp=None):
         if not self._finalized:
             self.finalize()
         # Results recorded by SLURM array elements live in sidecar files
@@ -195,6 +300,7 @@ class Remake:
             force=force,
             check_outputs=self.check_outputs,
             ignore_code_changes=ignore_code_changes,
+            restamp=restamp,
         )
 
     def explain_task(self, task):
@@ -424,6 +530,7 @@ class Remake:
                     {
                         'task': str(t),
                         'key': t.key,
+                        'rule': rule.name,
                         'timestamp': records[t.key].timestamp,
                         'exception': records[t.key].exception,
                         'log': str(task_log_path(t)),
@@ -432,11 +539,18 @@ class Remake:
                     if t.key in records and records[t.key].status == TASK_STATUS_FAILED
                 )
 
+        # Bytes of recorded outputs per rule: one aggregate query.
+        output_bytes = self.metadata.get_rule_output_bytes([r.name for r in self.rules])
+        for row in rule_rows:
+            if not row['deferred']:
+                row['output_bytes'] = output_bytes.get(row['rule'], 0)
+
         # Totals across non-deferred rules.
         tallied = [r for r in rule_rows if not r['deferred']]
         totals = {
             field: sum(r[field] for r in tallied)
-            for field in ('tasks', 'up_to_date', 'stale', 'failed', 'pending', 'to_run')
+            for field in ('tasks', 'up_to_date', 'stale', 'failed', 'pending', 'to_run',
+                          'output_bytes')
         }
         out = {'rules': rule_rows, 'totals': totals}
         if list_tasks:
@@ -467,6 +581,10 @@ class Remake:
             if task.rule.outputs is not None
             else {}
         )
+        for name, token in task.outputs.items():
+            if isinstance(token, Dir) and name in outputs:
+                # Stale files (not produced by the last run), from the manifest.
+                outputs[name]['dir'] = token.summary()
         return {
             'task': str(task),
             'rule': task.rule.name,
@@ -486,9 +604,46 @@ class Remake:
             },
             'inputs': inputs,
             'outputs': outputs,
+            # name -> {'n_files', 'total_bytes', 'checksum'} of the last
+            # successful run; '*' sums the plain file outputs.
+            'output_stats': self.metadata.get_output_stats(task),
             'log': {'path': str(log_path), 'exists': log_path.exists()},
             'slurm': {'jobids': jobids, 'array_index': array_index},
         }
+
+    def task_spec(self, task, *, uses=True):
+        """A task's fully resolved spec as a JSON-serialisable dict — the data
+        behind `remake export-task`: rule, key, kwargs, resolved input/output
+        paths, and where the rule function lives. With uses=True, also the
+        rule's `uses` (the value when JSON-serialisable, else its repr)."""
+        import json
+
+        if not self._finalized:
+            self.finalize()
+        rule = task.rule
+        fn = rule.fn
+        spec = {
+            'rule': rule.name,
+            'key': task.key,
+            'kwargs': task.kwargs,
+            'inputs': {k: str(v) for k, v in task.inputs.items()},
+            'outputs': {k: str(v) for k, v in task.outputs.items()},
+            'function': {
+                'module': getattr(fn, '__module__', None),
+                'qualname': getattr(fn, '__qualname__', None),
+            },
+            'remakefile': str(Path(self.remakefile).resolve()) if self.remakefile else None,
+        }
+        if uses:
+            def plain(value):
+                try:
+                    json.dumps(value)
+                    return value
+                except (TypeError, ValueError):
+                    return repr(value)
+
+            spec['uses'] = {k: plain(v) for k, v in rule.uses.items()}
+        return spec
 
     def rule_from_name(self, name):
         for rule in self.rules:
@@ -571,6 +726,61 @@ class Remake:
             'config': rule.config,
         }
 
+    def _dir_rules(self):
+        """Rules with a Dir output. A dict spec is read directly; only a
+        callable spec needs a task resolved to find out."""
+        found = []
+        for rule in self.rules:
+            spec = rule.outputs
+            if spec is None:
+                continue
+            if isinstance(spec, dict):
+                if any(isinstance(v, Dir) for v in spec.values()):
+                    found.append(rule)
+                continue
+            try:
+                task = next(iter_expand_rule(rule), None)
+                if task is not None and any(isinstance(v, Dir) for v in task.outputs.values()):
+                    found.append(rule)
+            except Exception:  # Defer, or a spec needing runtime state
+                continue
+        return found
+
+    def _dir_owners(self, rules):
+        """{normalised Dir path: first task declaring it}; a second task (or
+        a second output of one task) with the same Dir is a RemakeError. Rules
+        whose matrix can't be expanded yet are skipped (checked next wave)."""
+        owners = {}
+        for rule in rules:
+            try:
+                tasks = list(iter_expand_rule(rule))
+            except Exception:  # Defer, or a matrix needing runtime state
+                continue
+            for task in tasks:
+                try:
+                    outputs = task.outputs
+                except Exception:
+                    # An outputs spec that can't resolve for this task now:
+                    # run_task records that failure per task (review M11);
+                    # this check must not turn it into a crashed run.
+                    continue
+                for name, token in outputs.items():
+                    if not isinstance(token, Dir):
+                        continue
+                    path = os.path.normpath(token.path)
+                    other = owners.setdefault(path, (task, name))
+                    if other != (task, name):
+                        raise RemakeError(
+                            f'Dir {path!r} is declared by two outputs: '
+                            f'{other[0]} ({other[1]}) and {task} ({name}). '
+                            f'Each Dir belongs to exactly one task.')
+        return owners
+
+    def _check_duplicate_dirs(self):
+        rules = self._dir_rules()
+        if rules:
+            self._dir_owners(rules)
+
     def lint(self):
         """Wiring check — the data behind `remake lint`: every input of a
         dependent rule should be produced by one of its depends_on rules.
@@ -578,22 +788,33 @@ class Remake:
         {'kind', 'rule', 'other_rule', 'count', 'example'} where kind is
         'near_miss' (input matches a near-identical produced path — a likely
         typo/off-by-one), 'missing_dependency' (input is produced by a rule
-        not in depends_on) or 'external' (input produced by no rule).
-        Materialises all tasks; rules with an unresolved (deferred) matrix are
+        not in depends_on) or 'external' (input produced by no rule). An input
+        inside a rule's `Dir` counts as produced by that rule; 'dir_nested'
+        (a Dir inside another rule's Dir) and 'file_in_dir' (a plain output
+        inside another rule's Dir) are wiring errors too. Two tasks declaring
+        one Dir raise RemakeError. Materialises all tasks; rules with an unresolved (deferred) matrix are
         skipped with a warning."""
         import difflib
 
         if not self._finalized:
             self.finalize()
+        self._check_duplicate_dirs()
 
         producers = {}  # output path -> set of rule names
         rule_outputs = {}  # rule name -> [output paths]
+        dir_owner = {}  # normalised Dir path -> rule name
+        file_outputs = {}  # normalised plain output path -> rule name
         deferred = set()
         for rule in self.rules:
             paths = []
             try:
                 for task in iter_expand_rule(rule):
-                    paths.extend(str(token) for token in task.outputs.values())
+                    for token in task.outputs.values():
+                        paths.append(str(token))
+                        if isinstance(token, Dir):
+                            dir_owner[os.path.normpath(token.path)] = rule.name
+                        elif hasattr(token, '__fspath__'):
+                            file_outputs[os.path.normpath(token.path)] = rule.name
             except Defer:
                 deferred.add(rule.name)
                 logger.warning('{}: matrix not ready, outputs unknown — skipped', rule.name)
@@ -610,6 +831,28 @@ class Remake:
             )
             entry['count'] += 1
 
+        def enclosing_dir(path, *, proper=False):
+            """The nearest Dir output that contains `path` (or is it, unless
+            `proper`): (Dir path, owning rule) or None. A walk up the path's
+            parents, so cost is O(depth) per path, not a scan of all Dirs."""
+            path = os.path.normpath(path)
+            if proper:
+                path = os.path.dirname(path)
+            while path and path not in ('.', '/'):
+                if path in dir_owner:
+                    return path, dir_owner[path]
+                path = os.path.dirname(path)
+            return None
+
+        # Nesting: a Dir inside another task's Dir, or a plain file output
+        # inside a Dir, makes "everything in the Dir came from one task" false.
+        for path, owner in dir_owner.items():
+            if (outer := enclosing_dir(path, proper=True)):
+                record('dir_nested', owner, outer[1], {'dir': path, 'inside': outer[0]})
+        for path, owner in file_outputs.items():
+            if (outer := enclosing_dir(path)) and outer[1] != owner:
+                record('file_in_dir', owner, outer[1], {'file': path, 'inside': outer[0]})
+
         for rule in self.rules:
             if rule.inputs is None or rule.name in deferred:
                 continue
@@ -621,6 +864,9 @@ class Remake:
             for task in iter_expand_rule(rule):
                 for path in map(str, task.inputs.values()):
                     made_by = producers.get(path)
+                    if not made_by and dir_owner and (inside := enclosing_dir(path)):
+                        # An input inside another rule's Dir is that rule's.
+                        made_by = {inside[1]}
                     if made_by:
                         if not made_by & (dep_names | {rule.name}):
                             record('missing_dependency', rule.name, min(made_by), path)
@@ -704,12 +950,22 @@ class Remake:
         if not self._finalized:
             self.finalize()
         self.metadata.begin_invocation()  # fresh run_seq for this set-state
+        if not dry_run:
+            self._record_run('set-state')
         tasks = self.tasks(query=query)
         skipped = 0
         if check_outputs:
+            def adoptable(token):
+                # A Dir that exists without a manifest is claimed (scan and
+                # claim everything present), unless this is a dry run.
+                if isinstance(token, Dir):
+                    return token.claim(write=not dry_run)
+                return token.is_complete()
+
             verified = [
                 t for t in tasks
-                if t.outputs and all(token.is_complete() for token in t.outputs.values())
+                if t.outputs and all(adoptable(token) for token in sorted(
+                    t.outputs.values(), key=lambda tk: isinstance(tk, Dir)))
             ]
             skipped = len(tasks) - len(verified)
             tasks = verified
@@ -723,7 +979,10 @@ class Remake:
                 # no intra-batch ordering false-triggers (equal run_seq, strict >).
                 self.metadata.update_tasks(tasks + cascaded, TASK_STATUS_SUCCESS)
             else:
-                self.metadata.delete_tasks(tasks)
+                # A PENDING row, not a deleted one: the planner reruns any
+                # non-SUCCESS record, and the row keeps the last execution's
+                # measured resources (resource_capture.md, Settled 4).
+                self.metadata.mark_pending(tasks)
         return {'state': state, 'tasks': tasks, 'cascaded': cascaded, 'skipped': skipped}
 
     def _cascade_descendants(self, selected_tasks):
@@ -774,6 +1033,118 @@ class Remake:
         with run_lock(self.metadata):
             return self._run(executor, query, force, ignore_code_changes)
 
+    def missing_external_inputs(self, tasks):
+        """Inputs of `tasks` that don't exist and that no rule produces —
+        {rule name: [paths]} (each distinct path once, in first-seen order).
+        Plain paths are checked with os.path.exists, tokens with
+        is_complete(). Only inputs of the given tasks are touched, each
+        distinct path once; the (all-rules) producer set is built only if
+        something is missing. Inputs made by another rule are never
+        reported, even if absent now. Tasks that depend on a rule whose
+        matrix is still deferred are skipped (their producers are unknown),
+        as are tasks whose input spec can't be resolved yet."""
+        import os
+
+        checked = {}  # path -> exists
+        suspects = []  # (rule, path)
+        for task in tasks:
+            try:
+                values = list(task.inputs.values())
+            except Exception:
+                continue  # unresolvable here: let the task itself report it
+            for value in values:
+                path = str(value)
+                if not isinstance(value, OutputToken) and _URL_RE.match(path):
+                    continue  # a URL (s3://, https://, ...): not ours to stat
+                if isinstance(value, OutputToken) and not isinstance(value, PathToken):
+                    continue  # remote (S3Object, ...): no network calls at plan time
+                if path not in checked:
+                    try:
+                        if isinstance(value, OutputToken):
+                            checked[path] = value.is_complete()
+                        else:
+                            checked[path] = os.path.exists(path)
+                    except Exception:
+                        checked[path] = True  # can't tell: not ours to block on
+                    if not checked[path]:
+                        suspects.append((task.rule, path))
+        if not suspects:
+            return {}
+        from .tokens import Dir
+
+        def canon(p):
+            # The same file spelled two ways (relative vs absolute, `./`,
+            # a symlinked root) must match (ultrareview 2026-11-21).
+            return os.path.realpath(os.path.abspath(p))
+
+        produced = set()
+        produced_dirs = set()
+        deferred = set()
+        for rule in self.rules:
+            try:
+                for t in iter_expand_rule(rule):
+                    for tok in t.outputs.values():
+                        norm = canon(str(tok))
+                        produced.add(norm)
+                        if isinstance(tok, Dir):
+                            produced_dirs.add(norm)
+            except Exception:
+                # Deferred, or an output spec that can't be resolved now:
+                # its producers are unknown, so don't blame its consumers.
+                deferred.add(rule)
+
+        def is_produced(path):
+            norm = canon(path)
+            if norm in produced:
+                return True
+            # A file inside a rule's Dir output is produced by it (as lint
+            # treats it).
+            parent = os.path.dirname(norm)
+            while parent and parent != os.path.dirname(parent):
+                if parent in produced_dirs:
+                    return True
+                parent = os.path.dirname(parent)
+            return parent in produced_dirs
+
+        found = {}
+        seen = set()
+        for rule, path in suspects:
+            if is_produced(path) or (path, rule.name) in seen:
+                continue
+            if deferred and (nx.ancestors(self.dag, rule) & deferred):
+                continue
+            seen.add((path, rule.name))
+            found.setdefault(rule.name, []).append(path)
+        return found
+
+    def external_inputs_error(self, found, max_per_rule=5):
+        """Message for `missing_external_inputs` output (config
+        'external_inputs_hint' appended), or None if nothing is missing."""
+        if not found:
+            return None
+        total = sum(len(v) for v in found.values())
+        lines = [f'{total} input file(s) are missing and no rule produces them:']
+        for name, paths in found.items():
+            lines.append(f'  {name}: {len(paths)} missing')
+            for path in paths[:max_per_rule]:
+                lines.append(f'    {path}')
+            if len(paths) > max_per_rule:
+                lines.append(f'    ... and {len(paths) - max_per_rule} more')
+        hint = self.config.get('external_inputs_hint')
+        if hint:
+            lines.append(str(hint))
+        return '\n'.join(lines)
+
+    def _check_external_inputs(self, runnable, executor=None, dry_run=False):
+        message = self.external_inputs_error(self.missing_external_inputs(runnable))
+        if message is None:
+            return
+        if dry_run or getattr(executor, 'dry_run', False):
+            # A dry run reports the problem but still shows the plan.
+            logger.warning(message)
+            return
+        raise RemakeError(message)
+
     def _run(self, executor, query, force, ignore_code_changes):
         # One run_seq for this whole invocation (shared across replanning
         # waves); committed onto every task so downstream propagation survives
@@ -783,11 +1154,26 @@ class Remake:
             from ..executors import SingleprocExecutor
 
             executor = SingleprocExecutor(self)
+        if not getattr(executor, 'dry_run', False):
+            self._record_run('run')
+        eff = self.effective_config
+        logger.info(
+            f'Run: executor={type(executor).__name__} '
+            f'nproc={getattr(executor, "nproc", None)} '
+            f'profile={eff.profile or "none"}')
 
         def _plan():
-            return self.plan(
-                query=query, force=force, ignore_code_changes=ignore_code_changes
+            self._check_duplicate_dirs()
+            # Records stored by remake <= 0.9.0a1 that still match are
+            # re-pointed at the 0.9 renderings, once (core/canonical.py).
+            restamp = {}
+            planned = self.plan(
+                query=query, force=force, ignore_code_changes=ignore_code_changes,
+                restamp=restamp,
             )
+            if restamp:
+                self.metadata.restamp_codes(restamp)
+            return planned
 
         if executor.handles_deferred:
             # Asynchronous executors (SLURM) get the whole plan in one call;
@@ -796,6 +1182,7 @@ class Remake:
             if not runnable and not deferred:
                 logger.info('Nothing to do')
                 return 0
+            self._check_external_inputs(runnable, executor)
             return executor.run_tasks(runnable, deferred) or 0
 
         nfailed = 0
@@ -822,6 +1209,10 @@ class Remake:
                             self.blocked_rules.append(rule)
                             logger.error(f'Blocked rule {rule.name}: {_blocked_reason(rule)}')
                 break
+            if wave == 0:
+                # First wave only: later waves' inputs come from earlier ones
+                # (a failed upstream must not read as a missing external).
+                self._check_external_inputs(runnable, executor)
             wave += 1
             logger.bind(event='wave', wave=wave, ntasks=len(runnable)).debug(
                 'wave {}: running {} task(s)', wave, len(runnable))
@@ -870,6 +1261,7 @@ class Remake:
             for token in task.outputs.values():
                 if hasattr(token, '__fspath__'):
                     Path(token).parent.mkdir(parents=True, exist_ok=True)
+                token.before_run()
 
             fn = exec_function(task.rule.fn, task.rule.uses)
             args = []
@@ -893,6 +1285,7 @@ class Remake:
                 # sys.exit(0.0) or sys.exit('msg') exit 1.
                 if not (exc.code is None or (isinstance(exc.code, int) and exc.code == 0)):
                     raise
+            output_stats = self._check_outputs_after_run(task)
         except (Exception, SystemExit) as exc:
             # SystemExit from task code (a CLI main() calling sys.exit) is a
             # task failure, not a request to end the run (review H6).
@@ -927,4 +1320,26 @@ class Remake:
                     key=task.key, seconds=round(elapsed, 6),
                     **_resource_fields(resources),
                     ).debug('completed {} in {:.2f}s', task, elapsed)
-        self.metadata.update_task(task, TASK_STATUS_SUCCESS, resources=resources)
+        # Always passed (an empty dict clears the last run's stats), except to
+        # a third-party backend whose update_task predates the keyword.
+        extra = ({'output_stats': output_stats}
+                 if _accepts_output_stats(self.metadata) else {})
+        self.metadata.update_task(task, TASK_STATUS_SUCCESS, resources=resources, **extra)
+
+    def _check_outputs_after_run(self, task):
+        """Validate a successful task's outputs (`Ensure`), then collect
+        their stats: {output name: {'n_files', 'total_bytes', 'checksum'}}.
+        A failed check raises OutputValidationError (the task fails)."""
+        problems = [f'{name}: {msg}' for name, token in task.outputs.items()
+                    if (msg := token.validate())]
+        if problems:
+            raise OutputValidationError(
+                f'{task}: output check(s) failed:\n  ' + '\n  '.join(problems))
+        checksum = bool(task.rule.config.get(
+            'checksum_outputs', self.config.get('checksum_outputs', False)))
+        stats = {}
+        for name, token in task.outputs.items():
+            st = token.after_success(checksum=checksum)
+            if st is not None:
+                stats[name] = st
+        return stats

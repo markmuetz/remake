@@ -8,6 +8,7 @@ tasks, 99.8% of it duplicated uses text) and made status queries scale with
 task count (design_docs/records/logs_analysis/README.md). Older DBs are migrated in
 place by `_add_missing_columns`.
 """
+import dataclasses
 import json
 import random
 import sqlite3
@@ -19,9 +20,30 @@ from loguru import logger
 from ..core.exceptions import RemakeError
 from ..core.scope import io_hash as compute_io_hash
 from ..core.scope import raw_uses_parts
-from ..core.scope import uses_hash as compute_uses_hash
+from ..core.scope import rule_uses_hash
 from ..util.code_compare import CodeComparer
-from .metadata_manager import MetadataManager, TaskRecord
+from .metadata_manager import (TASK_STATUS_PENDING, TASK_STATUS_SUCCESS, MetadataManager,
+                               TaskRecord)
+
+# On-disk schema version, stored in the SQLite header (`PRAGMA user_version`)
+# as MAJOR * 1000 + MINOR (0.9.0 item 3). 0 is every DB written before 0.9.0:
+# it is migrated in place and stamped.
+#
+# - MINOR changes are additive (a nullable column, a new table): an older
+#   remake of the same MAJOR may still open the DB and simply ignores them.
+# - MAJOR changes are not: a DB of a newer MAJOR than this code knows is
+#   refused with an upgrade hint, since this version would misread or clobber
+#   what it stores.
+#
+# Bump on every change to SQL_SCHEMA or _add_missing_columns, and add the
+# migration step there. Sidecars and job specs carry their own "v" field.
+SCHEMA_MAJOR = 1
+SCHEMA_MINOR = 0
+SCHEMA_VERSION = SCHEMA_MAJOR * 1000 + SCHEMA_MINOR
+
+
+def split_schema_version(user_version):
+    return divmod(user_version, 1000)
 
 SQL_SCHEMA = """
 CREATE TABLE code (
@@ -76,6 +98,10 @@ CREATE TABLE task (
     cpu_s REAL,
     max_rss_bytes INTEGER,
     rss_method TEXT,
+    -- core.task.paths_digest of the resolved input/output paths the task
+    -- last ran with (review 2026-09-24 M8): a fan-in whose callable spec
+    -- now resolves to fewer/other paths reruns. NULL = not recorded.
+    paths_digest TEXT,
     PRIMARY KEY (id),
     FOREIGN KEY(rule_id) REFERENCES rule (id),
     FOREIGN KEY(run_code_id) REFERENCES code (id),
@@ -100,6 +126,31 @@ CREATE TABLE uses_manifest (
     PRIMARY KEY (uses_code_id, name),
     FOREIGN KEY(uses_code_id) REFERENCES code (id),
     FOREIGN KEY(code_id) REFERENCES code (id)
+);
+
+-- Output stats of a task's last successful execution (0.9.0 items 4/5):
+-- one row per Dir output or checksummed output, and one row named '*'
+-- summing a task's other (plain file) outputs, so a 1e4-task x 100-file
+-- pipeline adds 1e4 rows, not 1e6. checksum: sha256 hex, opt-in.
+CREATE TABLE output_stat (
+    task_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    n_files INTEGER,
+    total_bytes INTEGER,
+    checksum TEXT,
+    PRIMARY KEY (task_id, name),
+    FOREIGN KEY(task_id) REFERENCES task (id)
+);
+
+-- One row per invocation that wrote (run/set-state): when, from which
+-- remakefile, and the effective merged configuration it ran with (JSON) —
+-- reproducibility, and the anchor for 0.10's provenance capture.
+CREATE TABLE run (
+    run_seq INTEGER NOT NULL PRIMARY KEY,
+    started TIMESTAMP NOT NULL,
+    remakefile TEXT,
+    command TEXT,
+    config TEXT
 );
 
 -- Key/value store. run_seq: a monotonic counter, one value allocated per
@@ -205,6 +256,33 @@ def retry_lock_commit(fn):
     return inner
 
 
+
+def _config_json(config):
+    """The config as JSON for the run record. Provenance must never fail a
+    command: keys JSON can't take (tuples, enums) or can't sort (mixed int
+    and str) are stringified (ultrareview 2026-11-21)."""
+    try:
+        return json.dumps(config, sort_keys=True, default=repr)
+    except (TypeError, ValueError):
+        def norm(v):
+            if isinstance(v, dict):
+                return {str(k): norm(x) for k, x in v.items()}
+            if isinstance(v, (list, tuple)):
+                return [norm(x) for x in v]
+            return v
+        try:
+            return json.dumps(norm(config), sort_keys=True, default=repr)
+        except (TypeError, ValueError):
+            return None
+
+class _KeyOnly:
+    """Stand-in task for a lookup by key alone."""
+    legacy_key = None
+
+    def __init__(self, key):
+        self.key = key
+
+
 class Sqlite3Backend(MetadataManager):
     def __init__(self, dbloc='.remake/remake.db'):
         self.dbloc = str(dbloc)
@@ -275,6 +353,16 @@ class Sqlite3Backend(MetadataManager):
         conn.isolation_level = None  # explicit transaction control below
         _retry_locked(lambda: conn.execute('BEGIN EXCLUSIVE'), 'opening the database')
         try:
+            (found_version,) = conn.execute('PRAGMA user_version').fetchone()
+            found_major, found_minor = split_schema_version(found_version)
+            if found_major > SCHEMA_MAJOR:
+                raise RemakeError(
+                    f'{self.dbloc} was written by a newer remake (schema '
+                    f'{found_major}.{found_minor}; this remake understands '
+                    f'{SCHEMA_MAJOR}.x). Upgrade remake to use it (e.g. '
+                    f'`pip install -U remake` or `uv add remake@latest`): this '
+                    f'version would misread or overwrite what it stores.'
+                )
             tables = {row[0] for row in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'")}
             if 'task' not in tables and self.dbloc != ':memory:':
@@ -284,6 +372,13 @@ class Sqlite3Backend(MetadataManager):
             for stmt in _schema_statements():
                 conn.execute(stmt)
             needs_vacuum = self._add_missing_columns()
+            # Never stamp *down*: a newer minor's additive changes stay valid.
+            if found_version < SCHEMA_VERSION:
+                if found_version and 'task' in tables:
+                    logger.info(f'Upgrading database schema {found_version} -> '
+                                f'{SCHEMA_VERSION}')
+                # Transactional: rolls back with the migration if it fails.
+                conn.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
             conn.execute('COMMIT')
         except BaseException:
             # SQLite may already have rolled back by itself (disk full, I/O
@@ -320,7 +415,8 @@ class Sqlite3Backend(MetadataManager):
         # Resource-capture columns (0.9.0). Additive and nullable: an existing
         # DB gains NULLs and nothing reruns.
         for col, coltype in (('wall_s', 'REAL'), ('cpu_s', 'REAL'),
-                             ('max_rss_bytes', 'INTEGER'), ('rss_method', 'TEXT')):
+                             ('max_rss_bytes', 'INTEGER'), ('rss_method', 'TEXT'),
+                             ('paths_digest', 'TEXT')):
             if col not in cols:
                 logger.info(f'Adding task.{col} column to existing DB')
                 self.conn.execute(f'ALTER TABLE task ADD COLUMN {col} {coltype}')
@@ -339,6 +435,17 @@ class Sqlite3Backend(MetadataManager):
                 '    uses_code_id INTEGER NOT NULL, name VARCHAR(200) NOT NULL, '
                 '    code_id INTEGER NOT NULL, kind VARCHAR(10) NOT NULL, '
                 '    PRIMARY KEY (uses_code_id, name))')
+        if 'output_stat' not in tables:
+            logger.info('Adding output_stat table to existing DB')
+            self.conn.execute(
+                'CREATE TABLE output_stat (task_id INTEGER NOT NULL, name TEXT NOT NULL, '
+                'n_files INTEGER, total_bytes INTEGER, checksum TEXT, '
+                'PRIMARY KEY (task_id, name))')
+        if 'run' not in tables:
+            logger.info('Adding run table to existing DB')
+            self.conn.execute(
+                'CREATE TABLE run (run_seq INTEGER NOT NULL PRIMARY KEY, '
+                'started TIMESTAMP NOT NULL, remakefile TEXT, command TEXT, config TEXT)')
         if 'meta' not in tables:
             logger.info('Adding meta table to existing DB')
             self.conn.execute(
@@ -410,6 +517,28 @@ class Sqlite3Backend(MetadataManager):
             self._run_seq = self._allocate_run_seq()
         return self._run_seq
 
+    @retry_lock_commit
+    def _record_run(self, run_seq, remakefile, command, config_json):
+        self.conn.execute(
+            "INSERT OR REPLACE INTO run(run_seq, started, remakefile, command, config) "
+            "VALUES (?, datetime('now'), ?, ?, ?)",
+            (run_seq, remakefile, command, config_json))
+
+    def record_run(self, *, remakefile=None, command=None, config=None):
+        self._record_run(self.current_run_seq(), remakefile, command,
+                         _config_json(config) if config is not None else None)
+
+    def get_run(self, run_seq):
+        row = self.conn.execute(
+            'SELECT run_seq, started, remakefile, command, config FROM run '
+            'WHERE run_seq = ?', (run_seq,)).fetchone()
+        if row is None:
+            return None
+        keys = ('run_seq', 'started', 'remakefile', 'command', 'config')
+        rec = dict(zip(keys, row))
+        rec['config'] = json.loads(rec['config']) if rec['config'] else None
+        return rec
+
     def _insert_code(self, code):
         cur = self.conn.execute('INSERT INTO code(code) VALUES (?)', (code,))
         return cur.lastrowid
@@ -442,6 +571,28 @@ class Sqlite3Backend(MetadataManager):
                 'VALUES (?, ?, ?, ?)',
                 (uses_code_id, name, self._intern_code(raw), kind))
 
+    @retry_lock_commit
+    def restamp_codes(self, restamp):
+        for (rule, kind), old_ids in restamp.items():
+            if rule.name not in self.rule_ids or not old_ids:
+                continue
+            if kind == 'paths':
+                # Backfill: {task key: digest} for records predating it.
+                self.conn.executemany(
+                    'UPDATE task SET paths_digest = ? WHERE key = ? AND paths_digest IS NULL',
+                    [(d, k) for k, d in old_ids.items() if d is not None])
+                continue
+            rule_id, _, uses_code_id, io_code_id = self.rule_ids[rule.name]
+            column, new_id = (('uses_code_id', uses_code_id) if kind == 'uses'
+                              else ('io_code_id', io_code_id))
+            old = sorted(old_ids)
+            placeholders = ','.join('?' * len(old))
+            cur = self.conn.execute(
+                f'UPDATE task SET {column} = ? WHERE rule_id = ? '
+                f'AND {column} IN ({placeholders})', [new_id, rule_id, *old])
+            logger.debug('restamped {} {} record(s) of {} to the 0.9 rendering',
+                         cur.rowcount, kind, rule.name)
+
     def get_uses_manifest(self, uses_code_id):
         rows = self.conn.execute(
             'SELECT m.name, c.code, m.kind '
@@ -460,7 +611,7 @@ class Sqlite3Backend(MetadataManager):
         # Current uses/io state, interned once per rule per invocation: tasks
         # committed this invocation point at these ids, and the planner
         # detects change by comparing a record's stored ids against them.
-        uses_code_id = self._intern_code(compute_uses_hash(rule.uses))
+        uses_code_id = self._intern_code(rule_uses_hash(rule))
         io_code_id = self._intern_code(compute_io_hash(rule))
         self._ensure_uses_manifest(uses_code_id, rule.uses)
         if row is None:
@@ -545,6 +696,7 @@ class Sqlite3Backend(MetadataManager):
         # ids; callers resolve the few distinct ones via get_codes.
         start = perf_counter()
         records = {}
+        tasks = list(tasks)
         keys = [task.key for task in tasks]
         nchunks = (len(keys) + self.SELECT_CHUNK - 1) // self.SELECT_CHUNK
         for i in range(0, len(keys), self.SELECT_CHUNK):
@@ -553,13 +705,13 @@ class Sqlite3Backend(MetadataManager):
             rows = self.conn.execute(
                 'SELECT key, last_run_status, last_run_timestamp, '
                 '       run_code_id, uses_code_id, io_code_id, run_seq, exception, '
-                '       wall_s, cpu_s, max_rss_bytes, rss_method '
+                '       wall_s, cpu_s, max_rss_bytes, rss_method, paths_digest '
                 f'FROM task WHERE key IN ({placeholders})',
                 chunk,
             ).fetchall()
             for (key, status, timestamp, run_code_id, uses_code_id,
                  io_code_id, run_seq, exception,
-                 wall_s, cpu_s, max_rss_bytes, rss_method) in rows:
+                 wall_s, cpu_s, max_rss_bytes, rss_method, paths_digest) in rows:
                 records[key] = TaskRecord(
                     key=key,
                     status=status,
@@ -575,7 +727,18 @@ class Sqlite3Backend(MetadataManager):
                     cpu_s=cpu_s,
                     max_rss_bytes=max_rss_bytes,
                     rss_method=rss_method,
+                    paths_digest=paths_digest,
                 )
+        # Records stored under a pre-canonical key (M19: numpy/enum matrix
+        # values) are found under that key and returned under the new one;
+        # the next commit of the task re-keys the row (_upsert_task).
+        legacy = {t.legacy_key: t.key for t in tasks
+                  if t.legacy_key and t.key not in records}
+        if legacy:
+            found = self.get_tasks_status(
+                [_KeyOnly(k) for k in legacy])
+            for old_key, rec in found.items():
+                records[legacy[old_key]] = dataclasses.replace(rec, key=legacy[old_key])
         elapsed = perf_counter() - start
         # ~1857 of these dominated a field DEBUG log (logs_analysis §3.3):
         # only slow outliers earn DEBUG; the rest are TRACE. Fields are bound
@@ -665,21 +828,23 @@ class Sqlite3Backend(MetadataManager):
             # A sidecar always records an execution, so its resources replace
             # the columns verbatim (a pre-0.9 sidecar has none: NULLs).
             res = payload.get('resources') or {}
-            self.conn.execute(
+            cur = self.conn.execute(
                 'INSERT INTO task(key, rule_id, run_code_id, uses_code_id, io_code_id, '
                 '                 run_seq, last_run_timestamp, last_run_status, exception, '
-                '                 wall_s, cpu_s, max_rss_bytes, rss_method) '
-                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
+                '                 wall_s, cpu_s, max_rss_bytes, rss_method, paths_digest) '
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
                 'ON CONFLICT(key) DO UPDATE SET '
                 '    run_code_id = excluded.run_code_id, '
                 '    uses_code_id = excluded.uses_code_id, '
                 '    io_code_id = excluded.io_code_id, '
-                '    run_seq = excluded.run_seq, '
+                # NULL (mark_pending): keep the stored run_seq.
+            '    run_seq = COALESCE(excluded.run_seq, run_seq), '
                 '    last_run_timestamp = excluded.last_run_timestamp, '
                 '    wall_s = excluded.wall_s, '
                 '    cpu_s = excluded.cpu_s, '
                 '    max_rss_bytes = excluded.max_rss_bytes, '
                 '    rss_method = excluded.rss_method, '
+                '    paths_digest = excluded.paths_digest, '
                 '    last_run_status = excluded.last_run_status, '
                 '    exception = excluded.exception '
                 # Never let an older result overwrite a newer one (review
@@ -714,23 +879,71 @@ class Sqlite3Backend(MetadataManager):
                     res.get('cpu_s'),
                     res.get('max_rss_bytes'),
                     res.get('rss_method'),
+                    payload.get('paths_digest'),
                 ),
             )
+            # Only when the sidecar's result was applied (not an older one
+            # the run_seq guard skipped); a successful result's stats replace
+            # the last run's.
+            if cur.rowcount and payload['status'] == TASK_STATUS_SUCCESS and 'output_stats' in payload:
+                self._write_output_stats(key, payload['output_stats'])
 
-    def update_task(self, task, status, exception='', resources=None):
+    def update_task(self, task, status, exception='', resources=None, output_stats=None):
         # Allocate run_seq (own txn) before opening the upsert's EXCLUSIVE txn.
         self._commit_updates(
-            [task], status, exception, self.current_run_seq(), resources)
+            [task], status, exception, self.current_run_seq(), resources, output_stats)
+
+    def _write_output_stats(self, key, output_stats):
+        (task_id,) = self.conn.execute('SELECT id FROM task WHERE key = ?', (key,)).fetchone()
+        self.conn.execute('DELETE FROM output_stat WHERE task_id = ?', (task_id,))
+        rows, plain_n, plain_bytes = [], 0, 0
+        for name, st in sorted(output_stats.items()):
+            if st.get('checksum') is None and not st.get('dir'):
+                plain_n += st.get('n_files') or 0
+                plain_bytes += st.get('total_bytes') or 0
+                continue
+            rows.append((task_id, name, st.get('n_files'), st.get('total_bytes'),
+                         st.get('checksum')))
+        if plain_n:
+            rows.append((task_id, '*', plain_n, plain_bytes, None))
+        self.conn.executemany(
+            'INSERT INTO output_stat(task_id, name, n_files, total_bytes, checksum) '
+            'VALUES (?, ?, ?, ?, ?)', rows)
+
+    def get_output_stats(self, task):
+        rows = self.conn.execute(
+            'SELECT s.name, s.n_files, s.total_bytes, s.checksum FROM output_stat s '
+            'JOIN task t ON s.task_id = t.id WHERE t.key = ?', (task.key,))
+        return {name: {'n_files': n, 'total_bytes': b, 'checksum': c}
+                for name, n, b, c in rows}
+
+    def get_rule_output_bytes(self, rules):
+        wanted = set(rules)
+        rows = self.conn.execute(
+            'SELECT r.name, SUM(s.total_bytes) FROM output_stat s '
+            'JOIN task t ON s.task_id = t.id JOIN rule r ON t.rule_id = r.id '
+            'GROUP BY r.name')
+        return {name: total or 0 for name, total in rows if name in wanted}
 
     def update_tasks(self, tasks, status, exception=''):
         self._commit_updates(tasks, status, exception, self.current_run_seq())
 
     @retry_lock_commit
-    def _commit_updates(self, tasks, status, exception, run_seq, resources=None):
+    def _commit_updates(self, tasks, status, exception, run_seq, resources=None,
+                        output_stats=None):
         # One EXCLUSIVE transaction for the lot (bulk state changes:
         # set-state, migration adoption).
         for task in tasks:
             self._upsert_task(task, status, exception, run_seq, resources)
+            if output_stats is not None:
+                self._write_output_stats(task.key, output_stats)
+
+    def mark_pending(self, tasks):
+        """set-state --pending: PENDING, keeping each record's run_seq. A
+        fresh run_seq would make the planner's cross-run backstop rerun
+        up-to-date downstream tasks, though nothing upstream ran
+        (ultrareview 2026-11-21)."""
+        self._commit_updates(tasks, TASK_STATUS_PENDING, '', None)
 
     @retry_lock_commit
     def delete_tasks(self, tasks):
@@ -746,6 +959,14 @@ class Sqlite3Backend(MetadataManager):
         # per-task compute_uses_hash was 1e6 AST renders on a big run).
         rule_id, run_code_id, uses_code_id, io_code_id = self.rule_ids[task.rule.name]
         res = resources or {}
+        if getattr(task, 'legacy_key', None):
+            # Re-key a record stored under the task's pre-canonical key (M19).
+            self.conn.execute(
+                'UPDATE task SET key = ? WHERE key = ? AND NOT EXISTS '
+                '(SELECT 1 FROM task WHERE key = ?)',
+                (task.key, task.legacy_key, task.key))
+        from ..core.task import paths_digest
+        digest = paths_digest(task)
         # An execution replaces all four resource columns verbatim, NULLs
         # included, so a fresh wall_s is never left paired with a peak RSS
         # from an earlier run. A bulk state change (resources=None) measured
@@ -760,8 +981,8 @@ class Sqlite3Backend(MetadataManager):
         self.conn.execute(
             'INSERT INTO task(key, rule_id, run_code_id, uses_code_id, io_code_id, '
             '                 run_seq, last_run_timestamp, last_run_status, exception, '
-            '                 wall_s, cpu_s, max_rss_bytes, rss_method) '
-            "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?) "
+            '                 wall_s, cpu_s, max_rss_bytes, rss_method, paths_digest) '
+            "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?) "
             'ON CONFLICT(key) DO UPDATE SET '
             '    run_code_id = excluded.run_code_id, '
             '    uses_code_id = excluded.uses_code_id, '
@@ -769,6 +990,7 @@ class Sqlite3Backend(MetadataManager):
             '    run_seq = excluded.run_seq, '
             "    last_run_timestamp = datetime('now'), "
             f'{resource_update}'
+            '    paths_digest = excluded.paths_digest, '
             '    last_run_status = excluded.last_run_status, '
             '    exception = excluded.exception',
             (
@@ -784,5 +1006,6 @@ class Sqlite3Backend(MetadataManager):
                 res.get('cpu_s'),
                 res.get('max_rss_bytes'),
                 res.get('rss_method'),
+                digest,
             ),
         )

@@ -207,9 +207,13 @@ def rule(
     def decorator(fn):
         uses_ = dict(uses) if uses else {}
         _validate_signature(fn, inputs, outputs, matrix)
-        # Rule-level strict_scope=True errors now; None defers strictness to
-        # registration (warnings are still emitted now).
-        check_scope(fn, uses_, strict=bool(strict_scope))
+        # Rule-level strict_scope=True errors now, on what is defined so far.
+        # The full check — warning, or error under strict — runs when the
+        # pipeline is finalized, once the whole remakefile has executed, so
+        # helpers and constants defined *below* the rule are checked too
+        # (review 2026-09-24 M2).
+        if strict_scope:
+            check_scope(fn, uses_, strict=True)
         check_shadowing(fn, uses_)
         rule_obj = Rule(
             fn=fn,

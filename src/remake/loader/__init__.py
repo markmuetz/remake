@@ -30,12 +30,25 @@ def load_module(local_filename: Union[str, Path], module_attrs=None):
     # name — a remakefile called json.py must not break stdlib imports.
     if module_name not in sys.modules:
         sys.modules[module_name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except ModuleNotFoundError as e:
+        # A missing package is a setup problem, not a remake bug: report it
+        # as a clean error (exit 2), with the traceback at DEBUG. Other
+        # ImportErrors (circular imports, `cannot import name` deep in user
+        # code) keep their traceback.
+        from loguru import logger
+
+        from ..core.exceptions import RemakeLoadError
+
+        logger.opt(exception=e).debug('importing {} failed', local_filename)
+        raise RemakeLoadError(
+            f'could not import remakefile {local_filename}: {type(e).__name__}: {e}') from e
 
     return module
 
 
-def load_remake(filename, finalize=True):
+def load_remake(filename, finalize=True, profile=None):
     """Load a pipeline file and return its Remake instance."""
     # Avoids circular import.
     from ..core.exceptions import RemakeLoadError
@@ -60,6 +73,9 @@ def load_remake(filename, finalize=True):
     # The path the user refers to this pipeline by — executors that generate
     # scripts re-invoking remake (SLURM) need it.
     rmk.remakefile = str(filename)
+    # Merge the config cascade once, with remake.toml from the remakefile's
+    # directory (before finalize: nothing may read a stale config).
+    rmk.resolve_config((Path.cwd() / filename).parent, profile=profile)
     if finalize:
         rmk.finalize()
     return rmk

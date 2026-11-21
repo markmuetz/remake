@@ -2,6 +2,8 @@ from .version import __version__
 
 from .core import (
     Defer,
+    Dir,
+    Ensure,
     FileToken,
     OutputToken,
     PathToken,

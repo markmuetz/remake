@@ -1,11 +1,31 @@
 # Directory outputs (`Dir` token)
 
-> **Status: design agreed in discussion (MM + Claude, 2026-07-14); not yet
-> implemented.** Target release: 0.9.0 (new API — barred from the 0.8.x
-> patch lane by [compatibility.md](../compatibility.md)); folded into the
-> scoped 0.9.0 alongside resource capture and output validation, with which
-> it dovetails ([releases/v0.9.0.md](../releases/v0.9.0.md)).
-> Class: **Design** — decisions below are settled unless marked open.
+> **Status: Implemented (0.9.0).** Class: **Design**. Deviations from the
+> text below, all small:
+>
+> - The example is `ex14_dir_outputs.py` (ex13 became the rule-factory
+>   example).
+> - `output_stat` has a `checksum` column and a Dir gets its own row
+>   (`dir: True` in the stats passed to `update_task`); the DB figures are the
+>   *produced* files only. Stale counts live in the manifest and appear in
+>   `task-info`.
+> - The "Dir equal to or containing a declared input of another rule" lint
+>   check is realised through the prefix matching of inputs: an input inside
+>   another rule's Dir counts as produced by that rule, so it is reported as
+>   `missing_dependency` when the rule is not in `depends_on`. Inside a
+>   correctly wired dependency it is (rightly) not an error. `lint` also
+>   reports `dir_nested` and `file_in_dir`.
+> - The duplicate-Dir check runs when running (each planning wave, over the
+>   rules that have a Dir output only) and in `lint`, not in `plan()`.
+> - `info` has the per-rule output size as `output_bytes` in `--json` and a
+>   `--sizes` column in the table (the default table is unchanged).
+> - Adoption (`set-state --check-outputs`) writes the manifest but not an
+>   `output_stat` row, so an adopted task has no size stats until it next
+>   runs; `task-info` still shows the manifest's counts.
+> - "Produced" allows 20 ms of slack between the task's start clock and a
+>   file's mtime (coarse kernel timestamps).
+> - Target release: 0.9.0, with resource capture and output validation
+>   ([releases/v0.9.0.md](../releases/v0.9.0.md)).
 >
 > *Milestones and 0.9.0 item numbers in the body are as of writing; the
 > 2026-09-24 re-plan ([roadmap.md](../roadmap.md),

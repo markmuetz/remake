@@ -15,7 +15,9 @@
 from pathlib import Path
 from remake import Remake, rule
 
-rmk = Remake()
+rmk = Remake(config={
+    'external_inputs_hint': 'Run make_example_data.py from this directory first to generate the example inputs.',
+})
 
 SITES = ['oxford', 'cambridge', 'bristol']
 YEARS = list(range(2010, 2021))

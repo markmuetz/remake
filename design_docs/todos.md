@@ -57,6 +57,18 @@ All items shipped; archived verbatim in
   (bench_field_scale: 1e4 completions in 0.08 s). Only worth revisiting
   if per-task commit latency shows up on NFS in the field.
 
+## Open from the 0.9.0 work (2026-11-21)
+
+- [ ] `rules_from_current_module()` misses rules held in module-level
+  lists/dicts (documented; field note 2). Consider a warning when a module
+  holds Rules in containers that weren't registered.
+- [ ] Two environment reports: `executors/slurm_executor.environment_report`
+  (submit-script header lines) and `envcheck.environment_report` (check-env,
+  structured). Merge into one when either changes.
+- [ ] Bug 02 (task-info crash on non-path input values) and review L2
+  (list-valued io entries stringified) are still open; DSL-adjacent, so
+  decide before 1.0.
+
 ## Smaller debts
 
 - [ ] **Definition-vs-visibility for namespace scans** (found designing
@@ -109,7 +121,7 @@ and rationale: [slurm_already_running.md](designs/slurm_already_running.md)).
 
 ## UX
 
-- [ ] **Missing external inputs: fail fast with a hint** (scoped as
+- [x] **Missing external inputs: fail fast with a hint** (done 2026-11-21, 0.9.0) (scoped as
   0.9.0 item 6, spec in
   [releases/v0.9.0.md](releases/v0.9.0.md)): running a
   pipeline whose ungenerated/unfetched external inputs are missing
@@ -117,7 +129,7 @@ and rationale: [slurm_already_running.md](designs/slurm_already_running.md)).
   2026-07-10 examples session) instead of one pre-run list plus the
   remakefile's `external_inputs_hint`.
 
-- [ ] Run-start observability (lesser remainder of the 2026-07-02
+- [x] Run-start observability (done 2026-11-21: executor/nproc/profile logged and the effective config recorded per run) (lesser remainder of the 2026-07-02
   observability work, main asks archived): log chosen executor/nproc/config
   at run start; the direct-DB-write-vs-sidecar decision and per-task
   `update_task` are unlogged (trace would suffice).

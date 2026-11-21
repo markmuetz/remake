@@ -1,0 +1,18 @@
+# Shipped remake profile: JASMIN LOTUS2 defaults.
+#
+# NOTE: the *contents* of shipped profiles are outside remake's compatibility
+# guarantee. They track the cluster (partitions, QoS names and limits change)
+# and may be updated in any release. The file format and the profile
+# mechanism are what is stable.
+#
+# It deliberately does not set `account`: that is per-user. Put it in your
+# user file, ~/.config/remake/config.toml:
+#
+#     [slurm]
+#     account = "my_group_workspace"
+
+[slurm]
+partition = "standard"
+qos = "standard"
+time = "4:00:00"
+mem = "4G"
