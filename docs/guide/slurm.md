@@ -55,6 +55,32 @@ Symptom of getting this wrong: every element fails immediately with exit code
 package is only on `PYTHONPATH` (a dev checkout), the `remake` executable is
 still resolved from `PATH` — install both into the env you submit from.
 
+With pixi, a `PYTHONPATH` set *outside* `pixi run` is silently replaced by the
+environment's activation, so jobs can import a different checkout of your
+package than the one you planned with. Set it inside the run:
+
+```bash
+pixi run -e myenv env PYTHONPATH=$PWD remake run pipeline.py -E slurm
+```
+
+Before submitting thousands of tasks, check what a job will import:
+
+```bash
+remake check-env pipeline.py          # job side runs locally, in a fresh subprocess
+remake check-env pipeline.py --srun   # job side runs on a compute node
+```
+
+`check-env` loads the remakefile, then starts a fresh `remake` (resolved from
+`PATH`, with your environment exported and the remakefile's directory as the
+working directory, as a job would) and compares the two: Python executable
+and version, remake's version and file, and the file and version of every
+project module or package the remakefile imported. It prints `OK` lines and
+one `MISMATCH` line per difference, and exits 0 if all match, 1 on any
+mismatch (including `remake` missing from `PATH`), 2 on usage errors. `--json`
+prints both reports and the list of mismatches. `--srun` wraps the job-side
+command in `srun --ntasks=1 --time=00:05:00` (plus `partition`, `account` and
+`qos` from the `slurm` config), so it needs a free slot on the cluster.
+
 The job also reloads the remakefile, so anything it does at import time (e.g.
 scanning input directories to build a matrix) happens again in every element.
 

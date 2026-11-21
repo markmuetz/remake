@@ -359,6 +359,22 @@ class RemakeCLI:
                 Arg('--json', help='Machine-readable output', action='store_true'),
             ],
         },
+        'check-env': {
+            'help': 'Check a SLURM job would import the same code as this process',
+            'args': [
+                Arg('remakefile'),
+                Arg('--srun', action='store_true',
+                    help='Run the job-side check on a compute node via srun'),
+                Arg('--json', help='Machine-readable output', action='store_true'),
+            ],
+        },
+        '_env-report': {
+            'help': argparse.SUPPRESS,  # internal: used by check-env
+            'args': [
+                Arg('remakefile'),
+                Arg('--json', action='store_true'),
+            ],
+        },
         'version': {
             'help': 'Print remake version',
             'args': [],
@@ -943,6 +959,28 @@ class RemakeCLI:
             )
             reasons = f'  [{", ".join(row["reasons"])}]' if row['reasons'] else ''
             print(f'{row["rule"]:<20} job {row["jobid"]:<12} {states}{reasons}')
+
+    def remake_check_env(self, args):
+        from . import envcheck
+
+        rmk = self._load(args)
+        local = envcheck.environment_report()
+        job, error = envcheck.job_report(
+            args.remakefile, args.srun, rmk.config.get('slurm', {})
+        )
+        mismatches = envcheck.compare_reports(local, job, error)
+        if args.json:
+            print(json.dumps({'planning': local, 'job': job,
+                              'mismatches': mismatches}, indent=1))
+        else:
+            print(envcheck.format_text(local, job, mismatches))
+        return 1 if mismatches else 0
+
+    def remake__env_report(self, args):
+        from . import envcheck
+
+        self._load(args)
+        print(json.dumps(envcheck.environment_report()))
 
     def remake_version(self, args):
         print(__version__)

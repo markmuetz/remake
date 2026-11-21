@@ -31,6 +31,7 @@ These go *before* the command name (`remake -D run pipeline.py`):
 | `lint` | Check input/output wiring between rules |
 | `rule-dag` | Print the rule dependency DAG in topological order |
 | `slurm-status` | Live SLURM queue state of the last submission, per rule |
+| `check-env` | Check a SLURM job would import the same code as this process (`--srun`, `--json`) |
 | `resubmit` | Re-execute `.remake/submit.sh` without replanning |
 | `version` | Print remake version |
 

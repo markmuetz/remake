@@ -15,6 +15,14 @@ timestamp. Add `--all-failures` to list every failed task individually instead
 of grouping. `remake info pipeline.py --reasons` gives the complementary view:
 a per-rule tally of *why* the to-run tasks would rerun.
 
+## Jobs import the wrong code
+
+If SLURM tasks fail with errors your local run doesn't show (a missing
+function, an old version of your package), the job probably imported a
+different copy of it. `remake check-env pipeline.py [--srun]` compares what the
+remakefile imports locally with what a fresh job-style process imports, and
+reports each difference; see [SLURM](slurm.md#the-job-environment).
+
 ## Why did (or didn't) a task run?
 
 ```bash
