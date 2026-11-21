@@ -37,8 +37,13 @@ What a tag does and doesn't do:
 ## Tagging and publishing
 
 7. `git tag -a vX.Y.Z -m "remake X.Y.Z"` and `git push origin vX.Y.Z`.
-8. Watch the release workflow (`gh run watch`) and check that the version
-   is on PyPI: `https://pypi.org/project/remake/X.Y.Z/`.
+8. **The PyPI job waits for MM's approval**: the `pypi` environment has a
+   required reviewer. Tell MM as soon as the tag is pushed and give him the
+   run's page, `https://github.com/markmuetz/remake/actions/runs/<run id>`
+   (`gh run list -w release.yml -L 1`), where he clicks **Review
+   deployments**, ticks `pypi` and approves. Until then the run sits at
+   "Waiting". Then watch it (`gh run watch`) and check the version is on
+   PyPI: `https://pypi.org/project/remake/X.Y.Z/`.
 9. Create the GitHub Release, with the changelog section as its notes:
    `gh release create vX.Y.Z --title vX.Y.Z --notes-file <section>`
    (add `--prerelease` for an `aN`/`rcN`; Zenodo archives those too).

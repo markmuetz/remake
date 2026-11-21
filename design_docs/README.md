@@ -84,7 +84,7 @@ here when work starts.
 How to cut one (tag, PyPI, GitHub Release, Zenodo DOI check):
 [releasing.md](releasing.md).
 
-- [v0.9.0.md](releases/v0.9.0.md) — scope of the next minor: correctness of
+- [v0.9.0.md](releases/v0.9.0.md) — released 2026-11-21 (record): correctness of
   the core + DSL shape (rescoped 2026-09-24).
 - [v0.8.0_record.md](releases/v0.8.0_record.md) — the road to 0.8.0
   (blocking items, DoD checklist, branch migration); frozen at the tag.
