@@ -129,6 +129,12 @@ MANIFEST_NAME = '.remake-manifest.json'
 # before our own clock reading (coarse kernel timestamps); this much slack
 # keeps it classed as produced.
 _MTIME_SLACK_S = 0.02
+# Touched in the dir at task start: its mtime is the reference "produced"
+# is judged against, stamped by the same file server (and at the same
+# timestamp resolution) as the files the task writes, so a server clock
+# behind the compute node's, or 1 s mtime granularity, can't make rewritten
+# files look stale (code review 2026-11-21).
+_START_MARKER = '.remake-started'
 
 
 class Dir(PathToken):
@@ -171,7 +177,7 @@ class Dir(PathToken):
             for name in files:
                 full = os.path.join(root, name)
                 rel = os.path.relpath(full, self.path)
-                if rel in (MANIFEST_NAME, MANIFEST_NAME + '.tmp'):
+                if rel in (MANIFEST_NAME, MANIFEST_NAME + '.tmp', _START_MARKER):
                     continue
                 try:
                     st = os.stat(full)
@@ -245,7 +251,14 @@ class Dir(PathToken):
             pass
         self._snapshot = set(self._walk())
         self._scanned = None
-        self._start = time.time()
+        marker = os.path.join(self.path, _START_MARKER)
+        try:
+            with open(marker, 'w'):
+                pass
+            self._start = os.stat(marker).st_mtime
+            os.remove(marker)
+        except OSError:
+            self._start = time.time()
 
     def validate(self):
         if not (self._ensure_requested() or self.checksum):

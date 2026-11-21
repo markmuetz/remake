@@ -30,7 +30,18 @@ def load_module(local_filename: Union[str, Path], module_attrs=None):
     # name — a remakefile called json.py must not break stdlib imports.
     if module_name not in sys.modules:
         sys.modules[module_name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except ImportError as e:
+        # A missing package is a setup problem, not a remake bug: report it
+        # as a clean error (exit 2), with the traceback at DEBUG.
+        from loguru import logger
+
+        from ..core.exceptions import RemakeLoadError
+
+        logger.opt(exception=e).debug('importing {} failed', local_filename)
+        raise RemakeLoadError(
+            f'could not import remakefile {local_filename}: {type(e).__name__}: {e}') from e
 
     return module
 

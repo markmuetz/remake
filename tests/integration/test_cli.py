@@ -1165,3 +1165,45 @@ def test_run_all_dry_run_and_recursive(tmp_path, monkeypatch, capsys):
 
 def test_run_all_not_a_directory(tmp_path, capsys):
     cli_error(capsys, 'run-all', str(tmp_path / 'nope'), match='Not a directory')
+
+
+def test_run_all_isolates_same_named_helper_modules(tmp_path, monkeypatch, capsys):
+    # Code review 2026-11-21: in one interpreter, b's `import common` got a's.
+    monkeypatch.chdir(tmp_path)
+    for name in ('a', 'b'):
+        d = tmp_path / name
+        d.mkdir()
+        (d / 'common.py').write_text(f'WHO = {name!r}\n')
+        (d / 'remakefile.py').write_text(f'''
+from pathlib import Path
+import common
+from remake import Remake, rule
+
+@rule(outputs={{'o': 'who.txt'}}, uses={{'WHO': common.WHO}})
+def who(outputs):
+    Path(outputs['o']).write_text(WHO)
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    assert cli('run-all', '-r') == 0
+    assert (tmp_path / 'a' / 'who.txt').read_text() == 'a'
+    assert (tmp_path / 'b' / 'who.txt').read_text() == 'b'
+
+
+def test_export_task_output_is_relative_to_where_invoked(tmp_path, monkeypatch):
+    sub = tmp_path / 'pipes'
+    sub.mkdir()
+    (sub / 'p.py').write_text('''
+from remake import Remake, rule
+
+@rule(outputs={'o': 'o.txt'})
+def r(outputs):
+    pass
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    monkeypatch.chdir(tmp_path)
+    assert cli('export-task', 'pipes/p.py', '-Q', 'True', '-o', 'spec.json') in (0, None)
+    assert (tmp_path / 'spec.json').exists()

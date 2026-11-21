@@ -1,6 +1,7 @@
 """The Remake class — wires rules, planner, metadata and executors together."""
 import inspect
 import os
+import re
 import traceback
 from collections import Counter
 from pathlib import Path
@@ -103,6 +104,10 @@ def _same_definition(a, b):
     one factory function, which share a single code object and differ only
     in closure values."""
     return _where(a) == _where(b) and a.fn.__code__ is not b.fn.__code__
+
+
+# A scheme prefix (s3://, https://, gs://): an input that is a URL.
+_URL_RE = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]*://')
 
 
 def _accepts_output_stats(metadata):
@@ -1001,6 +1006,8 @@ class Remake:
                 continue  # unresolvable here: let the task itself report it
             for value in values:
                 path = str(value)
+                if not isinstance(value, OutputToken) and _URL_RE.match(path):
+                    continue  # a URL (s3://, https://, ...): not ours to stat
                 if path not in checked:
                     if isinstance(value, OutputToken):
                         checked[path] = value.is_complete()
@@ -1010,18 +1017,41 @@ class Remake:
                         suspects.append((task.rule, path))
         if not suspects:
             return {}
+        from .tokens import Dir
+
         produced = set()
+        produced_dirs = set()
         deferred = set()
         for rule in self.rules:
             try:
                 for t in iter_expand_rule(rule):
-                    produced.update(str(tok) for tok in t.outputs.values())
-            except Defer:
+                    for tok in t.outputs.values():
+                        norm = os.path.normpath(str(tok))
+                        produced.add(norm)
+                        if isinstance(tok, Dir):
+                            produced_dirs.add(norm)
+            except Exception:
+                # Deferred, or an output spec that can't be resolved now:
+                # its producers are unknown, so don't blame its consumers.
                 deferred.add(rule)
+
+        def is_produced(path):
+            norm = os.path.normpath(path)
+            if norm in produced:
+                return True
+            # A file inside a rule's Dir output is produced by it (as lint
+            # treats it).
+            parent = os.path.dirname(norm)
+            while parent and parent != os.path.dirname(parent):
+                if parent in produced_dirs:
+                    return True
+                parent = os.path.dirname(parent)
+            return parent in produced_dirs
+
         found = {}
         seen = set()
         for rule, path in suspects:
-            if path in produced or (path, rule.name) in seen:
+            if is_produced(path) or (path, rule.name) in seen:
                 continue
             if deferred and (nx.ancestors(self.dag, rule) & deferred):
                 continue

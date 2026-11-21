@@ -8,6 +8,7 @@ import json
 import os
 import re
 import signal
+import subprocess
 import sys
 import threading
 from collections import Counter
@@ -976,16 +977,24 @@ class RemakeCLI:
         results = []  # (file, status, detail)
         for f in files:
             print(f'=== {f}', flush=True)
-            try:
-                code = remake_cmd(['remake', *top, 'run', str(f), *flags])
-            except ImportError as e:
-                results.append((f, 'skipped', f'import failed: {e}'))
-                continue
-            except Exception as e:  # one remakefile must not stop the rest
-                results.append((f, 'failed', f'{type(e).__name__}: {e}'))
-                continue
-            results.append((f, 'ran' if not code else 'failed',
-                            '' if not code else f'exit {code}'))
+            # Each remakefile in its own process: in one interpreter, a
+            # second project's `import common` (or a same-named remakefile)
+            # would resolve to the first one's module from sys.modules, and
+            # run - and hash - the wrong code (code review 2026-11-21).
+            proc = subprocess.Popen(
+                [sys.executable, '-m', 'remake', *top, 'run', str(f), *flags],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            import_error = None
+            for line in proc.stdout:
+                print(line, end='', flush=True)
+                if import_error is None and 'could not import remakefile' in line:
+                    import_error = line.strip().removeprefix('error: ')
+            code = proc.wait()
+            if code == 2 and import_error:
+                results.append((f, 'skipped', f'import failed: {import_error}'))
+            else:
+                results.append((f, 'ran' if not code else 'failed',
+                                '' if not code else f'exit {code}'))
         print('\n=== run-all summary')
         for f, status, detail in results:
             print(f'{status:<8} {f}' + (f'  ({detail})' if detail else ''))
@@ -1226,7 +1235,10 @@ class RemakeCLI:
     def remake__env_report(self, args):
         from . import envcheck
 
-        self._load(args)
+        # finalize=False: only the imports matter here, and under --srun this
+        # runs on a compute node, which must not open the shared DB (as
+        # run-array-task doesn't).
+        load_remake(args.remakefile, finalize=False, profile=args.profile)
         print(json.dumps(envcheck.environment_report()))
 
     def remake_version(self, args):
@@ -1270,8 +1282,11 @@ def remake_cmd(argv=None):
     # run-array-task <remakefile>` from the submit dir) stay consistent.
     # Restored after dispatch so in-process/library callers don't see cwd move.
     orig_cwd = os.getcwd()
-    if getattr(args, 'output', None) and args.subcmd_name == 'dag':
-        args.output = os.path.abspath(args.output)  # relative to where invoked
+    # An output *file* (dag, export-task) is relative to where remake was
+    # invoked, not the remakefile's directory it chdirs into below. (Some
+    # commands' `output` is a show-outputs flag, not a path.)
+    if isinstance(getattr(args, 'output', None), str):
+        args.output = os.path.abspath(args.output)
     if getattr(args, 'remakefile', None):
         rf = Path(args.remakefile).expanduser()
         if str(rf.parent) not in ('', '.'):

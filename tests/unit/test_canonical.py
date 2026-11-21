@@ -351,3 +351,35 @@ def test_record_under_legacy_key_is_found_and_rekeyed(tmp_path):
     assert rmk.plan()[0] == []
     rmk.run(force=True)
     assert [k for (k,) in db.conn.execute('SELECT key FROM task')] == [task.key]
+
+
+# --- code review 2026-11-21 ----------------------------------------------------
+
+def test_dataclass_and_namedtuple_holding_sets_are_stable():
+    code = '''
+import dataclasses, collections
+from remake.core.scope import uses_hash
+@dataclasses.dataclass
+class Cfg:
+    vars: set
+NT = collections.namedtuple('NT', 'vars')
+class D(dict):
+    pass
+print(uses_hash({'c': Cfg({'tas', 'pr', 'ua'}), 'n': NT({'tas', 'pr', 'ua'}),
+                 'd': D(v={'tas', 'pr', 'ua'})}))
+'''
+    outs = {subprocess.run([sys.executable, '-c', code], capture_output=True, text=True,
+                           env={'PYTHONHASHSEED': str(seed), 'PATH': ''},
+                           check=True).stdout
+            for seed in (1, 2, 3, 4)}
+    assert len(outs) == 1
+
+
+def test_bound_method_of_self_referencing_object_terminates():
+    class Obj:
+        def process(self):
+            return 1
+
+    obj = Obj()
+    obj.cb = obj.process
+    assert 'method' in uses_hash({'f': obj.process})
