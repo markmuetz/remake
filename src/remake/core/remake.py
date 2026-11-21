@@ -34,7 +34,7 @@ from .planner import (
 from .rule import Rule
 from .scope import check_scope, exec_function
 from .task import Task
-from .tokens import Dir, OutputToken
+from .tokens import Dir, OutputToken, PathToken
 
 
 class _TemplatePlaceholder:
@@ -106,6 +106,32 @@ def _same_definition(a, b):
     return _where(a) == _where(b) and a.fn.__code__ is not b.fn.__code__
 
 
+def _config_edits(before, after):
+    """The parts of `after` that differ from `before` (nested dicts walked;
+    deletions are not tracked)."""
+    patch = {}
+    for key, value in after.items():
+        old = before.get(key, _MISSING)
+        if isinstance(value, dict) and isinstance(old, dict):
+            sub = _config_edits(old, value)
+            if sub:
+                patch[key] = sub
+        elif old is _MISSING or old != value:
+            patch[key] = value
+    return patch
+
+
+def _deep_update(base, patch):
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _deep_update(base[key], value)
+        else:
+            base[key] = value
+
+
+_MISSING = object()
+
+
 # A scheme prefix (s3://, https://, gs://): an input that is a URL.
 # Path('s3://b/k') stringifies as 's3:/b/k', hence :// or :/ (but not a
 # Windows drive, C:\\).
@@ -137,6 +163,7 @@ class Remake:
 
             validate_programmatic(self._programmatic_config)
         self._effective = None
+        self._effective_snapshot = None
         self.metadata = metadata
         self.check_outputs = check_outputs
         # Rules the last run() left unresolved (deferred matrix never ready,
@@ -157,10 +184,21 @@ class Remake:
         """(Re)build the effective config (util/config.py): `remake.toml` is
         looked for in `project_dir` (default cwd); `profile` is the CLI
         selection. The CLI calls this once at load time."""
+        import copy
+
         from ..util.config import resolve
 
+        if self._effective is not None:
+            # The remakefile may have changed `rmk.config` in place (e.g.
+            # `rmk.config['slurm']['account'] = ...`) before load_remake
+            # re-resolves it: keep those edits as programmatic settings
+            # (ultrareview 2026-11-21).
+            patch = _config_edits(self._effective_snapshot, self._effective.values)
+            if patch:
+                _deep_update(self._programmatic_config, patch)
         self._effective = resolve(
             project_dir, programmatic=self._programmatic_config, profile=profile)
+        self._effective_snapshot = copy.deepcopy(self._effective.values)
         return self._effective
 
     @property
@@ -715,19 +753,27 @@ class Remake:
         owners = {}
         for rule in rules:
             try:
-                for task in iter_expand_rule(rule):
-                    for name, token in task.outputs.items():
-                        if not isinstance(token, Dir):
-                            continue
-                        path = os.path.normpath(token.path)
-                        other = owners.setdefault(path, (task, name))
-                        if other != (task, name):
-                            raise RemakeError(
-                                f'Dir {path!r} is declared by two outputs: '
-                                f'{other[0]} ({other[1]}) and {task} ({name}). '
-                                f'Each Dir belongs to exactly one task.')
-            except Defer:
+                tasks = list(iter_expand_rule(rule))
+            except Exception:  # Defer, or a matrix needing runtime state
                 continue
+            for task in tasks:
+                try:
+                    outputs = task.outputs
+                except Exception:
+                    # An outputs spec that can't resolve for this task now:
+                    # run_task records that failure per task (review M11);
+                    # this check must not turn it into a crashed run.
+                    continue
+                for name, token in outputs.items():
+                    if not isinstance(token, Dir):
+                        continue
+                    path = os.path.normpath(token.path)
+                    other = owners.setdefault(path, (task, name))
+                    if other != (task, name):
+                        raise RemakeError(
+                            f'Dir {path!r} is declared by two outputs: '
+                            f'{other[0]} ({other[1]}) and {task} ({name}). '
+                            f'Each Dir belongs to exactly one task.')
         return owners
 
     def _check_duplicate_dirs(self):
@@ -936,7 +982,7 @@ class Remake:
                 # A PENDING row, not a deleted one: the planner reruns any
                 # non-SUCCESS record, and the row keeps the last execution's
                 # measured resources (resource_capture.md, Settled 4).
-                self.metadata.update_tasks(tasks, TASK_STATUS_PENDING)
+                self.metadata.mark_pending(tasks)
         return {'state': state, 'tasks': tasks, 'cascaded': cascaded, 'skipped': skipped}
 
     def _cascade_descendants(self, selected_tasks):
@@ -1010,16 +1056,26 @@ class Remake:
                 path = str(value)
                 if not isinstance(value, OutputToken) and _URL_RE.match(path):
                     continue  # a URL (s3://, https://, ...): not ours to stat
+                if isinstance(value, OutputToken) and not isinstance(value, PathToken):
+                    continue  # remote (S3Object, ...): no network calls at plan time
                 if path not in checked:
-                    if isinstance(value, OutputToken):
-                        checked[path] = value.is_complete()
-                    else:
-                        checked[path] = os.path.exists(path)
+                    try:
+                        if isinstance(value, OutputToken):
+                            checked[path] = value.is_complete()
+                        else:
+                            checked[path] = os.path.exists(path)
+                    except Exception:
+                        checked[path] = True  # can't tell: not ours to block on
                     if not checked[path]:
                         suspects.append((task.rule, path))
         if not suspects:
             return {}
         from .tokens import Dir
+
+        def canon(p):
+            # The same file spelled two ways (relative vs absolute, `./`,
+            # a symlinked root) must match (ultrareview 2026-11-21).
+            return os.path.realpath(os.path.abspath(p))
 
         produced = set()
         produced_dirs = set()
@@ -1028,7 +1084,7 @@ class Remake:
             try:
                 for t in iter_expand_rule(rule):
                     for tok in t.outputs.values():
-                        norm = os.path.normpath(str(tok))
+                        norm = canon(str(tok))
                         produced.add(norm)
                         if isinstance(tok, Dir):
                             produced_dirs.add(norm)
@@ -1038,7 +1094,7 @@ class Remake:
                 deferred.add(rule)
 
         def is_produced(path):
-            norm = os.path.normpath(path)
+            norm = canon(path)
             if norm in produced:
                 return True
             # A file inside a rule's Dir output is produced by it (as lint

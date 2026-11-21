@@ -22,7 +22,8 @@ from ..core.scope import io_hash as compute_io_hash
 from ..core.scope import raw_uses_parts
 from ..core.scope import rule_uses_hash
 from ..util.code_compare import CodeComparer
-from .metadata_manager import TASK_STATUS_SUCCESS, MetadataManager, TaskRecord
+from .metadata_manager import (TASK_STATUS_PENDING, TASK_STATUS_SUCCESS, MetadataManager,
+                               TaskRecord)
 
 # On-disk schema version, stored in the SQLite header (`PRAGMA user_version`)
 # as MAJOR * 1000 + MINOR (0.9.0 item 3). 0 is every DB written before 0.9.0:
@@ -254,6 +255,25 @@ def retry_lock_commit(fn):
 
     return inner
 
+
+
+def _config_json(config):
+    """The config as JSON for the run record. Provenance must never fail a
+    command: keys JSON can't take (tuples, enums) or can't sort (mixed int
+    and str) are stringified (ultrareview 2026-11-21)."""
+    try:
+        return json.dumps(config, sort_keys=True, default=repr)
+    except (TypeError, ValueError):
+        def norm(v):
+            if isinstance(v, dict):
+                return {str(k): norm(x) for k, x in v.items()}
+            if isinstance(v, (list, tuple)):
+                return [norm(x) for x in v]
+            return v
+        try:
+            return json.dumps(norm(config), sort_keys=True, default=repr)
+        except (TypeError, ValueError):
+            return None
 
 class _KeyOnly:
     """Stand-in task for a lookup by key alone."""
@@ -506,8 +526,7 @@ class Sqlite3Backend(MetadataManager):
 
     def record_run(self, *, remakefile=None, command=None, config=None):
         self._record_run(self.current_run_seq(), remakefile, command,
-                         json.dumps(config, sort_keys=True, default=repr)
-                         if config is not None else None)
+                         _config_json(config) if config is not None else None)
 
     def get_run(self, run_seq):
         row = self.conn.execute(
@@ -818,7 +837,8 @@ class Sqlite3Backend(MetadataManager):
                 '    run_code_id = excluded.run_code_id, '
                 '    uses_code_id = excluded.uses_code_id, '
                 '    io_code_id = excluded.io_code_id, '
-                '    run_seq = excluded.run_seq, '
+                # NULL (mark_pending): keep the stored run_seq.
+            '    run_seq = COALESCE(excluded.run_seq, run_seq), '
                 '    last_run_timestamp = excluded.last_run_timestamp, '
                 '    wall_s = excluded.wall_s, '
                 '    cpu_s = excluded.cpu_s, '
@@ -917,6 +937,13 @@ class Sqlite3Backend(MetadataManager):
             self._upsert_task(task, status, exception, run_seq, resources)
             if output_stats is not None:
                 self._write_output_stats(task.key, output_stats)
+
+    def mark_pending(self, tasks):
+        """set-state --pending: PENDING, keeping each record's run_seq. A
+        fresh run_seq would make the planner's cross-run backstop rerun
+        up-to-date downstream tasks, though nothing upstream ran
+        (ultrareview 2026-11-21)."""
+        self._commit_updates(tasks, TASK_STATUS_PENDING, '', None)
 
     @retry_lock_commit
     def delete_tasks(self, tasks):
