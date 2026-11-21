@@ -7,6 +7,7 @@ import pytest
 from loguru import logger
 
 from remake import Remake, Sqlite3Backend, rule
+from remake.core.exceptions import RemakeError
 from remake.metadata import TASK_STATUS_SUCCESS
 
 
@@ -479,3 +480,48 @@ def test_malformed_sidecars_are_quarantined(tmp_path, monkeypatch):
     assert not other.exists() and other.with_name(other.name + '.bad').exists()
     rmk.plan()  # no longer raises
     rmk.metadata.close()
+
+
+# --- 0.9.0 item 3: schema version (PRAGMA user_version) ---
+
+def _user_version(path):
+    conn = sqlite3.connect(path)
+    try:
+        return conn.execute('PRAGMA user_version').fetchone()[0]
+    finally:
+        conn.close()
+
+
+def test_new_db_is_stamped_with_schema_version(tmp_path):
+    from remake.metadata.sqlite3_backend import SCHEMA_VERSION
+
+    db = tmp_path / 'remake.db'
+    Sqlite3Backend(db).close()
+    assert _user_version(db) == SCHEMA_VERSION
+
+
+def test_legacy_db_is_migrated_and_stamped(tmp_path):
+    from remake.metadata.sqlite3_backend import SCHEMA_VERSION
+
+    db = tmp_path / 'remake.db'
+    Sqlite3Backend(db).close()
+    conn = sqlite3.connect(db)
+    conn.execute('PRAGMA user_version = 0')  # as written by remake <= 0.8
+    conn.commit()
+    conn.close()
+    Sqlite3Backend(db).close()
+    assert _user_version(db) == SCHEMA_VERSION
+
+
+def test_db_from_newer_remake_is_refused(tmp_path):
+    from remake.metadata.sqlite3_backend import SCHEMA_VERSION
+
+    db = tmp_path / 'remake.db'
+    Sqlite3Backend(db).close()
+    conn = sqlite3.connect(db)
+    conn.execute(f'PRAGMA user_version = {SCHEMA_VERSION + 1}')
+    conn.commit()
+    conn.close()
+    with pytest.raises(RemakeError, match='newer remake'):
+        Sqlite3Backend(db)
+    assert _user_version(db) == SCHEMA_VERSION + 1  # untouched

@@ -23,6 +23,15 @@ from ..core.scope import uses_hash as compute_uses_hash
 from ..util.code_compare import CodeComparer
 from .metadata_manager import MetadataManager, TaskRecord
 
+# On-disk schema version, stored in the SQLite header (`PRAGMA user_version`)
+# and bumped by every migration (0.9.0 item 3). 0 is every DB written before
+# 0.9.0: it is migrated in place and stamped. A DB stamped with a *newer*
+# version than this code knows was written by a later remake, which may store
+# things this one would misread or clobber, so it is refused with an upgrade
+# hint rather than opened. Bump on every change to SQL_SCHEMA or
+# _add_missing_columns, and add the migration step there.
+SCHEMA_VERSION = 1
+
 SQL_SCHEMA = """
 CREATE TABLE code (
     id INTEGER NOT NULL,
@@ -275,6 +284,15 @@ class Sqlite3Backend(MetadataManager):
         conn.isolation_level = None  # explicit transaction control below
         _retry_locked(lambda: conn.execute('BEGIN EXCLUSIVE'), 'opening the database')
         try:
+            (found_version,) = conn.execute('PRAGMA user_version').fetchone()
+            if found_version > SCHEMA_VERSION:
+                raise RemakeError(
+                    f'{self.dbloc} was written by a newer remake (schema version '
+                    f'{found_version}; this remake understands up to '
+                    f'{SCHEMA_VERSION}). Upgrade remake to use it (e.g. '
+                    f'`pip install -U remake` or `uv add remake@latest`); this '
+                    f'version would misread or overwrite what it stores.'
+                )
             tables = {row[0] for row in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'")}
             if 'task' not in tables and self.dbloc != ':memory:':
@@ -284,6 +302,12 @@ class Sqlite3Backend(MetadataManager):
             for stmt in _schema_statements():
                 conn.execute(stmt)
             needs_vacuum = self._add_missing_columns()
+            if found_version != SCHEMA_VERSION:
+                if found_version and 'task' in tables:
+                    logger.info(f'Upgrading database schema {found_version} -> '
+                                f'{SCHEMA_VERSION}')
+                # Transactional: rolls back with the migration if it fails.
+                conn.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
             conn.execute('COMMIT')
         except BaseException:
             # SQLite may already have rolled back by itself (disk full, I/O
