@@ -1,0 +1,10 @@
+# examples/ex18_maintenance/remake.toml
+
+# Where the metadata lives, instead of `.remake/` (relative to this
+# directory; `~` and $VARS are expanded). Handy for putting it on a scratch
+# filesystem. Moving it on an existing project starts a fresh history.
+metadata_dir = ".remake18"
+
+# Run history: keep the last 3 executions of each task (default 10).
+[history]
+keep = 3

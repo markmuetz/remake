@@ -61,6 +61,7 @@ CASES = [
     ('ex15_config/pipeline.py', 2, 4),
     ('ex16_diagnostics.py', 3, 3),
     ('ex17_list_values.py', 3, 7),
+    ('ex18_maintenance/pipeline.py', 2, 5),
 ]
 
 
@@ -148,7 +149,7 @@ def test_rule_names_are_unique_across_examples(ex_dir):
     """The top-level examples share one .remake/ store, so no rule name may
     appear in two files (the duplicate-rule warning would fire, and the two
     would clobber each other's recorded state). ex5_multifile/ and
-    ex15_config/ are their own pipeline directories and are not included."""
+    ex15_config/ and ex18_maintenance/ are their own pipeline directories and are not included."""
     owners = {}
     for path in sorted(ex_dir.glob('ex*.py')):
         try:
@@ -196,3 +197,81 @@ def test_ex16_history_after_failing_and_fixing(tmp_path, monkeypatch):
     assert task['executions'][1]['error'].startswith('RuntimeError at ex16_diagnostics.py')
     runs = history('--runs')['runs']
     assert [r['n_failed'] for r in runs] == [0, 1, 0]
+
+
+def test_ex18_maintenance_verify_history_prune_and_project_dir(ex_dir, tmp_path, monkeypatch):
+    """The ex18 walk-through: verify finds a deleted output and --apply marks
+    it pending; --adopt records outputs made outside remake; the history is
+    capped at `[history] keep` and `--prune --keep 1` trims it. All metadata
+    is under `.remake18/` (metadata_dir), never `.remake/`. Then
+    `Remake(project_dir=)` anchors a library caller elsewhere."""
+    import contextlib
+    import io
+    import json
+
+    from remake import Remake
+    from remake.remake_cmd import remake_cmd
+
+    monkeypatch.delenv('REMAKE_PROFILE', raising=False)
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'no_user_config'))
+    proj = ex_dir / 'ex18_maintenance'
+    monkeypatch.chdir(proj)
+    pipeline = str(proj / 'pipeline.py')
+
+    def cmd(*argv):
+        """Run `remake ARGV...` in-process; return (exit code, stdout)."""
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = remake_cmd(['remake', *argv]) or 0
+        return code, buf.getvalue()
+
+    assert cmd('run', pipeline)[0] == 0
+    assert (proj / 'data/results/total18.txt').read_text() == '20\n'  # 1 + 3 + 6 + 10
+    assert (proj / '.remake18').is_dir()
+    assert not (proj / '.remake').exists()
+
+    # 1. A lost output: verify reports (exit 1), --apply marks it pending.
+    (proj / 'data/ex18/part_2.txt').unlink()
+    code, out = cmd('verify', pipeline, '--json')
+    assert code == 1
+    assert len(json.loads(out)['missing']) == 1
+    assert cmd('verify', pipeline, '--apply')[0] == 0
+    assert cmd('verify', pipeline)[0] == 0
+    assert cmd('run', pipeline)[0] == 0
+    assert (proj / 'data/ex18/part_2.txt').exists()
+
+    # 2. Adopt: forget the metadata, keep the outputs.
+    shutil.rmtree(proj / '.remake18')
+    code, out = cmd('verify', pipeline, '--adopt', '--json')
+    assert code == 1
+    assert len(json.loads(out)['adoptable']) == 5
+    assert cmd('verify', pipeline, '--adopt', '--apply')[0] == 0
+    runnable, deferred = load_remake(pipeline, finalize=False).plan()
+    assert not runnable and not deferred
+
+    # 3. History is capped at keep = 3 (remake.toml); prune --keep 1 trims it.
+    for _ in range(4):
+        assert cmd('run', '-f', pipeline)[0] == 0
+    code, out = cmd('history', pipeline, '-Q', "rule == 'join18'", '--json')
+    assert code == 0
+    assert len(json.loads(out)['executions']) == 3
+    code, out = cmd('history', pipeline, '--prune', '--keep', '1', '--json')
+    assert json.loads(out)['deleted'] > 0
+    code, out = cmd('history', pipeline, '-Q', "rule == 'join18'", '--json')
+    assert len(json.loads(out)['executions']) == 1
+
+    assert not (proj / '.remake').exists()  # everything is under .remake18/
+
+    # 4. project_dir=: a library caller elsewhere, anchored at a copy.
+    other = tmp_path / 'elsewhere'
+    shutil.copytree(proj, other, ignore=shutil.ignore_patterns(
+        'data', '.remake*', '__pycache__'))
+    monkeypatch.chdir(tmp_path)
+    rmk = Remake(rules=load_remake(pipeline, finalize=False).rules, project_dir=other)
+    rmk.run()
+    assert (other / 'data/results/total18.txt').exists()
+    assert (other / '.remake18').is_dir() and not (other / '.remake').exists()
+    report = rmk.verify()
+    assert not report['missing'] and not report['adoptable']
+    assert len(rmk.history(runs=True)) >= 1
+    assert Path.cwd() == tmp_path
