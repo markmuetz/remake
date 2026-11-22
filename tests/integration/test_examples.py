@@ -54,6 +54,8 @@ CASES = [
     ('ex11_custom_token.py', 1, 3),
     ('ex12_chained_loop_rules.py', 6, 16),
     ('ex13_rule_factory.py', 5, 11),
+    ('ex15_config/pipeline.py', 2, 4),
+    ('ex16_diagnostics.py', 3, 3),
 ]
 
 
@@ -78,6 +80,7 @@ def test_example_loads_and_plans(filename, n_rules, n_tasks, tmp_path, monkeypat
     ('ex12', 'data/stage0/alpha.txt'),              # self-generating
     ('ex13', 'data/results/summary13.txt'),         # self-generating
     ('ex14', 'data/results/summary14.txt'),         # self-generating
+    ('ex16', 'data/results/report16.txt'),
 ])
 def test_light_examples_run_end_to_end(example, result_file, tmp_path, monkeypatch, memory_backend):
     """These need no heavy deps: generate synthetic data (if any) and run."""
@@ -106,3 +109,20 @@ def test_ex9_zarr_region(memory_backend):
     assert len(rmk.rules) == 3
     assert len(runnable) == 46  # 1 + 44 years + 1
     assert not deferred
+
+
+def test_ex15_config_runs_and_resolves_config(tmp_path, monkeypatch, memory_backend):
+    """The directory example runs, and its remake.toml layers are applied."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("REMAKE_PROFILE", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "no_user_config"))
+    rmk = load_remake(EXAMPLES_DIR / "ex15_config" / "pipeline.py", finalize=False)
+    rmk.metadata = memory_backend
+    assert rmk.config["checksum_outputs"] is True
+    assert rmk.config["multiproc"]["nproc"] == 2  # project file
+    assert rmk.config["resources"]["capture"] is True  # Remake(config=)
+    assert rmk.config["resources"]["rss_interval"] == 0.5  # profile quick
+    rmk.run()
+    assert (tmp_path / "data/results/total15.txt").read_text() == "57\n"  # 6 + 15 + 36
+    runnable, deferred = rmk.plan()
+    assert not runnable and not deferred

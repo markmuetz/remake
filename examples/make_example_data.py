@@ -24,6 +24,14 @@ def ex1():
     path.write_text('\n'.join(lines) + '\n')
 
 
+def ex16():
+    """data/ex16/readings.txt — the external input of ex16 (one number per line)."""
+    rng = random.Random(16)
+    path = Path('data/ex16/readings.txt')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(''.join(f'{rng.uniform(0, 10):.2f}\n' for _ in range(50)))
+
+
 def _temperature_nc_bytes(year, seed):
     """A month of 6-hourly synthetic temperature as netCDF bytes."""
     import tempfile
@@ -117,7 +125,7 @@ def ex8():
 
 
 def main(argv):
-    which = argv[1:] or ['ex1', 'ex2', 'ex3', 'ex4', 'ex8']
+    which = argv[1:] or ['ex1', 'ex2', 'ex3', 'ex4', 'ex8', 'ex16']
     for name in which:
         print(f'generating data for {name}')
         globals()[name]()

@@ -19,6 +19,8 @@ API, in roughly increasing order of complexity:
 | `ex12_chained_loop_rules.py` | Loop-generated rules with chained dependencies, `name=`, string `depends_on=` |
 | `ex13_rule_factory.py` | Rule factory: one function generating several rules with `name=`, analyser passed through `uses`, no closure shadowing, `add_rules` |
 | `ex14_dir_outputs.py` | Directory outputs: a `Dir` token (manifest-based completion, stale-file attribution, `Ensure`), enumerated by `@deferrable` downstream matrices |
+| `ex15_config/` | The config cascade: `remake.toml` project file, profiles (`--profile`), `Remake(config=)`, per-rule `config=`, `checksum_outputs`, `remake config` |
+| `ex16_diagnostics.py` | `Ensure` on plain files (`min_size`, `checksum`), fail-fast on missing external inputs, and the diagnostics commands: `dag`, `info --failed`, `export-task`, `check-env`, `task-info` resources |
 
 ## Running
 
@@ -51,7 +53,7 @@ clobber each other's recorded state (causing spurious reruns) — that's a
 prompt to rename one or split directories, and it's why every rule here has
 a distinct name.
 
-ex1, ex3, ex6, ex7, ex10, ex11, ex12, ex13 and ex14 need only the stdlib. The rest need
+ex1, ex3, ex6, ex7, ex10, ex11, ex12, ex13, ex14, ex15 and ex16 need only the stdlib. The rest need
 the scientific stack (`xarray netCDF4 h5netcdf zarr dask`, plus pyyaml for
 ex4) — install everything in one go with the `examples` extra:
 
