@@ -323,9 +323,8 @@ class RemakeCLI:
                 Arg('--success', action='store_true',
                     help='Record success (with current code/uses hashes)'),
                 Arg('--pending', action='store_true',
-                    help='Delete records: tasks become never-run and rerun at '
-                         'the next plan (the default check_outputs=never mode '
-                         'does not re-adopt on-disk outputs)'),
+                    help='Record pending: tasks rerun at the next plan (the '
+                         'record is kept, with its last measured resources)'),
                 Arg('--check-outputs', action='store_true',
                     help='With --success: only tasks whose outputs are complete '
                          'on disk (the explicit adoption path for migrating an '
@@ -338,6 +337,21 @@ class RemakeCLI:
                          'upstream)'),
                 Arg('--dry-run', '-n', help='Show affected tasks, change nothing',
                     action='store_true'),
+            ],
+        },
+        'verify': {
+            'help': 'Reconcile the DB with the outputs on disk (read-only unless --apply)',
+            'args': [
+                Arg('remakefile'),
+                Arg('--query', '-Q', help='Only tasks matching this kwargs query'),
+                Arg('--outputs', action='store_true',
+                    help='Recorded success, outputs missing or failing Ensure '
+                         '(with --apply: mark pending)'),
+                Arg('--adopt', action='store_true',
+                    help='No record, outputs complete on disk (with --apply: '
+                         'record success)'),
+                Arg('--apply', action='store_true', help='Write the changes'),
+                Arg('--json', help='Machine-readable output', action='store_true'),
             ],
         },
         'info': {
@@ -715,10 +729,43 @@ class RemakeCLI:
             print(f'{task} -> {state}')
         for task in cascaded:
             print(f'{task} -> {state} (cascade)')
+        if args.check_outputs:
+            print('note: `remake verify --adopt` reports the same tasks, and '
+                  '`--apply` records them', file=sys.stderr)
         suffix = f' ({skipped} skipped: outputs missing/incomplete)' if skipped else ''
         cas = f', {len(cascaded)} cascaded' if cascaded else ''
         verb = 'would be set' if args.dry_run else 'set'
         print(f'{len(tasks)} task(s) {verb} to {state}{cas}{suffix}')
+
+    def remake_verify(self, args):
+        """`remake verify`: report (and with --apply, fix) DB/disk mismatches.
+        Neither --outputs nor --adopt means both. Exit 1 when mismatches
+        were found and not applied, else 0."""
+        rmk = self._load(args)
+        both = not (args.outputs or args.adopt)
+        result = rmk.verify(args.query, outputs=args.outputs or both,
+                            adopt=args.adopt or both, apply=args.apply)
+        missing, adoptable = result['missing'], result['adoptable']
+        if args.json:
+            def rows(tasks):
+                return [{'task': str(t), 'key': t.key, 'rule': t.rule.name} for t in tasks]
+            _print_json({'applied': result['applied'], 'missing': rows(missing),
+                         'adoptable': rows(adoptable), 'cascaded': rows(result['cascaded'])})
+        else:
+            paint = Painter(args.colour)
+            for t in missing:
+                print(f'{t}  {paint("outputs missing", "red")}'
+                      + (' -> pending' if args.apply else ''))
+            for t in adoptable:
+                print(f'{t}  {paint("adoptable", "green")}'
+                      + (' -> success' if args.apply else ''))
+            for t in result['cascaded']:
+                print(f'{t}  -> success (cascade)')
+            print(f'{len(missing)} recorded success with outputs missing, '
+                  f'{len(adoptable)} unrecorded with outputs complete'
+                  + ('' if args.apply or not (missing or adoptable)
+                     else '; rerun with --apply to record'))
+        return 1 if (missing or adoptable) and not args.apply else 0
 
     def remake_info(self, args):
         rmk = self._load(args)

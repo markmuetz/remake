@@ -23,6 +23,7 @@ These go *before* the command name (`remake -D run pipeline.py`):
 |---|---|
 | `run` | Run all pending (needed) tasks |
 | `set-state` | Set tasks' recorded state by query, without running them |
+| `verify` | Reconcile the DB with the outputs on disk (read-only unless `--apply`) |
 | `info` | Per-rule summary of task statuses |
 | `ls-tasks` | List tasks (key prefix + name), materialising matrices |
 | `export-task` | Write a task's fully resolved spec as JSON |
@@ -66,10 +67,30 @@ remake run pipeline.py [options]
 |---|---|
 | `-Q, --query` | tasks to affect (**required**; `-Q True` for all) |
 | `--success` | record success with current code/uses hashes |
-| `--pending` | delete records — tasks become never-run |
+| `--pending` | record pending: the tasks rerun at the next plan (the record, and its last measured resources, are kept) |
 | `--check-outputs` | with `--success`, only tasks whose outputs are complete on disk |
 | `--no-cascade` | with `--success`, stamp only the selected tasks (by default success also re-stamps downstream complete tasks so they aren't left looking stale; a guard skips any descendant with an independently-newer upstream) |
 | `-n, --dry-run` | show affected tasks, change nothing |
+
+## `verify`
+
+`remake verify REMAKEFILE [-Q QUERY] [--outputs] [--adopt] [--apply] [--json]`
+compares what the DB records with what is on disk. It only reports, unless
+`--apply`. With neither `--outputs` nor `--adopt`, it does both.
+
+| Option | Finds | With `--apply` |
+|---|---|---|
+| `--outputs` | tasks recorded as success whose outputs are missing, or fail their `Ensure` checks (e.g. after a scratch purge) | marks them pending (keeping their run stamp, so only they and what reads them rerun) |
+| `--adopt` | tasks with no record whose outputs are all complete on disk (an existing output tree) | records them as success with the current code; a `Dir` without a manifest gets one; downstream settled tasks are re-stamped as by `set-state --success` |
+
+Completion is checked in batches (one directory listing per directory, not
+one `stat` per file). Rules whose matrix is not ready yet are not examined.
+Exit code: 1 if anything was found and `--apply` was not given, else 0.
+
+`verify --adopt --apply` is the recommended way to adopt existing outputs;
+`set-state --success --check-outputs` still works, for when you know what
+you are doing. remake never judges staleness by mtime (it is unreliable on
+HPC filesystems); the DB is the record.
 
 ## `info`
 

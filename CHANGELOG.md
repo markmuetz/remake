@@ -34,6 +34,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`remake verify`** (0.10 item 2): reconciles the DB with the disk.
+  `--outputs` finds tasks recorded as success whose outputs are missing or
+  fail `Ensure` (marked pending with `--apply`); `--adopt` finds unrecorded
+  tasks whose outputs are complete (recorded as success with `--apply`).
+  Read-only by default, `-Q`-composable, `--json`, batched completion
+  checks. `Remake.verify()` is the library form. `set-state
+  --check-outputs` now points at it.
 - **The output-token interface is settled for 1.0** (0.10 item 5a,
   `remake.core.tokens`): `OutputToken.stat()` (an `OutputStat` of
   exists/size/mtime, without reading the data), `complete_many()` (batched

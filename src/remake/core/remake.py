@@ -26,6 +26,7 @@ from .planner import (
     cascade_settled,
     explain_task,
     make_predicate,
+    outputs_complete_many,
     plan,
     rule_kwarg_names,
     upstream_run_seqs,
@@ -1063,6 +1064,54 @@ class Remake:
                 # measured resources (resource_capture.md, Settled 4).
                 self.metadata.mark_pending(tasks)
         return {'state': state, 'tasks': tasks, 'cascaded': cascaded, 'skipped': skipped}
+
+    def verify(self, query=None, *, outputs=True, adopt=True, apply=False):
+        """Reconcile the DB with what is on disk (0.10 item 2; `remake verify`).
+
+        outputs: tasks recorded as success whose outputs are missing or fail
+          their `Ensure` checks (a scratch purge). With apply, they are
+          marked pending (keeping run_seq, so only they and what reads them
+          rerun).
+        adopt: tasks with no record whose outputs are all complete on disk
+          (an existing output tree). With apply, they are recorded as
+          success with the current code, and downstream settled tasks are
+          re-stamped as by `set_state(success=True)`; a `Dir` without a
+          manifest gets one.
+
+        Read-only unless apply. Completion is checked in batches
+        (tokens.complete_many). Tasks of rules whose matrix is not ready are
+        not examined. Returns {'missing': [tasks], 'adoptable': [tasks],
+        'applied': bool, 'cascaded': [tasks]}."""
+        if not self._finalized:
+            self.finalize()
+        tasks = [t for t in self.tasks(query=query) if t.outputs]
+        records = self.metadata.get_tasks_status(tasks)
+        recorded_ok = [t for t in tasks if t.key in records
+                       and records[t.key].status == TASK_STATUS_SUCCESS] if outputs else []
+        unrecorded = [t for t in tasks if t.key not in records] if adopt else []
+        complete = outputs_complete_many(recorded_ok)
+        missing = [t for t in recorded_ok if not complete[t.key]]
+        adoptable = []
+        if unrecorded:
+            done = outputs_complete_many(unrecorded)
+            # A Dir without its manifest is not complete but may be adopted;
+            # ask the token (write=False: still read-only here).
+            for t in unrecorded:
+                if done[t.key] or all(tok.adopt(write=False) for tok in t.outputs.values()):
+                    adoptable.append(t)
+        cascaded = []
+        if apply and (missing or adoptable):
+            self.metadata.begin_invocation()
+            self._record_run('verify')
+            if missing:
+                self.metadata.mark_pending(missing)
+            if adoptable:
+                adoptable = [t for t in adoptable
+                             if all(tok.adopt(write=True) for tok in t.outputs.values())]
+                cascaded = self._cascade_descendants(adoptable)
+                self.metadata.update_tasks(adoptable + cascaded, TASK_STATUS_SUCCESS)
+        return {'missing': missing, 'adoptable': adoptable, 'applied': bool(apply),
+                'cascaded': cascaded}
 
     def _cascade_descendants(self, selected_tasks):
         """Downstream SUCCESS tasks to re-stamp alongside `selected_tasks` so the

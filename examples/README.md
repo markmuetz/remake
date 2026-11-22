@@ -105,3 +105,15 @@ Similarly for outputs that vanish behind remake's back (scratch purges):
 delete a row that ex11 wrote (`sqlite3 data/results.db "DELETE FROM stats
 WHERE key='n2'"`) and rerun with `--check-outputs` — only that task
 recomputes.
+
+Or ask remake to reconcile the DB with the disk. After running ex1, delete
+one of its outputs, then:
+
+```bash
+remake verify ex1_simple.py --outputs           # reports the task (exit 1)
+remake verify ex1_simple.py --outputs --apply   # marks it pending
+remake run ex1_simple.py                        # reruns it and its downstream
+```
+
+`remake verify --adopt --apply` does the opposite for an output tree made
+outside remake: it records the tasks whose outputs are already complete.
