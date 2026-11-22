@@ -6,6 +6,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Breaking
+
+- **`-Q` queries use a restricted grammar.** The query is parsed and every
+  node checked against an allowlist before it is evaluated (with no
+  builtins). Allowed: names (matrix kwargs and `rule`), constants, lists and
+  tuples, comparisons (`== != < <= > >= in, not in, is, is not`), `and` /
+  `or` / `not`, and unary minus. Rejected with a `RemakeError` (exit 2):
+  function calls, so the builtins `len`, `range`, `str`, `any`, ... are gone;
+  arithmetic; attributes, subscripts, sets, dicts, comprehensions, lambdas
+  and f-strings. `-Q True` still selects every task.
+
 ## [0.10.0] — 2026-11-22
 
 Provenance and run history, `remake verify`, list-valued inputs and

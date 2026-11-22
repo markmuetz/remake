@@ -275,3 +275,30 @@ def test_ex18_maintenance_verify_history_prune_and_project_dir(ex_dir, tmp_path,
     assert not report['missing'] and not report['adoptable']
     assert len(rmk.history(runs=True)) >= 1
     assert Path.cwd() == tmp_path
+
+
+def test_ex17_restricted_query_grammar(tmp_path, monkeypatch):
+    """The `-Q` examples in ex17's docstring: allowed queries select tasks
+    through the CLI; a query with a function call exits 2 with a clean error."""
+    import contextlib
+    import io
+
+    from remake.remake_cmd import remake_cmd
+
+    monkeypatch.chdir(tmp_path)
+    shutil.copy(EXAMPLES_DIR / 'ex17_list_values.py', tmp_path)
+    pipeline = str(tmp_path / 'ex17_list_values.py')
+
+    def cmd(*argv):
+        """Run `remake ARGV...` in-process; return (exit code, stdout, stderr)."""
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = remake_cmd(['remake', *argv]) or 0
+        return code, out.getvalue(), err.getvalue()
+
+    assert cmd('run', '-n', pipeline, '-Q', "site in ['a', 'b'] and rule == 'split17'")[0] == 0
+    assert cmd('run', '-n', pipeline, '-Q', "not site == 'c'")[0] == 0
+    assert cmd('run', '-n', pipeline, '-Q', 'True')[0] == 0
+    code, out, err = cmd('run', '-n', pipeline, '-Q', 'len(site) == 1')
+    assert code == 2
+    assert 'function calls are not allowed in a query' in out + err
