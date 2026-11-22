@@ -98,7 +98,7 @@ All items shipped; archived verbatim in
   into a `_task_rerun(task, rec, ...) -> (rerun, reason)` helper so `plan` reads
   as orchestration. Behaviour-preserving readability refactor; well covered by
   the planner tests.
-- [ ] No Hypothesis property tests despite the design doc promising them
+- [x] No Hypothesis property tests despite the design doc promising them
   (task key uniqueness/stability, matrix normalisation).
 - [ ] `ZarrStore.is_complete()` checks `.zmetadata` (zarr v2); zarr v3
   consolidated metadata lives in `zarr.json`. Handle both when xarray/zarr
