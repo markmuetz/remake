@@ -770,9 +770,9 @@ class RemakeCLI:
     def remake_info(self, args):
         rmk = self._load(args)
         show_failures = args.show_failures or args.all_failures
-        # Remake.status_summary does the gathering; this method only renders
+        # Remake.info does the gathering; this method only renders
         # (table / --json) and groups failures for display.
-        summary = rmk.status_summary(
+        summary = rmk.info(
             query=args.query,
             reasons=args.reasons,
             list_tasks=args.tasks,
@@ -893,7 +893,7 @@ class RemakeCLI:
     def remake_export_task(self, args):
         rmk = self._load(args)
         task = rmk.select_task(args.task_key, args.query)
-        text = json.dumps(rmk.task_spec(task), indent=1, default=repr)
+        text = json.dumps(rmk.export_task(task), indent=1, default=repr)
         if args.output:
             Path(args.output).write_text(text + '\n')
         else:

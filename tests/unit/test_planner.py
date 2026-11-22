@@ -217,11 +217,11 @@ def test_info_fetches_each_record_once(tmp_path, monkeypatch):
     n_tasks = len(rmk.tasks())
 
     fetched = _spy_record_fetches(monkeypatch)
-    rmk.status_summary()
+    rmk.info()
     assert len(fetched) == len(set(fetched)) == n_tasks
 
     fetched.clear()
-    rmk.status_summary(reasons=True, list_tasks=True, list_failures=True)
+    rmk.info(reasons=True, list_tasks=True, list_failures=True)
     assert len(fetched) == len(set(fetched))  # never the same key twice
 
 

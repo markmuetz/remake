@@ -35,7 +35,7 @@ from .planner import (
 from .rule import Rule
 from .scope import check_scope, exec_function
 from .task import Task, flat_items, flat_values
-from .tokens import Dir, OutputToken, PathToken, canonical, canonical_path, complete_many, is_remote
+from .tokens import Dir, FileToken, OutputToken, PathToken, canonical, canonical_path, complete_many, is_remote
 
 
 class _TemplatePlaceholder:
@@ -200,6 +200,13 @@ def anchored(method):
         with self._anchor:
             return method(self, *args, **kwargs)
     return wrapper
+
+
+def _deprecated(old, new):
+    import warnings
+
+    warnings.warn(f'Remake.{old}() is deprecated; use Remake.{new}() (removed at 1.0)',
+                  DeprecationWarning, stacklevel=3)
 
 
 def _accepts_kwarg(metadata, name):
@@ -595,7 +602,7 @@ class Remake:
 
     # MM: got to here so far.
     @anchored
-    def status_summary(self, query=None, *, reasons=False, list_tasks=False,
+    def info(self, query=None, *, reasons=False, list_tasks=False,
                        list_failures=False):
         """Per-rule task-status summary — the data behind `remake info`.
 
@@ -800,7 +807,7 @@ class Remake:
         }
 
     @anchored
-    def task_spec(self, task, *, uses=True):
+    def export_task(self, task, *, uses=True):
         """A task's fully resolved spec as a JSON-serialisable dict — the data
         behind `remake export-task`: rule, key, kwargs, resolved input/output
         paths, and where the rule function lives. With uses=True, also the
@@ -1192,6 +1199,29 @@ class Remake:
                 self.metadata.mark_pending(tasks)
         return {'state': state, 'tasks': tasks, 'cascaded': cascaded, 'skipped': skipped}
 
+    def status_summary(self, *args, **kwargs):
+        """Deprecated alias of info() (renamed in 0.10 to match `remake
+        info`; removed at 1.0)."""
+        _deprecated('status_summary', 'info')
+        return self.info(*args, **kwargs)
+
+    def task_spec(self, *args, **kwargs):
+        """Deprecated alias of export_task() (renamed in 0.10 to match
+        `remake export-task`; removed at 1.0)."""
+        _deprecated('task_spec', 'export_task')
+        return self.export_task(*args, **kwargs)
+
+    def history(self, task=None, *, runs=False, limit=20):
+        """Run history (0.10 item 3; `remake history`): a task's recorded
+        executions, newest first, or with runs=True the most recent runs."""
+        if not self._finalized:
+            self.finalize()
+        if runs:
+            return self.metadata.get_runs(limit=limit)
+        if task is None:
+            raise RemakeError('history: give a task, or runs=True')
+        return self.metadata.get_history(task, limit=limit)
+
     @anchored
     def verify(self, query=None, *, outputs=True, adopt=True, apply=False):
         """Reconcile the DB with what is on disk (0.10 item 2; `remake verify`).
@@ -1303,27 +1333,34 @@ class Remake:
         as are tasks whose input spec can't be resolved yet."""
         import os
 
-        checked = {}  # path -> exists
-        suspects = []  # (rule, path)
+        # Each distinct path once, checked in batches (tokens.complete_many:
+        # one directory listing per directory, 0.10 item 4), in first-seen
+        # order so the report stays grouped by rule.
+        first_seen = {}  # path -> (rule, token)
         for task in tasks:
             try:
                 values = list(flat_values(task.inputs))
             except Exception:
                 continue  # unresolvable here: let the task itself report it
             for value in values:
-                path = str(value)
                 if is_remote(value):
                     continue  # S3, a URL: no network calls at plan time
-                if path not in checked:
-                    try:
-                        if isinstance(value, OutputToken):
-                            checked[path] = value.is_complete()
-                        else:
-                            checked[path] = os.path.exists(path)
-                    except Exception:
-                        checked[path] = True  # can't tell: not ours to block on
-                    if not checked[path]:
-                        suspects.append((task.rule, path))
+                path = str(value)
+                if path not in first_seen:
+                    token = value if isinstance(value, OutputToken) else FileToken(path)
+                    first_seen[path] = (task.rule, token)
+        paths = list(first_seen)
+        tokens = [first_seen[p][1] for p in paths]
+        try:
+            exists = complete_many(tokens)
+        except Exception:
+            exists = []
+            for token in tokens:
+                try:
+                    exists.append(token.is_complete())
+                except Exception:
+                    exists.append(True)  # can't tell: not ours to block on
+        suspects = [(first_seen[p][0], p) for p, ok in zip(paths, exists) if not ok]
         if not suspects:
             return {}
         from .tokens import Dir

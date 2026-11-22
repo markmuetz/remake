@@ -47,7 +47,7 @@ def test_lint_and_task_info_see_each_path(tmp_path, monkeypatch):
     info = rmk.task_info(t)
     assert set(info['inputs']) == {'files[0]', 'files[1]'}
     assert info['inputs']['files[1]']['path'] == 'b/2.txt'
-    spec = rmk.task_spec(t)
+    spec = rmk.export_task(t)
     assert spec['inputs']['files'] == ['a/2.txt', 'b/2.txt']
 
 
@@ -98,3 +98,17 @@ def test_digest_of_a_list_of_strings_is_unchanged_from_0_9(tmp_path, monkeypatch
     from hashlib import sha1
     items = sorted([('i', repr('xs'), str(['a.txt', 'b.txt'])), ('o', repr('o'), 'o.txt')])
     assert paths_digest(t) == f'1:1:{sha1(repr(items).encode()).hexdigest()}'
+
+
+def test_renamed_methods_keep_deprecated_aliases(tmp_path, monkeypatch):
+    # 0.10 item 5d: names match the CLI verbs; the old ones warn until 1.0.
+    monkeypatch.chdir(tmp_path)
+    make, use = _pipeline(tmp_path)
+    rmk = Remake(rules=[make, use], metadata=Sqlite3Backend(':memory:'))
+    rmk.finalize()
+    t = next(iter(rmk.tasks()))
+    with pytest.warns(DeprecationWarning, match='export_task'):
+        assert rmk.task_spec(t) == rmk.export_task(t)
+    with pytest.warns(DeprecationWarning, match='info'):
+        assert rmk.status_summary()['totals'] == rmk.info()['totals']
+    assert rmk.history(t) == [] and rmk.history(runs=True) == []

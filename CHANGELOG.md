@@ -85,6 +85,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **`Remake` method names match the CLI** (0.10 item 5d):
+  `status_summary()` is now `info()` and `task_spec()` is `export_task()`;
+  the old names still work, with a `DeprecationWarning`, until 1.0. New
+  `Remake.history()` is the library form of `remake history`. The
+  missing-inputs check and `verify` check files in batches (one directory
+  listing per directory, 0.10 item 4).
 - **One environment report.** The SLURM submit header and `check-env` now
   share one function (`envcheck.environment_report`), which also carries the
   environment fingerprint, the installed packages and the lockfile hash. The
