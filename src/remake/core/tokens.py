@@ -19,6 +19,7 @@ import copy
 import hashlib
 import json
 import os
+import unicodedata
 import re
 import time
 from dataclasses import dataclass
@@ -71,6 +72,11 @@ def canonical_path(path):
     absolute = os.path.abspath(os.fspath(path))
     directory, name = os.path.split(absolute)
     return os.path.join(_real_dir(directory), name) if name else _real_dir(directory)
+
+
+def _fold(name):
+    """A file name as a case-insensitive, normalising filesystem compares it."""
+    return unicodedata.normalize('NFC', name).casefold()
 
 
 def dir_keys(path):
@@ -255,13 +261,27 @@ class PathToken(OutputToken):
                 present = set()
             except OSError:  # e.g. a search-only (--x) directory: stat each
                 present = None
+            # Folded names (case, Unicode normalisation): a name missing from
+            # the listing is stat'd only if the directory holds one it could
+            # be on a case-insensitive or normalising filesystem (review
+            # 2026-11-22, finding 2). A plain miss, the common case when
+            # planning never-run tasks, costs no stat (CI bench, 2026-11-22).
+            if present is not None and not present:  # missing or empty dir
+                for i, _ in entries:
+                    results[i] = False
+                continue
+            folded = None  # built on the first miss only
             for i, name in entries:
-                # A name missing from the listing is checked with a stat
-                # before saying no: a case-insensitive filesystem or a
-                # different Unicode normalisation spells it differently
-                # (review 2026-11-22, finding 2). Misses are the rare case.
-                results[i] = ((present is not None and name in present)
-                              or os.path.exists(tokens[i]._marker_path()))
+                if present is not None and name in present:
+                    results[i] = True
+                    continue
+                if present is not None:
+                    if folded is None:
+                        folded = {_fold(n) for n in present}
+                    if _fold(name) not in folded:
+                        results[i] = False
+                        continue
+                results[i] = os.path.exists(tokens[i]._marker_path())
         return results
 
 

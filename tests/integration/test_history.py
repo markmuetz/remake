@@ -179,8 +179,15 @@ def test_upgrade_from_schema_1_0_adds_history_and_reruns_nothing(tmp_path, monke
     conn = sqlite3.connect(path)
     conn.execute('DROP TABLE task_run')
     conn.execute('DROP TABLE environment')
-    for col, _ in _RUN_COLUMNS_1_1:
-        conn.execute(f'ALTER TABLE run DROP COLUMN {col}')
+    # Rebuild run in its 1.0 shape by copying: ALTER TABLE DROP COLUMN
+    # fails on some system SQLite builds (CI's python3.14, 2026-11-22) when
+    # the stored CREATE text has comments between columns.
+    conn.execute('CREATE TABLE run_10 (run_seq INTEGER NOT NULL PRIMARY KEY, '
+                 'started TIMESTAMP NOT NULL, remakefile TEXT, command TEXT, config TEXT)')
+    conn.execute('INSERT INTO run_10 SELECT run_seq, started, remakefile, command, config FROM run')
+    conn.execute('DROP TABLE run')
+    conn.execute('ALTER TABLE run_10 RENAME TO run')
+    assert len(_RUN_COLUMNS_1_1) == 19  # every 1.1 column is re-added by the upgrade
     conn.execute(f'PRAGMA user_version = {SCHEMA_MAJOR * 1000}')
     conn.commit()
     conn.close()

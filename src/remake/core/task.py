@@ -11,7 +11,7 @@ from hashlib import sha1
 
 from .exceptions import SignatureError
 from .rule import Rule
-from .tokens import OutputToken, as_token
+from .tokens import FileToken, OutputToken, as_token
 
 
 def _format_item(v, kwargs):
@@ -52,9 +52,14 @@ def _resolve(spec, kwargs, wrap_tokens):
         params = inspect.signature(spec).parameters
         resolved = spec(**{k: v for k, v in kwargs.items() if k in params})
     else:
-        resolved = {k: _format_value(k, v, kwargs) for k, v in spec.items()}
+        # A plain string template is the hot case (1e6 per plan at field
+        # scale): format it inline; lists and tokens take the general path
+        # (CI bench, 2026-11-22: D8 had doubled plan_fallback_stats).
+        resolved = {k: (v.format(**kwargs) if type(v) is str else _format_value(k, v, kwargs))
+                    for k, v in spec.items()}
     if wrap_tokens:
-        resolved = {k: _wrap(k, v) for k, v in resolved.items()}
+        resolved = {k: (FileToken(v) if type(v) is str else _wrap(k, v))
+                    for k, v in resolved.items()}
     return resolved
 
 
@@ -71,8 +76,15 @@ def flat_items(mapping):
 
 
 def flat_values(mapping):
-    """Every path/token in a resolved inputs/outputs dict (see flat_items)."""
-    return [item for _, item in flat_items(mapping)]
+    """Every path/token in a resolved inputs/outputs dict, in flat_items
+    order (no labels built: this is the hot one)."""
+    out = []
+    for v in mapping.values():
+        if isinstance(v, (list, tuple)):
+            out.extend(v)
+        else:
+            out.append(v)
+    return out
 
 
 def task_key(rule_name, kwargs):

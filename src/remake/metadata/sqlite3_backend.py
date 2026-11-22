@@ -176,9 +176,9 @@ CREATE TABLE run (
     n_failed INTEGER,
     n_skipped INTEGER,
     n_blocked_rules INTEGER,
+    n_waves INTEGER
     -- env_id -> environment(id); no FOREIGN KEY clause, so that the
     -- in-place migration (ALTER TABLE ADD COLUMN) gives the same shape.
-    n_waves INTEGER
 );
 
 -- Installed-distribution lists, interned by fingerprint (one row per
