@@ -20,7 +20,7 @@ API, in roughly increasing order of complexity:
 | `ex13_rule_factory.py` | Rule factory: one function generating several rules with `name=`, analyser passed through `uses`, no closure shadowing, `add_rules` |
 | `ex14_dir_outputs.py` | Directory outputs: a `Dir` token (manifest-based completion, stale-file attribution, `Ensure`), enumerated by `@deferrable` downstream matrices |
 | `ex15_config/` | The config cascade: `remake.toml` project file, profiles (`--profile`), `Remake(config=)`, per-rule `config=`, `checksum_outputs`, `remake config` |
-| `ex16_diagnostics.py` | `Ensure` on plain files (`min_size`, `checksum`), fail-fast on missing external inputs, and the diagnostics commands: `dag`, `info --failed`, `export-task`, `check-env`, `task-info` resources |
+| `ex16_diagnostics.py` | `Ensure` on plain files (`min_size`, `checksum`), fail-fast on missing external inputs, and the diagnostics commands: `dag`, `info --failed`, `export-task`, `check-env`, `task-info` resources, and `history` / `history --runs` (per-execution record, rerun reasons) |
 
 ## Running
 

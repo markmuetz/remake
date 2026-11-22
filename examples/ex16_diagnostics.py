@@ -3,22 +3,22 @@
 # Output checks on plain files, fail-fast on missing inputs, and the
 # diagnostics commands for when a pipeline misbehaves.
 #
-#   - summarise declares its output as Ensure('...', min_size=, checksum=True):
+#   - summarise16 declares its output as Ensure('...', min_size=, checksum=True):
 #     when the task finishes, remake checks the file (non-empty, at least
 #     min_size bytes) and fails the task if the check fails. checksum=True
 #     records the file's sha256, shown by task-info (recorded, never compared).
-#   - summarise's input data/ex16/readings.txt is external: no rule makes
+#   - summarise16's input data/ex16/readings.txt is external: no rule makes
 #     it (make_example_data.py does). If it is missing, `remake run` stops
 #     before running anything, with one error (exit 2) and the
 #     external_inputs_hint below, instead of one FileNotFoundError per task.
-#   - calibrate fails only if the environment variable REMAKE_EX16_FAIL is
-#     set, so the default run succeeds. Set it to "raise" to make calibrate
-#     raise, or to "empty" to make summarise write an empty file, which its
+#   - calibrate16 fails only if the environment variable REMAKE_EX16_FAIL is
+#     set, so the default run succeeds. Set it to "raise" to make calibrate16
+#     raise, or to "empty" to make summarise16 write an empty file, which its
 #     Ensure then rejects.
 #   - Every task execution records wall time, CPU time and peak memory
 #     (peak memory is sampled from /proc, so only shown on Linux).
 #
-# DAG: summarise --> calibrate --> report
+# DAG: summarise16 --> calibrate16 --> report16
 #
 # Try (from the directory holding make_example_data.py):
 #   python make_example_data.py ex16
@@ -42,6 +42,20 @@
 #   remake run ex16_diagnostics.py               # fixed (variable unset): reruns
 #                                                #   only what failed or was
 #                                                #   downstream of it
+# Run history (0.10): every execution of a task is kept, not just the last:
+#   remake history ex16_diagnostics.py <key>    # calibrate16's executions, newest
+#                                               #   first: run number, status,
+#                                               #   resources, [rerun reason,
+#                                               #   host], and the error
+#                                               #   signature of a failed one
+#   remake history ex16_diagnostics.py --runs   # one line per run: when, command,
+#                                               #   how many tasks ran or failed
+#   remake history ex16_diagnostics.py <key> --json   # the same, for scripts
+# After the failing and fixed runs above, calibrate16 has a "never-run"
+# success, a "forced" failure (RuntimeError at ...) and a "last-run-failed"
+# success. `remake task-info` shows the last execution, with the git commit
+# and environment of the run that made it. None of this triggers a rerun.
+# See docs/guide/provenance.md.
 # An Ensure failure looks the same:
 #   REMAKE_EX16_FAIL=empty remake run -f ex16_diagnostics.py
 #   remake info ex16_diagnostics.py --failed
@@ -68,7 +82,7 @@ rmk = Remake(config={
     inputs={'readings': 'data/ex16/readings.txt'},
     outputs={'summary': Ensure('data/ex16/summary.txt', min_size=10, checksum=True)},
 )
-def summarise(inputs, outputs):
+def summarise16(inputs, outputs):
     """Summarise the readings; burn a little memory so resource capture has
     something to show. REMAKE_EX16_FAIL=empty writes an empty file, which
     the output's Ensure rejects."""
@@ -87,9 +101,9 @@ def summarise(inputs, outputs):
 @rule(
     inputs={'summary': 'data/ex16/summary.txt'},
     outputs={'calibrated': 'data/ex16/calibrated.txt'},
-    depends_on=[summarise],
+    depends_on=[summarise16],
 )
-def calibrate(inputs, outputs):
+def calibrate16(inputs, outputs):
     """Scale the mean by a constant. Fails if REMAKE_EX16_FAIL=raise, as a
     stand-in for a real-world failure (bad data, a missing library, ...)."""
     if os.environ.get('REMAKE_EX16_FAIL') == 'raise':
@@ -101,9 +115,9 @@ def calibrate(inputs, outputs):
 @rule(
     inputs={'calibrated': 'data/ex16/calibrated.txt'},
     outputs={'report': 'data/results/report16.txt'},
-    depends_on=[calibrate],
+    depends_on=[calibrate16],
 )
-def report(inputs, outputs):
+def report16(inputs, outputs):
     """Write the final report."""
     value = Path(inputs['calibrated']).read_text().strip()
     Path(outputs['report']).write_text(f'calibrated mean: {value}\n')

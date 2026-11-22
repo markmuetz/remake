@@ -31,6 +31,7 @@ These go *before* the command name (`remake -D run pipeline.py`):
 | `task-info` | Detail view of one task: status, paths, log, SLURM job |
 | `task-log` | Print a task's per-task log |
 | `why` | Explain why task(s) would (or would not) rerun |
+| `history` | A task's recorded executions, recent runs, or prune the history |
 | `lint` | Check input/output wiring between rules |
 | `rule-dag` | Print the rule dependency DAG in topological order |
 | `dag` | Export the rule or task graph as Graphviz DOT |
@@ -149,6 +150,57 @@ in DIR and runs each as if by `remake run <file>`, in sorted-filename order.
 - `-E/--executor`, `-j/--nproc`, `-f/--force`, `-n/--dry-run`,
   `--ignore-code-changes` and `--check-outputs` are passed to each `run`.
 
+## `history`
+
+`remake history pipeline.py <key>` (or `-Q QUERY`) lists the recorded
+executions of one task, newest first; `remake history pipeline.py --runs`
+lists recent runs. Both read `remake.db` and run nothing. What is recorded,
+and what it is for, is in [Provenance and run history](guide/provenance.md).
+
+```bash
+remake history pipeline.py 55a42548          # one task's executions
+remake history pipeline.py -Q "year == 2015" # the query must match one task
+remake history pipeline.py --runs --limit 5  # the last five runs
+remake history pipeline.py --prune --keep 3  # trim the history now
+```
+
+| Option | Meaning |
+|---|---|
+| `<key>` / `-Q, --query` | the task, as for `task-info`: a key prefix, or a query matching exactly one task |
+| `--runs` | list recent runs (one line each: run number, start time, command, tasks run and failed, short git commit with `+dirty`, and the run it continues) instead of one task's executions |
+| `-n, --limit N` | show at most N rows (default 20) |
+| `--prune` | apply the per-task cap to every task now |
+| `--keep N` | with `--prune`: keep N executions per task instead of `history.keep` (an error without `--prune`) |
+| `--json` | machine-readable output |
+
+An execution line shows the run number, finish time, status, resources, and
+in brackets the rerun reason and host; a failed one is followed by its error
+signature (`ExcType at file:line in function`), and a line says "ran in a
+different environment from the planning run" for a SLURM job whose
+environment differed. A task with no record prints "no recorded executions"
+(history starts with 0.10; earlier runs are not back-filled).
+
+The history keeps the last `history.keep` executions of each task (default
+10), set in `remake.toml` (project file only):
+
+```toml
+[history]
+keep = 20
+```
+
+The cap is applied as executions are recorded, so `--prune` is only needed
+after lowering `keep` or to trim by hand. `--prune` prints
+`pruned N history row(s)`. Runs themselves are never pruned.
+
+`--json` shapes (see [JSON output](#json-output)): the task form is
+`{"format": 1, "task", "key", "executions": [...]}`, each execution with
+`run_seq`, `finished`, `status`, `wall_s`, `cpu_s`, `max_rss_bytes`,
+`rss_method`, `output_bytes`, `reason`, `host`, `error` and
+`different_environment`; `--runs` is `{"format": 1, "runs": [...]}` (the
+provenance fields of the run, and its counts `n_planned`, `n_run`,
+`n_succeeded`, `n_failed`, `n_skipped`, `n_blocked_rules`, `n_waves`);
+`--prune` is `{"format": 1, "deleted": N}`.
+
 ## `config`
 
 `remake config pipeline.py [--json]` prints the effective merged config: the
@@ -183,6 +235,7 @@ keys per command:
 | `rule-dag` | `order`, `edges`; plus `rules` with `-N`/`-M` |
 | `rule-info` | the rule's detail fields (`rule`, `docstring`, `matrix`, `outputs`, `uses`, ...) |
 | `task-info` | the task's detail fields (`status`, `kwargs`, `inputs`, `outputs`, `slurm`, ...) |
+| `history` | `executions` (with `task` and `key`); `runs` with `--runs`; `deleted` with `--prune` |
 | `config` | `profile`, `profile_source`, `files`, `config`, `provenance` |
 | `slurm-status` | `submissions` (list of `{rule, jobid, states, reasons}`) |
 | `check-env` | `planning`, `job`, `mismatches` |
