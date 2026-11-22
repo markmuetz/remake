@@ -6,6 +6,16 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-11-22
+
+Provenance and run history, `remake verify`, list-valued inputs and
+outputs, `metadata_dir`, and the surfaces that 1.0 will freeze: the
+output-token interface, `--json` output, exit codes and `Remake` method
+names. A `Remake` used from Python now anchors at its defining file, as the
+CLI does. Upgrading from 0.9 reruns nothing (checked on the examples and on
+a 13,000-task field pipeline on JASMIN); the database schema moves to 1.1
+in place and 0.9 can still read it. Python 3.11 is now the minimum.
+
 ### Breaking
 
 - **A `Remake` used as a library anchors at its defining file** (0.10
@@ -770,6 +780,7 @@ the `remake` Claude skill (`references/remake2_to_remake3.md`). The rewrite was
 validated by reproducing a real multi-figure paper pipeline (`mcs_prime`)
 end-to-end on JASMIN with outputs identical to the remake2 reference.
 
+[0.10.0]: https://github.com/markmuetz/remake/releases/tag/v0.10.0
 [0.9.0]: https://github.com/markmuetz/remake/releases/tag/v0.9.0
 [0.8.5]: https://github.com/markmuetz/remake/releases/tag/v0.8.5
 [0.8.4]: https://github.com/markmuetz/remake/releases/tag/v0.8.4
