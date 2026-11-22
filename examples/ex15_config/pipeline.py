@@ -15,8 +15,8 @@
 #     SLURM executor reads per-rule config, and `remake config` shows the
 #     pipeline-level layers only, so this one is visible only in an sbatch
 #     script (it is harmless here: nothing is submitted).
-#   - remake.toml also shows (commented out) `metadata_dir`, which moves
-#     `.remake/` elsewhere, e.g. onto a scratch filesystem.
+#   - remake.toml also has a `metadata_dir` key, which moves `.remake/`
+#     elsewhere, e.g. onto a scratch filesystem; ex18_maintenance/ uses it.
 # Config never causes reruns: editing any of it reruns nothing.
 #
 # The pipeline: write_numbers[n] --> total.
