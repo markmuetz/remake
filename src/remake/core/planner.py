@@ -22,7 +22,7 @@ from .dag import expand_rule
 from .deps import ALL, Edges, downstream_task, task_id
 from .exceptions import Defer, RemakeError
 from .rule import is_deferrable
-from .task import paths_digest
+from .task import flat_values, paths_digest
 from .canonical import is_canonical
 from .scope import (
     io_match,
@@ -162,7 +162,7 @@ def _max_upstream_run_seq(task, upstream_seqs, edges, above=None):
 
 def _outputs_complete(task):
     outputs = task.outputs
-    return bool(outputs) and all(token.is_complete() for token in outputs.values())
+    return bool(outputs) and all(token.is_complete() for token in flat_values(outputs))
 
 
 def outputs_complete_many(tasks):
@@ -173,7 +173,7 @@ def outputs_complete_many(tasks):
 
     flat, owners = [], []
     for task in tasks:
-        for token in task.outputs.values():
+        for token in flat_values(task.outputs):
             flat.append(token)
             owners.append(task.key)
     result = {task.key: bool(task.outputs) for task in tasks}
@@ -247,7 +247,7 @@ def _io_paths(task, part):
     callable spec raises — run_task has already recorded that failure, and
     the executor's bookkeeping must not re-raise it (and crash the run)."""
     try:
-        return _norm_paths(getattr(task, part).values())
+        return _norm_paths(flat_values(getattr(task, part)))
     except Exception:
         return set()
 

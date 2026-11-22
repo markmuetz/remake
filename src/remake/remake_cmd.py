@@ -903,6 +903,7 @@ class RemakeCLI:
         from .core.dag import iter_expand_rule
         from .core.exceptions import Defer
         from .core.planner import make_predicate, rule_kwarg_names
+        from .core.task import flat_items
 
         rmk = self._load(args)
         rmk.finalize()
@@ -911,14 +912,14 @@ class RemakeCLI:
         paint = Painter(args.colour)
 
         def input_files(task):
-            for name, value in task.inputs.items():
+            for name, value in flat_items(task.inputs):
                 info = {'name': name, 'path': str(value)}
                 if args.check:
                     info['exists'] = Path(value).exists()
                 yield info
 
         def output_files(task):
-            for name, token in task.outputs.items():
+            for name, token in flat_items(task.outputs):
                 info = {'name': name, 'path': str(token)}
                 if args.check:
                     info['complete'] = token.is_complete()

@@ -338,6 +338,26 @@ write it. Two options:
   exists, and doesn't rerun anything when it changes or goes missing. Fine for a
   throw-away diagnostic that nothing depends on.
 
+### Several paths under one key
+
+A value can be a flat list (or tuple) of paths, each formatted with the
+task's matrix values:
+
+```python
+@rule(outputs={'halves': ['data/{site}_first.txt', 'data/{site}_second.txt']},
+      matrix={'site': SITES})
+def split(outputs, site):
+    first, second = outputs['halves']
+    ...
+```
+
+The rule body gets a list: of path strings for inputs, of path-like output
+tokens for outputs. Everything that looks at paths (lint, `task-info` and
+`ls-tasks`, where elements show as `halves[0]`, `halves[1]`; `verify`; the
+missing-inputs check; dependency tracking) sees each element. A callable
+spec may return lists too. Lists must be flat: a nested list is an error at
+definition. See `examples/ex17_list_values.py`.
+
 ## Output checks with `Ensure`
 
 By default remake trusts a task that returns without raising. Wrap an output

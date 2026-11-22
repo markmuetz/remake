@@ -131,6 +131,13 @@ def check_io_spec(rule_name, part_name, spec, matrix_keys):
             )
     else:
         for key, value in spec.items():
+            if isinstance(value, (list, tuple)):
+                # A list of paths (0.10 D8): flat, and each element checked.
+                for e in value:
+                    if isinstance(e, (list, tuple, dict, set)):
+                        raise SignatureError(
+                            f'{rule_name}: {part_name} {key}: a list of paths must be '
+                            f'flat (got a nested {type(e).__name__}); use separate keys')
             missing = sorted(f for f in _template_fields(value)
                              if not f or f not in matrix_keys)
             if missing:

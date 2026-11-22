@@ -470,7 +470,11 @@ def io_part(spec):
 
     # A FileToken is what a plain path string becomes anyway, and Ensure
     # options are not identity: `Ensure('a.nc')` and `'a.nc'` hash the same.
-    spec = {k: (v.path if type(v) is FileToken else v) for k, v in spec.items()}
+    def plain(v):
+        return v.path if type(v) is FileToken else v
+
+    spec = {k: (type(v)(plain(e) for e in v) if isinstance(v, (list, tuple)) else plain(v))
+            for k, v in spec.items()}
     try:
         tree = ast.parse(repr(spec))
     except SyntaxError:

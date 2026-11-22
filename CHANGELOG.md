@@ -41,6 +41,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **List-valued inputs and outputs** (0.10 decision D8; bug 02, review
+  L2): `outputs={'parts': ['a/{i}.nc', 'b/{i}.nc']}` names several paths
+  under one key, formatted per element; the rule body gets a list. Lint,
+  `task-info` (as `parts[0]`, `parts[1]`), `ls-tasks`, `verify`, the
+  missing-inputs check and dependency tracking see each path. Lists must be
+  flat. A dict spec that already held a list used to be stringified into
+  one bogus path; it now means the list (its stored hashes are unchanged,
+  so nothing reruns). `task-info` no longer crashes on a tuple from a
+  callable spec. Example: `examples/ex17_list_values.py`.
 - **`remake verify`** (0.10 item 2): reconciles the DB with the disk.
   `--outputs` finds tasks recorded as success whose outputs are missing or
   fail `Ensure` (marked pending with `--apply`); `--adopt` finds unrecorded

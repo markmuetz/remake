@@ -33,7 +33,7 @@ from .planner import (
 )
 from .rule import Rule
 from .scope import check_scope, exec_function
-from .task import Task
+from .task import Task, flat_items, flat_values
 from .tokens import Dir, OutputToken, PathToken, canonical, canonical_path, complete_many, is_remote
 
 
@@ -135,6 +135,13 @@ _MISSING = object()
 # A scheme prefix (s3://, https://, gs://): an input that is a URL.
 # Path('s3://b/k') stringifies as 's3:/b/k', hence :// or :/ (but not a
 # Windows drive, C:\\).
+
+
+def _as_strs(value):
+    """A resolved input/output value as JSON: a path string, or a list."""
+    if isinstance(value, (list, tuple)):
+        return [str(e) for e in value]
+    return str(value)
 
 
 def _accepts_kwarg(metadata, name):
@@ -646,16 +653,16 @@ class Remake:
         log_path = task_log_path(task)
         jobids, array_index = last_submission(task.rule.name, task.key)
         inputs = (
-            {k: {'path': str(v), 'exists': Path(v).exists()} for k, v in task.inputs.items()}
+            {k: {'path': str(v), 'exists': Path(v).exists()} for k, v in flat_items(task.inputs)}
             if task.rule.inputs is not None
             else {}
         )
         outputs = (
-            {k: {'path': str(v), 'complete': v.is_complete()} for k, v in task.outputs.items()}
+            {k: {'path': str(v), 'complete': v.is_complete()} for k, v in flat_items(task.outputs)}
             if task.rule.outputs is not None
             else {}
         )
-        for name, token in task.outputs.items():
+        for name, token in flat_items(task.outputs):
             if isinstance(token, Dir) and name in outputs:
                 # Stale files (not produced by the last run), from the manifest.
                 outputs[name]['dir'] = token.summary()
@@ -729,8 +736,8 @@ class Remake:
             'rule': rule.name,
             'key': task.key,
             'kwargs': task.kwargs,
-            'inputs': {k: str(v) for k, v in task.inputs.items()},
-            'outputs': {k: str(v) for k, v in task.outputs.items()},
+            'inputs': {k: _as_strs(v) for k, v in task.inputs.items()},
+            'outputs': {k: _as_strs(v) for k, v in task.outputs.items()},
             'function': {
                 'module': getattr(fn, '__module__', None),
                 'qualname': getattr(fn, '__qualname__', None),
@@ -843,7 +850,7 @@ class Remake:
                 continue
             try:
                 task = next(iter_expand_rule(rule), None)
-                if task is not None and any(isinstance(v, Dir) for v in task.outputs.values()):
+                if task is not None and any(isinstance(v, Dir) for v in flat_values(task.outputs)):
                     found.append(rule)
             except Exception:  # Defer, or a spec needing runtime state
                 continue
@@ -867,7 +874,7 @@ class Remake:
                     # run_task records that failure per task (review M11);
                     # this check must not turn it into a crashed run.
                     continue
-                for name, token in outputs.items():
+                for name, token in flat_items(outputs):
                     if not isinstance(token, Dir):
                         continue
                     path = canonical_path(token.path)
@@ -915,7 +922,7 @@ class Remake:
             paths = []
             try:
                 for task in iter_expand_rule(rule):
-                    for token in task.outputs.values():
+                    for token in flat_values(task.outputs):
                         if is_remote(token):
                             continue
                         paths.append(str(token))
@@ -978,7 +985,7 @@ class Remake:
                 continue
             candidates = [p for name in dep_names for p in rule_outputs.get(name, [])]
             for task in iter_expand_rule(rule):
-                for value in task.inputs.values():
+                for value in flat_values(task.inputs):
                     if is_remote(value):
                         continue  # not a local file: nothing to match
                     path = str(value)
@@ -1083,7 +1090,7 @@ class Remake:
             verified = [
                 t for t in tasks
                 if t.outputs and all(adoptable(token) for token in sorted(
-                    t.outputs.values(), key=lambda tk: isinstance(tk, Dir)))
+                    flat_values(t.outputs), key=lambda tk: isinstance(tk, Dir)))
             ]
             skipped = len(tasks) - len(verified)
             tasks = verified
@@ -1135,7 +1142,7 @@ class Remake:
             # A Dir without its manifest is not complete but may be adopted;
             # ask the token (write=False: still read-only here).
             for t in unrecorded:
-                if done[t.key] or all(tok.adopt(write=False) for tok in t.outputs.values()):
+                if done[t.key] or all(tok.adopt(write=False) for tok in flat_values(t.outputs)):
                     adoptable.append(t)
         cascaded = []
         if apply and (missing or adoptable):
@@ -1145,7 +1152,7 @@ class Remake:
                 self.metadata.mark_pending(missing)
             if adoptable:
                 adoptable = [t for t in adoptable
-                             if all(tok.adopt(write=True) for tok in t.outputs.values())]
+                             if all(tok.adopt(write=True) for tok in flat_values(t.outputs))]
                 cascaded = self._cascade_descendants(adoptable)
                 self.metadata.update_tasks(adoptable + cascaded, TASK_STATUS_SUCCESS)
         return {'missing': missing, 'adoptable': adoptable, 'applied': bool(apply),
@@ -1215,7 +1222,7 @@ class Remake:
         suspects = []  # (rule, path)
         for task in tasks:
             try:
-                values = list(task.inputs.values())
+                values = list(flat_values(task.inputs))
             except Exception:
                 continue  # unresolvable here: let the task itself report it
             for value in values:
@@ -1246,7 +1253,7 @@ class Remake:
         for rule in self.rules:
             try:
                 for t in iter_expand_rule(rule):
-                    for tok in t.outputs.values():
+                    for tok in flat_values(t.outputs):
                         norm = canon(tok)
                         produced.add(norm)
                         if isinstance(tok, Dir):
@@ -1442,10 +1449,10 @@ class Remake:
             # is attached (they'd cost real time at 1e6 tasks otherwise).
             logger.opt(lazy=True).trace(
                 'running {}: inputs {} -> outputs {}', lambda: task,
-                lambda: [str(p) for p in task.inputs.values()],
-                lambda: [str(p) for p in task.outputs.values()],
+                lambda: [str(p) for p in flat_values(task.inputs)],
+                lambda: [str(p) for p in flat_values(task.outputs)],
             )
-            for token in task.outputs.values():
+            for token in flat_values(task.outputs):
                 if isinstance(token, PathToken):
                     Path(token).parent.mkdir(parents=True, exist_ok=True)
                 token.before_run()
@@ -1543,7 +1550,7 @@ class Remake:
         """Validate a successful task's outputs (`Ensure`), then collect
         their stats: {output name: {'n_files', 'total_bytes', 'checksum'}}.
         A failed check raises OutputValidationError (the task fails)."""
-        problems = [f'{name}: {msg}' for name, token in task.outputs.items()
+        problems = [f'{name}: {msg}' for name, token in flat_items(task.outputs)
                     if (msg := token.validate())]
         if problems:
             raise OutputValidationError(
@@ -1551,7 +1558,7 @@ class Remake:
         checksum = bool(task.rule.config.get(
             'checksum_outputs', self.config.get('checksum_outputs', False)))
         stats = {}
-        for name, token in task.outputs.items():
+        for name, token in flat_items(task.outputs):
             st = token.after_success(checksum=checksum)
             if st is not None:
                 stats[name] = st

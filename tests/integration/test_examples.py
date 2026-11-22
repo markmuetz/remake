@@ -60,6 +60,7 @@ CASES = [
     ('ex13_rule_factory.py', 5, 11),
     ('ex15_config/pipeline.py', 2, 4),
     ('ex16_diagnostics.py', 3, 3),
+    ('ex17_list_values.py', 3, 7),
 ]
 
 
@@ -85,6 +86,7 @@ def test_example_loads_and_plans(filename, n_rules, n_tasks, tmp_path, monkeypat
     ('ex13', 'data/results/summary13.txt'),         # self-generating
     ('ex14', 'data/results/summary14.txt'),         # self-generating
     ('ex16', 'data/results/report16.txt'),
+    ('ex17', 'data/ex17/summary17.txt'),          # self-generating
 ])
 def test_light_examples_run_end_to_end(example, result_file, tmp_path, monkeypatch, memory_backend):
     """These need no heavy deps: generate synthetic data (if any) and run."""
