@@ -14,6 +14,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   when rules were blocked too. `run-all` follows the same rule and lists
   such remakefiles as `blocked`. Scripts that test for `1` to mean "not
   finished" should also accept 3.
+- **Python 3.10 is no longer supported; 3.11 is the minimum.** Python 3.10
+  reached end of life in October 2026. The `tomli` fallback is gone
+  (`tomllib` is built in), and the lock now resolves tornado 6.6 or later.
+
+### Added
+
+- `remake.__all__` declares the public API, checked against `docs/api/` by a test.
 
 ## [0.9.0] — 2026-11-21
 

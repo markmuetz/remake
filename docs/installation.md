@@ -1,6 +1,6 @@
 # Installation
 
-remake requires **Python 3.10+**.
+remake requires **Python 3.11+**.
 
 ## From PyPI
 

@@ -8,17 +8,13 @@ set it (`EffectiveConfig.provenance`).
 """
 import copy
 import os
-import sys
+import tomllib
 from pathlib import Path
 
 from loguru import logger
 
 from ..core.exceptions import RemakeError
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover
-    import tomli as tomllib
 
 # The built-in defaults (layer a). Same values the SLURM executor has always
 # used; to be removed at 1.0 in favour of an explicit profile.
