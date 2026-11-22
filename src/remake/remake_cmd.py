@@ -1267,6 +1267,9 @@ class RemakeCLI:
             raise RemakeError('--keep only applies with --prune')
         rmk = self._load(args)
         meta = rmk.metadata
+        # SLURM jobs leave their results as sidecars: absorb them first, or
+        # history lags the jobs that have finished (JASMIN check 2026-11-22).
+        meta.ingest_sidecars(rmk.rules)
         if args.prune:
             keep = args.keep if args.keep is not None else (
                 (rmk.config.get('history') or {}).get('keep'))
@@ -1283,7 +1286,11 @@ class RemakeCLI:
                 return 0
             for r in runs:
                 counts = ''
-                if r.get('n_run') is not None:
+                if r.get('n_run') is not None and r.get('n_planned') is not None \
+                        and r.get('finished') is None:  # a SLURM submission, so far
+                    counts = (f'{r["n_planned"]} submitted, {r["n_run"]} run, '
+                              f'{r["n_failed"] or 0} failed')
+                elif r.get('n_run') is not None:
                     counts = (f'{r["n_run"]} run, {r["n_failed"] or 0} failed'
                               + (f', {r["n_blocked_rules"]} blocked rule(s)'
                                  if r.get('n_blocked_rules') else ''))

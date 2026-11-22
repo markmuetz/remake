@@ -860,3 +860,14 @@ rmk.rules_from_current_module()
     assert data['rules'][0]['output_bytes'] == 6
     cli('task-info', 'dirs.py', '-Q', 'rule == "tiles" and n == 2')
     assert 'size:     d: 2 file(s), 6B' in capsys.readouterr().out
+
+
+def test_history_runs_counts_a_submission_as_its_tasks_are_ingested(slurm_dir, capsys):
+    # JASMIN check 2026-11-22: a SLURM run row stayed "N submitted" forever.
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    cli('run-array-task', 'pipeline.py', 'gen', '3')
+    cli('run-array-task', 'pipeline.py', 'gen', '4')
+    capsys.readouterr()
+    cli('history', 'pipeline.py', '--runs')
+    line = capsys.readouterr().out.splitlines()[-1]
+    assert 'submitted, 2 run, 0 failed' in line, line

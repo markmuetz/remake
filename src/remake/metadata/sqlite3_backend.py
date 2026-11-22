@@ -745,8 +745,20 @@ class Sqlite3Backend(MetadataManager):
         """The most recent `run` rows, newest first."""
         rows = self.conn.execute(
             f'SELECT {", ".join(self._RUN_FIELDS)} FROM run '
-            'ORDER BY run_seq DESC LIMIT ?', (limit,))
-        return [self._run_from_row(row) for row in rows]
+            'ORDER BY run_seq DESC LIMIT ?', (limit,)).fetchall()
+        runs = [self._run_from_row(row) for row in rows]
+        for rec in runs:
+            if rec.get('n_run') is None and rec.get('finished') is None:
+                # A SLURM submission never finishes in this process: count
+                # the executions ingested for it so far (JASMIN check
+                # 2026-11-22). 'finished' stays None, so these are partial.
+                n_run, n_ok, n_failed = self.conn.execute(
+                    'SELECT COUNT(*), COALESCE(SUM(status = ?), 0), COALESCE(SUM(status = ?), 0) '
+                    'FROM task_run WHERE run_seq = ?',
+                    (TASK_STATUS_SUCCESS, TASK_STATUS_FAILED, rec['run_seq'])).fetchone()
+                if n_run:
+                    rec.update(n_run=n_run, n_succeeded=n_ok, n_failed=n_failed)
+        return runs
 
     def get_environment(self, env_id):
         """{'fingerprint', 'python_version', 'packages'} for an environment id."""
