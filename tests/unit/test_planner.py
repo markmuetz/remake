@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from remake import Remake, Sqlite3Backend, rule
 from remake.core.planner import make_predicate
 from remake.metadata import TASK_STATUS_FAILED
@@ -542,12 +544,99 @@ def test_always_mode_detects_deleted_output(tmp_path):
 # --- review 2026-09-24 M14: query errors and typos ---
 
 
-def test_query_builtins_available():
+def _q(query, kwargs, known=None):
+    """Evaluate `query` on `kwargs` (plus a rule name)."""
     from remake.core.planner import make_predicate
 
-    pred = make_predicate('year in range(2000, 2002)', {'year'})
-    assert pred({'year': 2001, 'rule': 'r'}) and not pred({'year': 2003, 'rule': 'r'})
-    assert make_predicate('len(site) == 2', {'site'})({'site': 'ox', 'rule': 'r'})
+    return make_predicate(query, known)({'rule': 'r', **kwargs})
+
+
+@pytest.mark.parametrize('query, kwargs, expected', [
+    ('year == 2000', {'year': 2000}, True),
+    ('year != 2000', {'year': 2000}, False),
+    ('year < 2001', {'year': 2000}, True),
+    ('year <= 2000', {'year': 2000}, True),
+    ('year > 2000', {'year': 2000}, False),
+    ('year >= 2000', {'year': 2000}, True),
+    ('1 < year < 3000', {'year': 2000}, True),  # chained comparison
+    ("site in ['ox', 'cam']", {'site': 'ox'}, True),
+    ("site not in ('ox', 'cam')", {'site': 'ox'}, False),
+    ('x is None', {'x': None}, True),
+    ('x is not None', {'x': None}, False),
+    ("rule in ['a', 'b']", {'rule': 'b'}, True),
+    ("rule in ['a', 'b']", {'rule': 'c'}, False),
+    ("year == 1 or site == 'ox'", {'year': 2, 'site': 'ox'}, True),
+    ("year == 1 and site == 'ox'", {'year': 2, 'site': 'ox'}, False),
+    ("not site == 'ox'", {'site': 'ox'}, False),
+    ("not (year == 1 or site == 'ox')", {'year': 2, 'site': 'cam'}, True),
+    ('year > -5', {'year': -3}, True),
+    ('year == -3', {'year': -3}, True),
+    ('x == 1.5', {'x': 1.5}, True),
+    ('flag == True', {'flag': True}, True),
+    ('True', {}, True),
+    ('False', {}, False),
+    ('not False', {}, True),
+    ('year in [2000, 2001]', {'year': 2001}, True),
+])
+def test_query_allowed_constructs(query, kwargs, expected):
+    assert _q(query, kwargs) is expected
+
+
+@pytest.mark.parametrize('query, what', [
+    ('len(site) == 2', 'function calls'),
+    ('year in range(2000, 2002)', 'function calls'),
+    ('any(y > 1 for y in [year])', 'function calls'),
+    ("site.upper() == 'OX'", 'function calls'),
+    ("().__class__ == 1", 'attribute accesses'),
+    ('site.real == 1', 'attribute accesses'),
+    ('site[0] == "o"', 'subscripts'),
+    ('site[0:1] == "o"', 'subscripts'),
+    ('year + 1 == 2001', 'arithmetic operators'),
+    ('year * 2 > 3', 'arithmetic operators'),
+    ('[y for y in [year]]', 'comprehensions'),
+    ('lambda: 1', 'lambdas'),
+    ('year in {1, 2}', 'set literals'),
+    ('year in {1: 2}', 'dict literals'),
+    ('(y := 3) == 3', 'assignment expressions'),
+    ('f"{year}" == "1"', 'f-strings'),
+    ('1 if year else 2', 'conditional expressions'),
+    ('+year == 1', 'unary +'),
+    ('~year == 1', 'unary ~'),
+])
+def test_query_rejected_constructs(query, what):
+    import pytest as _pytest
+
+    from remake import RemakeError
+    from remake.core.planner import make_predicate
+
+    with _pytest.raises(RemakeError) as exc:
+        make_predicate(query)
+    msg = str(exc.value)
+    assert what in msg and 'not allowed in a query' in msg and repr(query) in msg
+
+
+def test_query_dangerous_expressions_rejected_before_evaluation():
+    """__import__ and the object-graph escape are refused at validation: the
+    predicate is never built, so nothing is evaluated (not even a NameError)."""
+    from remake import RemakeError
+    from remake.core.planner import make_predicate
+
+    for query in ("__import__('os').getcwd() == 1",
+                  "__import__('os').system('touch pwned')",
+                  '().__class__.__bases__[0].__subclasses__()'):
+        with pytest.raises(RemakeError, match='not allowed in a query'):
+            make_predicate(query, {'year'})
+
+
+def test_query_no_builtins_at_evaluation():
+    # A name that is a builtin is just an unknown name: no match without
+    # known_names, an error with them.
+    from remake import RemakeError
+    from remake.core.planner import make_predicate
+
+    assert make_predicate('len == 1')({'rule': 'r'}) is False
+    with pytest.raises(RemakeError, match=r"unknown name\(s\) \['len'\]"):
+        make_predicate('len == 1', {'year'})
 
 
 def test_query_unknown_name_is_an_error():
@@ -558,8 +647,6 @@ def test_query_unknown_name_is_an_error():
 
     with pytest.raises(RemakeError, match=r"unknown name\(s\) \['yera'\]"):
         make_predicate('yera == 2000', {'year', 'site'})
-    # Names bound inside the query itself are not unknown.
-    make_predicate('any(y > 2000 for y in [year])', {'year'})
     make_predicate("rule == 'a'", {'year'})
     # Without known names (library use), a missing name is still a no-match.
     assert make_predicate('nope == 1')({'year': 1, 'rule': 'r'}) is False
@@ -576,12 +663,3 @@ def test_query_syntax_and_eval_errors_are_remake_errors():
     pred = make_predicate("year > '2000'", {'year'})
     with pytest.raises(RemakeError, match='TypeError'):
         pred({'year': 2001, 'rule': 'r'})
-
-
-def test_query_generator_expressions_see_kwargs():
-    # Pre-tag review finding 3: kwargs were eval *locals*, invisible inside
-    # a generator expression's own scope -> silent no-match.
-    from remake.core.planner import make_predicate
-
-    pred = make_predicate('any(year == y for y in (2000, 2001))', {'year'})
-    assert pred({'year': 2000, 'rule': 'r'}) and not pred({'year': 2005, 'rule': 'r'})

@@ -6,7 +6,6 @@ compare), uses changed, or any relevant upstream task reruns. Filesystem
 checks happen only via the opt-in check_outputs modes.
 """
 import ast
-import builtins
 import difflib
 import inspect
 import os
@@ -38,12 +37,40 @@ from .scope import (
 )
 
 
-# Builtins a query may call (review 2026-09-24 M14): with none, reasonable
-# queries like "year in range(2000, 2005)" silently matched nothing.
-QUERY_BUILTINS = {
-    name: getattr(builtins, name)
-    for name in ('abs', 'all', 'any', 'bool', 'float', 'frozenset', 'int', 'len',
-                 'list', 'max', 'min', 'range', 'round', 'set', 'sorted', 'str', 'tuple')
+# The query grammar (design_docs/releases/v0.11.0.md item 2), after
+# pyquerylist: every node of the parsed query must be one of these types.
+QUERY_NODES = (
+    ast.Expression, ast.Name, ast.Load, ast.Constant, ast.List, ast.Tuple,
+    ast.Compare, ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE,
+    ast.In, ast.NotIn, ast.Is, ast.IsNot,
+    ast.BoolOp, ast.And, ast.Or, ast.UnaryOp, ast.Not, ast.USub,
+)
+
+# What to call a rejected node type, in a user's words (plural: the message
+# reads "<what> are not allowed in a query").
+_NODE_WORDS = {
+    'Call': 'function calls',
+    'Attribute': 'attribute accesses',
+    'Subscript': 'subscripts',
+    'Slice': 'slices',
+    'BinOp': 'arithmetic operators',
+    'Set': 'set literals',
+    'Dict': 'dict literals',
+    'ListComp': 'comprehensions',
+    'SetComp': 'comprehensions',
+    'DictComp': 'comprehensions',
+    'GeneratorExp': 'generator expressions',
+    'Lambda': 'lambdas',
+    'JoinedStr': 'f-strings',
+    'FormattedValue': 'f-strings',
+    'IfExp': 'conditional expressions',
+    'NamedExpr': 'assignment expressions (:=)',
+    'Starred': 'starred expressions',
+    'Await': 'await expressions',
+    'Yield': 'yield expressions',
+    'YieldFrom': 'yield expressions',
+    'UAdd': 'unary + operators',
+    'Invert': 'unary ~ operators',
 }
 
 
@@ -58,48 +85,61 @@ def rule_kwarg_names(rules):
     return names
 
 
-def _free_names(tree):
-    """Names a query expression reads, minus those it binds itself
-    (comprehension targets, lambda arguments)."""
-    loaded, bound = set(), set()
+def _validate_query(tree, query):
+    """Reject any node of the parsed `query` that is not in QUERY_NODES, with
+    a RemakeError naming the construct and the query. Runs before anything
+    is evaluated."""
     for node in ast.walk(tree):
-        if isinstance(node, ast.Name):
-            (loaded if isinstance(node.ctx, ast.Load) else bound).add(node.id)
-        elif isinstance(node, ast.arg):
-            bound.add(node.arg)
-    return loaded - bound
+        if not isinstance(node, QUERY_NODES):
+            kind = type(node).__name__
+            what = _NODE_WORDS.get(kind, f'{kind} expressions')
+            raise RemakeError(
+                f'{what} are not allowed in a query ({kind}): {query!r}. '
+                'A query is comparisons (== != < <= > >= in, not in, is, is not) '
+                'of names and literals, combined with and / or / not'
+            )
+
+
+def _query_names(tree):
+    """Names a (validated) query expression reads."""
+    return {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
 
 
 def make_predicate(query, known_names=None):
-    """Compile a task-filter expression evaluated against task kwargs plus
+    """Compile a task-filter query, evaluated against task kwargs plus
     'rule' (the rule name), e.g. "year > 1985 and model == 'era5'",
-    "rule in ['extract', 'clean']". A few safe builtins are available
-    (QUERY_BUILTINS).
+    "rule in ['extract', 'clean']", "True".
+
+    The grammar is restricted (pyquerylist pattern): the query is parsed,
+    every node must be a name, literal (constant, list, tuple), comparison
+    (== != < <= > >= in, not in, is, is not), and/or, not, or unary minus.
+    Calls, attributes, subscripts, arithmetic, sets, dicts, comprehensions,
+    lambdas and f-strings are rejected with a RemakeError before anything
+    is evaluated. The validated tree is then evaluated with an empty __builtins__ and
+    the task kwargs as the only names.
 
     `known_names` (every kwarg name in the pipeline, see rule_kwarg_names)
     turns a name no rule has — almost always a typo — into an error instead
     of a silent no-match. Bad syntax and evaluation errors are RemakeErrors
     (a clean CLI error) rather than raw tracebacks."""
-    # MM: this looks like a risk - using compile to compile the code?
-    # See how pyquerylist does this - it only allows certain Python ops.
     try:
         tree = ast.parse(query, mode='eval')
-        code = compile(tree, '<query>', 'eval')
     except SyntaxError as e:
         raise RemakeError(f'invalid query {query!r}: {e.msg}') from None
+    _validate_query(tree, query)
+    code = compile(tree, '<query>', 'eval')
     if known_names is not None:
-        unknown = _free_names(tree) - set(known_names) - {'rule'} - QUERY_BUILTINS.keys()
+        unknown = _query_names(tree) - set(known_names) - {'rule'}
         if unknown:
             raise RemakeError(
                 f'query {query!r} uses unknown name(s) {sorted(unknown)} — not a '
-                f'matrix key of any rule (keys: {sorted(known_names)}), "rule", or an '
-                f'allowed builtin ({", ".join(sorted(QUERY_BUILTINS))})'
+                f'matrix key of any rule (keys: {sorted(known_names)}) or "rule"'
             )
+
     def predicate(kwargs):
+        """True if the task with these kwargs (plus 'rule') matches."""
         try:
-            # kwargs go in the *globals*: a generator expression (e.g. inside
-            # any()) has its own scope and can't see eval's locals.
-            return bool(eval(code, {**kwargs, '__builtins__': QUERY_BUILTINS}))
+            return bool(eval(code, {**kwargs, '__builtins__': {}}))
         except NameError:
             # Query references a kwarg this rule doesn't have: no match.
             return False

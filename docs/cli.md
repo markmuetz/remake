@@ -263,7 +263,8 @@ whole runnable set.
 
 ## Queries
 
-`-Q` takes a Python expression evaluated over each task's matrix kwargs:
+`-Q` takes a small restricted expression evaluated over each task's matrix
+kwargs (and `rule`, the rule name):
 
 ```bash
 remake info pipeline.py -Q "rule == 'process' and year >= 2015"
@@ -271,6 +272,15 @@ remake run  pipeline.py -Q "rule in ['extract', 'process']"
 ```
 
 `-Q True` matches every task.
+
+The grammar is deliberately small: names (matrix kwargs and `rule`), literals
+(numbers, strings, `True`/`False`/`None`, lists and tuples of them),
+comparisons (`==  !=  <  <=  >  >=  in  not in  is  is not`), `and` / `or` /
+`not`, parentheses and a unary minus (`year > -5`). Anything else (function
+calls such as `len(x)` or `range(...)`, attributes, subscripts, arithmetic,
+sets, dicts, comprehensions, lambdas, f-strings) is rejected before the query
+is evaluated, with exit code 2 and a message naming the construct. A name that
+is no rule's matrix key (and not `rule`) is an error too, which catches typos.
 
 A query that names a kwarg a rule doesn't have simply doesn't match that
 rule's tasks — it is not an error. `-Q "site == 'oxford' and year < 2015"`

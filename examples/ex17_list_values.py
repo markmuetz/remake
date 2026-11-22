@@ -12,6 +12,14 @@ Try:
     remake task-info ex17_list_values.py -Q "rule == 'pair_up17' and site == 'a'"
     remake lint ex17_list_values.py
 
+Queries (`-Q`) are a small restricted language: comparisons of kwarg names and
+literals, joined with and / or / not. No function calls or arithmetic:
+
+    remake info ex17_list_values.py -Q "site in ['a', 'b'] and rule != 'summary17'"
+    remake info ex17_list_values.py -Q "not site == 'c'"
+    remake info ex17_list_values.py -Q True            # every task
+    remake info ex17_list_values.py -Q "len(site) == 1"   # error (exit 2)
+
 Lists must be flat (a nested list is an error at definition); use separate
 keys for separate groups. Stdlib only.
 """
