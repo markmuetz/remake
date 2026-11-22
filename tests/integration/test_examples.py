@@ -7,6 +7,7 @@ are errors (except ScopeWarning, which ex3 deliberately demonstrates), and
 anything logged at WARNING+ through loguru (e.g. the duplicate-rule-name
 collision warning) fails the test via the autouse fixture below.
 """
+import shutil
 from pathlib import Path
 
 import pytest
@@ -30,7 +31,10 @@ def fail_on_logged_warnings():
     sink_id = logger.add(
         lambda message: records.append(message.record), level='WARNING')
     yield
-    logger.remove(sink_id)
+    try:
+        logger.remove(sink_id)
+    except ValueError:  # the CLI resets loguru's handlers (tests that call it)
+        pass
     assert not records, 'logged warnings during test: ' + '; '.join(
         f'{r["level"].name}: {r["message"]}' for r in records)
 
@@ -126,3 +130,58 @@ def test_ex15_config_runs_and_resolves_config(tmp_path, monkeypatch, memory_back
     assert (tmp_path / "data/results/total15.txt").read_text() == "57\n"  # 6 + 15 + 36
     runnable, deferred = rmk.plan()
     assert not runnable and not deferred
+
+
+def test_rule_names_are_unique_across_examples(tmp_path, monkeypatch):
+    """The top-level examples share one .remake/ store, so no rule name may
+    appear in two files (the duplicate-rule warning would fire, and the two
+    would clobber each other's recorded state). ex5_multifile/ and
+    ex15_config/ are their own pipeline directories and are not included."""
+    monkeypatch.chdir(tmp_path)
+    owners = {}
+    for path in sorted(EXAMPLES_DIR.glob('ex*.py')):
+        try:
+            rmk = load_remake(path, finalize=False)
+        except ImportError:  # e.g. ex9 without xarray
+            continue
+        for r in rmk.rules:
+            owners.setdefault(r.name, []).append(path.name)
+    clashes = {name: files for name, files in owners.items() if len(files) > 1}
+    assert not clashes, f'rule names defined in more than one example: {clashes}'
+
+
+def test_ex16_history_after_failing_and_fixing(tmp_path, monkeypatch):
+    """The ex16 walk-through: a forced failure then a fix gives calibrate16
+    three executions, and `history --json` and `--runs --json` show them."""
+    import json
+
+    from remake.remake_cmd import remake_cmd
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv('REMAKE_EX16_FAIL', raising=False)
+    getattr(load_module(EXAMPLES_DIR / 'make_example_data.py'), 'ex16')()
+    # remake anchors paths to the remakefile's directory: run a copy.
+    shutil.copy(EXAMPLES_DIR / 'ex16_diagnostics.py', tmp_path)
+    pipeline = str(tmp_path / 'ex16_diagnostics.py')
+    assert (remake_cmd(['remake', 'run', pipeline]) or 0) == 0
+    monkeypatch.setenv('REMAKE_EX16_FAIL', 'raise')
+    assert remake_cmd(['remake', 'run', '-f', pipeline]) == 1
+    monkeypatch.delenv('REMAKE_EX16_FAIL')
+    assert (remake_cmd(['remake', 'run', pipeline]) or 0) == 0
+
+    import contextlib
+    import io
+
+    def history(*argv):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            assert (remake_cmd(['remake', 'history', pipeline, *argv, '--json']) or 0) == 0
+        return json.loads(buf.getvalue())
+
+    task = history('-Q', "rule == 'calibrate16'")
+    assert task['format'] == 1
+    assert [(e['status'], e['reason']) for e in task['executions']] == [
+        ('success', 'last-run-failed'), ('failed', 'forced'), ('success', 'never-run')]
+    assert task['executions'][1]['error'].startswith('RuntimeError at ex16_diagnostics.py')
+    runs = history('--runs')['runs']
+    assert [r['n_failed'] for r in runs] == [0, 1, 0]
