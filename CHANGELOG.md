@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Breaking
+
+- **Exit code 3 for a run that stopped short** (0.10 decision D5): when no
+  task failed but rules were left blocked (a deferred matrix never became
+  ready), `remake run` now exits 3, not 1. A failed task is still 1, also
+  when rules were blocked too. `run-all` follows the same rule and lists
+  such remakefiles as `blocked`. Scripts that test for `1` to mean "not
+  finished" should also accept 3.
+
 ## [0.9.0] — 2026-11-21
 
 Canonical change detection, a config file cascade with profiles, output

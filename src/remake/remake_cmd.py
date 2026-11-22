@@ -31,6 +31,13 @@ from .version import __version__
 # the methods that need them so `remake version`/`task-log` don't pay to import
 # them; cheap stdlib (json, ...) is hoisted where it is used widely.
 
+# `remake run` exit codes (docs/guide/running.md; frozen at 1.0). 2 is a
+# usage error and 128+N a signal, both handled in main().
+EXIT_OK = 0
+EXIT_FAILED = 1
+EXIT_USAGE = 2
+EXIT_BLOCKED = 3
+
 _TB_FRAME = re.compile(r'  File "(.+?)", line (\d+), in (.+)')
 
 
@@ -574,9 +581,13 @@ class RemakeCLI:
             force=args.force,
             ignore_code_changes=args.ignore_code_changes,
         )
-        # Exit 0 only when everything needed completed: failed tasks and
-        # rules left blocked (deferred matrix never ready) are both non-zero.
-        return 1 if nfailed or rmk.blocked_rules else 0
+        # Exit 0 only when everything needed completed. A failed task is 1;
+        # a run that only stopped short (rules left blocked: a deferred
+        # matrix never became ready) is 3, so scripts can tell the two apart
+        # (0.10 decision D5). A failure wins when both happen.
+        if nfailed:
+            return EXIT_FAILED
+        return EXIT_BLOCKED if rmk.blocked_rules else EXIT_OK
 
     def remake_run_task(self, args):
         from .util.resources import one_task_per_process
@@ -1014,6 +1025,8 @@ class RemakeCLI:
                         proc.wait()
             if code == 2 and import_error:
                 results.append((f, 'skipped', f'import failed: {import_error}'))
+            elif code == EXIT_BLOCKED:
+                results.append((f, 'blocked', 'rules left blocked'))
             else:
                 results.append((f, 'ran' if not code else 'failed',
                                 '' if not code else f'exit {code}'))
@@ -1021,10 +1034,14 @@ class RemakeCLI:
         for f, status, detail in results:
             print(f'{status:<8} {f}' + (f'  ({detail})' if detail else ''))
         counts = {k: sum(1 for r in results if r[1] == k)
-                  for k in ('ran', 'failed', 'skipped')}
+                  for k in ('ran', 'failed', 'blocked', 'skipped')}
         print(f'{counts["ran"]} ran, {counts["failed"]} failed, '
-              f'{counts["skipped"]} skipped')
-        return 1 if counts['failed'] else 0
+              + (f'{counts["blocked"]} blocked, ' if counts['blocked'] else '')
+              + f'{counts["skipped"]} skipped')
+        # Same precedence as `run`: any failure is 1, else any blocked is 3.
+        if counts['failed']:
+            return EXIT_FAILED
+        return EXIT_BLOCKED if counts['blocked'] else EXIT_OK
 
     def remake_rule_info(self, args):
         rmk = self._track(load_remake(args.remakefile, profile=args.profile))

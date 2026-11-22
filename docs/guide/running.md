@@ -54,8 +54,12 @@ remake run pipeline.py --ignore-code-changes
 | Code | Meaning |
 |---|---|
 | `0` | success — everything needed completed |
-| `1` | one or more tasks failed (see [Debugging](debugging.md)), or rules were left blocked — a deferred matrix that never became ready; each is logged with what it is waiting on |
+| `1` | one or more tasks failed (see [Debugging](debugging.md)) |
 | `2` | usage error — bad arguments, missing external inputs, an invalid or unknown-name `-Q` query, a missing or broken remakefile, bad rule dependencies — printed as `error: ...` |
+| `3` | the run stopped short: no task failed, but rules were left blocked — a deferred matrix that never became ready; each is logged with what it is waiting on. Rerunning may finish the job once the missing upstream exists. (Before 0.10 this was `1`.) |
+| `130` / `143` | interrupted by Ctrl-C / SIGTERM (128 + the signal number) |
+
+If tasks failed *and* rules were left blocked, the code is `1`.
 
 ## Missing external inputs
 

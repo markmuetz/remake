@@ -122,7 +122,8 @@ in DIR and runs each as if by `remake run <file>`, in sorted-filename order.
   sort order, and no dependencies between them. Generate any input data first
   (e.g. `python make_example_data.py`), then `remake run-all`.
 - It continues past a failing remakefile, prints a summary (ran / failed /
-  skipped) and exits non-zero if any failed. A remakefile that cannot be
+  blocked / skipped) and exits like `run`: 1 if any failed, else 3 if any
+  stopped short with rules left blocked, else 0. A remakefile that cannot be
   imported (e.g. a missing `xarray`) is reported as skipped.
 - `-E/--executor`, `-j/--nproc`, `-f/--force`, `-n/--dry-run`,
   `--ignore-code-changes` and `--check-outputs` are passed to each `run`.

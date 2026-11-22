@@ -792,10 +792,11 @@ rmk.rules_from_current_module()
 def test_run_exits_nonzero_when_rules_stay_blocked(tmp_path, monkeypatch, capsys):
     # Review 2026-09-24 M9: a deferred matrix that never resolves (a typo'd
     # path, nothing produces it) only warned and exited 0 — CI read it as
-    # success. It now exits 1 and names what the rule is waiting on.
+    # success. It now exits 3 (0.10 D5: "stopped short", distinct from a
+    # failed task's 1) and names what the rule is waiting on.
     monkeypatch.chdir(tmp_path)
     Path('pipeline.py').write_text(BLOCKED)
-    assert cli('run', 'pipeline.py') == 1
+    assert cli('run', 'pipeline.py') == 3
     assert Path('a.txt').exists()
     err = capsys.readouterr().err
     assert 'Blocked rule b' in err and 'never_made.txt' in err
@@ -990,13 +991,43 @@ rmk.rules_from_current_module()
     assert 'Blocked rule p (upstream not selected' in capsys.readouterr().err
 
 
+FAILED_AND_BLOCKED = '''
+from pathlib import Path
+from remake import Defer, Remake, deferrable, rule
+
+@rule(outputs={'o': 'boom.txt'})
+def boom(outputs):
+    raise RuntimeError('boom')
+
+@deferrable
+def matrix():
+    if not Path('never_made.txt').exists():
+        raise Defer('never_made.txt')
+    return [{'i': 1}]
+
+@rule(outputs={'o': 'b_{i}.txt'}, matrix=matrix)
+def b(outputs, i):
+    pass
+
+rmk = Remake()
+rmk.rules_from_current_module()
+'''
+
+
+def test_failed_task_and_blocked_rule_exits_1(tmp_path, monkeypatch, capsys):
+    # D5: a failure wins over "stopped short".
+    monkeypatch.chdir(tmp_path)
+    Path('pipeline.py').write_text(FAILED_AND_BLOCKED)
+    assert cli('run', 'pipeline.py') == 1
+
+
 def test_filtered_run_still_fails_on_an_unrelated_blocked_rule(tmp_path, monkeypatch, capsys):
     # Follow-up review: -Q must not hide a rule that is blocked for reasons
     # unrelated to the filter (its upstreams are all complete).
     monkeypatch.chdir(tmp_path)
     Path('pipeline.py').write_text(BLOCKED)
-    assert cli('run', 'pipeline.py') == 1          # a completes; b blocked
-    assert cli('run', 'pipeline.py', '-Q', "rule == 'a'") == 1
+    assert cli('run', 'pipeline.py') == 3          # a completes; b blocked
+    assert cli('run', 'pipeline.py', '-Q', "rule == 'a'") == 3
     assert 'Blocked rule b: matrix not ready' in capsys.readouterr().err
 
 
