@@ -10,7 +10,8 @@ the chosen executor.
 remake operates from the remakefile's own directory: `remake run sub/pipeline.py`
 changes into `sub/` first, so the `.remake/` store, the log, and the pipeline's
 relative input/output paths are all anchored to the remakefile rather than to
-wherever you launched the command. Running from the remakefile's directory (the
+wherever you launched the command (`metadata_dir` in `remake.toml` can move
+`.remake/` elsewhere; see [Configuration](configuration.md)). Running from the remakefile's directory (the
 usual case) is unaffected.
 
 The same holds when you use remake as a library (since 0.10). A `Remake(...)`

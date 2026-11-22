@@ -135,7 +135,8 @@ option spelling `sbatch` doesn't know, or a QOS that refuses the resources
 
 ## What gets written
 
-On submission remake writes, under `.remake/`:
+On submission remake writes, under `.remake/` (or your `metadata_dir`, see
+[Configuration](configuration.md)):
 
 | Path | Contents |
 |---|---|

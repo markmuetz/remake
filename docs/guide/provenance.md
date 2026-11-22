@@ -96,7 +96,7 @@ is stored and no flag appears. The execution's host is the compute node.
 ## Privacy
 
 `.remake/` is a record of who ran what and where, so think before sharing or
-archiving it.
+archiving it. (If you set `metadata_dir`, that directory is the record.)
 
 - The **username is hashed** (sha256, truncated), not stored. The hash is
   *pseudonymous, not anonymous*: it is unsalted, so anyone with a list of

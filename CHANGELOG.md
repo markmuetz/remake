@@ -47,6 +47,16 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`metadata_dir` puts `.remake/` elsewhere** (0.10 item 5f, decision D7): a
+  project-file key (`remake.toml`, or `Remake(config=)`) for the metadata
+  directory, e.g. on a scratch filesystem with more quota. Relative values are
+  relative to the project directory; `~` and environment variables are
+  expanded. The database, logs, results, run history and SLURM scripts, job
+  specs and `submit.sh` all move with it, and workers and array jobs find it
+  by loading the remakefile. Default unchanged (`.remake/` beside the
+  remakefile). Internally every `.remake` path now comes from
+  `remake.util.paths`. The CLI's own log files follow only the `remake.toml`
+  key. See the configuration guide.
 - **List-valued inputs and outputs** (0.10 decision D8; bug 02, review
   L2): `outputs={'parts': ['a/{i}.nc', 'b/{i}.nc']}` names several paths
   under one key, formatted per element; the rule body gets a list. Lint,

@@ -404,7 +404,12 @@ class _KeyOnly:
 
 
 class Sqlite3Backend(MetadataManager):
-    def __init__(self, dbloc='.remake/remake.db'):
+    def __init__(self, dbloc=None):
+        # Default: <metadata dir>/remake.db, evaluated now (util.paths).
+        if dbloc is None:
+            from ..util.paths import db_path
+
+            dbloc = db_path()
         self.dbloc = str(dbloc)
         self.code_comparer = CodeComparer()
         if self.dbloc != ':memory:':
@@ -1082,12 +1087,12 @@ class Sqlite3Backend(MetadataManager):
         """Absorb pending sidecar results (written by run-array-task) into
         the DB — one batched transaction for the lot, sidecars deleted
         after commit. Cheap when there is nothing to ingest."""
-        from .sidecar import RESULTS_ROOT
+        from ..util.paths import results_root
 
         start = perf_counter()
         pending = []
         for rule in rules:
-            rule_dir = RESULTS_ROOT / rule.name
+            rule_dir = results_root() / rule.name
             if not rule_dir.is_dir():
                 continue
             for path in sorted(rule_dir.glob('*/*.json')):

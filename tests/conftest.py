@@ -25,3 +25,14 @@ def _anchor_test_remakes_at_cwd(request, monkeypatch):
     `real_anchoring`, which check the real behaviour."""
     if request.node.get_closest_marker('real_anchoring') is None:
         monkeypatch.setattr('remake.core.remake._default_project_dir', os.getcwd)
+
+
+@pytest.fixture(autouse=True)
+def _reset_metadata_dir():
+    """`metadata_dir` is process-global (util.paths): never leak one test's
+    setting into the next."""
+    from remake.util.paths import set_metadata_dir
+
+    set_metadata_dir(None)
+    yield
+    set_metadata_dir(None)

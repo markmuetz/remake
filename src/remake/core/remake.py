@@ -180,6 +180,8 @@ class _Anchored:
     def __enter__(self):
         here = os.getcwd()
         target = self.rmk.project_dir
+        if self.rmk._effective is not None:
+            self.rmk._apply_metadata_dir()
         self.saved.append(here if target and here != target else None)
         if self.saved[-1] is not None:
             os.chdir(target)
@@ -284,7 +286,16 @@ class Remake:
         self._effective = resolve(
             project_dir, programmatic=self._programmatic_config, profile=profile)
         self._effective_snapshot = copy.deepcopy(self._effective.values)
+        self._apply_metadata_dir()
         return self._effective
+
+    def _apply_metadata_dir(self):
+        """Point util.paths at this Remake's `metadata_dir` (config key; default
+        `.remake`, relative values taken from the project dir). Process-global,
+        so re-applied whenever the config is resolved or the Remake anchors."""
+        from ..util.paths import set_metadata_dir
+
+        set_metadata_dir(self._effective.values.get('metadata_dir'), base=self.project_dir)
 
     @property
     def effective_config(self):
