@@ -64,3 +64,30 @@ jobs:
         # Fails if any phase exceeds 2x the (runner-speed-scaled) baseline.
         # Refresh: see the check_regression.py docstring.
         run: uv run python tests/benchmarks/check_regression.py bench_field_scale.json --factor 2.0
+
+  upgrade:
+    name: upgrade check (py3.13)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # all tags: the script picks the latest v* release
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: "3.13"
+
+      - name: Sync dependencies
+        env:
+          CFLAGS: -std=gnu17
+        run: uv sync --group dev
+
+      - name: Upgrade check against the previous release
+        # Runs the stdlib examples and tests/upgrade/corpus with the latest
+        # released remake from PyPI, then `run -n` with this checkout; fails
+        # if any task would rerun. See the script's docstring.
+        run: uv run python tests/upgrade/check_upgrade.py

@@ -42,3 +42,6 @@ site/
 # claude local-only files
 .claude/settings.local.json
 .claude/review-ack
+
+# ... except the old-release DB fixtures (tests/fixtures/old_dbs/)
+!tests/fixtures/old_dbs/*/.remake/

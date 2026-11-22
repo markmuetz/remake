@@ -35,6 +35,16 @@ What a tag does and doesn't do:
    (ex1, ex2, ex2 under `-E multiproc`).
 6. Commit as `release: X.Y.Z.` (body: what was checked), push `main`, and
    wait for CI to go green on every Python version.
+   The `upgrade` job in that CI run is the "upgrading reruns nothing" check
+   (it replaces the by-hand run of the examples under the previous release):
+   it installs the latest `v*` release from PyPI, runs the stdlib examples
+   and `tests/upgrade/corpus/` with it, and fails if `run -n` with the
+   branch would rerun any task. Locally:
+   `uv run python tests/upgrade/check_upgrade.py [--from X.Y.Z]`. Likewise
+   `tests/integration/test_old_dbs.py` (fixtures from 0.8.5, 0.9.0, 0.10.0)
+   is the "opens every older DB" check, and `tests/unit/test_golden_hashes.py`
+   fails on any change to stored keys and hashes. Add a fixture for each new
+   release (`tests/fixtures/old_dbs/make_fixtures.py`).
 
 ## Tagging and publishing
 
