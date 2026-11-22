@@ -140,7 +140,7 @@ On submission remake writes, under `.remake/` (or your `metadata_dir`, see
 
 | Path | Contents |
 |---|---|
-| `jobs/<rule>.<run_seq>.json` | per-submission job spec (one entry per task). Immutable: each submission writes its own file and the sbatch script pins it, so replans never disturb a queued array |
+| `jobs/<rule>.<run_seq>.json` | per-submission job spec: one header (rule, `run_seq`, planner environment) and one entry per task, in array-index order (format 2, 0.11; 0.9–0.10 files, a plain list, are still read). Immutable: each submission writes its own file and the sbatch script pins it, so replans never disturb a queued array |
 | `slurm/<rule>.sbatch` | per-rule array script |
 | `slurm/output/<rule>/` | per-element stdout/stderr |
 | `submit.sh` | master submission script (re-run it with `remake resubmit`) |

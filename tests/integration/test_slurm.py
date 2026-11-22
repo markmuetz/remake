@@ -121,7 +121,9 @@ def specs_file(rule):
 
 
 def read_specs(rule):
-    return json.loads(specs_file(rule).read_text())
+    """Per-task specs of the rule's latest file, either format."""
+    from remake.executors.slurm_executor import load_job_specs
+    return load_job_specs(specs_file(rule))
 
 
 # --- generation (dry run: writes everything, submits nothing) ---
@@ -136,6 +138,32 @@ def test_dry_run_writes_job_specs(slurm_dir):
     assert specs[3]['kwargs'] == {'n': 3}
     assert len(specs[3]['task_key']) == 40
     assert not sbatch_calls(slurm_dir)
+
+
+def test_job_specs_state_the_submission_once(slurm_dir):
+    """0.11 item 4: format 2 has one header (rule, run_seq, env) and a
+    per-task list; nothing per-submission is repeated per task."""
+    cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')
+    data = json.loads(specs_file('gen').read_text())
+    assert data['v'] == 2 and data['rule'] == 'gen'
+    assert data['run_seq'] is not None and 'env' in data
+    assert len(data['tasks']) == 12
+    assert set(data['tasks'][0]) == {'task_key', 'kwargs', 'reason'}
+
+
+def test_array_task_reads_a_format_1_spec(slurm_dir):
+    """An array job queued by 0.9/0.10 (format 1: a list repeating every
+    field per task) still runs after an upgrade."""
+    cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')
+    path = specs_file('gen')
+    data = json.loads(path.read_text())
+    old = [{'v': 1, 'rule': data['rule'], 'run_seq': data['run_seq'],
+            'env': data['env'], **t} for t in data['tasks']]
+    path.write_text(json.dumps(old))
+    cli('run-array-task', 'pipeline.py', 'gen', '3')
+    key = old[3]['task_key']
+    sidecar = Path(f'.remake/tasks/results/gen/{key[:2]}/{key[2:]}.json')
+    assert json.loads(sidecar.read_text())['run_seq'] == old[3]['run_seq']
 
 
 def test_dry_run_writes_sbatch_scripts(slurm_dir):
@@ -648,7 +676,7 @@ def test_run_array_task_rejects_key_mismatch(slurm_dir, capsys):
     cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')
     path = specs_file('gen')
     specs = json.loads(path.read_text())
-    specs[3]['kwargs'] = {'n': 99}  # no longer matches task_key
+    specs['tasks'][3]['kwargs'] = {'n': 99}  # no longer matches task_key
     path.write_text(json.dumps(specs))
 
     assert cli('run-array-task', 'pipeline.py', 'gen', '3', '--specs', str(path)) == 2
@@ -817,7 +845,7 @@ def test_info_failed_falls_back_to_slurm_err(slurm_dir):
     from remake.remake_cmd import _failed_line
 
     cli('run', 'pipeline.py', '-E', 'slurm')
-    specs = json.loads(specs_file('gen').read_text())
+    specs = read_specs('gen')
     key = specs[3]['task_key']
     (Path('.remake/slurm/output/gen') / '3.err').write_text(
         'Traceback (most recent call last):\n  ...\nImportError: no module x\n\n')

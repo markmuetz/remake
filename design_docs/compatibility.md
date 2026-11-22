@@ -27,6 +27,26 @@ The on-disk carve-out is not new policy bolted on — the SQLite backend already
 ships a defensive `ALTER TABLE` migration path, so "the DB gets ramps even in
 0.x" is the *existing* precedent, now stated explicitly.
 
+## What under `.remake/` is the on-disk contract (0.11 item 4)
+
+The metadata directory (`.remake/`, or `metadata_dir`; layout in
+`src/remake/util/paths.py`) holds two kinds of file. **Contract** files carry
+state a later remake must read: a change ships a migration, or a reader for
+the old shape. **Scratch** files are rewritten, regenerated or only read by
+the run that wrote them: they can change in any release.
+
+| Path | Kind | Notes |
+|---|---|---|
+| `remake.db` | contract | SQLite schema, `PRAGMA user_version`; migrations forward-only |
+| `tasks/results/<rule>/<kk>/<key>.json` | contract | per-task result sidecars, ingested by the next plan; a queued job written by an older release must still ingest |
+| `environments/<hash>.json` | contract | environment fingerprints referenced by sidecars |
+| `jobs/<rule>.<run_seq>.json` | contract | SLURM job specs, read by queued array jobs (format 2 since 0.11; format 1 still read) |
+| `jobs/<rule>.jobids.json` | contract | submitted job ids and their `run_seq` |
+| `tasks/log/<rule>/<kk>/<key>.log` | scratch (layout documented) | one file per task, overwritten each run; logs of tasks no longer in the pipeline are deleted by `remake history --prune`. The path is shown by `task-info`, so it is not moved without a reason |
+| `tasks/running/` | scratch | in-flight markers for multiproc/dask |
+| `slurm/*.sbatch`, `slurm/output/`, `submit.sh` | scratch | regenerated at each submission; SLURM copies scripts at submit |
+| `remake*.log` | scratch | the remake process log; wording is never covered |
+
 ## Pre-1.0 conduct
 
 - Every API/CLI/DSL break goes in `CHANGELOG.md` under **Changed** (or

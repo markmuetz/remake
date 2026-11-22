@@ -1325,6 +1325,44 @@ class Remake:
         return self.metadata.get_history(task, limit=limit)
 
     @anchored
+    def prune_task_logs(self):
+        """Delete per-task logs of tasks no longer in the pipeline (0.11
+        item 4, decision Q4; run by `remake history --prune`).
+
+        A task's log is overwritten each time it runs, so the logs are
+        bounded by the number of tasks; what grows without bound is the
+        logs of tasks a changed matrix or a removed rule left behind. A
+        rule whose matrix is not ready keeps all its logs (its tasks are
+        unknown). Empty shard directories go too. Returns the number of
+        log files deleted."""
+        from ..util.paths import task_log_root
+
+        if not self._finalized:
+            self.finalize()
+        root = task_log_root()
+        if not root.is_dir():
+            return 0
+        rules = {rule.name: rule for rule in self.rules}
+        deleted = 0
+        for rule_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+            rule = rules.get(rule_dir.name)
+            try:
+                # A removed rule: none of its logs is current.
+                keys = {t.key for t in iter_expand_rule(rule)} if rule else set()
+            except Defer:
+                continue
+            for shard in [p for p in rule_dir.iterdir() if p.is_dir()]:
+                for log in shard.glob('*.log'):
+                    if shard.name + log.stem not in keys:
+                        log.unlink()
+                        deleted += 1
+                if not any(shard.iterdir()):
+                    shard.rmdir()
+            if not any(rule_dir.iterdir()):
+                rule_dir.rmdir()
+        return deleted
+
+    @anchored
     def verify(self, query=None, *, outputs=True, adopt=True, apply=False):
         """Reconcile the DB with what is on disk (0.10 item 2; `remake verify`).
 

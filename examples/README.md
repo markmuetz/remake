@@ -22,7 +22,7 @@ API, in roughly increasing order of complexity:
 | `ex15_config/` | The config cascade: `remake.toml` project file, profiles (`--profile`), `Remake(config=)`, per-rule `config=`, `checksum_outputs`, `remake config` |
 | `ex16_diagnostics.py` | `Ensure` on plain files (`min_size`, `checksum`), fail-fast on missing external inputs, and the diagnostics commands: `dag`, `info --failed`, `export-task`, `check-env`, `task-info` resources, and `history` / `history --runs` (per-execution record, rerun reasons) |
 | `ex17_list_values.py` | List-valued inputs and outputs: one key naming several paths, formatted per element; a callable spec returning a list. Also the restricted `-Q` query grammar (see its docstring) |
-| `ex18_maintenance/` | Maintenance: `remake verify` (`--outputs`, `--adopt`, `--apply`), `history` and `history --prune`, `metadata_dir` and `[history] keep` in `remake.toml`, and library use with `Remake(project_dir=)` (`run_from_python.py`) |
+| `ex18_maintenance/` | Maintenance: `remake verify` (`--outputs`, `--adopt`, `--apply`), `history` and `history --prune` (history rows and stale task logs), `metadata_dir` and `[history] keep` in `remake.toml`, and library use with `Remake(project_dir=)` (`run_from_python.py`) |
 
 ## Running
 

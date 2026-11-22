@@ -33,7 +33,12 @@
 #   remake run -f pipeline.py                   # repeat 4 times
 #   remake history pipeline.py -Q "rule == 'join18'"   # 3 executions
 #   remake history pipeline.py --runs           # one line per run
-#   remake history pipeline.py --prune --keep 1 # "pruned N history row(s)"
+#   remake history pipeline.py --prune --keep 1 # "pruned N history row(s),
+#                                               #  M stale task log(s)"
+#
+#    --prune also deletes the per-task logs (.remake18/tasks/log/) of tasks
+#    no longer in the pipeline, e.g. after shrinking a matrix. A task's own
+#    log is overwritten each run, so the rest stay one file per task.
 #
 # Everything above lands under `.remake18/`; `.remake/` is never created.
 #

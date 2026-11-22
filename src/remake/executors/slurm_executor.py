@@ -5,8 +5,11 @@ Writes per-rule JSON job specs, per-rule sbatch scripts and a master
 design_docs/design.md (SLURM executor) for the full behaviour.
 
 File layout (all relative to the working directory, like the metadata DB):
-    .remake/jobs/<rule>.<run_seq>.json  array of {task_key, rule, kwargs,
-                                     run_seq}; SLURM array index = position.
+    .remake/jobs/<rule>.<run_seq>.json  {v: 2, rule, run_seq, env, tasks:
+                                     [{task_key, kwargs, reason}]}; SLURM
+                                     array index = position in tasks (format
+                                     1, 0.9-0.10: a list of per-task dicts;
+                                     load_job_specs reads both).
                                      Immutable: written once per submission,
                                      never rewritten — the sbatch script pins
                                      this exact path (--specs), so replans and
@@ -304,6 +307,23 @@ def check_resubmit_safe(submit_path):
         )
 
 
+SPEC_FORMAT = 2
+
+
+def load_job_specs(path):
+    """The per-task job specs in a `.remake/jobs/<rule>.<run_seq>.json` file,
+    in array-index order, each a dict with task_key, rule, kwargs, run_seq,
+    reason and env. Reads format 2 (0.11: one header for the submission,
+    a `tasks` list) and format 1 (0.9-0.10: a list repeating every field
+    per task; reason/env absent before 0.10), so array jobs queued by an
+    older remake still run after an upgrade."""
+    data = json.loads(Path(path).read_text())
+    if isinstance(data, list):
+        return data
+    header = {k: data.get(k) for k in ('rule', 'run_seq', 'env')}
+    return [{**header, **task} for task in data['tasks']]
+
+
 def last_submission(rule_name, task_key=None):
     """(jobids, array_index) from the last submission's sidecar/job spec,
     (None, None) if the rule was never submitted. `array_index` is the task's
@@ -317,7 +337,7 @@ def last_submission(rule_name, task_key=None):
     index = None
     specs_path = spec_path(rule_name, recorded.get('run_seq'))
     if task_key is not None and specs_path.exists():
-        specs = json.loads(specs_path.read_text())
+        specs = load_job_specs(specs_path)
         index = next((i for i, s in enumerate(specs) if s['task_key'] == task_key), None)
     return jobids, index
 
@@ -516,13 +536,14 @@ class SlurmExecutor(Executor):
         # against it and records its environment only if they differ (0.10
         # item 1). Computed once per process (cached).
         env = provenance.current_environment()[0]
-        specs = [
-            # v: the spec format version (bump when fields change meaning;
-            # readers ignore unknown fields). reason/env: 0.10, absent before.
-            {'v': 1, 'task_key': task.key, 'rule': rule.name, 'kwargs': task.kwargs,
-             'run_seq': run_seq, 'reason': task.rerun_reason, 'env': env}
-            for task in tasks
-        ]
+        # Format 2 (0.11 item 4): what one submission shares is stated once
+        # in the header; `tasks` is in array-index order. v: bump when a
+        # field changes meaning; readers ignore unknown fields.
+        specs = {
+            'v': SPEC_FORMAT, 'rule': rule.name, 'run_seq': run_seq, 'env': env,
+            'tasks': [{'task_key': task.key, 'kwargs': task.kwargs,
+                       'reason': task.rerun_reason} for task in tasks],
+        }
         path = spec_path(rule.name, run_seq)
         if path.exists():
             # Queued arrays pin this exact file (--specs): rewriting it is

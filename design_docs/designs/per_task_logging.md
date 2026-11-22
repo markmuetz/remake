@@ -1,7 +1,7 @@
 # Per-task logging
 
 > **Status: implemented** (2026-06-12; multiproc and dask workers
-> included). Open: the per-task log file-count budget
+> included). Decided (0.11): the per-task log file-count budget
 > ([todos.md](../todos.md)). The 2026-09-24 review adds that failure
 > tracebacks never reach these logs (M12, 0.8.4).
 
@@ -70,8 +70,13 @@ meaningful and costs small rules nothing in practice.
 Sharding caps per-directory counts, not the total: a wide array job still
 creates one log per task run, O(N_tasks) files (plus the scheduler's own
 `.out`/`.err` pairs, which already have this property). On quota'd
-filesystems this is a real budget at 1e5+ tasks. Not addressed now;
-options if it bites, in escalating order:
+filesystems this is a real budget at 1e5+ tasks.
+
+**Decided 2026-11-22 (MM, 0.11 decision Q4):** one file per task,
+overwritten on each run (so bounded by the task count, not by runs), and the
+logs of tasks no longer in the pipeline are deleted by `remake history
+--prune` (`Remake.prune_task_logs`). No total cap. The options weighed were,
+in escalating order:
 
 1. a cleanup command / retention policy (e.g. `remake clean-logs`);
 2. delete a task's log on success, keep on failure (loses successful-run

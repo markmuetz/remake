@@ -103,7 +103,7 @@ All items shipped; archived verbatim in
 - [ ] `ZarrStore.is_complete()` checks `.zmetadata` (zarr v2); zarr v3
   consolidated metadata lives in `zarr.json`. Handle both when xarray/zarr
   versions move.
-- [ ] **Per-task log total-file-count budget** — the sharded
+- [x] (0.11: one file per task, stale ones pruned by `history --prune`) **Per-task log total-file-count budget** — the sharded
   `.remake/tasks/log/` tree grows one file per task with no cap; see the
   open question in design_docs/designs/per_task_logging.md.
 

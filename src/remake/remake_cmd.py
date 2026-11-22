@@ -645,7 +645,7 @@ class RemakeCLI:
             rmk.run_task(task)
 
     def remake_run_array_task(self, args):
-        from .executors.slurm_executor import submitted_spec_path
+        from .executors.slurm_executor import load_job_specs, submitted_spec_path
         from .metadata.sidecar import SidecarWriter
         from .util.resources import one_task_per_process
 
@@ -664,7 +664,7 @@ class RemakeCLI:
                 f'No job specs for rule {args.rule} — generate them with: '
                 f'remake run {args.remakefile} --executor slurm'
             )
-        specs = json.loads(specs_path.read_text())
+        specs = load_job_specs(specs_path)
         if not 0 <= args.index < len(specs):
             raise RemakeError(
                 f'array index {args.index} out of range: {specs_path} has '
@@ -1274,10 +1274,11 @@ class RemakeCLI:
             keep = args.keep if args.keep is not None else (
                 (rmk.config.get('history') or {}).get('keep'))
             deleted = meta.prune_history(keep=keep)
+            logs = rmk.prune_task_logs()
             if args.json:
-                _print_json({'deleted': deleted})
+                _print_json({'deleted': deleted, 'logs_deleted': logs})
             else:
-                print(f'pruned {deleted} history row(s)')
+                print(f'pruned {deleted} history row(s), {logs} stale task log(s)')
             return 0
         if args.runs:
             runs = meta.get_runs(limit=args.limit)

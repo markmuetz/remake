@@ -28,6 +28,19 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of once per path (`getcwd` costs ~60 µs on macOS): lint and the
   missing-inputs check over 1e6 paths drop from ~100 s to ~2 s there.
 
+- **SLURM job specs are format 2** (`.remake/jobs/<rule>.<run_seq>.json`):
+  one header (`v`, `rule`, `run_seq`, `env`) and a `tasks` list of
+  `{task_key, kwargs, reason}`, instead of a list repeating every field per
+  task. Format 1 files are still read, so arrays queued by 0.9/0.10 run
+  after an upgrade; a 0.10 remake cannot read a format 2 file (don't
+  downgrade with jobs queued). Tools reading the files directly: use
+  `remake.executors.slurm_executor.load_job_specs`.
+- **`remake history --prune` also deletes stale per-task logs**: those of
+  tasks no longer in the pipeline (a changed matrix, a removed rule). Its
+  `--json` output gains `logs_deleted`. New `Remake.prune_task_logs()`.
+- compatibility.md lists which files under `.remake/` are the on-disk
+  contract and which are scratch.
+
 ### Deprecated
 
 - `Dir.claim()` now warns (`DeprecationWarning`); use `Dir.adopt()`. Removed

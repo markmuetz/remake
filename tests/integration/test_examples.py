@@ -255,8 +255,13 @@ def test_ex18_maintenance_verify_history_prune_and_project_dir(ex_dir, tmp_path,
     code, out = cmd('history', pipeline, '-Q', "rule == 'join18'", '--json')
     assert code == 0
     assert len(json.loads(out)['executions']) == 3
+    # A log left by a task no longer in the pipeline goes with the prune.
+    stale = proj / '.remake18/tasks/log/join18/ab/cdef.log'
+    stale.parent.mkdir(parents=True)
+    stale.write_text('old')
     code, out = cmd('history', pipeline, '--prune', '--keep', '1', '--json')
     assert json.loads(out)['deleted'] > 0
+    assert json.loads(out)['logs_deleted'] == 1 and not stale.parent.exists()
     code, out = cmd('history', pipeline, '-Q', "rule == 'join18'", '--json')
     assert len(json.loads(out)['executions']) == 1
 
