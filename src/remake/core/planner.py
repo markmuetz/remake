@@ -23,6 +23,7 @@ from .deps import ALL, Edges, downstream_task, task_id
 from .exceptions import Defer, RemakeError
 from .rule import is_deferrable
 from .task import flat_values, paths_digest
+from .tokens import canonical
 from .canonical import is_canonical
 from .scope import (
     io_match,
@@ -245,7 +246,11 @@ _FAILED_OUTPUTS = '_failed_outputs'
 
 
 def _norm_paths(values):
-    return {os.path.normpath(str(v)) for v in values}
+    """Canonical identities of input/output values (tokens.canonical), so a
+    failed task's outputs match the inputs that read them under any
+    spelling (0.11 item 3)."""
+    cwd = os.getcwd()
+    return {canonical(v, cwd) for v in values}
 
 
 def _io_paths(task, part):

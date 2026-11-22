@@ -6,6 +6,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Dependency matching between tasks uses canonical paths** (0.11 item 3).
+  An input that spells its producer's output differently (absolute vs
+  relative, `./`, a symlinked directory) now links to the one upstream task
+  that writes it, instead of to every task of the upstream rule. Pipelines
+  that relied on that fallback rerun fewer tasks; never fewer than needed.
+- Canonicalising paths looks up the working directory once per check
+  instead of once per path (`getcwd` costs ~60 µs on macOS): lint and the
+  missing-inputs check over 1e6 paths drop from ~100 s to ~2 s there.
+
 ## [0.10.0] — 2026-11-22
 
 Provenance and run history, `remake verify`, list-valued inputs and

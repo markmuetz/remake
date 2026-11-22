@@ -1095,7 +1095,9 @@ class Remake:
         self._check_duplicate_dirs()
 
         # Paths are matched by their canonical spelling (tokens.canonical:
-        # `./a`, `a` and `/abs/a` are one file) and shown as declared.
+        # `./a`, `a` and `/abs/a` are one file) and shown as declared. One
+        # getcwd for the whole check (anchored: fixed while it runs).
+        cwd = os.getcwd()
         producers = {}  # canonical output path -> set of rule names
         rule_outputs = {}  # rule name -> [output paths, as declared]
         dir_owner = {}  # canonical Dir path -> rule name
@@ -1111,11 +1113,11 @@ class Remake:
                             continue
                         paths.append(str(token))
                         if isinstance(token, Dir):
-                            for key in dir_keys(token.path):
+                            for key in dir_keys(token.path, cwd):
                                 dir_owner[key] = rule.name
                                 shown.setdefault(key, token.path)
                         elif hasattr(token, '__fspath__'):  # any local path-like token, as 0.9
-                            key = canonical_path(os.fspath(token))
+                            key = canonical_path(os.fspath(token), cwd)
                             file_outputs[key] = rule.name
                             shown.setdefault(key, os.fspath(token))
             except Defer:
@@ -1124,7 +1126,7 @@ class Remake:
                 continue
             rule_outputs[rule.name] = paths
             for path in paths:
-                producers.setdefault(canonical(path), set()).add(rule.name)
+                producers.setdefault(canonical(path, cwd), set()).add(rule.name)
 
         findings = {}  # (kind, rule, other) -> {'count': n, 'example': ...}
 
@@ -1173,7 +1175,7 @@ class Remake:
                     if is_remote(value):
                         continue  # not a local file: nothing to match
                     path = str(value)
-                    key = canonical(value)
+                    key = canonical(value, cwd)
                     made_by = producers.get(key)
                     if not made_by and dir_owner and (inside := enclosing_dir(key)):
                         # An input inside another rule's Dir is that rule's.
@@ -1187,7 +1189,7 @@ class Remake:
                         continue
                     close = difflib.get_close_matches(path, candidates, n=1, cutoff=0.9)
                     if close:
-                        producer = min(producers[canonical(close[0])])
+                        producer = min(producers[canonical(close[0], cwd)])
                         record(
                             'near_miss', rule.name, producer,
                             {'input': path, 'closest': close[0]},
@@ -1479,7 +1481,10 @@ class Remake:
 
         # The same file spelled two ways (relative vs absolute, `./`, a
         # symlinked root) must match (ultrareview 2026-11-21).
-        canon = canonical
+        cwd = os.getcwd()
+
+        def canon(value):
+            return canonical(value, cwd)
 
         produced = set()
         produced_dirs = set()
@@ -1491,7 +1496,7 @@ class Remake:
                         norm = canon(tok)
                         produced.add(norm)
                         if isinstance(tok, Dir):
-                            produced_dirs.update(dir_keys(tok.path))
+                            produced_dirs.update(dir_keys(tok.path, cwd))
             except Exception:
                 # Deferred, or an output spec that can't be resolved now:
                 # its producers are unknown, so don't blame its consumers.
