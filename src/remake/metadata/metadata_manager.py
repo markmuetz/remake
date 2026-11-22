@@ -115,14 +115,41 @@ class MetadataManager(abc.ABC):
         verdict; it only lets later plans compare ids exactly. No-op for
         backends without a code store."""
 
-    def record_run(self, *, remakefile=None, command=None, config=None):
+    def record_run(self, *, remakefile=None, command=None, config=None,
+                   provenance=None, parent_run_seq=None):
         """Record this invocation (its run_seq) with the effective merged
-        configuration it ran with. No-op for backends without a store."""
+        configuration it ran with and its provenance (a dict from
+        `remake.provenance.collect`, 0.10). No-op for backends without a
+        store."""
+
+    def finish_run(self, counts, finished=True):
+        """Record a run's counts ({'n_planned', 'n_attempted',
+        'n_blocked_rules', 'n_waves'}; a backend with history derives
+        n_run/n_succeeded/n_failed/n_skipped from it) and apply the history
+        cap. finished=False: asynchronous or interrupted, no finish time.
+        No-op for backends without a store."""
 
     def get_run(self, run_seq):
         """The recorded invocation for a run_seq: {run_seq, started,
-        remakefile, command, config} or None."""
+        remakefile, command, config, provenance and count fields} or None."""
         return None
+
+    def get_runs(self, limit=20):
+        """The most recent recorded invocations, newest first."""
+        return []
+
+    def get_history(self, task, limit=None):
+        """A task's recorded executions, newest first ([] without a store)."""
+        return []
+
+    def get_environment(self, env_id):
+        """A recorded environment ({'fingerprint', 'python_version',
+        'packages'}) by id, or None."""
+        return None
+
+    def prune_history(self, keep=None):
+        """Apply the per-task history cap now; returns rows deleted."""
+        return 0
 
     def begin_invocation(self):
         """Start a new logical invocation: allocate a fresh run_seq so tasks
@@ -136,8 +163,14 @@ class MetadataManager(abc.ABC):
         return None
 
     @abc.abstractmethod
-    def update_task(self, task, status, exception='', resources=None, output_stats=None):
+    def update_task(self, task, status, exception='', resources=None, output_stats=None,
+                    execution=None):
         """Record a task execution result.
+
+        `execution` (0.10, run history) is {'reason': rerun category, 'host':
+        hostname, 'env': None or {'fingerprint', 'python_version',
+        'packages'} when the task ran in a different environment from the
+        planning run}. Backends without history ignore it.
 
         `resources` is the measurement from `util.resources` — a dict of
         wall_s/cpu_s/max_rss_bytes/rss_method, or None where nothing was

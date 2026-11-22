@@ -303,6 +303,14 @@ def _check_crash_outcome():
     assert len(failed) == 1 and failed[0][0] == 'a'
     assert 'worker process running this task died' in failed[0][1]
     assert not list(Path('.remake/tasks/running').glob('*'))
+    # The death is an execution in the history (/code-review 2026-11-22 #4).
+    with closing(sqlite3.connect('.remake/remake.db')) as conn:
+        statuses = [s for (s,) in conn.execute(
+            'SELECT tr.status FROM task_run tr JOIN task t ON t.id = tr.task_id '
+            'JOIN rule r ON r.id = t.rule_id WHERE r.name = ? AND tr.status = 2', ('a',))]
+        n_failed = conn.execute('SELECT n_failed FROM run ORDER BY run_seq DESC LIMIT 1').fetchone()[0]
+    assert statuses == [2]
+    assert n_failed == 1
 
 
 def test_multiproc_survives_a_worker_crash(tmp_path, monkeypatch):

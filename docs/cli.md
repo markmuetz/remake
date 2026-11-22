@@ -23,6 +23,7 @@ These go *before* the command name (`remake -D run pipeline.py`):
 |---|---|
 | `run` | Run all pending (needed) tasks |
 | `set-state` | Set tasks' recorded state by query, without running them |
+| `verify` | Reconcile the DB with the outputs on disk (read-only unless `--apply`) |
 | `info` | Per-rule summary of task statuses |
 | `ls-tasks` | List tasks (key prefix + name), materialising matrices |
 | `export-task` | Write a task's fully resolved spec as JSON |
@@ -30,6 +31,7 @@ These go *before* the command name (`remake -D run pipeline.py`):
 | `task-info` | Detail view of one task: status, paths, log, SLURM job |
 | `task-log` | Print a task's per-task log |
 | `why` | Explain why task(s) would (or would not) rerun |
+| `history` | A task's recorded executions, recent runs, or prune the history |
 | `lint` | Check input/output wiring between rules |
 | `rule-dag` | Print the rule dependency DAG in topological order |
 | `dag` | Export the rule or task graph as Graphviz DOT |
@@ -66,10 +68,30 @@ remake run pipeline.py [options]
 |---|---|
 | `-Q, --query` | tasks to affect (**required**; `-Q True` for all) |
 | `--success` | record success with current code/uses hashes |
-| `--pending` | delete records — tasks become never-run |
+| `--pending` | record pending: the tasks rerun at the next plan (the record, and its last measured resources, are kept) |
 | `--check-outputs` | with `--success`, only tasks whose outputs are complete on disk |
 | `--no-cascade` | with `--success`, stamp only the selected tasks (by default success also re-stamps downstream complete tasks so they aren't left looking stale; a guard skips any descendant with an independently-newer upstream) |
 | `-n, --dry-run` | show affected tasks, change nothing |
+
+## `verify`
+
+`remake verify REMAKEFILE [-Q QUERY] [--outputs] [--adopt] [--apply] [--json]`
+compares what the DB records with what is on disk. It only reports, unless
+`--apply`. With neither `--outputs` nor `--adopt`, it does both.
+
+| Option | Finds | With `--apply` |
+|---|---|---|
+| `--outputs` | tasks recorded as success whose outputs are missing, or fail their `Ensure` checks (e.g. after a scratch purge) | marks them pending (keeping their run stamp, so only they and what reads them rerun) |
+| `--adopt` | tasks with no record whose outputs are all complete on disk (an existing output tree) | records them as success with the current code; a `Dir` without a manifest gets one; downstream settled tasks are re-stamped as by `set-state --success` |
+
+Completion is checked in batches (one directory listing per directory, not
+one `stat` per file). Rules whose matrix is not ready yet are not examined.
+Exit code: 1 if anything was found and `--apply` was not given, else 0.
+
+`verify --adopt --apply` is the recommended way to adopt existing outputs;
+`set-state --success --check-outputs` still works, for when you know what
+you are doing. remake never judges staleness by mtime (it is unreliable on
+HPC filesystems); the DB is the record.
 
 ## `info`
 
@@ -91,7 +113,7 @@ always satisfy `up-to-date + stale + failed + pending = tasks` and
 | `-t, --tasks` | list individual tasks with status |
 | `-F, --show-failures` | show failures grouped by unique traceback signature + count |
 | `--all-failures` | with `-F`, show every failed task individually (not grouped) |
-| `--failed` | one line per failed task (and nothing else): rule, short key, last line of its error, log path. The error is the stored exception's last line; if none is stored, the last non-empty line of the task's SLURM `.err` (`.remake/slurm/output/<rule>/<index>.err`). With `--json`, a list of `{rule, key, error, log}` |
+| `--failed` | one line per failed task (and nothing else): rule, short key, last line of its error, log path. The error is the stored exception's last line; if none is stored, the last non-empty line of the task's SLURM `.err` (`.remake/slurm/output/<rule>/<index>.err`). With `--json`, `{"format": 1, "failures": [{rule, key, error, log}, ...]}` |
 | `--reasons` | per-rule tally of *why* the to-run tasks would rerun |
 | `--json` | machine-readable output |
 
@@ -122,10 +144,62 @@ in DIR and runs each as if by `remake run <file>`, in sorted-filename order.
   sort order, and no dependencies between them. Generate any input data first
   (e.g. `python make_example_data.py`), then `remake run-all`.
 - It continues past a failing remakefile, prints a summary (ran / failed /
-  skipped) and exits non-zero if any failed. A remakefile that cannot be
+  blocked / skipped) and exits like `run`: 1 if any failed, else 3 if any
+  stopped short with rules left blocked, else 0. A remakefile that cannot be
   imported (e.g. a missing `xarray`) is reported as skipped.
 - `-E/--executor`, `-j/--nproc`, `-f/--force`, `-n/--dry-run`,
   `--ignore-code-changes` and `--check-outputs` are passed to each `run`.
+
+## `history`
+
+`remake history pipeline.py <key>` (or `-Q QUERY`) lists the recorded
+executions of one task, newest first; `remake history pipeline.py --runs`
+lists recent runs. Both read `remake.db` and run nothing. What is recorded,
+and what it is for, is in [Provenance and run history](guide/provenance.md).
+
+```bash
+remake history pipeline.py 55a42548          # one task's executions
+remake history pipeline.py -Q "year == 2015" # the query must match one task
+remake history pipeline.py --runs --limit 5  # the last five runs
+remake history pipeline.py --prune --keep 3  # trim the history now
+```
+
+| Option | Meaning |
+|---|---|
+| `<key>` / `-Q, --query` | the task, as for `task-info`: a key prefix, or a query matching exactly one task |
+| `--runs` | list recent runs (one line each: run number, start time, command, tasks run and failed, short git commit with `+dirty`, and the run it continues) instead of one task's executions |
+| `--limit N` | show at most N rows (default 20) |
+| `--prune` | apply the per-task cap to every task now |
+| `--keep N` | with `--prune`: keep N executions per task instead of `history.keep` (an error without `--prune`) |
+| `--json` | machine-readable output |
+
+An execution line shows the run number, finish time, status, resources, and
+in brackets the rerun reason and host; a failed one is followed by its error
+signature (`ExcType at file:line in function`), and a line says "ran in a
+different environment from the planning run" for a SLURM job whose
+environment differed. A task with no record prints "no recorded executions"
+(history starts with 0.10; earlier runs are not back-filled).
+
+The history keeps the last `history.keep` executions of each task (default
+10), set in `remake.toml` (project file only):
+
+```toml
+[history]
+keep = 20
+```
+
+The cap is applied as executions are recorded, so `--prune` is only needed
+after lowering `keep` or to trim by hand. `--prune` prints
+`pruned N history row(s)`. Runs themselves are never pruned.
+
+`--json` shapes (see [JSON output](#json-output)): the task form is
+`{"format": 1, "task", "key", "executions": [...]}`, each execution with
+`run_seq`, `finished`, `status`, `wall_s`, `cpu_s`, `max_rss_bytes`,
+`rss_method`, `output_bytes`, `reason`, `host`, `error` and
+`different_environment`; `--runs` is `{"format": 1, "runs": [...]}` (the
+provenance fields of the run, and its counts `n_planned`, `n_run`,
+`n_succeeded`, `n_failed`, `n_skipped`, `n_blocked_rules`, `n_waves`);
+`--prune` is `{"format": 1, "deleted": N}`.
 
 ## `config`
 
@@ -144,7 +218,34 @@ the layer that set it. Does not touch the metadata database. See
 | `rule-dag -M, --matrix-keys` | annotate each rule with its matrix keys as `rule(m1, m2)` |
 | `task-log --path` | print the log path only |
 | `export-task <key>` / `-Q` | write the task's resolved spec (rule, key, kwargs, input/output paths, rule function module and qualname, remakefile path, `uses`) as JSON to stdout; `-o FILE` writes a file instead. `uses` values that aren't JSON-serialisable are given as their `repr`. See [Debugging](guide/debugging.md#running-a-task-body-from-another-python) |
-| `ls-tasks --json` | the same per-task identity (`key`, `rule`, `kwargs`; plus `inputs`/`outputs` with `-i`/`-o`) for every task, as one JSON list |
+| `ls-tasks --json` | the same per-task identity (`key`, `rule`, `kwargs`; plus `inputs`/`outputs` with `-i`/`-o`) for every task, under the `tasks` key of the [JSON output](#json-output) object |
+
+## JSON output
+
+Every `--json` output is one JSON object whose first key is `"format": 1`
+(never a bare list). `format` is the version of these shapes. The top-level
+keys per command:
+
+| Command | Top-level keys after `format` |
+|---|---|
+| `info` | `rules`, `totals`; plus `tasks` with `-t`, `failures` with `-F` |
+| `info --failed` | `failures` (list of `{rule, key, error, log}`) |
+| `ls-tasks` | `tasks` (list of `{key, rule, kwargs}`, plus `inputs`/`outputs` with `-i`/`-o`) |
+| `lint` | `findings` (list of rows, each with a `kind`) |
+| `rule-dag` | `order`, `edges`; plus `rules` with `-N`/`-M` |
+| `rule-info` | the rule's detail fields (`rule`, `docstring`, `matrix`, `outputs`, `uses`, ...) |
+| `task-info` | the task's detail fields (`status`, `kwargs`, `inputs`, `outputs`, `slurm`, ...) |
+| `history` | `executions` (with `task` and `key`); `runs` with `--runs`; `deleted` with `--prune` |
+| `config` | `profile`, `profile_source`, `files`, `config`, `provenance` |
+| `slurm-status` | `submissions` (list of `{rule, jobid, states, reasons}`) |
+| `check-env` | `planning`, `job`, `mismatches` |
+
+Compatibility: after 1.0, adding a key is not a breaking change, so ignore
+keys you do not know. Removing or renaming a key, or changing its type, is a
+major-version change and bumps `format`. Before 1.0, shape changes are listed
+under Breaking in the changelog. `export-task` prints a task spec (no
+`format` key), and the JSONL event log (`.remake/remake.jsonl`) is not
+`--json` output.
 
 ## Selecting tasks for `task-info`, `task-log` and `why`
 

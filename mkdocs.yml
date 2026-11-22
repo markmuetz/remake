@@ -60,6 +60,7 @@ nav:
       - Configuration: guide/configuration.md
       - SLURM: guide/slurm.md
       - Debugging: guide/debugging.md
+      - Provenance and history: guide/provenance.md
   - CLI reference: cli.md
   - Field notes:
       - Porting scaffold_analysis from omnium: notes/scaffold-omnium-port.md

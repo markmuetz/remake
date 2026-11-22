@@ -18,7 +18,9 @@ What a tag does and doesn't do:
 ## Before tagging
 
 1. The release's review gates are done: see `releases/vX.Y.Z.md` (for a
-   minor release, the pre-tag review in [roadmap.md](roadmap.md)). Merge
+   minor release, the pre-tag review in [roadmap.md](roadmap.md): a Fable
+   adversarial review, then `/code-review xhigh`; patch releases need
+   neither). Merge
    into `main` with `git merge --no-ff --no-commit <branch>`, then commit
    (the review hook applies).
 2. Bump `src/remake/version.py` to the release version. The workflow fails

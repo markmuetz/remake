@@ -26,13 +26,14 @@ from ..core.exceptions import RemakeError
 from ..core.deps import Edges
 from ..core.planner import record_failure, upstream_failed
 from ..metadata import TASK_STATUS_FAILED
-from .multiproc_executor import RUNNING_ROOT, WORKER_DIED
+from ..util.paths import running_root
+from .multiproc_executor import WORKER_DIED
 from .executor import Executor
 
 _worker_rmk_cache = {}
 
 
-def _run_spec(remakefile, rule_name, kwargs, run_seq=None):
+def _run_spec(remakefile, rule_name, kwargs, run_seq=None, reason=None):
     """Runs on a dask worker. Returns True on success."""
     from ..loader import load_remake
     from ..metadata.sidecar import SidecarWriter
@@ -47,11 +48,12 @@ def _run_spec(remakefile, rule_name, kwargs, run_seq=None):
     # call because long-lived workers outlive a single invocation.
     rmk.metadata.run_seq = run_seq
     task = rmk.task_from_spec(rule_name, kwargs)
+    task.rerun_reason = reason  # for the task's history row
     logfile = task_log_path(task)
     logfile.parent.mkdir(parents=True, exist_ok=True)
     # In-flight marker, as in multiproc: tells the parent whether a task the
     # cluster failed (KilledWorker) had actually started.
-    marker = RUNNING_ROOT / task.key
+    marker = running_root() / task.key
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.touch()
     sink_id = logger.add(logfile, level='DEBUG', mode='w')
@@ -141,11 +143,11 @@ class DaskExecutor(Executor):
                 while pending:
                     attempts += 1
                     for task in pending:  # clear stale marks from a killed run
-                        (RUNNING_ROOT / task.key).unlink(missing_ok=True)
+                        (running_root() / task.key).unlink(missing_ok=True)
                     futures = {
                         client.submit(
                             _run_spec, self.remakefile, rule.name, task.kwargs, run_seq,
-                            pure=False,
+                            task.rerun_reason, pure=False,
                         ): task
                         for task in pending
                     }
@@ -156,7 +158,7 @@ class DaskExecutor(Executor):
                         try:
                             ok = future.result()
                         except Exception as e:
-                            marker = RUNNING_ROOT / task.key
+                            marker = running_root() / task.key
                             if not marker.exists() and attempts < 3:
                                 # Failed without ever starting (queued on a
                                 # worker that died): run it again.
@@ -171,6 +173,8 @@ class DaskExecutor(Executor):
                             self.rmk.metadata.update_task(
                                 task, TASK_STATUS_FAILED,
                                 exception=f'{WORKER_DIED}\n\n{type(e).__name__}: {e}',
+                                resources={},  # an execution: a history row (#4)
+                                execution=self.rmk._execution_record(task),
                             )
                         # Drop the result: a future still held pins its
                         # result on its worker, and if that worker dies the

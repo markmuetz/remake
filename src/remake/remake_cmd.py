@@ -25,13 +25,32 @@ from .util import (
     add_argset,
     task_log_path as _task_log_path,
 )
+from .util.config import project_metadata_dir
+from .util.paths import log_file, metadata_dir, set_metadata_dir, slurm_output_dir, submit_path
 from .version import __version__
 
 # Heavy/optional imports (networkx, the executor stack, squeue) stay local to
 # the methods that need them so `remake version`/`task-log` don't pay to import
 # them; cheap stdlib (json, ...) is hoisted where it is used widely.
 
+# `remake run` exit codes (docs/guide/running.md; frozen at 1.0). 2 is a
+# usage error and 128+N a signal, both handled in main().
+EXIT_OK = 0
+EXIT_FAILED = 1
+EXIT_USAGE = 2
+EXIT_BLOCKED = 3
+
 _TB_FRAME = re.compile(r'  File "(.+?)", line (\d+), in (.+)')
+
+
+JSON_FORMAT = 1  # version of the `--json` output shapes; see docs/cli.md
+
+
+def _print_json(payload):
+    """Print `payload` (a dict) as JSON with `"format": JSON_FORMAT` as the
+    first key. Every `--json` output goes through here, so the top level is
+    always a versioned object, never a bare list."""
+    print(json.dumps({'format': JSON_FORMAT, **payload}, indent=1, default=repr))
 
 
 def _traceback_signature(tb):
@@ -113,7 +132,7 @@ def _failed_line(failure):
 
         _, index = last_submission(failure['rule'], failure['key'])
         if index is not None:
-            err = Path('.remake/slurm/output') / failure['rule'] / f'{index}.err'
+            err = slurm_output_dir() / failure['rule'] / f'{index}.err'
             if err.exists():
                 error = _last_line(err.read_text(errors='replace'))
     return {
@@ -306,9 +325,8 @@ class RemakeCLI:
                 Arg('--success', action='store_true',
                     help='Record success (with current code/uses hashes)'),
                 Arg('--pending', action='store_true',
-                    help='Delete records: tasks become never-run and rerun at '
-                         'the next plan (the default check_outputs=never mode '
-                         'does not re-adopt on-disk outputs)'),
+                    help='Record pending: tasks rerun at the next plan (the '
+                         'record is kept, with its last measured resources)'),
                 Arg('--check-outputs', action='store_true',
                     help='With --success: only tasks whose outputs are complete '
                          'on disk (the explicit adoption path for migrating an '
@@ -321,6 +339,21 @@ class RemakeCLI:
                          'upstream)'),
                 Arg('--dry-run', '-n', help='Show affected tasks, change nothing',
                     action='store_true'),
+            ],
+        },
+        'verify': {
+            'help': 'Reconcile the DB with the outputs on disk (read-only unless --apply)',
+            'args': [
+                Arg('remakefile'),
+                Arg('--query', '-Q', help='Only tasks matching this kwargs query'),
+                Arg('--outputs', action='store_true',
+                    help='Recorded success, outputs missing or failing Ensure '
+                         '(with --apply: mark pending)'),
+                Arg('--adopt', action='store_true',
+                    help='No record, outputs complete on disk (with --apply: '
+                         'record success)'),
+                Arg('--apply', action='store_true', help='Write the changes'),
+                Arg('--json', help='Machine-readable output', action='store_true'),
             ],
         },
         'info': {
@@ -454,6 +487,22 @@ class RemakeCLI:
                 Arg('--path', help='Print the log path only', action='store_true'),
             ],
         },
+        'history': {
+            'help': "Run history: a task's executions, or recent runs (--runs)",
+            'args': [
+                Arg('remakefile'),
+                Arg('task_key', nargs='?'),
+                Arg('--query', '-Q', help='Select the task by kwargs query instead of key'),
+                Arg('--runs', help='List recent runs instead, one line each',
+                    action='store_true'),
+                Arg('--limit', help='Show at most N rows (default 20)', type=int,
+                    default=20),
+                Arg('--prune', help='Apply the per-task cap (history.keep) to every '
+                    'task now', action='store_true'),
+                Arg('--keep', help='With --prune: keep N executions per task', type=int),
+                Arg('--json', help='Machine-readable output', action='store_true'),
+            ],
+        },
         'why': {
             'help': 'Explain why task(s) would (or would not) rerun',
             'args': [
@@ -574,9 +623,13 @@ class RemakeCLI:
             force=args.force,
             ignore_code_changes=args.ignore_code_changes,
         )
-        # Exit 0 only when everything needed completed: failed tasks and
-        # rules left blocked (deferred matrix never ready) are both non-zero.
-        return 1 if nfailed or rmk.blocked_rules else 0
+        # Exit 0 only when everything needed completed. A failed task is 1;
+        # a run that only stopped short (rules left blocked: a deferred
+        # matrix never became ready) is 3, so scripts can tell the two apart
+        # (0.10 decision D5). A failure wins when both happen.
+        if nfailed:
+            return EXIT_FAILED
+        return EXIT_BLOCKED if rmk.blocked_rules else EXIT_OK
 
     def remake_run_task(self, args):
         from .util.resources import one_task_per_process
@@ -632,6 +685,8 @@ class RemakeCLI:
                 f'submitted key {spec["task_key"]} — kwargs changed in the '
                 f'JSON round-trip through {specs_path}'
             )
+        task.rerun_reason = spec.get('reason')
+        rmk.planner_env = spec.get('env')
         _add_task_log_sink(task)
         logger.info(f'Running {task}')
         # As run-task: one array element = one task = one process.
@@ -643,7 +698,7 @@ class RemakeCLI:
 
         from .executors.slurm_executor import check_resubmit_safe
 
-        submit = Path('.remake/submit.sh')
+        submit = submit_path()
         if not submit.exists():
             raise RemakeError(
                 f'No {submit} — generate it with: remake run {args.remakefile} --executor slurm'
@@ -676,17 +731,50 @@ class RemakeCLI:
             print(f'{task} -> {state}')
         for task in cascaded:
             print(f'{task} -> {state} (cascade)')
+        if args.check_outputs:
+            print('note: `remake verify --adopt` reports the same tasks, and '
+                  '`--apply` records them', file=sys.stderr)
         suffix = f' ({skipped} skipped: outputs missing/incomplete)' if skipped else ''
         cas = f', {len(cascaded)} cascaded' if cascaded else ''
         verb = 'would be set' if args.dry_run else 'set'
         print(f'{len(tasks)} task(s) {verb} to {state}{cas}{suffix}')
 
+    def remake_verify(self, args):
+        """`remake verify`: report (and with --apply, fix) DB/disk mismatches.
+        Neither --outputs nor --adopt means both. Exit 1 when mismatches
+        were found and not applied, else 0."""
+        rmk = self._load(args)
+        both = not (args.outputs or args.adopt)
+        result = rmk.verify(args.query, outputs=args.outputs or both,
+                            adopt=args.adopt or both, apply=args.apply)
+        missing, adoptable = result['missing'], result['adoptable']
+        if args.json:
+            def rows(tasks):
+                return [{'task': str(t), 'key': t.key, 'rule': t.rule.name} for t in tasks]
+            _print_json({'applied': result['applied'], 'missing': rows(missing),
+                         'adoptable': rows(adoptable), 'cascaded': rows(result['cascaded'])})
+        else:
+            paint = Painter(args.colour)
+            for t in missing:
+                print(f'{t}  {paint("outputs missing", "red")}'
+                      + (' -> pending' if args.apply else ''))
+            for t in adoptable:
+                print(f'{t}  {paint("adoptable", "green")}'
+                      + (' -> success' if args.apply else ''))
+            for t in result['cascaded']:
+                print(f'{t}  -> success (cascade)')
+            print(f'{len(missing)} recorded success with outputs missing, '
+                  f'{len(adoptable)} unrecorded with outputs complete'
+                  + ('' if args.apply or not (missing or adoptable)
+                     else '; rerun with --apply to record'))
+        return 1 if (missing or adoptable) and not args.apply else 0
+
     def remake_info(self, args):
         rmk = self._load(args)
         show_failures = args.show_failures or args.all_failures
-        # Remake.status_summary does the gathering; this method only renders
+        # Remake.info does the gathering; this method only renders
         # (table / --json) and groups failures for display.
-        summary = rmk.status_summary(
+        summary = rmk.info(
             query=args.query,
             reasons=args.reasons,
             list_tasks=args.tasks,
@@ -704,7 +792,7 @@ class RemakeCLI:
         if args.failed:
             lines = [_failed_line(f) for f in failures]
             if args.json:
-                print(json.dumps(lines, indent=1))
+                _print_json({'failures': lines})
             else:
                 for line in lines:
                     print(f'{line["rule"]}  {line["key"][:8]}  {line["error"]}  '
@@ -717,7 +805,7 @@ class RemakeCLI:
                 data['tasks'] = task_rows
             if show_failures:
                 data['failures'] = failures if args.all_failures else grouped
-            print(json.dumps(data, indent=1))
+            _print_json(data)
             return
 
         paint = Painter(args.colour)
@@ -807,7 +895,7 @@ class RemakeCLI:
     def remake_export_task(self, args):
         rmk = self._load(args)
         task = rmk.select_task(args.task_key, args.query)
-        text = json.dumps(rmk.task_spec(task), indent=1, default=repr)
+        text = json.dumps(rmk.export_task(task), indent=1, default=repr)
         if args.output:
             Path(args.output).write_text(text + '\n')
         else:
@@ -817,6 +905,7 @@ class RemakeCLI:
         from .core.dag import iter_expand_rule
         from .core.exceptions import Defer
         from .core.planner import make_predicate, rule_kwarg_names
+        from .core.task import flat_items
 
         rmk = self._load(args)
         rmk.finalize()
@@ -825,14 +914,14 @@ class RemakeCLI:
         paint = Painter(args.colour)
 
         def input_files(task):
-            for name, value in task.inputs.items():
+            for name, value in flat_items(task.inputs):
                 info = {'name': name, 'path': str(value)}
                 if args.check:
                     info['exists'] = Path(value).exists()
                 yield info
 
         def output_files(task):
-            for name, token in task.outputs.items():
+            for name, token in flat_items(task.outputs):
                 info = {'name': name, 'path': str(token)}
                 if args.check:
                     info['complete'] = token.is_complete()
@@ -867,14 +956,14 @@ class RemakeCLI:
             except Defer:
                 logger.warning(f'{rule.name}: deferred (matrix not ready), tasks unknown')
         if args.json:
-            print(json.dumps(rows, indent=1))
+            _print_json({'tasks': rows})
 
     def remake_lint(self, args):
         rmk = self._load(args)
         rows = rmk.lint()
         problems = [r for r in rows if r['kind'] != 'external']
         if args.json:
-            print(json.dumps(rows, indent=1))
+            _print_json({'findings': rows})
             return 1 if problems else 0
 
         for row in rows:
@@ -926,7 +1015,7 @@ class RemakeCLI:
                     name: {'n_tasks': n, 'matrix_keys': keys}
                     for name, (n, keys) in matrix_info.items()
                 }
-            print(json.dumps(data, indent=1))
+            _print_json(data)
             return
 
         def label(name):
@@ -1014,6 +1103,8 @@ class RemakeCLI:
                         proc.wait()
             if code == 2 and import_error:
                 results.append((f, 'skipped', f'import failed: {import_error}'))
+            elif code == EXIT_BLOCKED:
+                results.append((f, 'blocked', 'rules left blocked'))
             else:
                 results.append((f, 'ran' if not code else 'failed',
                                 '' if not code else f'exit {code}'))
@@ -1021,17 +1112,21 @@ class RemakeCLI:
         for f, status, detail in results:
             print(f'{status:<8} {f}' + (f'  ({detail})' if detail else ''))
         counts = {k: sum(1 for r in results if r[1] == k)
-                  for k in ('ran', 'failed', 'skipped')}
+                  for k in ('ran', 'failed', 'blocked', 'skipped')}
         print(f'{counts["ran"]} ran, {counts["failed"]} failed, '
-              f'{counts["skipped"]} skipped')
-        return 1 if counts['failed'] else 0
+              + (f'{counts["blocked"]} blocked, ' if counts['blocked'] else '')
+              + f'{counts["skipped"]} skipped')
+        # Same precedence as `run`: any failure is 1, else any blocked is 3.
+        if counts['failed']:
+            return EXIT_FAILED
+        return EXIT_BLOCKED if counts['blocked'] else EXIT_OK
 
     def remake_rule_info(self, args):
         rmk = self._track(load_remake(args.remakefile, profile=args.profile))
         rule = rmk.rule_from_name(args.rule_name)
         data = rmk.rule_info(rule)
         if args.json:
-            print(json.dumps(data, indent=1))
+            _print_json(data)
             return
 
         paint = Painter(args.colour)
@@ -1090,7 +1185,7 @@ class RemakeCLI:
         task = rmk.select_task(args.task_key, args.query)
         data = rmk.task_info(task)
         if args.json:
-            print(json.dumps(data, indent=1))
+            _print_json(data)
             return
 
         paint = Painter(args.colour)
@@ -1121,6 +1216,25 @@ class RemakeCLI:
             if st.get('checksum'):
                 line += f', sha256 {st["checksum"]}'
             print(f'size:     {label}: {line}')
+        last = data.get('last_execution')
+        if last:
+            where = f' on {last["host"]}' if last['host'] else ''
+            why = f' ({last["reason"]})' if last['reason'] else ''
+            print(f'last ran: run {last["run_seq"]} at {last["finished"]}{where}{why}')
+            run = last.get('run') or {}
+            if run.get('git_commit'):
+                dirty = (f' + uncommitted changes (diff {run["git_diff_hash"][:12]})'
+                         if run.get('git_dirty') and run.get('git_diff_hash') else
+                         ' + uncommitted changes' if run.get('git_dirty') else '')
+                print(f'git:      {run["git_commit"][:12]}{dirty}')
+            if run.get('remake_version'):
+                print(f'env:      Python {run["python_version"]}, remake {run["remake_version"]}'
+                      + (f', {run["lockfile"]} {run["lockfile_hash"][:12]}'
+                         if run.get('lockfile') and run.get('lockfile_hash') else ''))
+            if last['different_environment']:
+                print(paint('          ran in a different environment from the one that '
+                            'planned it (see `remake history` and `remake check-env`)',
+                            'yellow'))
         log = data['log']
         mark = '' if log['exists'] else paint('  [no log yet]', 'dim')
         print(f'log:      {log["path"]}{mark}')
@@ -1144,6 +1258,80 @@ class RemakeCLI:
                 f'it has not been run via run-task/run-array-task'
             )
         print(log_path.read_text(), end='')
+
+    def remake_history(self, args):
+        """`remake history`: one task's executions, recent runs, or a prune."""
+        from .metadata.metadata_manager import STATUS_NAMES
+
+        if args.keep is not None and not args.prune:
+            raise RemakeError('--keep only applies with --prune')
+        rmk = self._load(args)
+        meta = rmk.metadata
+        # SLURM jobs leave their results as sidecars: absorb them first, or
+        # history lags the jobs that have finished (JASMIN check 2026-11-22).
+        meta.ingest_sidecars(rmk.rules)
+        if args.prune:
+            keep = args.keep if args.keep is not None else (
+                (rmk.config.get('history') or {}).get('keep'))
+            deleted = meta.prune_history(keep=keep)
+            if args.json:
+                _print_json({'deleted': deleted})
+            else:
+                print(f'pruned {deleted} history row(s)')
+            return 0
+        if args.runs:
+            runs = meta.get_runs(limit=args.limit)
+            if args.json:
+                _print_json({'runs': runs})
+                return 0
+            for r in runs:
+                counts = ''
+                # A SLURM submission (no waves: never run locally), so far;
+                # an interrupted local run has n_waves and keeps its counts.
+                if r.get('n_run') is not None and r.get('n_planned') is not None \
+                        and r.get('finished') is None and r.get('n_waves') is None:
+                    counts = (f'{r["n_planned"]} submitted, {r["n_run"]} run, '
+                              f'{r["n_failed"] or 0} failed')
+                elif r.get('n_run') is not None:
+                    counts = (f'{r["n_run"]} run, {r["n_failed"] or 0} failed'
+                              + (f', {r["n_blocked_rules"]} blocked rule(s)'
+                                 if r.get('n_blocked_rules') else ''))
+                elif r.get('n_planned') is not None:
+                    counts = f'{r["n_planned"]} submitted'
+                git = ''
+                if r.get('git_commit'):
+                    git = r['git_commit'][:10] + ('+dirty' if r.get('git_dirty') else '')
+                parent = f' (continues {r["parent_run_seq"]})' if r.get('parent_run_seq') else ''
+                print(f'{r["run_seq"]:>5}  {r["started"]}  {r["command"] or "":<9} '
+                      f'{counts:<28} {git}{parent}')
+            return 0
+        task = rmk.select_task(args.task_key, args.query)
+        rows = meta.get_history(task, limit=args.limit)
+        for row in rows:
+            row['status'] = STATUS_NAMES.get(row['status'], 'pending')
+            row['different_environment'] = (row['env_id'] is not None
+                                            and row['env_id'] != row['run_env_id'])
+        if args.json:
+            _print_json({'task': str(task), 'key': task.key, 'executions': rows})
+            return 0
+        paint = Painter(args.colour)
+        print(f'{task}  {task.key}')
+        if not rows:
+            print('no recorded executions (history starts with remake 0.10)')
+        for row in rows:
+            res = _resources_line(row) or ''
+            extra = [x for x in (row['reason'], row['host']) if x]
+            line = (f'run {row["run_seq"]!s:>5}  {row["finished"]}  '
+                    f'{paint.status(row["status"]):<8} {res}')
+            if extra:
+                line += f'  [{", ".join(extra)}]'
+            print(line)
+            if row['error']:
+                print(paint(f'      {row["error"]}', 'red'))
+            if row['different_environment']:
+                print(paint('      ran in a different environment from the planning run',
+                            'yellow'))
+        return 0
 
     def remake_why(self, args):
         rmk = self._load(args)
@@ -1176,7 +1364,7 @@ class RemakeCLI:
         rmk = self._track(load_remake(args.remakefile, finalize=False, profile=args.profile))
         eff = rmk.effective_config
         if args.json:
-            print(json.dumps(eff.to_json(), indent=2, sort_keys=True, default=repr))
+            _print_json(eff.to_json())
             return 0
         print(f'profile: {eff.profile or "(none)"}'
               + (f' (from {eff.profile_source})' if eff.profile else ''))
@@ -1225,7 +1413,7 @@ class RemakeCLI:
                     }
                 )
         if args.json:
-            print(json.dumps(rows, indent=1))
+            _print_json({'submissions': rows})
             return
         if not rows:
             print('No SLURM submissions recorded (.remake/jobs/*.jobids.json)')
@@ -1248,8 +1436,8 @@ class RemakeCLI:
         )
         mismatches = envcheck.compare_reports(local, job, error)
         if args.json:
-            print(json.dumps({'planning': local, 'job': job,
-                              'mismatches': mismatches}, indent=1))
+            _print_json({'planning': local, 'job': job,
+                              'mismatches': mismatches})
         else:
             print(envcheck.format_text(local, job, mismatches))
         return 1 if mismatches else 0
@@ -1332,9 +1520,12 @@ def remake_cmd(argv=None):
         # correlate e.g. a plan total with its constituent status queries.
         logger.configure(extra={'run_id': uuid.uuid4().hex[:12]})
         try:
-            Path('.remake').mkdir(parents=True, exist_ok=True)
-        except OSError as e:
-            print(f'error: cannot create .remake/ metadata dir: {e}', file=sys.stderr)
+            # metadata_dir from remake.toml, before the config is loaded
+            # (the log sinks below need it).
+            set_metadata_dir(project_metadata_dir(Path.cwd()), base=Path.cwd())
+            metadata_dir().mkdir(parents=True, exist_ok=True)
+        except (OSError, RemakeError) as e:
+            print(f'error: cannot create metadata dir {metadata_dir()}: {e}', file=sys.stderr)
             os.chdir(orig_cwd)
             return 2
         debug_level = 'TRACE' if args.trace else 'DEBUG'
@@ -1346,15 +1537,15 @@ def remake_cmd(argv=None):
         #    per record, with bound fields (event=..., ntasks=..., seconds=...)
         #    under record.extra, so mining is jq, not regex (logs_analysis §4).
         logger.add(
-            '.remake/remake.log', level='INFO',
+            log_file('remake.log'), level='INFO',
             rotation='5 MB', retention=3,
         )
         logger.add(
-            '.remake/remake.debug.log', level=debug_level,
+            log_file('remake.debug.log'), level=debug_level,
             rotation='5 MB', retention=3,
         )
         logger.add(
-            '.remake/remake.jsonl', level=debug_level, serialize=True,
+            log_file('remake.jsonl'), level=debug_level, serialize=True,
             rotation='5 MB', retention=3,
         )
         logger.bind(event='invocation').debug(f'argv: {argv}')

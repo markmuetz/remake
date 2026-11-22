@@ -13,11 +13,11 @@ this is exactly the ordering remake promises; the cost vs SLURM's
 aftercorr is that same-matrix chains don't pipeline element-wise.
 
 Per-task logs are written by the workers to the usual
-.remake/tasks/log/<rule>/... locations.
+.remake/tasks/log/<rule>/... locations (under `metadata_dir`, util.paths).
 
 Worker crashes (OOM kill, segfault, os._exit): the pool can't say which
 task killed it, so each worker marks the task it is running
-(RUNNING_ROOT/<key>) and clears the mark when the task ends. After a crash,
+(running_root()/<key>) and clears the mark when the task ends. After a crash,
 marked tasks were in flight — the culprit is among them — and are rerun one
 at a time in a single-worker pool; a task whose worker dies there is
 recorded as failed. Tasks that never started are resubmitted. Interrupts
@@ -36,12 +36,13 @@ from ..core.exceptions import RemakeError
 from ..core.deps import Edges
 from ..core.planner import record_failure, upstream_failed
 from ..metadata import TASK_STATUS_FAILED
+from ..util.paths import running_root
 from .executor import Executor
 
 _worker_rmk = None
 
-# In-flight markers: one empty file per task a worker is running.
-RUNNING_ROOT = Path('.remake/tasks/running')
+# In-flight markers: one empty file per task a worker is running, under
+# util.paths.running_root() (evaluated at use time: metadata_dir).
 
 WORKER_DIED = (
     'The worker process running this task died without reporting a result — '
@@ -76,14 +77,15 @@ def _worker_init(remakefile):
 def _worker_run(spec):
     from ..util import task_log_path
 
-    rule_name, kwargs, run_seq = spec
+    rule_name, kwargs, run_seq, reason = spec
     # Stamp results with the parent invocation's run_seq so durable rerun
     # propagation (bugs/01) works for multiproc runs as it does for SLURM.
     _worker_rmk.metadata.run_seq = run_seq
     task = _worker_rmk.task_from_spec(rule_name, kwargs)
+    task.rerun_reason = reason  # for the task's history row
     logfile = task_log_path(task)
     logfile.parent.mkdir(parents=True, exist_ok=True)
-    marker = RUNNING_ROOT / task.key
+    marker = running_root() / task.key
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.touch()
     sink_id = logger.add(logfile, level='DEBUG', mode='w')
@@ -189,8 +191,8 @@ class MultiprocExecutor(Executor):
 
     def _submit(self, pool, rule, tasks, run_seq):
         for task in tasks:  # clear stale marks from an earlier, killed run
-            (RUNNING_ROOT / task.key).unlink(missing_ok=True)
-        return {pool.submit(_worker_run, (rule.name, t.kwargs, run_seq)): t
+            (running_root() / task.key).unlink(missing_ok=True)
+        return {pool.submit(_worker_run, (rule.name, t.kwargs, run_seq, t.rerun_reason)): t
                 for t in tasks}
 
     def _finish(self, task, ok, failed):
@@ -204,7 +206,12 @@ class MultiprocExecutor(Executor):
     def _worker_died(self, task, failed):
         """Record a task whose worker died: no sidecar was written, so the
         parent records the failure itself."""
-        self.rmk.metadata.update_task(task, TASK_STATUS_FAILED, exception=WORKER_DIED)
+        # An execution with no measurements: resources={} still writes its
+        # history row, so the death shows in `remake history` and counts as
+        # failed, not skipped (/code-review #4).
+        self.rmk.metadata.update_task(task, TASK_STATUS_FAILED, exception=WORKER_DIED,
+                                      resources={},
+                                      execution=self.rmk._execution_record(task))
         self._done += 1
         failed.append(task)
         logger.error(f'{self._done}/{self._ntasks} failed (worker process died): {task}')
@@ -231,8 +238,8 @@ class MultiprocExecutor(Executor):
             # A worker died; the executor has torn the pool down.
             _kill_pool(pool)
             pool = self._new_pool(self.nproc)
-            in_flight = [t for t in unresolved if (RUNNING_ROOT / t.key).exists()]
-            pending = [t for t in unresolved if not (RUNNING_ROOT / t.key).exists()]
+            in_flight = [t for t in unresolved if (running_root() / t.key).exists()]
+            pending = [t for t in unresolved if not (running_root() / t.key).exists()]
             if not in_flight:
                 # Died before starting any task (e.g. the remakefile crashes
                 # the interpreter on import): retrying would loop forever.
@@ -258,7 +265,7 @@ class MultiprocExecutor(Executor):
                 try:
                     ok = next(iter(future)).result()
                 except BrokenProcessPool:
-                    (RUNNING_ROOT / task.key).unlink(missing_ok=True)
+                    (running_root() / task.key).unlink(missing_ok=True)
                     self._worker_died(task, failed)
                     _kill_pool(solo)
                     solo = self._new_pool(1)

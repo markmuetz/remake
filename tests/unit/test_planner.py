@@ -217,11 +217,11 @@ def test_info_fetches_each_record_once(tmp_path, monkeypatch):
     n_tasks = len(rmk.tasks())
 
     fetched = _spy_record_fetches(monkeypatch)
-    rmk.status_summary()
+    rmk.info()
     assert len(fetched) == len(set(fetched)) == n_tasks
 
     fetched.clear()
-    rmk.status_summary(reasons=True, list_tasks=True, list_failures=True)
+    rmk.info(reasons=True, list_tasks=True, list_failures=True)
     assert len(fetched) == len(set(fetched))  # never the same key twice
 
 
@@ -270,7 +270,7 @@ def test_plan_reason_records_all_cheap_triggers(tmp_path):
         rmk.plan()
     finally:
         logger.remove(sink)
-    joint = [m for m in msgs if 'uses= changed + inputs/outputs spec changed' in m]
+    joint = [m for m in msgs if 'uses-changed+io-changed' in m]
     assert len(joint) == 2  # both rule_b tasks report both triggers
     # `why` names *which* segment (inputs/outputs) differs — previously it
     # said only "spec changed" and diagnosing meant DB spelunking (todos.md).

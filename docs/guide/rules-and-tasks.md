@@ -338,6 +338,26 @@ write it. Two options:
   exists, and doesn't rerun anything when it changes or goes missing. Fine for a
   throw-away diagnostic that nothing depends on.
 
+### Several paths under one key
+
+A value can be a flat list (or tuple) of paths, each formatted with the
+task's matrix values:
+
+```python
+@rule(outputs={'halves': ['data/{site}_first.txt', 'data/{site}_second.txt']},
+      matrix={'site': SITES})
+def split(outputs, site):
+    first, second = outputs['halves']
+    ...
+```
+
+The rule body gets a list: of path strings for inputs, of path-like output
+tokens for outputs. Everything that looks at paths (lint, `task-info` and
+`ls-tasks`, where elements show as `halves[0]`, `halves[1]`; `verify`; the
+missing-inputs check; dependency tracking) sees each element. A callable
+spec may return lists too. Lists must be flat: a nested list is an error at
+definition. See `examples/ex17_list_values.py`.
+
 ## Output checks with `Ensure`
 
 By default remake trusts a task that returns without raising. Wrap an output
@@ -497,22 +517,26 @@ rmk.rules_from_current_module()
 This collects every `@rule` defined in the module onto the `Remake` object.
 For pipelines split across modules, see `examples/ex5_multifile/`.
 
-It finds a rule only if a module-level **name is bound directly to it**. A
-rule held inside a list, dict or other container is not found, and neither is
-a rule made in a loop or factory whose name is rebound each time (only the last
-one survives). Rules made by a factory and kept in a list:
+A scan claims a rule only if a module-level **name is bound directly to it**
+and the rule is **defined in the scanned file**. Two kinds of rule are left
+alone, and named together in one warning that says to register them with
+`rmk.add_rules(...)`:
+
+- a rule *imported* from another module (`from rules_extract import extract`).
+  Register such rules explicitly, or scan their module with
+  `rmk.rules_from_modules(rules_extract, rules_analysis)` (list a module after
+  the ones it imports from, so its imports are already registered);
+- a rule held in a list, tuple or dict (one level deep), including rules made
+  in a loop or factory. These are never claimed, even when defined in this
+  file, because a container is often a deliberate subset. A rule made in a
+  loop whose name is rebound each time is still claimed once, for the last one.
 
 ```python
-stats_rules = [stats_rule(name, GROUPS) for name in ANALYSERS]   # a list: not found
-rmk.rules_from_current_module()                                  # registers none of them
-```
-
-register them explicitly instead:
-
-```python
+stats_rules = [stats_rule(name, GROUPS) for name in ANALYSERS]
 rmk.add_rules(stats_rules)
+rmk.rules_from_current_module()    # last: the list is already registered, no warning
 ```
 
 Mixing the two is fine: rules registered by both routes are not duplicated.
-Use `rmk.rules_from_modules(mod_a, mod_b)` for rules bound at the top level of
-other modules.
+Put `rules_from_current_module()` after any `add_rules` call, or the scan
+warns about rules you are about to register.

@@ -6,6 +6,111 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Breaking
+
+- **A `Remake` used as a library anchors at its defining file** (0.10
+  decision D6), as the CLI does: relative paths, `.remake/` and
+  `remake.toml` resolve against the directory of the script that builds
+  the `Remake`, not the cwd. `Remake(project_dir=...)` overrides; a
+  notebook or REPL anchors at the cwd. A script run from another directory
+  used to write beside the cwd; it now writes beside the script.
+- **Module scans claim only rules defined in the scanned file.**
+  `rules_from_current_module()` and `rules_from_modules()` no longer claim a
+  Rule imported from another module (it could land in the wrong pipeline).
+  Remakefiles that composed a pipeline by importing rules by name must
+  register them with `rmk.add_rules(...)` or `rmk.rules_from_modules(...)`;
+  `examples/ex5_multifile` now does the latter. Rules imported, or held in
+  lists, tuples or dicts, are not claimed and are named in one warning.
+- **Every `--json` output is now an object with `"format": 1` as its first
+  key** (documented in `docs/cli.md`, "JSON output"). Bare lists became
+  objects: `info --failed --json` is `{"format": 1, "failures": [...]}`,
+  `ls-tasks --json` is `{"format": 1, "tasks": [...]}`, `lint --json` is
+  `{"format": 1, "findings": [...]}`, and `slurm-status --json` is
+  `{"format": 1, "submissions": [...]}`. `info`, `rule-dag`, `rule-info`,
+  `task-info`, `config` and `check-env` already printed objects and only gain
+  `"format": 1`.
+- `OutputToken.after_success` marks a token that summarises many files
+  with `'aggregate': True` (was `'dir': True`); 0.9 sidecars are still
+  read. Custom tokens that are neither local paths nor `remote = True` are
+  now asked `is_complete()` by the missing-inputs check (0.9 skipped every
+  non-path token); set `remote = True` on a token class to opt out.
+
+- **Exit code 3 for a run that stopped short** (0.10 decision D5): when no
+  task failed but rules were left blocked (a deferred matrix never became
+  ready), `remake run` now exits 3, not 1. A failed task is still 1, also
+  when rules were blocked too. `run-all` follows the same rule and lists
+  such remakefiles as `blocked`. Scripts that test for `1` to mean "not
+  finished" should also accept 3.
+- **Python 3.10 is no longer supported; 3.11 is the minimum.** Python 3.10
+  reached end of life in October 2026. The `tomli` fallback is gone
+  (`tomllib` is built in), and the lock now resolves tornado 6.6 or later.
+
+### Added
+
+- **`metadata_dir` puts `.remake/` elsewhere** (0.10 item 5f, decision D7): a
+  project-file key (`remake.toml`, or `Remake(config=)`) for the metadata
+  directory, e.g. on a scratch filesystem with more quota. Relative values are
+  relative to the project directory; `~` and environment variables are
+  expanded. The database, logs, results, run history and SLURM scripts, job
+  specs and `submit.sh` all move with it, and workers and array jobs find it
+  by loading the remakefile. Default unchanged (`.remake/` beside the
+  remakefile). Internally every `.remake` path now comes from
+  `remake.util.paths`. The CLI's own log files follow only the `remake.toml`
+  key. See the configuration guide.
+- **List-valued inputs and outputs** (0.10 decision D8; bug 02, review
+  L2): `outputs={'parts': ['a/{i}.nc', 'b/{i}.nc']}` names several paths
+  under one key, formatted per element; the rule body gets a list. Lint,
+  `task-info` (as `parts[0]`, `parts[1]`), `ls-tasks`, `verify`, the
+  missing-inputs check and dependency tracking see each path. Lists must be
+  flat. A dict spec that already held a list used to be stringified into
+  one bogus path (such a pipeline could not run); it now means the list.
+  `task-info` no longer crashes on a tuple from a
+  callable spec. Example: `examples/ex17_list_values.py`.
+- **`remake verify`** (0.10 item 2): reconciles the DB with the disk.
+  `--outputs` finds tasks recorded as success whose outputs are missing or
+  fail `Ensure` (marked pending with `--apply`); `--adopt` finds unrecorded
+  tasks whose outputs are complete (recorded as success with `--apply`).
+  Read-only by default, `-Q`-composable, `--json`, batched completion
+  checks. `Remake.verify()` is the library form. `set-state
+  --check-outputs` now points at it.
+- **The output-token interface is settled for 1.0** (0.10 item 5a,
+  `remake.core.tokens`): `OutputToken.stat()` (an `OutputStat` of
+  exists/size/mtime, without reading the data), `complete_many()` (batched
+  completion: local paths take one directory listing per directory instead
+  of one stat per file, used by `check_outputs` planning), `canonical()`
+  (one spelling per path, used by lint, the missing-inputs check and `Dir`
+  ownership, so `./a`, `a` and `/abs/a` are one file there; a symlinked
+  `Dir` also matches through its target. Dependency matching between tasks
+  still compares normalised paths, and falls back to depending on every
+  upstream task when spellings differ), `adopt()`
+  (`Dir.claim` remains as an alias), and a `remote` class flag. `S3Object`
+  is marked experimental: storage backends come after 1.0.
+- **Provenance and run history** (0.10 items 1 and 3): each run records the
+  git commit, a dirty flag and diff hash, Python and remake versions, an
+  installed-distribution fingerprint, a lockfile hash, the host, and a hash
+  of the username. Each task execution is kept (the last `history.keep`,
+  default 10, per task) with its rerun reason, resources, host and error
+  signature. New `remake history <task>`, `remake history --runs` and
+  `--prune`; `task-info` shows the last execution and flags a SLURM job that
+  ran in a different environment from the planner. Schema 1.1, additive:
+  upgrading reruns nothing.
+- `remake.__all__` declares the public API, checked against `docs/api/` by a test.
+
+### Changed
+
+- **`Remake` method names match the CLI** (0.10 item 5d):
+  `status_summary()` is now `info()` and `task_spec()` is `export_task()`;
+  the old names still work, with a `DeprecationWarning`, until 1.0. New
+  `Remake.history()` is the library form of `remake history`. The
+  missing-inputs check and `verify` check files in batches (one directory
+  listing per directory, 0.10 item 4).
+- **One environment report.** The SLURM submit header and `check-env` now
+  share one function (`envcheck.environment_report`), which also carries the
+  environment fingerprint, the installed packages and the lockfile hash. The
+  submit header gains `remake`, `environment fingerprint` and `lockfile`
+  lines. `check-env` compares the fingerprint and says `OK  same packages`
+  or lists the `name==version` entries that differ.
+
 ## [0.9.0] — 2026-11-21
 
 Canonical change detection, a config file cascade with profiles, output

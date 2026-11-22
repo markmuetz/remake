@@ -53,9 +53,19 @@ output), and the **on-disk format**. So:
 **Minor releases** (`v0.8.x..v0.9.0`) get an **adversarial review** of the
 full diff since the previous tag, before tagging — a fresh reviewer context
 that sees only the diff, instructed to find flaws (the Bun-in-Rust lesson:
-the implementing context is biased toward approving its own work):
-`/code-review ultra` per feature branch/PR, or a per-subsystem agent fan-out
-over the tag range if work landed on `main` directly.
+the implementing context is biased toward approving its own work). Since
+0.10 (decided 2026-11-22, MM, mindful of tokens), in two passes, both run by
+Claude without waiting on MM:
+
+1. an adversarial **Fable** review of the full diff, as a fresh agent given
+   the code and the release doc, not the implementer's conclusions;
+2. `/code-review xhigh` on the release branch (Opus: a different model from
+   pass 1, so different blind spots).
+
+Every finding is fixed (with a regression test) or recorded in the release
+doc. `/code-review ultra` is no longer required: MM may still run it, e.g.
+before 1.0. If pass 2 finds something serious in the planner, hashing or the
+schema, treat that as a reason to go deeper (`max`, or ask MM for `ultra`).
 
 **Patch releases** need no pre-tag review (decided 2026-07-10 at 0.8.2 —
 mandatory review per point release is unsustainable). The per-commit hook in
@@ -77,7 +87,8 @@ match the model to what a miss costs:
   caught by the pre-tag review. Run it as a review agent with a model
   override: `/code-review` runs as a fork of the session and always uses the
   session's model.
-- **Pre-tag reviews of a release range**: **Opus**. Once per release, the
+- **Pre-tag reviews of a release range**: **Fable**, then **Opus** (the
+  `/code-review xhigh` pass, above). Once per release, the
   last check before PyPI; the bugs that matter here (e.g. the 0.8.4 M5/M6
   review's masked disk-full `ROLLBACK` and legacy half-created DBs) need
   reasoning about failure modes, not just reading the diff.

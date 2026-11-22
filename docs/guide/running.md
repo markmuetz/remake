@@ -10,8 +10,28 @@ the chosen executor.
 remake operates from the remakefile's own directory: `remake run sub/pipeline.py`
 changes into `sub/` first, so the `.remake/` store, the log, and the pipeline's
 relative input/output paths are all anchored to the remakefile rather than to
-wherever you launched the command. Running from the remakefile's directory (the
+wherever you launched the command (`metadata_dir` in `remake.toml` can move
+`.remake/` elsewhere; see [Configuration](configuration.md)). Running from the remakefile's directory (the
 usual case) is unaffected.
+
+The same holds when you use remake as a library (since 0.10). A `Remake(...)`
+built in a script anchors at that script's directory, so `python
+path/to/pipeline.py` from anywhere writes `data/` and `.remake/` beside the
+script. Pass `Remake(..., project_dir=...)` to choose another directory. With
+no defining file (a notebook cell, the REPL, `python -c`) it anchors at the
+current directory when it is created. `rmk.project_dir` says where. The
+defining file is the first caller outside remake, skipping a `Remake`
+subclass's own `__init__`. A helper function that builds the `Remake` in a
+shared module anchors at that module's directory, so pass `project_dir=`
+there; one in an installed package (site-packages) anchors at the current
+directory, with a warning. Each
+`Remake` method changes into that directory for its duration and changes
+back afterwards. Since the working directory is process-wide, don't drive two
+`Remake`s from different threads at once. Paths on tasks you hold after a
+method returns stay relative to `project_dir`: open them from there, or
+join them to `rmk.project_dir`. Likewise create a `Sqlite3Backend` with an
+explicit path if you pass `metadata=`; its default location is relative to
+the current directory at construction.
 
 ## Executors
 
@@ -54,8 +74,12 @@ remake run pipeline.py --ignore-code-changes
 | Code | Meaning |
 |---|---|
 | `0` | success — everything needed completed |
-| `1` | one or more tasks failed (see [Debugging](debugging.md)), or rules were left blocked — a deferred matrix that never became ready; each is logged with what it is waiting on |
+| `1` | one or more tasks failed (see [Debugging](debugging.md)) |
 | `2` | usage error — bad arguments, missing external inputs, an invalid or unknown-name `-Q` query, a missing or broken remakefile, bad rule dependencies — printed as `error: ...` |
+| `3` | the run stopped short: no task failed, but rules were left blocked — a deferred matrix that never became ready; each is logged with what it is waiting on. Rerunning may finish the job once the missing upstream exists. (Before 0.10 this was `1`.) |
+| `130` / `143` | interrupted by Ctrl-C / SIGTERM (128 + the signal number) |
+
+If tasks failed *and* rules were left blocked, the code is `1`.
 
 ## Missing external inputs
 

@@ -37,8 +37,6 @@ import re
 import os
 import shlex
 import subprocess as sp
-import sys
-import sysconfig
 import time
 from pathlib import Path
 
@@ -46,6 +44,7 @@ from loguru import logger
 
 from ..core.deps import Edge, task_id
 from ..core.exceptions import RemakeError
+from ..util.paths import jobs_dir, slurm_dir, slurm_output_dir, submit_path
 from .executor import Executor
 
 DEFAULT_SLURM_CONFIG = {
@@ -78,40 +77,10 @@ CONTINUATION_SBATCH_TPL = """#!/bin/bash
 #SBATCH -e {output_dir}/continuation.err
 #SBATCH --kill-on-invalid-dep=yes
 {opts}
+# The run that started this chain of continuations (run history, 0.10).
+export REMAKE_PARENT_RUN_SEQ={parent_run_seq}
 remake run {remakefile} --executor slurm
 """
-
-
-def environment_report():
-    """Lines describing the Python environment remake is running in, so a
-    wrong interpreter or a wrong checkout of a package is visible after the
-    fact. Cheap: reads sys.modules, imports nothing. Lists each top-level
-    module that is neither stdlib nor in site-packages (i.e. a dev checkout
-    or a local module) with its resolved file."""
-    lines = [
-        f'sys.executable: {sys.executable}',
-        f'sys.version: {sys.version.replace(chr(10), " ")}',
-        f'PYTHONPATH: {os.environ.get("PYTHONPATH", "")}',
-        f'sys.path: {sys.path}',
-    ]
-    stdlib = getattr(sys, 'stdlib_module_names', frozenset())
-    stdlib_dir = sysconfig.get_paths()['stdlib']
-    for name, mod in sorted(sys.modules.items()):
-        if '.' in name or name in stdlib or name in sys.builtin_module_names:
-            continue
-        try:
-            file = getattr(mod, '__file__', None)
-            if not file:
-                continue
-            resolved = str(Path(file).resolve())
-        except (OSError, RuntimeError, ValueError):
-            continue
-        if 'site-packages' in resolved or 'dist-packages' in resolved:
-            continue
-        if resolved.startswith(stdlib_dir):
-            continue
-        lines.append(f'module {name}: {resolved}')
-    return lines
 
 
 def _sbatch_opts(config):
@@ -166,7 +135,8 @@ def squeue_snapshot():
     return snapshot
 
 
-JOBS_DIR = Path('.remake/jobs')
+# Job specs and sidecars live in util.paths.jobs_dir() (evaluated at use time:
+# the metadata_dir config key moves it).
 
 
 def spec_path(rule_name, run_seq=None):
@@ -174,8 +144,8 @@ def spec_path(rule_name, run_seq=None):
     run_seq, or the legacy unversioned path when run_seq is None (pre-0.9
     submissions, whose sidecars carry no run_seq)."""
     if run_seq is None:
-        return JOBS_DIR / f'{rule_name}.json'
-    return JOBS_DIR / f'{rule_name}.{run_seq}.json'
+        return jobs_dir() / f'{rule_name}.json'
+    return jobs_dir() / f'{rule_name}.{run_seq}.json'
 
 
 def submitted_spec_path(rule_name):
@@ -185,7 +155,7 @@ def submitted_spec_path(rule_name):
     files but never sidecars — can't skew it. Falls back to the newest spec
     file on disk when nothing was ever submitted (dry-run debugging), None
     if there are no specs at all."""
-    recorded = _read_sidecar(JOBS_DIR / f'{rule_name}.jobids.json')
+    recorded = _read_sidecar(jobs_dir() / f'{rule_name}.jobids.json')
     if recorded is not None:
         return spec_path(rule_name, recorded.get('run_seq'))
     return latest_spec_path(rule_name)
@@ -197,7 +167,7 @@ def latest_spec_path(rule_name):
     includes unsubmitted dry-run plans — prefer submitted_spec_path for
     anything that must match a real submission."""
     versioned = []
-    for path in JOBS_DIR.glob(f'{rule_name}.*.json'):
+    for path in jobs_dir().glob(f'{rule_name}.*.json'):
         seq = path.name.removeprefix(f'{rule_name}.').removesuffix('.json')
         if seq.isdigit():
             versioned.append((int(seq), path))
@@ -232,11 +202,11 @@ def prune_spec_files(max_age_days=SPEC_MAX_AGE_DAYS):
     case that outlives the window — the last submission pending for a long
     time. (Full design + accepted residual risk:
     design_docs/designs/slurm_already_running.md, 2026-07-10 decisions.)"""
-    if not JOBS_DIR.exists():
+    if not jobs_dir().exists():
         return
     keep = set()
     skip_rules = set()
-    for sidecar in JOBS_DIR.glob('*.jobids.json'):
+    for sidecar in jobs_dir().glob('*.jobids.json'):
         rule_name = sidecar.name.removesuffix('.jobids.json')
         recorded = _read_sidecar(sidecar)
         if recorded is None:
@@ -246,7 +216,7 @@ def prune_spec_files(max_age_days=SPEC_MAX_AGE_DAYS):
         keep.add(spec_path(rule_name, recorded.get('run_seq')))
     cutoff = time.time() - max_age_days * 86400
     npruned = 0
-    for path in JOBS_DIR.glob('*.json'):
+    for path in jobs_dir().glob('*.json'):
         if path.name.endswith('.jobids.json') or path in keep:
             continue
         if path.name.split('.')[0] in skip_rules:
@@ -263,7 +233,7 @@ def recorded_jobids(rule_name):
     submitted. One base id per rule since arrays-everywhere; 'slurm_job_ids'
     (one id per task) is read for sidecars written by pre-arrays-only
     versions, whose jobs may still be queued."""
-    recorded = _read_sidecar(JOBS_DIR / f'{rule_name}.jobids.json')
+    recorded = _read_sidecar(jobs_dir() / f'{rule_name}.jobids.json')
     if recorded is None:
         return []
     if 'slurm_array_job_id' in recorded:
@@ -340,7 +310,7 @@ def last_submission(rule_name, task_key=None):
     position in the job spec of the submission the sidecar records (pinned by
     its run_seq, so later replans don't skew it); None unless task_key is
     given."""
-    recorded = _read_sidecar(JOBS_DIR / f'{rule_name}.jobids.json')
+    recorded = _read_sidecar(jobs_dir() / f'{rule_name}.jobids.json')
     if recorded is None:
         return None, None
     jobids = recorded_jobids(rule_name)
@@ -403,10 +373,25 @@ class SlurmExecutor(Executor):
         # #SBATCH opts for configs that still set it.
         config.pop('array_threshold', None)
         self.slurm_config = config
-        self.jobs_dir = JOBS_DIR
-        self.slurm_dir = Path('.remake/slurm')
-        self.output_dir = self.slurm_dir / 'output'
-        self.submit_path = Path('.remake/submit.sh')
+
+    # Evaluated at use, not at construction: a library caller may build the
+    # executor from any cwd, before metadata_dir is applied (/code-review #9).
+    # Relative paths resolve against the anchored cwd when the run writes.
+    @property
+    def jobs_dir(self):
+        return jobs_dir()
+
+    @property
+    def slurm_dir(self):
+        return slurm_dir()
+
+    @property
+    def output_dir(self):
+        return slurm_output_dir()
+
+    @property
+    def submit_path(self):
+        return submit_path()
 
     @staticmethod
     def _check_profile_and_account(rmk, config):
@@ -465,7 +450,8 @@ class SlurmExecutor(Executor):
         # boundary.
         run_seq = self.rmk.metadata.current_run_seq()
         submitted = {}  # rule -> _SubmittedRule
-        env_lines = environment_report()
+        from .. import envcheck
+        env_lines = envcheck.format_header_lines(envcheck.environment_report())
         logger.info('Submit environment:\n  ' + '\n  '.join(env_lines))
         lines = ['#!/bin/bash', '# Generated by remake — re-run to resubmit without replanning.',
                  '# Environment of the submitting process:']
@@ -498,7 +484,7 @@ class SlurmExecutor(Executor):
                 lines.append(f'# Continuation: replans and submits deferred rules ({names}).')
                 lines.append(
                     f'sbatch --parsable --dependency=afterok:{":".join(all_refs)} '
-                    f'{self.slurm_dir}/continuation.sbatch'
+                    f'{shlex.quote(str(self.slurm_dir / "continuation.sbatch"))}'
                 )
                 lines.append('')
             else:
@@ -523,12 +509,18 @@ class SlurmExecutor(Executor):
         self.submit()
 
     def _write_job_specs(self, rule, tasks, run_seq):
+        from .. import provenance
+
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
+        # The planner's environment fingerprint: each job compares its own
+        # against it and records its environment only if they differ (0.10
+        # item 1). Computed once per process (cached).
+        env = provenance.current_environment()[0]
         specs = [
             # v: the spec format version (bump when fields change meaning;
-            # readers ignore unknown fields).
+            # readers ignore unknown fields). reason/env: 0.10, absent before.
             {'v': 1, 'task_key': task.key, 'rule': rule.name, 'kwargs': task.kwargs,
-             'run_seq': run_seq}
+             'run_seq': run_seq, 'reason': task.rerun_reason, 'env': env}
             for task in tasks
         ]
         path = spec_path(rule.name, run_seq)
@@ -583,9 +575,9 @@ class SlurmExecutor(Executor):
         sidecar = self.jobs_dir / f'{rule.name}.jobids.json'
         var = f'JOB_{rule.name}'
         return [
-            f'{var}=$(sbatch --parsable {dependency}{sbatch_path})',
+            f'{var}=$(sbatch --parsable {dependency}{shlex.quote(str(sbatch_path))})',
             f'echo "{{\\"slurm_array_job_id\\": \\"${var}\\", '
-            f'\\"run_seq\\": {run_seq}}}" > {sidecar}',
+            f'\\"run_seq\\": {run_seq}}}" > {shlex.quote(str(sidecar))}',
         ]
 
     def _write_continuation(self):
@@ -595,7 +587,11 @@ class SlurmExecutor(Executor):
         config.pop('array_throttle', None)
         config['time'] = '00:10:00'
         config['mem'] = '1G'
+        parent = os.environ.get('REMAKE_PARENT_RUN_SEQ', '')
+        if not parent.isdigit():
+            parent = self.rmk.metadata.current_run_seq()
         script = CONTINUATION_SBATCH_TPL.format(
+            parent_run_seq=parent if parent is not None else '',
             output_dir=self.output_dir,
             opts=_sbatch_opts(config),
             remakefile=shlex.quote(str(self.remakefile)),

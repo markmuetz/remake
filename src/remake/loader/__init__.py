@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import sys
 from pathlib import Path
 from typing import Union
@@ -72,7 +73,17 @@ def load_remake(filename, finalize=True, profile=None):
     rmk = remakes[0]
     # The path the user refers to this pipeline by — executors that generate
     # scripts re-invoking remake (SLURM) need it.
-    rmk.remakefile = str(filename)
+    # A bare name (the CLI, which has changed into its directory) stays as
+    # is; a path with a directory part is made absolute, since methods run
+    # in the remakefile's directory and workers re-load it from there
+    # (review 2026-11-22, finding 5).
+    # abspath, not resolve(): a symlinked remakefile stays the link, so
+    # workers re-load it from (and anchor in) the link's directory, the one
+    # the parent ingests from (/code-review 2026-11-22 #6).
+    rmk.remakefile = (str(filename) if Path(filename).parent == Path('.')
+                      else os.path.abspath(Path.cwd() / filename))
+    # Anchored at the remakefile's directory (D6), however it was found.
+    rmk.project_dir = str((Path.cwd() / filename).parent.resolve())
     # Merge the config cascade once, with remake.toml from the remakefile's
     # directory (before finalize: nothing may read a stale config).
     rmk.resolve_config((Path.cwd() / filename).parent, profile=profile)

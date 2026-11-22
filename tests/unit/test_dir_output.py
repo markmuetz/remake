@@ -345,7 +345,7 @@ def test_upgrade_from_db_without_output_stat_reruns_nothing(tmp_path):
     assert rmk.run() == 0 and calls == [1]
     (task,) = rmk.tasks()
     assert db.get_output_stats(task) == {}  # old records have no stats, harmlessly
-    assert rmk.status_summary()['totals']['output_bytes'] == 0
+    assert rmk.info()['totals']['output_bytes'] == 0
 
 
 def test_task_info_shows_stats_and_stale(tmp_path):
@@ -365,7 +365,7 @@ def test_task_info_shows_stats_and_stale(tmp_path):
     assert info['outputs']['p']['dir']['n_stale'] == 1
     assert info['output_stats']['p']['n_files'] == 1
     assert info['output_stats']['*'] == {'n_files': 1, 'total_bytes': 3, 'checksum': None}
-    summary = rmk.status_summary()
+    summary = rmk.info()
     assert summary['rules'][0]['output_bytes'] == 5
     assert summary['totals']['output_bytes'] == 5
 

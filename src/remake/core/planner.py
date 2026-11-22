@@ -22,7 +22,7 @@ from .dag import expand_rule
 from .deps import ALL, Edges, downstream_task, task_id
 from .exceptions import Defer, RemakeError
 from .rule import is_deferrable
-from .task import paths_digest
+from .task import flat_values, paths_digest
 from .canonical import is_canonical
 from .scope import (
     io_match,
@@ -162,7 +162,31 @@ def _max_upstream_run_seq(task, upstream_seqs, edges, above=None):
 
 def _outputs_complete(task):
     outputs = task.outputs
-    return bool(outputs) and all(token.is_complete() for token in outputs.values())
+    return bool(outputs) and all(token.is_complete() for token in flat_values(outputs))
+
+
+def outputs_complete_many(tasks):
+    """{task.key: all outputs complete} for many tasks, batched through
+    tokens.complete_many (one directory listing per directory rather than a
+    stat per file, 0.10 item 5a). A task with no outputs is not complete."""
+    from .tokens import complete_many
+
+    flat, owners = [], []
+    result = {}
+    for task in tasks:
+        try:
+            outputs = task.outputs
+        except Exception:
+            result[task.key] = False  # unresolvable: not complete; the task reports it
+            continue
+        result[task.key] = bool(outputs)
+        for token in flat_values(outputs):
+            flat.append(token)
+            owners.append(task.key)
+    for key, done in zip(owners, complete_many(flat)):
+        if not done:
+            result[key] = False
+    return result
 
 
 def cascade_settled(rule_set, dag, selected, run_seq, status, edges=None):
@@ -229,7 +253,7 @@ def _io_paths(task, part):
     callable spec raises — run_task has already recorded that failure, and
     the executor's bookkeeping must not re-raise it (and crash the run)."""
     try:
-        return _norm_paths(getattr(task, part).values())
+        return _norm_paths(flat_values(getattr(task, part)))
     except Exception:
         return set()
 
@@ -605,23 +629,43 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
             elif dep_rerun:
                 partial_deps.append((dep, dep_rerun))
 
+        # The disk checks, batched per rule (only the tasks they apply to).
+        disk_complete = {}
+        if not force and check_outputs in ('fallback', 'always'):
+            # Only the tasks that reach a disk check: no record (fallback or
+            # always), or a SUCCESS record under always. A failed or pending
+            # task reruns anyway; its outputs may not even resolve (review
+            # 2026-11-22, /code-review #1). Records first: resolving outputs
+            # is the cost to avoid.
+            def reaches_check(t):
+                rec = records.get(t.key)
+                if rec is None:
+                    return True
+                return check_outputs == 'always' and rec.status == TASK_STATUS_SUCCESS
+            to_check = [t for t in tasks if reaches_check(t)]
+            disk_complete = outputs_complete_many(to_check)
+
         for task in tasks:
             rec = records.get(task.key)
             task_kwargs = frozenset(task.kwargs.items())
-            # `reason` is a short literal (cheap to assign every iteration);
-            # only formatted into a log line when a TRACE sink is attached.
+            # `reason` is a short category literal (cheap to assign every
+            # iteration), the same names as explain_task's Reason.category.
+            # It is logged at TRACE and kept on the task for its history row
+            # (0.10 item 3).
             if force:
                 # Unconditional: skip the freshness checks (and their stat
                 # calls under check_outputs) rather than compute-then-discard.
                 rerun, reason = True, 'forced'
             elif rec is None:
-                if check_outputs in ('fallback', 'always') and _outputs_complete(task):
-                    rerun, reason = False, 'outputs complete (no DB record)'
+                if check_outputs in ('fallback', 'always') and disk_complete.get(task.key):
+                    rerun, reason = False, 'adopted-outputs'
                 else:
-                    rerun, reason = True, 'never run (no DB record)'
+                    rerun, reason = True, 'never-run'
             else:
                 rerun = rec.status != TASK_STATUS_SUCCESS
-                reason = 'last run not successful' if rerun else 'up to date'
+                reason = ('up-to-date' if not rerun else
+                          'last-run-failed' if rec.status == TASK_STATUS_FAILED
+                          else 'last-run-pending')
                 if not rerun and not ignore_code_changes:
                     # All three are cheap int set-memberships, so record every
                     # trigger rather than the first (several can be true at
@@ -630,13 +674,13 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
                     # explain_task is the full-fidelity view.
                     changed = []
                     if rec.run_code_id not in run_unchanged:
-                        changed.append('run code changed')
+                        changed.append('code-changed')
                     if rec.uses_code_id not in uses_unchanged:
-                        changed.append('uses= changed')
+                        changed.append('uses-changed')
                     if rec.io_code_id not in io_unchanged:
-                        changed.append('inputs/outputs spec changed')
+                        changed.append('io-changed')
                     if changed:
-                        rerun, reason = True, ' + '.join(changed)
+                        rerun, reason = True, '+'.join(changed)
                 if not rerun and not ignore_code_changes and callable_io:
                     # A callable spec can resolve to other paths with its
                     # source unchanged (it reads a global, e.g. YEARS): compare
@@ -646,15 +690,15 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
                         if restamp is not None and digest is not None:
                             restamp.setdefault((rule, 'paths'), {})[task.key] = digest
                     elif digest != rec.paths_digest:
-                        rerun, reason = True, 'resolved input/output paths changed'
+                        rerun, reason = True, 'paths-changed'
                 if not rerun and check_outputs == 'always' and task.outputs:
-                    if not _outputs_complete(task):
-                        rerun, reason = True, 'outputs missing (check_outputs=always)'
+                    if not disk_complete.get(task.key, False):
+                        rerun, reason = True, 'outputs-missing'
 
             if not rerun:
                 if upstream_all or any(_reads_rerun(edges.upstream_of(dep, task), dep_rerun)
                                        for dep, dep_rerun in partial_deps):
-                    rerun, reason = True, 'upstream reruns'
+                    rerun, reason = True, 'upstream-rerun'
             # Durable cross-pass backstop: an upstream committed in a later
             # invocation than this task (e.g. an upstream rerun via `run -Q`,
             # or after a crash) without rerunning it in the same pass. run_seq
@@ -664,10 +708,11 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
             if not rerun and rec is not None and rec.run_seq is not None:
                 up_seq = _max_upstream_run_seq(task, upstream_seqs, edges, above=rec.run_seq)
                 if up_seq is not None and up_seq > rec.run_seq:
-                    rerun, reason = True, 'upstream ran more recently'
+                    rerun, reason = True, 'upstream-newer'
 
             logger.trace('{}: {} — {}', task.key, 'rerun' if rerun else 'skip', reason)
             if rerun:
+                task.rerun_reason = reason
                 rule_rerun.add(task_kwargs)
                 runnable.append(task)
 

@@ -8,17 +8,13 @@ set it (`EffectiveConfig.provenance`).
 """
 import copy
 import os
-import sys
+import tomllib
 from pathlib import Path
 
 from loguru import logger
 
 from ..core.exceptions import RemakeError
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover
-    import tomli as tomllib
 
 # The built-in defaults (layer a). Same values the SLURM executor has always
 # used; to be removed at 1.0 in favour of an explicit profile.
@@ -42,6 +38,10 @@ _SCHEMA = {
     'resources': {'capture': (bool,), 'rss_interval': (int, float)},
     'external_inputs_hint': (str,),
     'checksum_outputs': (bool,),
+    # Where `.remake/` lives (0.10 item 5f / D7); relative to the project dir.
+    'metadata_dir': (str,),
+    # Run history (0.10 item 3): executions kept per task.
+    'history': {'keep': (int,)},
 }
 # Keys allowed in the user file (per-user machine settings, not pipeline
 # settings), and in a [profiles.X] table there.
@@ -64,6 +64,19 @@ def shipped_profile_dir():
 def shipped_profile_names():
     d = shipped_profile_dir()
     return sorted(p.stem for p in d.glob('*.toml')) if d.is_dir() else []
+
+
+def project_metadata_dir(project_dir):
+    """The `metadata_dir` set in `project_dir/remake.toml`, or None. Read
+    before the full config is loaded (the CLI opens its log files first);
+    unreadable or invalid files give None here and are reported when the
+    config is loaded properly."""
+    path = Path(project_dir) / 'remake.toml'
+    try:
+        value = _load_toml(path).get('metadata_dir') if path.is_file() else None
+    except RemakeError:
+        return None
+    return value if isinstance(value, str) and value else None
 
 
 def _isinstance(v, types):

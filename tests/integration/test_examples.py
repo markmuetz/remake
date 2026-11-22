@@ -7,6 +7,7 @@ are errors (except ScopeWarning, which ex3 deliberately demonstrates), and
 anything logged at WARNING+ through loguru (e.g. the duplicate-rule-name
 collision warning) fails the test via the autouse fixture below.
 """
+import shutil
 from pathlib import Path
 
 import pytest
@@ -30,7 +31,10 @@ def fail_on_logged_warnings():
     sink_id = logger.add(
         lambda message: records.append(message.record), level='WARNING')
     yield
-    logger.remove(sink_id)
+    try:
+        logger.remove(sink_id)
+    except ValueError:  # the CLI resets loguru's handlers (tests that call it)
+        pass
     assert not records, 'logged warnings during test: ' + '; '.join(
         f'{r["level"].name}: {r["message"]}' for r in records)
 
@@ -54,13 +58,28 @@ CASES = [
     ('ex11_custom_token.py', 1, 3),
     ('ex12_chained_loop_rules.py', 6, 16),
     ('ex13_rule_factory.py', 5, 11),
+    ('ex15_config/pipeline.py', 2, 4),
+    ('ex16_diagnostics.py', 3, 3),
+    ('ex17_list_values.py', 3, 7),
+    ('ex18_maintenance/pipeline.py', 2, 5),
 ]
 
 
+@pytest.fixture
+def ex_dir(tmp_path, monkeypatch):
+    """A copy of examples/ (sources only), cwd inside it. remake anchors
+    paths at a remakefile's directory (0.10 D6), so running the originals
+    would write into the repo's examples/."""
+    dest = tmp_path / 'examples'
+    shutil.copytree(EXAMPLES_DIR, dest, ignore=shutil.ignore_patterns(
+        'data', '.remake', '__pycache__', 'validated.yaml'))
+    monkeypatch.chdir(dest)
+    return dest
+
+
 @pytest.mark.parametrize('filename,n_rules,n_tasks', CASES)
-def test_example_loads_and_plans(filename, n_rules, n_tasks, tmp_path, monkeypatch, memory_backend):
-    monkeypatch.chdir(tmp_path)  # examples use relative paths
-    rmk = load_remake(EXAMPLES_DIR / filename, finalize=False)
+def test_example_loads_and_plans(filename, n_rules, n_tasks, ex_dir, memory_backend):
+    rmk = load_remake(ex_dir / filename, finalize=False)
     rmk.metadata = memory_backend
     runnable, deferred = rmk.plan()
     assert len(rmk.rules) == n_rules
@@ -78,31 +97,181 @@ def test_example_loads_and_plans(filename, n_rules, n_tasks, tmp_path, monkeypat
     ('ex12', 'data/stage0/alpha.txt'),              # self-generating
     ('ex13', 'data/results/summary13.txt'),         # self-generating
     ('ex14', 'data/results/summary14.txt'),         # self-generating
+    ('ex16', 'data/results/report16.txt'),
+    ('ex17', 'data/ex17/summary17.txt'),          # self-generating
 ])
-def test_light_examples_run_end_to_end(example, result_file, tmp_path, monkeypatch, memory_backend):
+def test_light_examples_run_end_to_end(example, result_file, ex_dir, memory_backend):
     """These need no heavy deps: generate synthetic data (if any) and run."""
     if example == 'ex4':
         pytest.importorskip('yaml')
-    monkeypatch.chdir(tmp_path)
-    make_data = load_module(EXAMPLES_DIR / 'make_example_data.py')
+    make_data = load_module(ex_dir / 'make_example_data.py')
     if hasattr(make_data, example):
         getattr(make_data, example)()
 
-    filename = next(EXAMPLES_DIR.glob(f'{example}_*.py'))
+    filename = next(ex_dir.glob(f'{example}_*.py'))
     rmk = load_remake(filename, finalize=False)
     rmk.metadata = memory_backend
     rmk.run()
-    assert (tmp_path / result_file).exists()
+    assert (ex_dir / result_file).exists()
     runnable, deferred = rmk.plan()
     assert not runnable and not deferred
 
 
-def test_ex9_zarr_region(memory_backend):
+def test_ex9_zarr_region(ex_dir, memory_backend):
     pytest.importorskip('xarray')
     pytest.importorskip('pandas')
-    rmk = load_remake(EXAMPLES_DIR / 'ex9_zarr_region.py', finalize=False)
+    rmk = load_remake(ex_dir / 'ex9_zarr_region.py', finalize=False)
     rmk.metadata = memory_backend
     runnable, deferred = rmk.plan()
     assert len(rmk.rules) == 3
     assert len(runnable) == 46  # 1 + 44 years + 1
     assert not deferred
+
+
+def test_ex15_config_runs_and_resolves_config(ex_dir, tmp_path, monkeypatch, memory_backend):
+    """The directory example runs, and its remake.toml layers are applied."""
+    monkeypatch.delenv("REMAKE_PROFILE", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "no_user_config"))
+    monkeypatch.chdir(ex_dir / "ex15_config")
+    rmk = load_remake(ex_dir / "ex15_config" / "pipeline.py", finalize=False)
+    rmk.metadata = memory_backend
+    assert rmk.config["checksum_outputs"] is True
+    assert rmk.config["multiproc"]["nproc"] == 2  # project file
+    assert rmk.config["resources"]["capture"] is True  # Remake(config=)
+    assert rmk.config["resources"]["rss_interval"] == 0.5  # profile quick
+    rmk.run()
+    assert (ex_dir / "ex15_config/data/results/total15.txt").read_text() == "57\n"  # 6 + 15 + 36
+    runnable, deferred = rmk.plan()
+    assert not runnable and not deferred
+
+
+def test_rule_names_are_unique_across_examples(ex_dir):
+    """The top-level examples share one .remake/ store, so no rule name may
+    appear in two files (the duplicate-rule warning would fire, and the two
+    would clobber each other's recorded state). ex5_multifile/ and
+    ex15_config/ and ex18_maintenance/ are their own pipeline directories and are not included."""
+    owners = {}
+    for path in sorted(ex_dir.glob('ex*.py')):
+        try:
+            rmk = load_remake(path, finalize=False)
+        except ImportError:  # e.g. ex9 without xarray
+            continue
+        for r in rmk.rules:
+            owners.setdefault(r.name, []).append(path.name)
+    clashes = {name: files for name, files in owners.items() if len(files) > 1}
+    assert not clashes, f'rule names defined in more than one example: {clashes}'
+
+
+def test_ex16_history_after_failing_and_fixing(tmp_path, monkeypatch):
+    """The ex16 walk-through: a forced failure then a fix gives calibrate16
+    three executions, and `history --json` and `--runs --json` show them."""
+    import json
+
+    from remake.remake_cmd import remake_cmd
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv('REMAKE_EX16_FAIL', raising=False)
+    getattr(load_module(EXAMPLES_DIR / 'make_example_data.py'), 'ex16')()
+    # remake anchors paths to the remakefile's directory: run a copy.
+    shutil.copy(EXAMPLES_DIR / 'ex16_diagnostics.py', tmp_path)
+    pipeline = str(tmp_path / 'ex16_diagnostics.py')
+    assert (remake_cmd(['remake', 'run', pipeline]) or 0) == 0
+    monkeypatch.setenv('REMAKE_EX16_FAIL', 'raise')
+    assert remake_cmd(['remake', 'run', '-f', pipeline]) == 1
+    monkeypatch.delenv('REMAKE_EX16_FAIL')
+    assert (remake_cmd(['remake', 'run', pipeline]) or 0) == 0
+
+    import contextlib
+    import io
+
+    def history(*argv):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            assert (remake_cmd(['remake', 'history', pipeline, *argv, '--json']) or 0) == 0
+        return json.loads(buf.getvalue())
+
+    task = history('-Q', "rule == 'calibrate16'")
+    assert task['format'] == 1
+    assert [(e['status'], e['reason']) for e in task['executions']] == [
+        ('success', 'last-run-failed'), ('failed', 'forced'), ('success', 'never-run')]
+    assert task['executions'][1]['error'].startswith('RuntimeError at ex16_diagnostics.py')
+    runs = history('--runs')['runs']
+    assert [r['n_failed'] for r in runs] == [0, 1, 0]
+
+
+def test_ex18_maintenance_verify_history_prune_and_project_dir(ex_dir, tmp_path, monkeypatch):
+    """The ex18 walk-through: verify finds a deleted output and --apply marks
+    it pending; --adopt records outputs made outside remake; the history is
+    capped at `[history] keep` and `--prune --keep 1` trims it. All metadata
+    is under `.remake18/` (metadata_dir), never `.remake/`. Then
+    `Remake(project_dir=)` anchors a library caller elsewhere."""
+    import contextlib
+    import io
+    import json
+
+    from remake import Remake
+    from remake.remake_cmd import remake_cmd
+
+    monkeypatch.delenv('REMAKE_PROFILE', raising=False)
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'no_user_config'))
+    proj = ex_dir / 'ex18_maintenance'
+    monkeypatch.chdir(proj)
+    pipeline = str(proj / 'pipeline.py')
+
+    def cmd(*argv):
+        """Run `remake ARGV...` in-process; return (exit code, stdout)."""
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = remake_cmd(['remake', *argv]) or 0
+        return code, buf.getvalue()
+
+    assert cmd('run', pipeline)[0] == 0
+    assert (proj / 'data/results/total18.txt').read_text() == '20\n'  # 1 + 3 + 6 + 10
+    assert (proj / '.remake18').is_dir()
+    assert not (proj / '.remake').exists()
+
+    # 1. A lost output: verify reports (exit 1), --apply marks it pending.
+    (proj / 'data/ex18/part_2.txt').unlink()
+    code, out = cmd('verify', pipeline, '--json')
+    assert code == 1
+    assert len(json.loads(out)['missing']) == 1
+    assert cmd('verify', pipeline, '--apply')[0] == 0
+    assert cmd('verify', pipeline)[0] == 0
+    assert cmd('run', pipeline)[0] == 0
+    assert (proj / 'data/ex18/part_2.txt').exists()
+
+    # 2. Adopt: forget the metadata, keep the outputs.
+    shutil.rmtree(proj / '.remake18')
+    code, out = cmd('verify', pipeline, '--adopt', '--json')
+    assert code == 1
+    assert len(json.loads(out)['adoptable']) == 5
+    assert cmd('verify', pipeline, '--adopt', '--apply')[0] == 0
+    runnable, deferred = load_remake(pipeline, finalize=False).plan()
+    assert not runnable and not deferred
+
+    # 3. History is capped at keep = 3 (remake.toml); prune --keep 1 trims it.
+    for _ in range(4):
+        assert cmd('run', '-f', pipeline)[0] == 0
+    code, out = cmd('history', pipeline, '-Q', "rule == 'join18'", '--json')
+    assert code == 0
+    assert len(json.loads(out)['executions']) == 3
+    code, out = cmd('history', pipeline, '--prune', '--keep', '1', '--json')
+    assert json.loads(out)['deleted'] > 0
+    code, out = cmd('history', pipeline, '-Q', "rule == 'join18'", '--json')
+    assert len(json.loads(out)['executions']) == 1
+
+    assert not (proj / '.remake').exists()  # everything is under .remake18/
+
+    # 4. project_dir=: a library caller elsewhere, anchored at a copy.
+    other = tmp_path / 'elsewhere'
+    shutil.copytree(proj, other, ignore=shutil.ignore_patterns(
+        'data', '.remake*', '__pycache__'))
+    monkeypatch.chdir(tmp_path)
+    rmk = Remake(rules=load_remake(pipeline, finalize=False).rules, project_dir=other)
+    rmk.run()
+    assert (other / 'data/results/total18.txt').exists()
+    assert (other / '.remake18').is_dir() and not (other / '.remake').exists()
+    report = rmk.verify()
+    assert not report['missing'] and not report['adoptable']
+    assert len(rmk.history(runs=True)) >= 1
+    assert Path.cwd() == tmp_path

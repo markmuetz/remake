@@ -62,7 +62,9 @@ def test_info_failed_one_line_per_task(pipeline_dir, capsys):
     assert '.remake/tasks/log/sometimes_fails/' in lines[0]
 
     cli('info', 'failing.py', '--failed', '--json')
-    (row,) = json.loads(capsys.readouterr().out)
+    payload = json.loads(capsys.readouterr().out)
+    assert list(payload)[0] == 'format' and payload['format'] == 1
+    (row,) = payload['failures']
     assert row['rule'] == 'sometimes_fails' and len(row['key']) == 40
     assert row['error'] == 'ValueError: boom from n=2'
 

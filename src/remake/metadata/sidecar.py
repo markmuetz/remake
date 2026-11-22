@@ -13,19 +13,46 @@ Sharded like the per-task logs (design_docs/designs/per_task_logging.md), but
 self-cleaning: sidecars are deleted on ingest.
 """
 import json
+import os
+import uuid
 import time
 from pathlib import Path
 
 from ..core.scope import io_hash as compute_io_hash
 from ..core.scope import rule_uses_hash
 from ..core.task import paths_digest
+from ..util.paths import environments_root, results_root
 from .metadata_manager import MetadataManager
 
-RESULTS_ROOT = Path('.remake/tasks/results')
+# Package lists of environments that differ from the planner's go under
+# environments_root(), one file per fingerprint (0.10 item 1): a sidecar
+# carries only the fingerprint. Paths come from util.paths (metadata_dir).
+
+
+def write_environment(fingerprint, packages):
+    """Write an environment's package list once (write-then-rename, so
+    concurrent array elements writing the same file are harmless). The
+    temporary name is unique across nodes, not just per host: two array
+    elements on different nodes can share a PID (/code-review #7)."""
+    path = environments_root() / f'{fingerprint}.json'
+    if path.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(f'.{uuid.uuid4().hex}.tmp')
+    tmp.write_text(json.dumps(list(packages)))
+    tmp.replace(path)
+
+
+def read_environment(fingerprint):
+    """The package list written by write_environment, or None."""
+    try:
+        return json.loads((environments_root() / f'{fingerprint}.json').read_text())
+    except (OSError, ValueError):
+        return None
 
 
 def task_result_path(rule_name, key):
-    return RESULTS_ROOT / rule_name / key[:2] / f'{key[2:]}.json'
+    return results_root() / rule_name / key[:2] / f'{key[2:]}.json'
 
 
 class SidecarWriter(MetadataManager):
@@ -47,9 +74,20 @@ class SidecarWriter(MetadataManager):
     def current_run_seq(self):
         return self.run_seq
 
-    def update_task(self, task, status, exception='', resources=None, output_stats=None):
+    def update_task(self, task, status, exception='', resources=None, output_stats=None,
+                    execution=None):
         path = task_result_path(task.rule.name, task.key)
         path.parent.mkdir(parents=True, exist_ok=True)
+        execution = dict(execution or {})
+        env = execution.get('env')
+        if env and 'packages' in env:
+            env = dict(env)
+            try:
+                write_environment(env['fingerprint'], env['packages'])
+                del env['packages']
+            except OSError:
+                pass  # keep the list inline: losing the task's result is worse
+            execution['env'] = env
         payload = {
             # Format version (absent = pre-0.9). Readers ignore unknown fields.
             'v': 1,
@@ -69,6 +107,9 @@ class SidecarWriter(MetadataManager):
             'run_seq': self.run_seq,
             # Resolved on the compute node, as run (review 2026-09-24 M8).
             'paths_digest': paths_digest(task),
+            # Run history (0.10): rerun reason, host, and the environment if
+            # it differs from the planning run's. Absent before 0.10.
+            'execution': execution,
             # Matches the format sqlite's datetime('now') stores (UTC).
             'timestamp': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
         }

@@ -107,7 +107,7 @@ remake run pipeline.py --raise
 
 ## Running a task body from another Python
 
-remake needs Python 3.10 or later. If a rule's body has to run in an older or
+remake needs Python 3.11 or later. If a rule's body has to run in an older or
 otherwise different interpreter (say, a legacy analysis environment) that cannot
 import remake, export the task's resolved spec and drive the function yourself:
 

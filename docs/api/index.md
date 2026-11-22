@@ -49,6 +49,10 @@ only need `Remake` and `rule`.
 
 ::: remake.ZarrStore
 
+::: remake.Dir
+
+::: remake.Ensure
+
 ::: remake.S3Object
 
 ## Loading & metadata

@@ -10,7 +10,7 @@ precedence:
 | 3 | **user file** | `$XDG_CONFIG_HOME/remake/config.toml` (default `~/.config/remake/config.toml`) |
 | 4 | **project file** | `remake.toml` next to the remakefile (commit it) |
 | 5 | `Remake(config=...)` | in the remakefile |
-| 6 | `@rule(config=...)` | per rule (merged by the executor) |
+| 6 | `@rule(config=...)` | per rule: `slurm` options (merged by the SLURM executor) and `checksum_outputs`; other executors ignore it |
 
 The format is TOML. **Dicts merge recursively; lists and scalars replace.**
 There is no way to delete an inherited key; override it instead.
@@ -23,6 +23,7 @@ only warns, so programmatic callers can keep their own keys there.)
 ```toml
 external_inputs_hint = "Run make_data.py first."   # project file only
 checksum_outputs = false                            # project file only
+metadata_dir = "/scratch/me/proj-meta"             # project file only; see below
 
 [slurm]            # any sbatch long option: partition, qos, time, mem, account, ...
 mem = "8G"
@@ -37,12 +38,40 @@ nproc = 16
 [resources]
 capture = true     # RSS sampling
 rss_interval = 0.1
+
+[history]          # project file only
+keep = 10          # executions kept per task in the run history (default 10)
 ```
 
 The user file is per-user machine/account settings, so it accepts only
 `slurm`, `multiproc`, `dask`, `resources`, `profile` and `profiles`.
 Pipeline settings (`external_inputs_hint`, `checksum_outputs`) belong in the
 project file or the remakefile.
+
+## Moving `.remake/` (`metadata_dir`)
+
+By default remake keeps its metadata (`remake.db`, task logs and results, run
+history, the SLURM scripts and job specs, `remake*.log`) in `.remake/` next to
+the remakefile. Set `metadata_dir` in `remake.toml` to put it elsewhere, e.g. on
+a scratch filesystem with more quota than `$HOME`:
+
+```toml
+metadata_dir = "../meta"          # relative to the project directory
+metadata_dir = "$SCRATCH/proj"    # `~` and environment variables are expanded
+```
+
+It is a project-file key (also accepted in `Remake(config=)`), not a user-file
+one. Nothing is created under the project's `.remake/` when it is set, and every
+command, worker process and SLURM array job finds the data again by loading the
+remakefile. Moving it on an existing project starts a fresh history: move the
+old directory across if you want to keep it. Keep it out of the outputs'
+directory trees: remake does not co-locate metadata with outputs (0.10 D7).
+
+Two limits. The directory is read from `remake.toml` before the pipeline is
+imported, so the CLI's own log files (`remake.log`, ...) follow it only if it is
+set there; with `Remake(config={'metadata_dir': ...})` everything else moves but
+those logs start in `.remake/`. And a path with spaces works for the files remake
+reads but `#SBATCH -o` lines cannot quote it, so avoid spaces on SLURM.
 
 ## Profiles
 

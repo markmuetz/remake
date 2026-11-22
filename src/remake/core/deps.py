@@ -22,7 +22,7 @@ import string
 from .dag import expand_rule
 from .exceptions import Defer
 from .rule import _template_fields
-from .task import Task
+from .task import Task, flat_values
 from .tokens import OutputToken
 
 # Can't tell precisely: the task depends on every upstream task.
@@ -46,7 +46,12 @@ def _templates(spec):
         return []
     if callable(spec) and not isinstance(spec, dict):
         return None
-    return [v.identity() if isinstance(v, OutputToken) else str(v) for v in spec.values()]
+    def one(v):
+        return v.identity() if isinstance(v, OutputToken) else str(v)
+
+    # A list value (0.10 D8) contributes each element's template.
+    return [one(e) for v in spec.values()
+            for e in (v if isinstance(v, (list, tuple)) else (v,))]
 
 
 def _literal_ends(template):
@@ -142,7 +147,7 @@ class Edge:
                 for t in dep_tasks:
                     tid = task_id(t)
                     try:
-                        outputs = t.outputs.values()
+                        outputs = flat_values(t.outputs)
                     except Exception:
                         continue  # its own resolution error is reported elsewhere
                     for tok in outputs:
@@ -163,7 +168,7 @@ class Edge:
         if self._kind == _ORDERING:
             return ALL
         try:
-            paths = {_norm(p) for p in task.inputs.values()}
+            paths = {_norm(p) for p in flat_values(task.inputs)}
         except Exception:
             return ALL  # the task fails on its own spec; stay conservative
         hits = paths & producer.keys()

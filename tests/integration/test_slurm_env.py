@@ -34,6 +34,8 @@ def test_submit_sh_header_records_environment(tmp_path, monkeypatch):
     assert 'sys.version: ' in text
     assert 'PYTHONPATH: /some/dev/checkout' in text
     assert 'sys.path: [' in text
+    assert 'environment fingerprint: ' in text
+    assert 'remake: ' in text
     assert f'module localhelper: {Path("localhelper.py").resolve()}' in text
     # stdlib and site-packages modules are not listed
     assert 'module json:' not in text

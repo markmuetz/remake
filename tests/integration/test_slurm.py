@@ -569,8 +569,9 @@ def test_slurm_status_reports_queue_state(slurm_dir, capsys):
     assert 'DependencyNeverSatisfied' in out  # agg, job 1003
 
     cli('slurm-status', 'pipeline.py', '--json')
-    rows = json.loads(capsys.readouterr().out)
-    by_rule = {row['rule']: row for row in rows}
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['format'] == 1
+    by_rule = {row['rule']: row for row in payload['submissions']}
     assert by_rule['gen']['jobid'] == '1001' and by_rule['gen']['states'] == {'PD': 1, 'R': 1}
     assert by_rule['agg']['reasons'] == ['DependencyNeverSatisfied']
 
@@ -850,7 +851,7 @@ rmk.rules_from_current_module()
     cli('run-array-task', 'dirs.py', 'tiles', '1')  # the n=2 spec
     payload = json.loads(next(Path('.remake/tasks/results').rglob('*.json')).read_text())
     assert payload['output_stats']['d'] == {
-        'dir': True, 'n_files': 2, 'total_bytes': 6, 'checksum': None}
+        'aggregate': True, 'n_files': 2, 'total_bytes': 6, 'checksum': None}
     assert Path('data/tiles/2/.remake-manifest.json').exists()
 
     capsys.readouterr()
@@ -859,3 +860,14 @@ rmk.rules_from_current_module()
     assert data['rules'][0]['output_bytes'] == 6
     cli('task-info', 'dirs.py', '-Q', 'rule == "tiles" and n == 2')
     assert 'size:     d: 2 file(s), 6B' in capsys.readouterr().out
+
+
+def test_history_runs_counts_a_submission_as_its_tasks_are_ingested(slurm_dir, capsys):
+    # JASMIN check 2026-11-22: a SLURM run row stayed "N submitted" forever.
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    cli('run-array-task', 'pipeline.py', 'gen', '3')
+    cli('run-array-task', 'pipeline.py', 'gen', '4')
+    capsys.readouterr()
+    cli('history', 'pipeline.py', '--runs')
+    line = capsys.readouterr().out.splitlines()[-1]
+    assert 'submitted, 2 run, 0 failed' in line, line

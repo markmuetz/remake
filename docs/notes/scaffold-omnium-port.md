@@ -74,7 +74,7 @@ Improvements:
 
 ### 4. No way to run tasks in an older Python
 
-remake needs Python ≥ 3.10. The reference env (iris 2.4) needs Python 3.7, so the port's
+remake needs Python ≥ 3.11. The reference env (iris 2.4) needs Python 3.7, so the port's
 "refactor reproduces the reference exactly" step had to use a separate hand-written driver that
 calls the analysis code directly.
 
