@@ -85,8 +85,9 @@ here when work starts.
 How to cut one (tag, PyPI, GitHub Release, Zenodo DOI check):
 [releasing.md](releasing.md).
 
-- [v0.10.0.md](releases/v0.10.0.md) — draft scope of the next minor: provenance
-  capture and settling the surfaces 1.0 freezes; decisions D1–D9 open.
+- [v0.10.0.md](releases/v0.10.0.md) — released 2026-11-22 (record): provenance
+  and run history, `remake verify`, list values, `metadata_dir`, and the
+  surfaces 1.0 freezes; DOI 10.5281/zenodo.24446090.
 - [v0.9.0.md](releases/v0.9.0.md) — released 2026-11-21 (record): correctness of
   the core + DSL shape (rescoped 2026-09-24).
 - [v0.8.0_record.md](releases/v0.8.0_record.md) — the road to 0.8.0
