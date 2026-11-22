@@ -92,6 +92,9 @@ version = { attr = "remake.version.__version__" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "real_anchoring: build Remakes with the real project_dir default (D6), not the cwd",
+]
 
 [tool.coverage.run]
 source = ["remake"]

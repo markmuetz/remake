@@ -64,10 +64,21 @@ CASES = [
 ]
 
 
+@pytest.fixture
+def ex_dir(tmp_path, monkeypatch):
+    """A copy of examples/ (sources only), cwd inside it. remake anchors
+    paths at a remakefile's directory (0.10 D6), so running the originals
+    would write into the repo's examples/."""
+    dest = tmp_path / 'examples'
+    shutil.copytree(EXAMPLES_DIR, dest, ignore=shutil.ignore_patterns(
+        'data', '.remake', '__pycache__', 'validated.yaml'))
+    monkeypatch.chdir(dest)
+    return dest
+
+
 @pytest.mark.parametrize('filename,n_rules,n_tasks', CASES)
-def test_example_loads_and_plans(filename, n_rules, n_tasks, tmp_path, monkeypatch, memory_backend):
-    monkeypatch.chdir(tmp_path)  # examples use relative paths
-    rmk = load_remake(EXAMPLES_DIR / filename, finalize=False)
+def test_example_loads_and_plans(filename, n_rules, n_tasks, ex_dir, memory_backend):
+    rmk = load_remake(ex_dir / filename, finalize=False)
     rmk.metadata = memory_backend
     runnable, deferred = rmk.plan()
     assert len(rmk.rules) == n_rules
@@ -88,28 +99,27 @@ def test_example_loads_and_plans(filename, n_rules, n_tasks, tmp_path, monkeypat
     ('ex16', 'data/results/report16.txt'),
     ('ex17', 'data/ex17/summary17.txt'),          # self-generating
 ])
-def test_light_examples_run_end_to_end(example, result_file, tmp_path, monkeypatch, memory_backend):
+def test_light_examples_run_end_to_end(example, result_file, ex_dir, memory_backend):
     """These need no heavy deps: generate synthetic data (if any) and run."""
     if example == 'ex4':
         pytest.importorskip('yaml')
-    monkeypatch.chdir(tmp_path)
-    make_data = load_module(EXAMPLES_DIR / 'make_example_data.py')
+    make_data = load_module(ex_dir / 'make_example_data.py')
     if hasattr(make_data, example):
         getattr(make_data, example)()
 
-    filename = next(EXAMPLES_DIR.glob(f'{example}_*.py'))
+    filename = next(ex_dir.glob(f'{example}_*.py'))
     rmk = load_remake(filename, finalize=False)
     rmk.metadata = memory_backend
     rmk.run()
-    assert (tmp_path / result_file).exists()
+    assert (ex_dir / result_file).exists()
     runnable, deferred = rmk.plan()
     assert not runnable and not deferred
 
 
-def test_ex9_zarr_region(memory_backend):
+def test_ex9_zarr_region(ex_dir, memory_backend):
     pytest.importorskip('xarray')
     pytest.importorskip('pandas')
-    rmk = load_remake(EXAMPLES_DIR / 'ex9_zarr_region.py', finalize=False)
+    rmk = load_remake(ex_dir / 'ex9_zarr_region.py', finalize=False)
     rmk.metadata = memory_backend
     runnable, deferred = rmk.plan()
     assert len(rmk.rules) == 3
@@ -117,31 +127,30 @@ def test_ex9_zarr_region(memory_backend):
     assert not deferred
 
 
-def test_ex15_config_runs_and_resolves_config(tmp_path, monkeypatch, memory_backend):
+def test_ex15_config_runs_and_resolves_config(ex_dir, tmp_path, monkeypatch, memory_backend):
     """The directory example runs, and its remake.toml layers are applied."""
-    monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("REMAKE_PROFILE", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "no_user_config"))
-    rmk = load_remake(EXAMPLES_DIR / "ex15_config" / "pipeline.py", finalize=False)
+    monkeypatch.chdir(ex_dir / "ex15_config")
+    rmk = load_remake(ex_dir / "ex15_config" / "pipeline.py", finalize=False)
     rmk.metadata = memory_backend
     assert rmk.config["checksum_outputs"] is True
     assert rmk.config["multiproc"]["nproc"] == 2  # project file
     assert rmk.config["resources"]["capture"] is True  # Remake(config=)
     assert rmk.config["resources"]["rss_interval"] == 0.5  # profile quick
     rmk.run()
-    assert (tmp_path / "data/results/total15.txt").read_text() == "57\n"  # 6 + 15 + 36
+    assert (ex_dir / "ex15_config/data/results/total15.txt").read_text() == "57\n"  # 6 + 15 + 36
     runnable, deferred = rmk.plan()
     assert not runnable and not deferred
 
 
-def test_rule_names_are_unique_across_examples(tmp_path, monkeypatch):
+def test_rule_names_are_unique_across_examples(ex_dir):
     """The top-level examples share one .remake/ store, so no rule name may
     appear in two files (the duplicate-rule warning would fire, and the two
     would clobber each other's recorded state). ex5_multifile/ and
     ex15_config/ are their own pipeline directories and are not included."""
-    monkeypatch.chdir(tmp_path)
     owners = {}
-    for path in sorted(EXAMPLES_DIR.glob('ex*.py')):
+    for path in sorted(ex_dir.glob('ex*.py')):
         try:
             rmk = load_remake(path, finalize=False)
         except ImportError:  # e.g. ex9 without xarray

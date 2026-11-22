@@ -73,6 +73,8 @@ def load_remake(filename, finalize=True, profile=None):
     # The path the user refers to this pipeline by — executors that generate
     # scripts re-invoking remake (SLURM) need it.
     rmk.remakefile = str(filename)
+    # Anchored at the remakefile's directory (D6), however it was found.
+    rmk.project_dir = str((Path.cwd() / filename).parent.resolve())
     # Merge the config cascade once, with remake.toml from the remakefile's
     # directory (before finalize: nothing may read a stale config).
     rmk.resolve_config((Path.cwd() / filename).parent, profile=profile)

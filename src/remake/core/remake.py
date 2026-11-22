@@ -1,6 +1,7 @@
 """The Remake class — wires rules, planner, metadata and executors together."""
 import inspect
 import os
+import sys
 import traceback
 from collections import Counter
 from pathlib import Path
@@ -144,6 +145,63 @@ def _as_strs(value):
     return str(value)
 
 
+def _defining_file():
+    """The file of the first caller outside the remake package, or None
+    (a notebook cell, the REPL, `python -c`, an exec'd string)."""
+    frame = sys._getframe(1)
+    while frame is not None:
+        g = frame.f_globals
+        name = g.get('__name__') or ''
+        if not (name == 'remake' or name.startswith('remake.')):
+            path = g.get('__file__')
+            if path and not path.startswith('<'):
+                return os.path.abspath(path)
+            return None
+        frame = frame.f_back
+    return None
+
+
+def _default_project_dir():
+    """The directory a Remake anchors to when none is given (D6)."""
+    path = _defining_file()
+    return os.path.dirname(path) if path else os.getcwd()
+
+
+class _Anchored:
+    """Re-entrant: run a block with the cwd at the Remake's project_dir
+    (restored afterwards). A no-op when the cwd is already there, as it is
+    under the CLI. chdir is process-wide: don't drive two Remakes from
+    different threads at once."""
+
+    def __init__(self, rmk):
+        self.rmk = rmk
+        self.saved = []
+
+    def __enter__(self):
+        here = os.getcwd()
+        target = self.rmk.project_dir
+        self.saved.append(here if target and here != target else None)
+        if self.saved[-1] is not None:
+            os.chdir(target)
+        return self
+
+    def __exit__(self, *exc):
+        saved = self.saved.pop()
+        if saved is not None:
+            os.chdir(saved)
+
+
+def anchored(method):
+    """Decorator: run a Remake method anchored at its project_dir."""
+    import functools
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._anchor:
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
 def _accepts_kwarg(metadata, name):
     """Does this backend's update_task take keyword `name`? (A third-party
     backend may predate output_stats (0.9) or execution (0.10).)"""
@@ -166,7 +224,15 @@ class Remake:
         metadata=None,
         check_outputs='never',
         strict_scope=False,
+        project_dir=None,
     ):
+        # Where relative paths (inputs, outputs, `.remake/`, remake.toml)
+        # resolve: the directory of the file that defines this Remake, as for
+        # the CLI, whatever the cwd (0.10 decision D6). `project_dir=`
+        # overrides; with no defining file (a notebook cell, the REPL,
+        # `python -c`) it is the cwd at construction.
+        self.project_dir = (os.path.abspath(project_dir) if project_dir is not None
+                            else _default_project_dir())
         # What the caller passed; the effective config (defaults < profile <
         # user file < project file < this) is built lazily — see `config`.
         self._programmatic_config = dict(config) if config else {}
@@ -190,6 +256,7 @@ class Remake:
         self.rules = []
         self.dag = None
         self.remakefile = None  # set by load_remake
+        self._anchor = _Anchored(self)
         self._finalized = False
         if rules:
             self.add_rules(rules)
@@ -204,6 +271,8 @@ class Remake:
 
         from ..util.config import resolve
 
+        if project_dir is None:
+            project_dir = self.project_dir
         if self._effective is not None:
             # The remakefile may have changed `rmk.config` in place (e.g.
             # `rmk.config['slurm']['account'] = ...`) before load_remake
@@ -331,6 +400,7 @@ class Remake:
 
     # --- planning ---
 
+    @anchored
     def finalize(self):
         if self.metadata is None:
             from ..metadata.sqlite3_backend import Sqlite3Backend
@@ -366,6 +436,7 @@ class Remake:
             check_scope(rule.fn, rule.uses, strict=bool(strict))
             rule._scope_checked = True
 
+    @anchored
     def plan(self, query=None, force=False, ignore_code_changes=False, restamp=None):
         if not self._finalized:
             self.finalize()
@@ -384,6 +455,7 @@ class Remake:
             restamp=restamp,
         )
 
+    @anchored
     def explain_task(self, task):
         """(will_run, reasons) for one task — `remake why`."""
         if not self._finalized:
@@ -396,6 +468,7 @@ class Remake:
             self.rules, self.dag, cache, task, check_outputs=self.check_outputs
         )
 
+    @anchored
     def explain_tasks(self, tasks=None):
         """Yield (task, will_run, reasons) for each task — batch `remake why`.
         Plans once and reuses the runnable set, so cost is one plan() plus
@@ -424,6 +497,7 @@ class Remake:
             )
             yield task, will_run, reasons
 
+    @anchored
     def why(self, key=None, query=None):
         """Explain why task(s) would (or would not) rerun — the data behind
         `remake why`, with CLI-style selection: one task by key, all matches
@@ -461,6 +535,7 @@ class Remake:
                     '{}: deferred (matrix not ready), tasks unknown', rule.name
                 )
 
+    @anchored
     def tasks(self, query=None):
         """All tasks of all currently-expandable rules. This materialises
         every task — intended for info/reporting, not planning."""
@@ -495,6 +570,7 @@ class Remake:
             raise RemakeError(f'No task with key {key}')
         return matches[0]
 
+    @anchored
     def select_task(self, key=None, query=None):
         """Resolve the single task a command addresses: a key (or unambiguous
         prefix), or a query matching exactly one task. Raises if both/neither
@@ -518,6 +594,7 @@ class Remake:
     # --- reporting ---
 
     # MM: got to here so far.
+    @anchored
     def status_summary(self, query=None, *, reasons=False, list_tasks=False,
                        list_failures=False):
         """Per-rule task-status summary — the data behind `remake info`.
@@ -640,6 +717,7 @@ class Remake:
             out['failures'] = failures
         return out
 
+    @anchored
     def task_info(self, task):
         """Detail view of one task as a dict — the data behind `remake
         task-info`: status/timestamp/exception, kwargs, key, input and output
@@ -721,6 +799,7 @@ class Remake:
             'run': {k: run.get(k) for k in prov_keys} if run else None,
         }
 
+    @anchored
     def task_spec(self, task, *, uses=True):
         """A task's fully resolved spec as a JSON-serialisable dict — the data
         behind `remake export-task`: rule, key, kwargs, resolved input/output
@@ -886,11 +965,13 @@ class Remake:
                             f'Each Dir belongs to exactly one task.')
         return owners
 
+    @anchored
     def _check_duplicate_dirs(self):
         rules = self._dir_rules()
         if rules:
             self._dir_owners(rules)
 
+    @anchored
     def lint(self):
         """Wiring check — the data behind `remake lint`: every input of a
         dependent rule should be produced by one of its depends_on rules.
@@ -1054,6 +1135,7 @@ class Remake:
 
     # --- state ---
 
+    @anchored
     def set_state(self, query, *, success=False, pending=False,
                   check_outputs=False, cascade=True, dry_run=False):
         """Set tasks' recorded state by query, without running them.
@@ -1110,6 +1192,7 @@ class Remake:
                 self.metadata.mark_pending(tasks)
         return {'state': state, 'tasks': tasks, 'cascaded': cascaded, 'skipped': skipped}
 
+    @anchored
     def verify(self, query=None, *, outputs=True, adopt=True, apply=False):
         """Reconcile the DB with what is on disk (0.10 item 2; `remake verify`).
 
@@ -1188,6 +1271,7 @@ class Remake:
 
     # --- execution ---
 
+    @anchored
     def run(self, executor=None, query=None, force=False, ignore_code_changes=False):
         """Run all tasks that need running, replanning after each wave so
         dynamic (deferred) matrices resolve as their upstreams complete.
@@ -1206,6 +1290,7 @@ class Remake:
         with run_lock(self.metadata):
             return self._run(executor, query, force, ignore_code_changes)
 
+    @anchored
     def missing_external_inputs(self, tasks):
         """Inputs of `tasks` that don't exist and that no rule produces —
         {rule name: [paths]} (each distinct path once, in first-seen order).
@@ -1433,6 +1518,7 @@ class Remake:
         return {rule for rule in deferred
                 if nx.ancestors(self.dag, rule) & (unfinished - {rule})}
 
+    @anchored
     def run_task(self, task):
         """Execute one task and record the result. The single execution
         entry point — used by all executors and `remake run-task`. Timing and

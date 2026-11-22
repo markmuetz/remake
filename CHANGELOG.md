@@ -8,6 +8,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Breaking
 
+- **A `Remake` used as a library anchors at its defining file** (0.10
+  decision D6), as the CLI does: relative paths, `.remake/` and
+  `remake.toml` resolve against the directory of the script that builds
+  the `Remake`, not the cwd. `Remake(project_dir=...)` overrides; a
+  notebook or REPL anchors at the cwd. A script run from another directory
+  used to write beside the cwd; it now writes beside the script.
 - **Module scans claim only rules defined in the scanned file.**
   `rules_from_current_module()` and `rules_from_modules()` no longer claim a
   Rule imported from another module (it could land in the wrong pipeline).
