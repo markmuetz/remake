@@ -76,11 +76,12 @@ def _worker_init(remakefile):
 def _worker_run(spec):
     from ..util import task_log_path
 
-    rule_name, kwargs, run_seq = spec
+    rule_name, kwargs, run_seq, reason = spec
     # Stamp results with the parent invocation's run_seq so durable rerun
     # propagation (bugs/01) works for multiproc runs as it does for SLURM.
     _worker_rmk.metadata.run_seq = run_seq
     task = _worker_rmk.task_from_spec(rule_name, kwargs)
+    task.rerun_reason = reason  # for the task's history row
     logfile = task_log_path(task)
     logfile.parent.mkdir(parents=True, exist_ok=True)
     marker = RUNNING_ROOT / task.key
@@ -190,7 +191,7 @@ class MultiprocExecutor(Executor):
     def _submit(self, pool, rule, tasks, run_seq):
         for task in tasks:  # clear stale marks from an earlier, killed run
             (RUNNING_ROOT / task.key).unlink(missing_ok=True)
-        return {pool.submit(_worker_run, (rule.name, t.kwargs, run_seq)): t
+        return {pool.submit(_worker_run, (rule.name, t.kwargs, run_seq, t.rerun_reason)): t
                 for t in tasks}
 
     def _finish(self, task, ok, failed):

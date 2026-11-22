@@ -11,6 +11,7 @@ place by `_add_missing_columns`.
 import dataclasses
 import json
 import random
+import re
 import sqlite3
 from pathlib import Path
 from time import monotonic, perf_counter, sleep
@@ -38,7 +39,7 @@ from .metadata_manager import (TASK_STATUS_PENDING, TASK_STATUS_SUCCESS, Metadat
 # Bump on every change to SQL_SCHEMA or _add_missing_columns, and add the
 # migration step there. Sidecars and job specs carry their own "v" field.
 SCHEMA_MAJOR = 1
-SCHEMA_MINOR = 0
+SCHEMA_MINOR = 1  # 1.1 (0.10): run provenance + counts, environment, task_run
 SCHEMA_VERSION = SCHEMA_MAJOR * 1000 + SCHEMA_MINOR
 
 
@@ -150,8 +151,67 @@ CREATE TABLE run (
     started TIMESTAMP NOT NULL,
     remakefile TEXT,
     command TEXT,
-    config TEXT
+    config TEXT,
+    -- Provenance (0.10 item 1; remake/provenance.py). Recorded, never
+    -- compared: none of these is a rerun trigger. NULL = not recorded.
+    git_commit TEXT,
+    git_dirty INTEGER,
+    git_diff_hash TEXT,
+    python_version TEXT,
+    remake_version TEXT,
+    env_id INTEGER,
+    lockfile TEXT,
+    lockfile_hash TEXT,
+    host TEXT,
+    user_hash TEXT,
+    -- A continuation run (SLURM deferred rules) points at the run that
+    -- started the chain, so one logical run's rows can be grouped.
+    parent_run_seq INTEGER,
+    -- Per-run counts (0.10 item 3), written when the run finishes.
+    finished TIMESTAMP,
+    n_planned INTEGER,
+    n_run INTEGER,
+    n_succeeded INTEGER,
+    n_failed INTEGER,
+    n_blocked_rules INTEGER,
+    -- env_id -> environment(id); no FOREIGN KEY clause, so that the
+    -- in-place migration (ALTER TABLE ADD COLUMN) gives the same shape.
+    n_waves INTEGER
 );
+
+-- Installed-distribution lists, interned by fingerprint (one row per
+-- distinct environment, however many runs share it).
+CREATE TABLE environment (
+    id INTEGER NOT NULL PRIMARY KEY,
+    fingerprint TEXT NOT NULL UNIQUE,
+    python_version TEXT,
+    packages TEXT NOT NULL
+);
+
+-- Run history (0.10 item 3): one row per task *execution*, where `task`
+-- keeps only the last. Capped per task (history.keep). env_id is set only
+-- when the task ran in a different environment from the run that planned
+-- it (a SLURM job); NULL means "the run's environment".
+CREATE TABLE task_run (
+    id INTEGER NOT NULL PRIMARY KEY,
+    task_id INTEGER NOT NULL,
+    run_seq INTEGER,
+    finished TIMESTAMP NOT NULL,
+    status INTEGER NOT NULL,
+    wall_s REAL,
+    cpu_s REAL,
+    max_rss_bytes INTEGER,
+    rss_method TEXT,
+    output_bytes INTEGER,
+    reason TEXT,
+    host TEXT,
+    error TEXT,
+    env_id INTEGER,
+    FOREIGN KEY(task_id) REFERENCES task (id),
+    FOREIGN KEY(env_id) REFERENCES environment (id)
+);
+CREATE INDEX task_run_task_index ON task_run(task_id, id);
+CREATE INDEX task_run_seq_index ON task_run(run_seq);
 
 -- Key/value store. run_seq: a monotonic counter, one value allocated per
 -- `remake run`/`set-state` invocation, stamped onto every task that
@@ -164,6 +224,41 @@ CREATE TABLE meta (
 );
 INSERT INTO meta(key, value) VALUES ('run_seq', 0);
 """
+
+
+# Columns added to `run` in schema 1.1 (0.10), for in-place migration.
+_RUN_COLUMNS_1_1 = (
+    ('git_commit', 'TEXT'), ('git_dirty', 'INTEGER'), ('git_diff_hash', 'TEXT'),
+    ('python_version', 'TEXT'), ('remake_version', 'TEXT'), ('env_id', 'INTEGER'),
+    ('lockfile', 'TEXT'), ('lockfile_hash', 'TEXT'), ('host', 'TEXT'),
+    ('user_hash', 'TEXT'), ('parent_run_seq', 'INTEGER'), ('finished', 'TIMESTAMP'),
+    ('n_planned', 'INTEGER'), ('n_run', 'INTEGER'), ('n_succeeded', 'INTEGER'),
+    ('n_failed', 'INTEGER'), ('n_blocked_rules', 'INTEGER'), ('n_waves', 'INTEGER'),
+)
+
+_PROVENANCE_KEYS = ('git_commit', 'git_dirty', 'git_diff_hash', 'python_version',
+                    'remake_version', 'lockfile', 'lockfile_hash', 'host', 'user_hash')
+_COUNT_KEYS = ('n_planned', 'n_run', 'n_succeeded', 'n_failed', 'n_blocked_rules',
+               'n_waves')
+DEFAULT_HISTORY_KEEP = 10
+
+
+_TB_FRAME = re.compile(r'  File "(.+?)", line (\d+), in (.+)')
+
+
+def error_signature(tb):
+    """A short, message-free signature of a stored traceback for history
+    rows: 'ExcType at file:line in fn' (the deepest frame), or None for no
+    error. Tasks failing the same way share it."""
+    if not tb:
+        return None
+    lines = tb.strip().splitlines()
+    exc_type = lines[-1].split(':', 1)[0].strip() if lines else ''
+    frames = _TB_FRAME.findall(tb)
+    if not frames:
+        return exc_type or None
+    path, line, fn = frames[-1]
+    return f'{exc_type} at {Path(path).name}:{line} in {fn}'
 
 
 def _schema_statements():
@@ -313,6 +408,9 @@ class Sqlite3Backend(MetadataManager):
         # Lazily allocated once per process (= per invocation); shared by every
         # task this invocation commits. See the `meta` table comment.
         self._run_seq = None
+        # history.keep from the effective config (Remake sets it); None =
+        # DEFAULT_HISTORY_KEEP.
+        self.history_keep = None
 
     def close(self):
         self.conn.close()
@@ -446,6 +544,14 @@ class Sqlite3Backend(MetadataManager):
             self.conn.execute(
                 'CREATE TABLE run (run_seq INTEGER NOT NULL PRIMARY KEY, '
                 'started TIMESTAMP NOT NULL, remakefile TEXT, command TEXT, config TEXT)')
+        run_cols = {row[1] for row in self.conn.execute('PRAGMA table_info(run)')}
+        for col, coltype in _RUN_COLUMNS_1_1:
+            if col not in run_cols:
+                self.conn.execute(f'ALTER TABLE run ADD COLUMN {col} {coltype}')
+        if 'environment' not in tables or 'task_run' not in tables:
+            logger.info('Adding environment/task_run tables to existing DB')
+            # SQL_SCHEMA's (idempotent) CREATEs have already made them;
+            # nothing to backfill: history starts now.
         if 'meta' not in tables:
             logger.info('Adding meta table to existing DB')
             self.conn.execute(
@@ -518,26 +624,163 @@ class Sqlite3Backend(MetadataManager):
         return self._run_seq
 
     @retry_lock_commit
-    def _record_run(self, run_seq, remakefile, command, config_json):
+    def _record_run(self, run_seq, remakefile, command, config_json, provenance,
+                    parent_run_seq):
+        prov = provenance or {}
+        env_id = None
+        if prov.get('env_fingerprint'):
+            env_id = self._intern_environment(
+                prov['env_fingerprint'], prov.get('python_version'),
+                prov.get('env_packages') or [])
+        # An upsert, not INSERT OR REPLACE: a second record_run in the same
+        # invocation must not null the columns the first (or finish_run) set.
+        values = {
+            'remakefile': remakefile, 'command': command, 'config': config_json,
+            'env_id': env_id, 'parent_run_seq': parent_run_seq,
+            **{k: (int(prov[k]) if k == 'git_dirty' and prov.get(k) is not None
+                   else prov.get(k)) for k in _PROVENANCE_KEYS},
+        }
+        cols = ', '.join(values)
+        marks = ', '.join('?' * len(values))
+        updates = ', '.join(f'{c} = COALESCE(excluded.{c}, {c})' for c in values)
         self.conn.execute(
-            "INSERT OR REPLACE INTO run(run_seq, started, remakefile, command, config) "
-            "VALUES (?, datetime('now'), ?, ?, ?)",
-            (run_seq, remakefile, command, config_json))
+            f"INSERT INTO run(run_seq, started, {cols}) "
+            f"VALUES (?, datetime('now'), {marks}) "
+            f"ON CONFLICT(run_seq) DO UPDATE SET {updates}",
+            (run_seq, *values.values()))
 
-    def record_run(self, *, remakefile=None, command=None, config=None):
+    def record_run(self, *, remakefile=None, command=None, config=None,
+                   provenance=None, parent_run_seq=None):
+        """Record this invocation's `run` row: what ran, with which config
+        and (0.10) provenance from `remake.provenance.collect`."""
         self._record_run(self.current_run_seq(), remakefile, command,
-                         _config_json(config) if config is not None else None)
+                         _config_json(config) if config is not None else None,
+                         provenance, parent_run_seq)
+
+    @retry_lock_commit
+    def finish_run(self, counts):
+        """Stamp the per-run counts (n_planned, n_run, n_succeeded, n_failed,
+        n_blocked_rules, n_waves) and the finish time on this run's row, and
+        prune the history of the tasks it ran."""
+        run_seq = self.current_run_seq()
+        sets = ', '.join(f'{k} = ?' for k in _COUNT_KEYS)
+        self.conn.execute(
+            f"UPDATE run SET finished = datetime('now'), {sets} WHERE run_seq = ?",
+            (*(counts.get(k) for k in _COUNT_KEYS), run_seq))
+        self._prune_history(run_seq=run_seq)
+
+    def _intern_environment(self, fingerprint, python_version, packages):
+        """Find-or-insert an environment by fingerprint; its id."""
+        row = self.conn.execute(
+            'SELECT id FROM environment WHERE fingerprint = ?', (fingerprint,)).fetchone()
+        if row is not None:
+            return row[0]
+        cur = self.conn.execute(
+            'INSERT INTO environment(fingerprint, python_version, packages) '
+            'VALUES (?, ?, ?)', (fingerprint, python_version, json.dumps(list(packages))))
+        return cur.lastrowid
+
+    _RUN_FIELDS = ('run_seq', 'started', 'remakefile', 'command', 'config',
+                   *(c for c, _ in _RUN_COLUMNS_1_1))
+
+    def _run_from_row(self, row):
+        rec = dict(zip(self._RUN_FIELDS, row))
+        rec['config'] = json.loads(rec['config']) if rec['config'] else None
+        if rec.get('git_dirty') is not None:
+            rec['git_dirty'] = bool(rec['git_dirty'])
+        return rec
 
     def get_run(self, run_seq):
+        """The `run` row for run_seq as a dict, or None."""
         row = self.conn.execute(
-            'SELECT run_seq, started, remakefile, command, config FROM run '
-            'WHERE run_seq = ?', (run_seq,)).fetchone()
+            f'SELECT {", ".join(self._RUN_FIELDS)} FROM run WHERE run_seq = ?',
+            (run_seq,)).fetchone()
+        return None if row is None else self._run_from_row(row)
+
+    def get_runs(self, limit=20):
+        """The most recent `run` rows, newest first."""
+        rows = self.conn.execute(
+            f'SELECT {", ".join(self._RUN_FIELDS)} FROM run '
+            'ORDER BY run_seq DESC LIMIT ?', (limit,))
+        return [self._run_from_row(row) for row in rows]
+
+    def get_environment(self, env_id):
+        """{'fingerprint', 'python_version', 'packages'} for an environment id."""
+        row = self.conn.execute(
+            'SELECT fingerprint, python_version, packages FROM environment WHERE id = ?',
+            (env_id,)).fetchone()
         if row is None:
             return None
-        keys = ('run_seq', 'started', 'remakefile', 'command', 'config')
-        rec = dict(zip(keys, row))
-        rec['config'] = json.loads(rec['config']) if rec['config'] else None
-        return rec
+        return {'fingerprint': row[0], 'python_version': row[1],
+                'packages': json.loads(row[2])}
+
+    _HISTORY_FIELDS = ('run_seq', 'finished', 'status', 'wall_s', 'cpu_s',
+                       'max_rss_bytes', 'rss_method', 'output_bytes', 'reason',
+                       'host', 'error', 'env_id')
+
+    def get_history(self, task, limit=None):
+        """A task's executions, newest first: dicts of _HISTORY_FIELDS plus
+        'run_env_id' (the planning run's environment) for comparison."""
+        sql = (f'SELECT {", ".join("h." + f for f in self._HISTORY_FIELDS)}, r.env_id '
+               'FROM task_run h JOIN task t ON h.task_id = t.id '
+               'LEFT JOIN run r ON r.run_seq = h.run_seq '
+               'WHERE t.key = ? ORDER BY h.id DESC')
+        params = [task.key]
+        if limit is not None:
+            sql += ' LIMIT ?'
+            params.append(limit)
+        out = []
+        for row in self.conn.execute(sql, params):
+            rec = dict(zip(self._HISTORY_FIELDS, row[:-1]))
+            rec['run_env_id'] = row[-1]
+            out.append(rec)
+        return out
+
+    def _history_keep(self):
+        return self.history_keep if self.history_keep is not None else DEFAULT_HISTORY_KEEP
+
+    def _prune_history(self, run_seq=None, keep=None):
+        """Keep the newest `keep` executions per task: for the tasks run_seq
+        touched (once per run, not per insert), or for every task. Returns
+        the number of rows deleted."""
+        keep = self._history_keep() if keep is None else keep
+        scope = ('WHERE task_id IN (SELECT task_id FROM task_run WHERE run_seq = ?)'
+                 if run_seq is not None else '')
+        params = (run_seq,) if run_seq is not None else ()
+        cur = self.conn.execute(
+            'DELETE FROM task_run WHERE id IN ('
+            '  SELECT id FROM ('
+            '    SELECT id, ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY id DESC) AS n '
+            f'   FROM task_run {scope}) WHERE n > ?)', (*params, keep))
+        return cur.rowcount
+
+    @retry_lock_commit
+    def prune_history(self, keep=None):
+        """`remake history --prune`: apply the cap to every task now."""
+        return self._prune_history(keep=keep)
+
+    def _write_history(self, key, status, run_seq, resources, output_stats, exception,
+                       execution, timestamp=None):
+        """Append one execution to task_run (an execution, not a bulk state
+        change: callers only write when resources were measured)."""
+        (task_id,) = self.conn.execute('SELECT id FROM task WHERE key = ?', (key,)).fetchone()
+        res = resources or {}
+        ex = execution or {}
+        output_bytes = None
+        if output_stats:
+            output_bytes = sum((st.get('total_bytes') or 0) for st in output_stats.values())
+        env_id = None
+        env = ex.get('env')
+        if env and env.get('fingerprint'):
+            env_id = self._intern_environment(
+                env['fingerprint'], env.get('python_version'), env.get('packages') or [])
+        self.conn.execute(
+            'INSERT INTO task_run(task_id, run_seq, finished, status, wall_s, cpu_s, '
+            '    max_rss_bytes, rss_method, output_bytes, reason, host, error, env_id) '
+            "VALUES (?, ?, COALESCE(?, datetime('now')), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (task_id, run_seq, timestamp, status, res.get('wall_s'), res.get('cpu_s'),
+             res.get('max_rss_bytes'), res.get('rss_method'), output_bytes,
+             ex.get('reason'), ex.get('host'), error_signature(exception), env_id))
 
     def _insert_code(self, code):
         cur = self.conn.execute('INSERT INTO code(code) VALUES (?)', (code,))
@@ -837,8 +1080,8 @@ class Sqlite3Backend(MetadataManager):
                 '    run_code_id = excluded.run_code_id, '
                 '    uses_code_id = excluded.uses_code_id, '
                 '    io_code_id = excluded.io_code_id, '
-                # NULL (mark_pending): keep the stored run_seq.
-            '    run_seq = COALESCE(excluded.run_seq, run_seq), '
+                # NULL (a legacy sidecar): keep the stored run_seq.
+                '    run_seq = COALESCE(excluded.run_seq, run_seq), '
                 '    last_run_timestamp = excluded.last_run_timestamp, '
                 '    wall_s = excluded.wall_s, '
                 '    cpu_s = excluded.cpu_s, '
@@ -887,11 +1130,21 @@ class Sqlite3Backend(MetadataManager):
             # the last run's.
             if cur.rowcount and payload['status'] == TASK_STATUS_SUCCESS and 'output_stats' in payload:
                 self._write_output_stats(key, payload['output_stats'])
+            # Every sidecar is an execution (history is append-only, so an
+            # older one the guard skipped above is still history).
+            self._write_history(key, payload['status'], payload.get('run_seq'), res,
+                                payload.get('output_stats'), payload.get('exception', ''),
+                                payload.get('execution'), payload.get('timestamp'))
+        for run_seq in {payload.get('run_seq') for _, _, payload, _ in pending}:
+            if run_seq is not None:
+                self._prune_history(run_seq=run_seq)
 
-    def update_task(self, task, status, exception='', resources=None, output_stats=None):
+    def update_task(self, task, status, exception='', resources=None, output_stats=None,
+                    execution=None):
         # Allocate run_seq (own txn) before opening the upsert's EXCLUSIVE txn.
         self._commit_updates(
-            [task], status, exception, self.current_run_seq(), resources, output_stats)
+            [task], status, exception, self.current_run_seq(), resources, output_stats,
+            execution)
 
     def _write_output_stats(self, key, output_stats):
         (task_id,) = self.conn.execute('SELECT id FROM task WHERE key = ?', (key,)).fetchone()
@@ -930,13 +1183,17 @@ class Sqlite3Backend(MetadataManager):
 
     @retry_lock_commit
     def _commit_updates(self, tasks, status, exception, run_seq, resources=None,
-                        output_stats=None):
+                        output_stats=None, execution=None):
         # One EXCLUSIVE transaction for the lot (bulk state changes:
         # set-state, migration adoption).
         for task in tasks:
             self._upsert_task(task, status, exception, run_seq, resources)
             if output_stats is not None:
                 self._write_output_stats(task.key, output_stats)
+            if resources is not None:
+                # Measured, so an execution: one history row (item 3).
+                self._write_history(task.key, status, run_seq, resources, output_stats,
+                                    exception, execution)
 
     def mark_pending(self, tasks):
         """set-state --pending: PENDING, keeping each record's run_seq. A
@@ -951,6 +1208,10 @@ class Sqlite3Backend(MetadataManager):
         for i in range(0, len(keys), self.SELECT_CHUNK):
             chunk = keys[i:i + self.SELECT_CHUNK]
             placeholders = ','.join('?' * len(chunk))
+            for table in ('task_run', 'output_stat'):
+                self.conn.execute(
+                    f'DELETE FROM {table} WHERE task_id IN '
+                    f'(SELECT id FROM task WHERE key IN ({placeholders}))', chunk)
             self.conn.execute(f'DELETE FROM task WHERE key IN ({placeholders})', chunk)
 
     def _upsert_task(self, task, status, exception='', run_seq=None, resources=None):
@@ -987,7 +1248,8 @@ class Sqlite3Backend(MetadataManager):
             '    run_code_id = excluded.run_code_id, '
             '    uses_code_id = excluded.uses_code_id, '
             '    io_code_id = excluded.io_code_id, '
-            '    run_seq = excluded.run_seq, '
+            # NULL (mark_pending): keep the stored run_seq.
+            '    run_seq = COALESCE(excluded.run_seq, run_seq), '
             "    last_run_timestamp = datetime('now'), "
             f'{resource_update}'
             '    paths_digest = excluded.paths_digest, '

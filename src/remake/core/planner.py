@@ -608,20 +608,22 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
         for task in tasks:
             rec = records.get(task.key)
             task_kwargs = frozenset(task.kwargs.items())
-            # `reason` is a short literal (cheap to assign every iteration);
-            # only formatted into a log line when a TRACE sink is attached.
+            # `reason` is a short category literal (cheap to assign every
+            # iteration), the same names as explain_task's Reason.category.
+            # It is logged at TRACE and kept on the task for its history row
+            # (0.10 item 3).
             if force:
                 # Unconditional: skip the freshness checks (and their stat
                 # calls under check_outputs) rather than compute-then-discard.
                 rerun, reason = True, 'forced'
             elif rec is None:
                 if check_outputs in ('fallback', 'always') and _outputs_complete(task):
-                    rerun, reason = False, 'outputs complete (no DB record)'
+                    rerun, reason = False, 'adopted-outputs'
                 else:
-                    rerun, reason = True, 'never run (no DB record)'
+                    rerun, reason = True, 'never-run'
             else:
                 rerun = rec.status != TASK_STATUS_SUCCESS
-                reason = 'last run not successful' if rerun else 'up to date'
+                reason = 'last-run-failed' if rerun else 'up-to-date'
                 if not rerun and not ignore_code_changes:
                     # All three are cheap int set-memberships, so record every
                     # trigger rather than the first (several can be true at
@@ -630,13 +632,13 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
                     # explain_task is the full-fidelity view.
                     changed = []
                     if rec.run_code_id not in run_unchanged:
-                        changed.append('run code changed')
+                        changed.append('code-changed')
                     if rec.uses_code_id not in uses_unchanged:
-                        changed.append('uses= changed')
+                        changed.append('uses-changed')
                     if rec.io_code_id not in io_unchanged:
-                        changed.append('inputs/outputs spec changed')
+                        changed.append('io-changed')
                     if changed:
-                        rerun, reason = True, ' + '.join(changed)
+                        rerun, reason = True, '+'.join(changed)
                 if not rerun and not ignore_code_changes and callable_io:
                     # A callable spec can resolve to other paths with its
                     # source unchanged (it reads a global, e.g. YEARS): compare
@@ -646,15 +648,15 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
                         if restamp is not None and digest is not None:
                             restamp.setdefault((rule, 'paths'), {})[task.key] = digest
                     elif digest != rec.paths_digest:
-                        rerun, reason = True, 'resolved input/output paths changed'
+                        rerun, reason = True, 'paths-changed'
                 if not rerun and check_outputs == 'always' and task.outputs:
                     if not _outputs_complete(task):
-                        rerun, reason = True, 'outputs missing (check_outputs=always)'
+                        rerun, reason = True, 'outputs-missing'
 
             if not rerun:
                 if upstream_all or any(_reads_rerun(edges.upstream_of(dep, task), dep_rerun)
                                        for dep, dep_rerun in partial_deps):
-                    rerun, reason = True, 'upstream reruns'
+                    rerun, reason = True, 'upstream-rerun'
             # Durable cross-pass backstop: an upstream committed in a later
             # invocation than this task (e.g. an upstream rerun via `run -Q`,
             # or after a crash) without rerunning it in the same pass. run_seq
@@ -664,10 +666,11 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
             if not rerun and rec is not None and rec.run_seq is not None:
                 up_seq = _max_upstream_run_seq(task, upstream_seqs, edges, above=rec.run_seq)
                 if up_seq is not None and up_seq > rec.run_seq:
-                    rerun, reason = True, 'upstream ran more recently'
+                    rerun, reason = True, 'upstream-newer'
 
             logger.trace('{}: {} — {}', task.key, 'rerun' if rerun else 'skip', reason)
             if rerun:
+                task.rerun_reason = reason
                 rule_rerun.add(task_kwargs)
                 runnable.append(task)
 

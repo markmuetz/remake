@@ -270,7 +270,7 @@ def test_plan_reason_records_all_cheap_triggers(tmp_path):
         rmk.plan()
     finally:
         logger.remove(sink)
-    joint = [m for m in msgs if 'uses= changed + inputs/outputs spec changed' in m]
+    joint = [m for m in msgs if 'uses-changed+io-changed' in m]
     assert len(joint) == 2  # both rule_b tasks report both triggers
     # `why` names *which* segment (inputs/outputs) differs — previously it
     # said only "spec changed" and diagnosing meant DB spelunking (todos.md).

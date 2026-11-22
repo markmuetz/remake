@@ -10,7 +10,7 @@ precedence:
 | 3 | **user file** | `$XDG_CONFIG_HOME/remake/config.toml` (default `~/.config/remake/config.toml`) |
 | 4 | **project file** | `remake.toml` next to the remakefile (commit it) |
 | 5 | `Remake(config=...)` | in the remakefile |
-| 6 | `@rule(config=...)` | per rule (merged by the executor) |
+| 6 | `@rule(config=...)` | per rule: `slurm` options (merged by the SLURM executor) and `checksum_outputs`; other executors ignore it |
 
 The format is TOML. **Dicts merge recursively; lists and scalars replace.**
 There is no way to delete an inherited key; override it instead.
@@ -37,6 +37,9 @@ nproc = 16
 [resources]
 capture = true     # RSS sampling
 rss_interval = 0.1
+
+[history]          # project file only
+keep = 10          # executions kept per task in the run history (default 10)
 ```
 
 The user file is per-user machine/account settings, so it accepts only

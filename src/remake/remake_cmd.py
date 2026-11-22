@@ -461,6 +461,22 @@ class RemakeCLI:
                 Arg('--path', help='Print the log path only', action='store_true'),
             ],
         },
+        'history': {
+            'help': "Run history: a task's executions, or recent runs (--runs)",
+            'args': [
+                Arg('remakefile'),
+                Arg('task_key', nargs='?'),
+                Arg('--query', '-Q', help='Select the task by kwargs query instead of key'),
+                Arg('--runs', help='List recent runs instead, one line each',
+                    action='store_true'),
+                Arg('--limit', '-n', help='Show at most N rows (default 20)', type=int,
+                    default=20),
+                Arg('--prune', help='Apply the per-task cap (history.keep) to every '
+                    'task now', action='store_true'),
+                Arg('--keep', help='With --prune: keep N executions per task', type=int),
+                Arg('--json', help='Machine-readable output', action='store_true'),
+            ],
+        },
         'why': {
             'help': 'Explain why task(s) would (or would not) rerun',
             'args': [
@@ -643,6 +659,8 @@ class RemakeCLI:
                 f'submitted key {spec["task_key"]} — kwargs changed in the '
                 f'JSON round-trip through {specs_path}'
             )
+        task.rerun_reason = spec.get('reason')
+        rmk.planner_env = spec.get('env')
         _add_task_log_sink(task)
         logger.info(f'Running {task}')
         # As run-task: one array element = one task = one process.
@@ -1138,6 +1156,25 @@ class RemakeCLI:
             if st.get('checksum'):
                 line += f', sha256 {st["checksum"]}'
             print(f'size:     {label}: {line}')
+        last = data.get('last_execution')
+        if last:
+            where = f' on {last["host"]}' if last['host'] else ''
+            why = f' ({last["reason"]})' if last['reason'] else ''
+            print(f'last ran: run {last["run_seq"]} at {last["finished"]}{where}{why}')
+            run = last.get('run') or {}
+            if run.get('git_commit'):
+                dirty = (f' + uncommitted changes (diff {run["git_diff_hash"][:12]})'
+                         if run.get('git_dirty') and run.get('git_diff_hash') else
+                         ' + uncommitted changes' if run.get('git_dirty') else '')
+                print(f'git:      {run["git_commit"][:12]}{dirty}')
+            if run.get('remake_version'):
+                print(f'env:      Python {run["python_version"]}, remake {run["remake_version"]}'
+                      + (f', {run["lockfile"]} {run["lockfile_hash"][:12]}'
+                         if run.get('lockfile') and run.get('lockfile_hash') else ''))
+            if last['different_environment']:
+                print(paint('          ran in a different environment from the one that '
+                            'planned it (see `remake history` and `remake check-env`)',
+                            'yellow'))
         log = data['log']
         mark = '' if log['exists'] else paint('  [no log yet]', 'dim')
         print(f'log:      {log["path"]}{mark}')
@@ -1161,6 +1198,70 @@ class RemakeCLI:
                 f'it has not been run via run-task/run-array-task'
             )
         print(log_path.read_text(), end='')
+
+    def remake_history(self, args):
+        """`remake history`: one task's executions, recent runs, or a prune."""
+        from .metadata.metadata_manager import STATUS_NAMES
+
+        rmk = self._load(args)
+        meta = rmk.metadata
+        if args.prune:
+            keep = args.keep if args.keep is not None else (
+                (rmk.config.get('history') or {}).get('keep'))
+            deleted = meta.prune_history(keep=keep)
+            if args.json:
+                print(json.dumps({'format': 1, 'deleted': deleted}, indent=1))
+            else:
+                print(f'pruned {deleted} history row(s)')
+            return 0
+        if args.runs:
+            runs = meta.get_runs(limit=args.limit)
+            if args.json:
+                print(json.dumps({'format': 1, 'runs': runs}, indent=1, default=str))
+                return 0
+            for r in runs:
+                counts = ''
+                if r.get('n_run') is not None:
+                    counts = (f'{r["n_run"]} run, {r["n_failed"] or 0} failed'
+                              + (f', {r["n_blocked_rules"]} blocked rule(s)'
+                                 if r.get('n_blocked_rules') else ''))
+                elif r.get('n_planned') is not None:
+                    counts = f'{r["n_planned"]} submitted'
+                git = ''
+                if r.get('git_commit'):
+                    git = r['git_commit'][:10] + ('+dirty' if r.get('git_dirty') else '')
+                parent = f' (continues {r["parent_run_seq"]})' if r.get('parent_run_seq') else ''
+                print(f'{r["run_seq"]:>5}  {r["started"]}  {r["command"] or "":<9} '
+                      f'{counts:<28} {git}{parent}')
+            return 0
+        task = rmk.select_task(args.task_key, args.query)
+        rows = meta.get_history(task, limit=args.limit)
+        for row in rows:
+            row['status'] = STATUS_NAMES.get(row['status'], 'pending')
+            row['different_environment'] = (row['env_id'] is not None
+                                            and row['env_id'] != row['run_env_id'])
+        if args.json:
+            print(json.dumps({'format': 1, 'task': str(task), 'key': task.key,
+                              'executions': rows}, indent=1))
+            return 0
+        paint = Painter(args.colour)
+        print(f'{task}  {task.key}')
+        if not rows:
+            print('no recorded executions (history starts with remake 0.10)')
+        for row in rows:
+            res = _resources_line(row) or ''
+            extra = [x for x in (row['reason'], row['host']) if x]
+            line = (f'run {row["run_seq"]!s:>5}  {row["finished"]}  '
+                    f'{paint.status(row["status"]):<8} {res}')
+            if extra:
+                line += f'  [{", ".join(extra)}]'
+            print(line)
+            if row['error']:
+                print(paint(f'      {row["error"]}', 'red'))
+            if row['different_environment']:
+                print(paint('      ran in a different environment from the planning run',
+                            'yellow'))
+        return 0
 
     def remake_why(self, args):
         rmk = self._load(args)

@@ -78,6 +78,8 @@ CONTINUATION_SBATCH_TPL = """#!/bin/bash
 #SBATCH -e {output_dir}/continuation.err
 #SBATCH --kill-on-invalid-dep=yes
 {opts}
+# The run that started this chain of continuations (run history, 0.10).
+export REMAKE_PARENT_RUN_SEQ={parent_run_seq}
 remake run {remakefile} --executor slurm
 """
 
@@ -523,12 +525,18 @@ class SlurmExecutor(Executor):
         self.submit()
 
     def _write_job_specs(self, rule, tasks, run_seq):
+        from .. import provenance
+
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
+        # The planner's environment fingerprint: each job compares its own
+        # against it and records its environment only if they differ (0.10
+        # item 1). Computed once per process (cached).
+        env = provenance.current_environment()[0]
         specs = [
             # v: the spec format version (bump when fields change meaning;
-            # readers ignore unknown fields).
+            # readers ignore unknown fields). reason/env: 0.10, absent before.
             {'v': 1, 'task_key': task.key, 'rule': rule.name, 'kwargs': task.kwargs,
-             'run_seq': run_seq}
+             'run_seq': run_seq, 'reason': task.rerun_reason, 'env': env}
             for task in tasks
         ]
         path = spec_path(rule.name, run_seq)
@@ -595,7 +603,11 @@ class SlurmExecutor(Executor):
         config.pop('array_throttle', None)
         config['time'] = '00:10:00'
         config['mem'] = '1G'
+        parent = os.environ.get('REMAKE_PARENT_RUN_SEQ', '')
+        if not parent.isdigit():
+            parent = self.rmk.metadata.current_run_seq()
         script = CONTINUATION_SBATCH_TPL.format(
+            parent_run_seq=parent if parent is not None else '',
             output_dir=self.output_dir,
             opts=_sbatch_opts(config),
             remakefile=shlex.quote(str(self.remakefile)),

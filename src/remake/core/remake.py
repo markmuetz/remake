@@ -138,11 +138,17 @@ _MISSING = object()
 _URL_RE = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]+:/')
 
 
-def _accepts_output_stats(metadata):
+def _accepts_kwarg(metadata, name):
+    """Does this backend's update_task take keyword `name`? (A third-party
+    backend may predate output_stats (0.9) or execution (0.10).)"""
     try:
-        return 'output_stats' in inspect.signature(metadata.update_task).parameters
+        return name in inspect.signature(metadata.update_task).parameters
     except (TypeError, ValueError):
         return False
+
+
+def _accepts_output_stats(metadata):
+    return _accepts_kwarg(metadata, 'output_stats')
 
 
 class Remake:
@@ -170,6 +176,10 @@ class Remake:
         # or waiting on an upstream that failed). Non-empty means that run
         # did not complete everything; the CLI exits non-zero on it.
         self.blocked_rules = []
+        # The environment fingerprint of the run that planned the tasks this
+        # process executes (a SLURM job spec carries it); None = this process
+        # is the planner, so there is nothing to compare (0.10 item 1).
+        self.planner_env = None
         self.strict_scope = strict_scope
         self.rules = []
         self.dag = None
@@ -220,8 +230,22 @@ class Remake:
         self._effective = None
 
     def _record_run(self, command):
+        from .. import provenance
+
+        directory = (Path(self.remakefile).resolve().parent if self.remakefile
+                     else Path.cwd())
+        try:
+            prov = provenance.collect(directory)
+        except Exception as exc:  # provenance must never stop a run
+            logger.debug(f'provenance not recorded: {exc!r}')
+            prov = None
+        parent = os.environ.get('REMAKE_PARENT_RUN_SEQ')
+        kwargs = {}
+        if 'provenance' in inspect.signature(self.metadata.record_run).parameters:
+            kwargs = {'provenance': prov,
+                      'parent_run_seq': int(parent) if parent and parent.isdigit() else None}
         self.metadata.record_run(
-            remakefile=self.remakefile, command=command, config=self.config)
+            remakefile=self.remakefile, command=command, config=self.config, **kwargs)
 
     # --- registration ---
 
@@ -609,6 +633,35 @@ class Remake:
             'output_stats': self.metadata.get_output_stats(task),
             'log': {'path': str(log_path), 'exists': log_path.exists()},
             'slurm': {'jobids': jobids, 'array_index': array_index},
+            # 0.10 items 1/3: the last execution's history row and the
+            # provenance of the run that recorded it.
+            'last_execution': self._last_execution(task, record),
+        }
+
+    def _last_execution(self, task, record):
+        """{'reason', 'host', 'error', 'run_seq', 'different_environment',
+        'run': {git and version fields}} for the task's newest history row,
+        or None when there is none (never run, or recorded before 0.10)."""
+        history = self.metadata.get_history(task, limit=1)
+        if not history:
+            return None
+        h = history[0]
+        run = self.metadata.get_run(h['run_seq']) if h['run_seq'] is not None else None
+        prov_keys = ('started', 'command', 'git_commit', 'git_dirty', 'git_diff_hash',
+                     'python_version', 'remake_version', 'lockfile', 'lockfile_hash',
+                     'host', 'parent_run_seq')
+        return {
+            'run_seq': h['run_seq'],
+            'finished': h['finished'],
+            'reason': h['reason'],
+            'host': h['host'],
+            'error': h['error'],
+            'output_bytes': h['output_bytes'],
+            # Set only when the task ran in an environment other than the
+            # planning run's (a SLURM job with a different interpreter or
+            # packages): see `remake check-env`.
+            'different_environment': h['env_id'] is not None and h['env_id'] != h['run_env_id'],
+            'run': {k: run.get(k) for k in prov_keys} if run else None,
         }
 
     def task_spec(self, task, *, uses=True):
@@ -1154,7 +1207,11 @@ class Remake:
             from ..executors import SingleprocExecutor
 
             executor = SingleprocExecutor(self)
-        if not getattr(executor, 'dry_run', False):
+        dry_run = getattr(executor, 'dry_run', False)
+        if hasattr(self.metadata, 'history_keep'):
+            keep = (self.config.get('history') or {}).get('keep')
+            self.metadata.history_keep = keep
+        if not dry_run:
             self._record_run('run')
         eff = self.effective_config
         logger.info(
@@ -1181,13 +1238,21 @@ class Remake:
             runnable, deferred = _plan()
             if not runnable and not deferred:
                 logger.info('Nothing to do')
+                if not dry_run:
+                    self.metadata.finish_run({'n_planned': 0, 'n_run': 0})
                 return 0
             self._check_external_inputs(runnable, executor)
-            return executor.run_tasks(runnable, deferred) or 0
+            nfailed = executor.run_tasks(runnable, deferred) or 0
+            if not dry_run:
+                # Asynchronous: what ran is known only when the jobs finish,
+                # so only the plan is counted here.
+                self.metadata.finish_run({'n_planned': len(runnable)})
+            return nfailed
 
         nfailed = 0
         attempted = set()
         wave = 0
+        n_planned = None
         start = perf_counter()
         while True:
             runnable, deferred = _plan()
@@ -1216,6 +1281,8 @@ class Remake:
             wave += 1
             logger.bind(event='wave', wave=wave, ntasks=len(runnable)).debug(
                 'wave {}: running {} task(s)', wave, len(runnable))
+            if n_planned is None:
+                n_planned = len(runnable)
             attempted |= {t.key for t in runnable}
             nfailed += executor.run_tasks(runnable) or 0
         if attempted:
@@ -1227,6 +1294,13 @@ class Remake:
                 len(attempted), nfailed, elapsed)
         else:
             logger.info('Nothing to do')
+        if not dry_run:
+            # n_planned: the first wave's tasks; n_run: every task attempted
+            # across waves (later waves are deferred matrices that resolved).
+            self.metadata.finish_run({
+                'n_planned': n_planned or 0, 'n_run': len(attempted),
+                'n_succeeded': len(attempted) - nfailed, 'n_failed': nfailed,
+                'n_blocked_rules': len(self.blocked_rules), 'n_waves': wave})
         return nfailed
 
     def _excluded_by_query(self, deferred):
@@ -1306,8 +1380,10 @@ class Remake:
             # without flooding the INFO console on runs with many failures
             # (review M12).
             logger.debug('traceback for {}:\n{}', task, tb)
+            extra = ({'execution': self._execution_record(task)}
+                     if _accepts_kwarg(self.metadata, 'execution') else {})
             self.metadata.update_task(
-                task, TASK_STATUS_FAILED, exception=tb, resources=resources,
+                task, TASK_STATUS_FAILED, exception=tb, resources=resources, **extra,
             )
             if isinstance(exc, SystemExit):
                 raise TaskExit(
@@ -1324,7 +1400,31 @@ class Remake:
         # a third-party backend whose update_task predates the keyword.
         extra = ({'output_stats': output_stats}
                  if _accepts_output_stats(self.metadata) else {})
+        if _accepts_kwarg(self.metadata, 'execution'):
+            extra['execution'] = self._execution_record(task)
         self.metadata.update_task(task, TASK_STATUS_SUCCESS, resources=resources, **extra)
+
+    def _execution_record(self, task):
+        """The history fields of one execution (0.10 item 3): the planner's
+        rerun category, this host, and this process's environment only when
+        it differs from the planning run's (`planner_env`, set from a SLURM
+        job spec). Never raises: history must not fail a task."""
+        from .. import provenance
+
+        record = {'reason': getattr(task, 'rerun_reason', None)}
+        try:
+            record['host'] = provenance.host_and_user()[0]
+            if self.planner_env is not None:
+                fingerprint, packages = provenance.current_environment()
+                if fingerprint != self.planner_env:
+                    import platform
+
+                    record['env'] = {'fingerprint': fingerprint,
+                                     'python_version': platform.python_version(),
+                                     'packages': list(packages)}
+        except Exception as exc:
+            logger.debug(f'execution record incomplete: {exc!r}')
+        return record
 
     def _check_outputs_after_run(self, task):
         """Validate a successful task's outputs (`Ensure`), then collect

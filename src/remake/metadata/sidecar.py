@@ -47,7 +47,8 @@ class SidecarWriter(MetadataManager):
     def current_run_seq(self):
         return self.run_seq
 
-    def update_task(self, task, status, exception='', resources=None, output_stats=None):
+    def update_task(self, task, status, exception='', resources=None, output_stats=None,
+                    execution=None):
         path = task_result_path(task.rule.name, task.key)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -69,6 +70,9 @@ class SidecarWriter(MetadataManager):
             'run_seq': self.run_seq,
             # Resolved on the compute node, as run (review 2026-09-24 M8).
             'paths_digest': paths_digest(task),
+            # Run history (0.10): rerun reason, host, and the environment if
+            # it differs from the planning run's. Absent before 0.10.
+            'execution': execution or {},
             # Matches the format sqlite's datetime('now') stores (UTC).
             'timestamp': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
         }

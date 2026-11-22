@@ -46,6 +46,10 @@ class Task:
     # backend finds and re-keys a record stored under it, so canonical keys
     # don't orphan existing state.
     legacy_key: str = None
+    # Why the planner chose to run this task (a category: 'never-run',
+    # 'code-changed', 'upstream-rerun', ...; planner.plan), recorded in the
+    # task's run history. None = not planned (run-task, an export).
+    rerun_reason: str = field(default=None, compare=False, repr=False)
 
     @cached_property
     def key(self):

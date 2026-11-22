@@ -38,6 +38,8 @@ _SCHEMA = {
     'resources': {'capture': (bool,), 'rss_interval': (int, float)},
     'external_inputs_hint': (str,),
     'checksum_outputs': (bool,),
+    # Run history (0.10 item 3): executions kept per task.
+    'history': {'keep': (int,)},
 }
 # Keys allowed in the user file (per-user machine settings, not pipeline
 # settings), and in a [profiles.X] table there.
