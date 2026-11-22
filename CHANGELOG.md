@@ -6,6 +6,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Breaking
+
+- **Every `--json` output is now an object with `"format": 1` as its first
+  key** (documented in `docs/cli.md`, "JSON output"). Bare lists became
+  objects: `info --failed --json` is `{"format": 1, "failures": [...]}`,
+  `ls-tasks --json` is `{"format": 1, "tasks": [...]}`, `lint --json` is
+  `{"format": 1, "findings": [...]}`, and `slurm-status --json` is
+  `{"format": 1, "submissions": [...]}`. `info`, `rule-dag`, `rule-info`,
+  `task-info`, `config` and `check-env` already printed objects and only gain
+  `"format": 1`.
+
 ## [0.9.0] — 2026-11-21
 
 Canonical change detection, a config file cascade with profiles, output

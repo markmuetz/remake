@@ -34,6 +34,16 @@ from .version import __version__
 _TB_FRAME = re.compile(r'  File "(.+?)", line (\d+), in (.+)')
 
 
+JSON_FORMAT = 1  # version of the `--json` output shapes; see docs/cli.md
+
+
+def _print_json(payload):
+    """Print `payload` (a dict) as JSON with `"format": JSON_FORMAT` as the
+    first key. Every `--json` output goes through here, so the top level is
+    always a versioned object, never a bare list."""
+    print(json.dumps({'format': JSON_FORMAT, **payload}, indent=1, default=repr))
+
+
 def _traceback_signature(tb):
     """A message-insensitive fingerprint of a stored traceback:
     (exception type, frame locations). Tasks failing the same way at the same
@@ -704,7 +714,7 @@ class RemakeCLI:
         if args.failed:
             lines = [_failed_line(f) for f in failures]
             if args.json:
-                print(json.dumps(lines, indent=1))
+                _print_json({'failures': lines})
             else:
                 for line in lines:
                     print(f'{line["rule"]}  {line["key"][:8]}  {line["error"]}  '
@@ -717,7 +727,7 @@ class RemakeCLI:
                 data['tasks'] = task_rows
             if show_failures:
                 data['failures'] = failures if args.all_failures else grouped
-            print(json.dumps(data, indent=1))
+            _print_json(data)
             return
 
         paint = Painter(args.colour)
@@ -867,14 +877,14 @@ class RemakeCLI:
             except Defer:
                 logger.warning(f'{rule.name}: deferred (matrix not ready), tasks unknown')
         if args.json:
-            print(json.dumps(rows, indent=1))
+            _print_json({'tasks': rows})
 
     def remake_lint(self, args):
         rmk = self._load(args)
         rows = rmk.lint()
         problems = [r for r in rows if r['kind'] != 'external']
         if args.json:
-            print(json.dumps(rows, indent=1))
+            _print_json({'findings': rows})
             return 1 if problems else 0
 
         for row in rows:
@@ -926,7 +936,7 @@ class RemakeCLI:
                     name: {'n_tasks': n, 'matrix_keys': keys}
                     for name, (n, keys) in matrix_info.items()
                 }
-            print(json.dumps(data, indent=1))
+            _print_json(data)
             return
 
         def label(name):
@@ -1031,7 +1041,7 @@ class RemakeCLI:
         rule = rmk.rule_from_name(args.rule_name)
         data = rmk.rule_info(rule)
         if args.json:
-            print(json.dumps(data, indent=1))
+            _print_json(data)
             return
 
         paint = Painter(args.colour)
@@ -1090,7 +1100,7 @@ class RemakeCLI:
         task = rmk.select_task(args.task_key, args.query)
         data = rmk.task_info(task)
         if args.json:
-            print(json.dumps(data, indent=1))
+            _print_json(data)
             return
 
         paint = Painter(args.colour)
@@ -1176,7 +1186,7 @@ class RemakeCLI:
         rmk = self._track(load_remake(args.remakefile, finalize=False, profile=args.profile))
         eff = rmk.effective_config
         if args.json:
-            print(json.dumps(eff.to_json(), indent=2, sort_keys=True, default=repr))
+            _print_json(eff.to_json())
             return 0
         print(f'profile: {eff.profile or "(none)"}'
               + (f' (from {eff.profile_source})' if eff.profile else ''))
@@ -1225,7 +1235,7 @@ class RemakeCLI:
                     }
                 )
         if args.json:
-            print(json.dumps(rows, indent=1))
+            _print_json({'submissions': rows})
             return
         if not rows:
             print('No SLURM submissions recorded (.remake/jobs/*.jobids.json)')
@@ -1248,8 +1258,8 @@ class RemakeCLI:
         )
         mismatches = envcheck.compare_reports(local, job, error)
         if args.json:
-            print(json.dumps({'planning': local, 'job': job,
-                              'mismatches': mismatches}, indent=1))
+            _print_json({'planning': local, 'job': job,
+                              'mismatches': mismatches})
         else:
             print(envcheck.format_text(local, job, mismatches))
         return 1 if mismatches else 0

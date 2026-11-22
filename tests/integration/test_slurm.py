@@ -569,8 +569,9 @@ def test_slurm_status_reports_queue_state(slurm_dir, capsys):
     assert 'DependencyNeverSatisfied' in out  # agg, job 1003
 
     cli('slurm-status', 'pipeline.py', '--json')
-    rows = json.loads(capsys.readouterr().out)
-    by_rule = {row['rule']: row for row in rows}
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['format'] == 1
+    by_rule = {row['rule']: row for row in payload['submissions']}
     assert by_rule['gen']['jobid'] == '1001' and by_rule['gen']['states'] == {'PD': 1, 'R': 1}
     assert by_rule['agg']['reasons'] == ['DependencyNeverSatisfied']
 

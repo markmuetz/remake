@@ -91,7 +91,7 @@ always satisfy `up-to-date + stale + failed + pending = tasks` and
 | `-t, --tasks` | list individual tasks with status |
 | `-F, --show-failures` | show failures grouped by unique traceback signature + count |
 | `--all-failures` | with `-F`, show every failed task individually (not grouped) |
-| `--failed` | one line per failed task (and nothing else): rule, short key, last line of its error, log path. The error is the stored exception's last line; if none is stored, the last non-empty line of the task's SLURM `.err` (`.remake/slurm/output/<rule>/<index>.err`). With `--json`, a list of `{rule, key, error, log}` |
+| `--failed` | one line per failed task (and nothing else): rule, short key, last line of its error, log path. The error is the stored exception's last line; if none is stored, the last non-empty line of the task's SLURM `.err` (`.remake/slurm/output/<rule>/<index>.err`). With `--json`, `{"format": 1, "failures": [{rule, key, error, log}, ...]}` |
 | `--reasons` | per-rule tally of *why* the to-run tasks would rerun |
 | `--json` | machine-readable output |
 
@@ -144,7 +144,33 @@ the layer that set it. Does not touch the metadata database. See
 | `rule-dag -M, --matrix-keys` | annotate each rule with its matrix keys as `rule(m1, m2)` |
 | `task-log --path` | print the log path only |
 | `export-task <key>` / `-Q` | write the task's resolved spec (rule, key, kwargs, input/output paths, rule function module and qualname, remakefile path, `uses`) as JSON to stdout; `-o FILE` writes a file instead. `uses` values that aren't JSON-serialisable are given as their `repr`. See [Debugging](guide/debugging.md#running-a-task-body-from-another-python) |
-| `ls-tasks --json` | the same per-task identity (`key`, `rule`, `kwargs`; plus `inputs`/`outputs` with `-i`/`-o`) for every task, as one JSON list |
+| `ls-tasks --json` | the same per-task identity (`key`, `rule`, `kwargs`; plus `inputs`/`outputs` with `-i`/`-o`) for every task, under the `tasks` key of the [JSON output](#json-output) object |
+
+## JSON output
+
+Every `--json` output is one JSON object whose first key is `"format": 1`
+(never a bare list). `format` is the version of these shapes. The top-level
+keys per command:
+
+| Command | Top-level keys after `format` |
+|---|---|
+| `info` | `rules`, `totals`; plus `tasks` with `-t`, `failures` with `-F` |
+| `info --failed` | `failures` (list of `{rule, key, error, log}`) |
+| `ls-tasks` | `tasks` (list of `{key, rule, kwargs}`, plus `inputs`/`outputs` with `-i`/`-o`) |
+| `lint` | `findings` (list of rows, each with a `kind`) |
+| `rule-dag` | `order`, `edges`; plus `rules` with `-N`/`-M` |
+| `rule-info` | the rule's detail fields (`rule`, `docstring`, `matrix`, `outputs`, `uses`, ...) |
+| `task-info` | the task's detail fields (`status`, `kwargs`, `inputs`, `outputs`, `slurm`, ...) |
+| `config` | `profile`, `profile_source`, `files`, `config`, `provenance` |
+| `slurm-status` | `submissions` (list of `{rule, jobid, states, reasons}`) |
+| `check-env` | `planning`, `job`, `mismatches` |
+
+Compatibility: after 1.0, adding a key is not a breaking change, so ignore
+keys you do not know. Removing or renaming a key, or changing its type, is a
+major-version change and bumps `format`. Before 1.0, shape changes are listed
+under Breaking in the changelog. `export-task` prints a task spec (no
+`format` key), and the JSONL event log (`.remake/remake.jsonl`) is not
+`--json` output.
 
 ## Selecting tasks for `task-info`, `task-log` and `why`
 

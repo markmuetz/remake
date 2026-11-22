@@ -94,7 +94,7 @@ def test_json_output(env, monkeypatch, capsys):
     monkeypatch.setenv('PYTHONPATH', str(env['b']))
     assert remake_cmd(['remake', 'check-env', 'pipeline.py', '--json']) == 1
     data = json.loads(capsys.readouterr().out)
-    assert set(data) == {'planning', 'job', 'mismatches'}
+    assert set(data) == {'format', 'planning', 'job', 'mismatches'}
     assert data['planning']['modules']['mymod']['file'].endswith('a/mymod.py')
     assert data['job']['modules']['mymod']['file'].endswith('b/mymod.py')
     assert data['planning']['remake_version'] == data['job']['remake_version']

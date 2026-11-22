@@ -527,6 +527,7 @@ def test_info_json(pipeline_dir, capsys):
     capsys.readouterr()
     cli('info', 'pipeline.py', '--json', '--tasks')
     data = json.loads(capsys.readouterr().out)
+    assert list(data)[0] == 'format' and data['format'] == 1
     by_rule = {r['rule']: r for r in data['rules']}
     assert by_rule['generate']['up_to_date'] == 2 and by_rule['generate']['to_run'] == 0
     assert len(data['tasks']) == 4
@@ -571,8 +572,9 @@ rmk.rules_from_current_module()
     import json
 
     cli('lint', 'miswired.py', '--json')
-    rows = json.loads(capsys.readouterr().out)
-    assert {r['kind'] for r in rows} == {'near_miss', 'missing_dependency', 'external'}
+    payload = json.loads(capsys.readouterr().out)
+    assert list(payload)[0] == 'format' and payload['format'] == 1
+    assert {r['kind'] for r in payload['findings']} == {'near_miss', 'missing_dependency', 'external'}
 
 
 def test_ls_tasks(pipeline_dir, capsys):
@@ -589,7 +591,9 @@ def test_ls_tasks(pipeline_dir, capsys):
     ]
 
     cli('ls-tasks', 'pipeline.py', '--json', '-Q', 'rule == "process"')
-    rows = json.loads(capsys.readouterr().out)
+    payload = json.loads(capsys.readouterr().out)
+    assert list(payload)[0] == 'format' and payload['format'] == 1
+    rows = payload['tasks']
     assert [r['kwargs'] for r in rows] == [{'n': 1}, {'n': 2}]
     assert all(len(r['key']) == 40 and r['rule'] == 'process' for r in rows)
 
@@ -608,6 +612,7 @@ def test_task_info_text_and_json(pipeline_dir, capsys):
 
     cli('task-info', 'pipeline.py', '--json', '-Q', 'rule == "generate" and n == 1')
     data = json.loads(capsys.readouterr().out)
+    assert data['format'] == 1
     assert data['status'] == 'success' and data['kwargs'] == {'n': 1}
     assert all(o['complete'] for o in data['outputs'].values())
     assert data['slurm'] == {'jobids': None, 'array_index': None}  # never submitted
@@ -684,6 +689,7 @@ def test_rule_info_text_json_and_errors(tmp_path, monkeypatch, capsys):
 
     cli('rule-info', 'pipeline.py', 'generate', '--json')
     data = json.loads(capsys.readouterr().out)
+    assert data['format'] == 1
     assert data['matrix'] == {'kind': 'dict', 'deferrable': False, 'keys': ['n'],
                               'n_tasks': 2, 'values': {'n': [1, 2]}}
     assert data['outputs']['templates'] == {'raw': 'data/raw_{n}.txt'}
