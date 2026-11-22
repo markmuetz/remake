@@ -125,3 +125,24 @@ def test_without_srun_srun_is_not_called(env):
 
 def test_bad_remakefile_is_usage_error(env, capsys):
     assert remake_cmd(['remake', 'check-env', 'nope.py']) == 2
+
+
+def test_package_fingerprint_difference_is_named(env, monkeypatch, capsys):
+    # Planning sees an extra package and a different version of another.
+    from remake import provenance
+
+    real = provenance.current_environment()
+    packages = [p for p in real[1] if not p.startswith('pytest==')]
+    packages += ['zzz-extra==1.0', 'pytest==0.0.1']
+    monkeypatch.setattr(provenance, 'current_environment',
+                        lambda: (provenance._sha256('x'), tuple(packages)))
+    assert remake_cmd(['remake', 'check-env', 'pipeline.py']) == 1
+    out = capsys.readouterr().out
+    assert 'MISMATCH  installed packages differ' in out
+    assert 'zzz-extra==1.0 only in planning' in out
+    assert 'pytest: planning 0.0.1' in out
+
+
+def test_same_packages_reported(env, capsys):
+    assert remake_cmd(['remake', 'check-env', 'pipeline.py']) == 0
+    assert 'OK  same packages' in capsys.readouterr().out
