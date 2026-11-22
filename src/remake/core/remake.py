@@ -251,15 +251,53 @@ class Remake:
         self._finalized = False
 
     def rules_from_current_module(self):
+        """Register the Rules bound to names in the calling module and
+        defined in it (the rule function's `__module__` is this module).
+        Rules imported from elsewhere are not claimed, and neither are Rules
+        held inside lists, tuples or dicts; both are named in one warning
+        advising `add_rules`. Call this after any `add_rules`, so rules
+        registered explicitly are not reported."""
         # f_locals so rules defined inside functions (tests, notebooks) are
         # found too; at module level locals and globals are the same dict.
         frame = inspect.currentframe().f_back
         namespace = {**frame.f_globals, **frame.f_locals}
-        self.add_rules(v for v in namespace.values() if isinstance(v, Rule))
+        self._scan_namespace(namespace, namespace.get('__name__'), 'this module')
 
     def rules_from_modules(self, *modules):
+        """Register the Rules bound to top-level names in each module and
+        defined in that module. Rules a module merely imported, or holds in
+        containers, are not claimed and are named in a warning."""
         for module in modules:
-            self.add_rules(v for v in vars(module).values() if isinstance(v, Rule))
+            self._scan_namespace(vars(module), module.__name__, module.__name__)
+
+    def _scan_namespace(self, namespace, module_name, label):
+        """Add the Rules in `namespace` defined in `module_name`; warn once
+        about Rules seen but not registered (imported, or in a container)."""
+        own, seen = [], []  # seen: (description, rule) not claimed
+        for name, value in namespace.items():
+            if name.startswith('__'):
+                continue
+            if isinstance(value, Rule):
+                if getattr(value.fn, '__module__', None) == module_name:
+                    own.append(value)
+                else:
+                    seen.append((f'{name} (imported from {_where(value)})', value))
+            elif isinstance(value, (list, tuple)):
+                seen.extend((f'{name}[{i}]', v) for i, v in enumerate(value)
+                            if isinstance(v, Rule))
+            elif isinstance(value, dict):
+                seen.extend((f'{name}[{k!r}]', v) for k, v in value.items()
+                            if isinstance(v, Rule))
+        self.add_rules(own)
+        # Skip any that are registered anyway (also bound to a claimed name,
+        # or added earlier with add_rules).
+        unregistered = [d for d, r in seen if not any(r is x for x in self.rules)]
+        if unregistered:
+            logger.warning(
+                f'Scan of {label} did not register: {", ".join(unregistered)}. '
+                f'Register rules imported from other modules, or held in '
+                f'lists/dicts, explicitly with rmk.add_rules(...)'
+            )
 
     # --- planning ---
 

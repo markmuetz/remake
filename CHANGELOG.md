@@ -6,6 +6,16 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Breaking
+
+- **Module scans claim only rules defined in the scanned file.**
+  `rules_from_current_module()` and `rules_from_modules()` no longer claim a
+  Rule imported from another module (it could land in the wrong pipeline).
+  Remakefiles that composed a pipeline by importing rules by name must
+  register them with `rmk.add_rules(...)` or `rmk.rules_from_modules(...)`;
+  `examples/ex5_multifile` now does the latter. Rules imported, or held in
+  lists, tuples or dicts, are not claimed and are named in one warning.
+
 ## [0.9.0] — 2026-11-21
 
 Canonical change detection, a config file cascade with profiles, output

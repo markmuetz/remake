@@ -59,7 +59,7 @@ All items shipped; archived verbatim in
 
 ## Open from the 0.9.0 work (2026-11-21)
 
-- [ ] `rules_from_current_module()` misses rules held in module-level
+- [x] (0.10.0: scans now warn; containers are never claimed) `rules_from_current_module()` misses rules held in module-level
   lists/dicts (documented; field note 2). Consider a warning when a module
   holds Rules in containers that weren't registered.
 - [ ] Two environment reports: `executors/slurm_executor.environment_report`
