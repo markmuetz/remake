@@ -168,7 +168,7 @@ remake history pipeline.py --prune --keep 3  # trim the history now
 |---|---|
 | `<key>` / `-Q, --query` | the task, as for `task-info`: a key prefix, or a query matching exactly one task |
 | `--runs` | list recent runs (one line each: run number, start time, command, tasks run and failed, short git commit with `+dirty`, and the run it continues) instead of one task's executions |
-| `-n, --limit N` | show at most N rows (default 20) |
+| `--limit N` | show at most N rows (default 20) |
 | `--prune` | apply the per-task cap to every task now |
 | `--keep N` | with `--prune`: keep N executions per task instead of `history.keep` (an error without `--prune`) |
 | `--json` | machine-readable output |

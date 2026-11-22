@@ -312,3 +312,14 @@ def test_delete_tasks_removes_their_history(project):
     tasks = _load_tasks()
     db.delete_tasks(tasks)
     assert db.conn.execute('SELECT COUNT(*) FROM task_run').fetchone()[0] == 0
+
+
+def test_failed_output_check_signature_names_the_output():
+    from remake.metadata.sqlite3_backend import error_signature
+
+    tb = ('Traceback (most recent call last):\n'
+          '  File "/x/remake.py", line 9, in _check_outputs_after_run\n'
+          '    raise OutputValidationError(\n'
+          'remake.core.exceptions.OutputValidationError: s[]: output check(s) failed:\n'
+          '  summary: data/summary.txt is empty\n')
+    assert error_signature(tb) == 'OutputValidationError: summary'

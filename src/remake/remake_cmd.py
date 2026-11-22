@@ -493,7 +493,7 @@ class RemakeCLI:
                 Arg('--query', '-Q', help='Select the task by kwargs query instead of key'),
                 Arg('--runs', help='List recent runs instead, one line each',
                     action='store_true'),
-                Arg('--limit', '-n', help='Show at most N rows (default 20)', type=int,
+                Arg('--limit', help='Show at most N rows (default 20)', type=int,
                     default=20),
                 Arg('--prune', help='Apply the per-task cap (history.keep) to every '
                     'task now', action='store_true'),

@@ -272,6 +272,13 @@ def error_signature(tb):
             match = _EXC_NAME.match(line)
             exc_type = match.group(0) if match else ''
             break
+    if exc_type.rsplit('.', 1)[-1] == 'OutputValidationError':
+        # Raised by remake itself after the rule returned, so its frame says
+        # nothing; which outputs failed is the useful part (names only, no
+        # message text).
+        names = re.findall(r'^  (\S+?): ', tb.split('output check(s) failed:', 1)[-1],
+                           re.MULTILINE)
+        return 'OutputValidationError: ' + (', '.join(names) or 'output check failed')
     frames = _TB_FRAME.findall(tb)
     if not frames:
         return exc_type or None
