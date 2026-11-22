@@ -13,6 +13,7 @@ Sharded like the per-task logs (design_docs/designs/per_task_logging.md), but
 self-cleaning: sidecars are deleted on ingest.
 """
 import json
+import os
 import time
 from pathlib import Path
 
@@ -22,6 +23,29 @@ from ..core.task import paths_digest
 from .metadata_manager import MetadataManager
 
 RESULTS_ROOT = Path('.remake/tasks/results')
+# Package lists of environments that differ from the planner's, one file per
+# fingerprint (0.10 item 1): a sidecar carries only the fingerprint.
+ENVIRONMENTS_ROOT = Path('.remake/environments')
+
+
+def write_environment(fingerprint, packages):
+    """Write an environment's package list once (write-then-rename, so
+    concurrent array elements writing the same file are harmless)."""
+    path = ENVIRONMENTS_ROOT / f'{fingerprint}.json'
+    if path.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(f'.{os.getpid()}.tmp')
+    tmp.write_text(json.dumps(list(packages)))
+    tmp.replace(path)
+
+
+def read_environment(fingerprint):
+    """The package list written by write_environment, or None."""
+    try:
+        return json.loads((ENVIRONMENTS_ROOT / f'{fingerprint}.json').read_text())
+    except (OSError, ValueError):
+        return None
 
 
 def task_result_path(rule_name, key):
@@ -51,6 +75,12 @@ class SidecarWriter(MetadataManager):
                     execution=None):
         path = task_result_path(task.rule.name, task.key)
         path.parent.mkdir(parents=True, exist_ok=True)
+        execution = dict(execution or {})
+        env = execution.get('env')
+        if env and 'packages' in env:
+            env = dict(env)
+            write_environment(env['fingerprint'], env.pop('packages'))
+            execution['env'] = env
         payload = {
             # Format version (absent = pre-0.9). Readers ignore unknown fields.
             'v': 1,
@@ -72,7 +102,7 @@ class SidecarWriter(MetadataManager):
             'paths_digest': paths_digest(task),
             # Run history (0.10): rerun reason, host, and the environment if
             # it differs from the planning run's. Absent before 0.10.
-            'execution': execution or {},
+            'execution': execution,
             # Matches the format sqlite's datetime('now') stores (UTC).
             'timestamp': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
         }

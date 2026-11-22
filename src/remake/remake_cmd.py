@@ -1213,6 +1213,8 @@ class RemakeCLI:
         """`remake history`: one task's executions, recent runs, or a prune."""
         from .metadata.metadata_manager import STATUS_NAMES
 
+        if args.keep is not None and not args.prune:
+            raise RemakeError('--keep only applies with --prune')
         rmk = self._load(args)
         meta = rmk.metadata
         if args.prune:

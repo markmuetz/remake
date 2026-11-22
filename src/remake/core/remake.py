@@ -233,7 +233,7 @@ class Remake:
         directory = (Path(self.remakefile).resolve().parent if self.remakefile
                      else Path.cwd())
         try:
-            prov = provenance.collect(directory)
+            prov = provenance.collect(directory, self.remakefile)
         except Exception as exc:  # provenance must never stop a run
             logger.debug(f'provenance not recorded: {exc!r}')
             prov = None
@@ -293,8 +293,21 @@ class Remake:
         self._check_scopes()
         self.dag = build_rule_dag(self.rules)
         self.metadata.ensure_rules(self.rules, remakefile=self.remakefile)
+        self._apply_history_keep()
         self._finalized = True
         return self
+
+    def _apply_history_keep(self):
+        """Pass history.keep to the backend, so every command that ingests
+        sidecars (info, why, ...) prunes with the configured cap, not just
+        run (0.10 item 3)."""
+        if not hasattr(self.metadata, 'history_keep'):
+            return
+        keep = (self.config.get('history') or {}).get('keep')
+        if keep is not None and (isinstance(keep, bool) or not isinstance(keep, int)
+                                 or keep < 1):
+            raise RemakeError(f'history.keep must be a whole number >= 1, not {keep!r}')
+        self.metadata.history_keep = keep
 
     def _check_scopes(self):
         """Scope-check every rule once, now that the remakefile has fully
@@ -1218,9 +1231,7 @@ class Remake:
 
             executor = SingleprocExecutor(self)
         dry_run = getattr(executor, 'dry_run', False)
-        if hasattr(self.metadata, 'history_keep'):
-            keep = (self.config.get('history') or {}).get('keep')
-            self.metadata.history_keep = keep
+        self._apply_history_keep()
         if not dry_run:
             self._record_run('run')
         eff = self.effective_config
@@ -1254,9 +1265,10 @@ class Remake:
             self._check_external_inputs(runnable, executor)
             nfailed = executor.run_tasks(runnable, deferred) or 0
             if not dry_run:
-                # Asynchronous: what ran is known only when the jobs finish,
-                # so only the plan is counted here.
-                self.metadata.finish_run({'n_planned': len(runnable)})
+                # Asynchronous: what ran is known only when the jobs finish
+                # (their history rows), so only the plan is counted, and the
+                # run is not stamped finished.
+                self.metadata.finish_run({'n_planned': len(runnable)}, finished=False)
             return nfailed
 
         nfailed = 0
@@ -1264,37 +1276,48 @@ class Remake:
         wave = 0
         n_planned = None
         start = perf_counter()
-        while True:
-            runnable, deferred = _plan()
-            force = False  # only force the first wave
-            runnable = [t for t in runnable if t.key not in attempted]
-            if not runnable:
-                if deferred:
-                    # Not everything completed: say which rules and why, and
-                    # make the run's outcome reflect it (review 2026-09-24 M9;
-                    # it used to be a bare warning and exit 0). A filtered run
-                    # may deliberately leave out the upstream a deferred rule
-                    # waits on: that one is reported but doesn't fail the run.
-                    excused = self._excluded_by_query(deferred) if query else set()
-                    for rule in deferred:
-                        if rule in excused:
-                            logger.warning(f'Blocked rule {rule.name} (upstream not '
-                                           f'selected by the query): {_blocked_reason(rule)}')
-                        else:
-                            self.blocked_rules.append(rule)
-                            logger.error(f'Blocked rule {rule.name}: {_blocked_reason(rule)}')
-                break
-            if wave == 0:
-                # First wave only: later waves' inputs come from earlier ones
-                # (a failed upstream must not read as a missing external).
-                self._check_external_inputs(runnable, executor)
-            wave += 1
-            logger.bind(event='wave', wave=wave, ntasks=len(runnable)).debug(
-                'wave {}: running {} task(s)', wave, len(runnable))
-            if n_planned is None:
-                n_planned = len(runnable)
-            attempted |= {t.key for t in runnable}
-            nfailed += executor.run_tasks(runnable) or 0
+        completed = False
+        try:
+            while True:
+                runnable, deferred = _plan()
+                force = False  # only force the first wave
+                runnable = [t for t in runnable if t.key not in attempted]
+                if not runnable:
+                    if deferred:
+                        # Not everything completed: say which rules and why, and
+                        # make the run's outcome reflect it (review 2026-09-24 M9;
+                        # it used to be a bare warning and exit 0). A filtered run
+                        # may deliberately leave out the upstream a deferred rule
+                        # waits on: that one is reported but doesn't fail the run.
+                        excused = self._excluded_by_query(deferred) if query else set()
+                        for rule in deferred:
+                            if rule in excused:
+                                logger.warning(f'Blocked rule {rule.name} (upstream not '
+                                               f'selected by the query): {_blocked_reason(rule)}')
+                            else:
+                                self.blocked_rules.append(rule)
+                                logger.error(f'Blocked rule {rule.name}: {_blocked_reason(rule)}')
+                    break
+                if wave == 0:
+                    # First wave only: later waves' inputs come from earlier ones
+                    # (a failed upstream must not read as a missing external).
+                    self._check_external_inputs(runnable, executor)
+                wave += 1
+                logger.bind(event='wave', wave=wave, ntasks=len(runnable)).debug(
+                    'wave {}: running {} task(s)', wave, len(runnable))
+                if n_planned is None:
+                    n_planned = len(runnable)
+                attempted |= {t.key for t in runnable}
+                nfailed += executor.run_tasks(runnable) or 0
+            completed = True
+        finally:
+            if not dry_run:
+                # Also when a task raises or the run is interrupted. The
+                # counts come from this run's history rows (finish_run).
+                self.metadata.finish_run({
+                    'n_planned': n_planned or 0, 'n_attempted': len(attempted),
+                    'n_blocked_rules': len(self.blocked_rules), 'n_waves': wave},
+                    finished=completed)
         if attempted:
             elapsed = perf_counter() - start
             logger.bind(event='run_summary', ntasks=len(attempted),
@@ -1304,13 +1327,6 @@ class Remake:
                 len(attempted), nfailed, elapsed)
         else:
             logger.info('Nothing to do')
-        if not dry_run:
-            # n_planned: the first wave's tasks; n_run: every task attempted
-            # across waves (later waves are deferred matrices that resolved).
-            self.metadata.finish_run({
-                'n_planned': n_planned or 0, 'n_run': len(attempted),
-                'n_succeeded': len(attempted) - nfailed, 'n_failed': nfailed,
-                'n_blocked_rules': len(self.blocked_rules), 'n_waves': wave})
         return nfailed
 
     def _excluded_by_query(self, deferred):

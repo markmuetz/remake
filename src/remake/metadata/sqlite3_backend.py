@@ -23,8 +23,8 @@ from ..core.scope import io_hash as compute_io_hash
 from ..core.scope import raw_uses_parts
 from ..core.scope import rule_uses_hash
 from ..util.code_compare import CodeComparer
-from .metadata_manager import (TASK_STATUS_PENDING, TASK_STATUS_SUCCESS, MetadataManager,
-                               TaskRecord)
+from .metadata_manager import (TASK_STATUS_FAILED, TASK_STATUS_PENDING, TASK_STATUS_SUCCESS,
+                               MetadataManager, TaskRecord)
 
 # On-disk schema version, stored in the SQLite header (`PRAGMA user_version`)
 # as MAJOR * 1000 + MINOR (0.9.0 item 3). 0 is every DB written before 0.9.0:
@@ -173,6 +173,7 @@ CREATE TABLE run (
     n_run INTEGER,
     n_succeeded INTEGER,
     n_failed INTEGER,
+    n_skipped INTEGER,
     n_blocked_rules INTEGER,
     -- env_id -> environment(id); no FOREIGN KEY clause, so that the
     -- in-place migration (ALTER TABLE ADD COLUMN) gives the same shape.
@@ -210,7 +211,9 @@ CREATE TABLE task_run (
     FOREIGN KEY(task_id) REFERENCES task (id),
     FOREIGN KEY(env_id) REFERENCES environment (id)
 );
-CREATE INDEX task_run_task_index ON task_run(task_id, id);
+-- Unique per execution: a sidecar ingested twice (a crash before its
+-- unlink, two processes ingesting) is one history row, not two.
+CREATE UNIQUE INDEX task_run_unique ON task_run(task_id, run_seq, finished);
 CREATE INDEX task_run_seq_index ON task_run(run_seq);
 
 -- Key/value store. run_seq: a monotonic counter, one value allocated per
@@ -233,17 +236,22 @@ _RUN_COLUMNS_1_1 = (
     ('lockfile', 'TEXT'), ('lockfile_hash', 'TEXT'), ('host', 'TEXT'),
     ('user_hash', 'TEXT'), ('parent_run_seq', 'INTEGER'), ('finished', 'TIMESTAMP'),
     ('n_planned', 'INTEGER'), ('n_run', 'INTEGER'), ('n_succeeded', 'INTEGER'),
-    ('n_failed', 'INTEGER'), ('n_blocked_rules', 'INTEGER'), ('n_waves', 'INTEGER'),
+    ('n_failed', 'INTEGER'), ('n_skipped', 'INTEGER'), ('n_blocked_rules', 'INTEGER'),
+    ('n_waves', 'INTEGER'),
 )
 
 _PROVENANCE_KEYS = ('git_commit', 'git_dirty', 'git_diff_hash', 'python_version',
                     'remake_version', 'lockfile', 'lockfile_hash', 'host', 'user_hash')
-_COUNT_KEYS = ('n_planned', 'n_run', 'n_succeeded', 'n_failed', 'n_blocked_rules',
-               'n_waves')
+_COUNT_KEYS = ('n_planned', 'n_run', 'n_succeeded', 'n_failed', 'n_skipped',
+               'n_blocked_rules', 'n_waves')
+# History order: newest execution first, by run_seq (allocated centrally, so
+# a late-ingested older sidecar sorts below newer runs), then time.
+_HISTORY_ORDER = 'run_seq IS NULL, run_seq DESC, finished DESC, id DESC'
 DEFAULT_HISTORY_KEEP = 10
 
 
 _TB_FRAME = re.compile(r'  File "(.+?)", line (\d+), in (.+)')
+_EXC_NAME = re.compile(r'^[\w.]+(?=:|$)')
 
 
 def error_signature(tb):
@@ -252,8 +260,18 @@ def error_signature(tb):
     error. Tasks failing the same way share it."""
     if not tb:
         return None
-    lines = tb.strip().splitlines()
-    exc_type = lines[-1].split(':', 1)[0].strip() if lines else ''
+    # The exception line is the first line at column 0 after the last
+    # frame (a multi-line message continues below it, and must not leak
+    # into the signature).
+    lines = tb.rstrip().splitlines()
+    last_frame = max((i for i, line in enumerate(lines) if line.startswith('  File ')),
+                     default=-1)
+    exc_type = ''
+    for line in lines[last_frame + 1:]:
+        if line and not line[0].isspace():
+            match = _EXC_NAME.match(line)
+            exc_type = match.group(0) if match else ''
+            break
     frames = _TB_FRAME.findall(tb)
     if not frames:
         return exc_type or None
@@ -548,10 +566,8 @@ class Sqlite3Backend(MetadataManager):
         for col, coltype in _RUN_COLUMNS_1_1:
             if col not in run_cols:
                 self.conn.execute(f'ALTER TABLE run ADD COLUMN {col} {coltype}')
-        if 'environment' not in tables or 'task_run' not in tables:
-            logger.info('Adding environment/task_run tables to existing DB')
-            # SQL_SCHEMA's (idempotent) CREATEs have already made them;
-            # nothing to backfill: history starts now.
+        # environment/task_run: made by SQL_SCHEMA's idempotent CREATEs
+        # above; nothing to backfill (history starts with 0.10).
         if 'meta' not in tables:
             logger.info('Adding meta table to existing DB')
             self.conn.execute(
@@ -657,15 +673,31 @@ class Sqlite3Backend(MetadataManager):
                          _config_json(config) if config is not None else None,
                          provenance, parent_run_seq)
 
+    def finish_run(self, counts, finished=True):
+        """Record a run's counts and apply the history cap to the tasks it
+        ran. n_run/n_succeeded/n_failed come from this run's history rows
+        (what actually executed); n_skipped = counts['n_attempted'] minus
+        those (tasks skipped because an upstream failed). `finished=False`
+        (an asynchronous submission, an interrupted run) leaves the finish
+        time unset."""
+        if self._run_seq is None:
+            return  # nothing allocated: nothing ran, no row to update
+        self._finish_run(self._run_seq, counts, finished)
+
     @retry_lock_commit
-    def finish_run(self, counts):
-        """Stamp the per-run counts (n_planned, n_run, n_succeeded, n_failed,
-        n_blocked_rules, n_waves) and the finish time on this run's row, and
-        prune the history of the tasks it ran."""
-        run_seq = self.current_run_seq()
-        sets = ', '.join(f'{k} = ?' for k in _COUNT_KEYS)
+    def _finish_run(self, run_seq, counts, finished):
+        counts = dict(counts)
+        if 'n_attempted' in counts:
+            n_run, n_ok, n_failed = self.conn.execute(
+                'SELECT COUNT(*), COALESCE(SUM(status = ?), 0), COALESCE(SUM(status = ?), 0) '
+                'FROM task_run WHERE run_seq = ?',
+                (TASK_STATUS_SUCCESS, TASK_STATUS_FAILED, run_seq)).fetchone()
+            counts.update(n_run=n_run, n_succeeded=n_ok, n_failed=n_failed,
+                          n_skipped=max(counts.pop('n_attempted') - n_run, 0))
+        sets = ', '.join(f'{k} = COALESCE(?, {k})' for k in _COUNT_KEYS)
+        finish = "finished = datetime('now'), " if finished else ''
         self.conn.execute(
-            f"UPDATE run SET finished = datetime('now'), {sets} WHERE run_seq = ?",
+            f'UPDATE run SET {finish}{sets} WHERE run_seq = ?',
             (*(counts.get(k) for k in _COUNT_KEYS), run_seq))
         self._prune_history(run_seq=run_seq)
 
@@ -724,7 +756,7 @@ class Sqlite3Backend(MetadataManager):
         sql = (f'SELECT {", ".join("h." + f for f in self._HISTORY_FIELDS)}, r.env_id '
                'FROM task_run h JOIN task t ON h.task_id = t.id '
                'LEFT JOIN run r ON r.run_seq = h.run_seq '
-               'WHERE t.key = ? ORDER BY h.id DESC')
+               f'WHERE t.key = ? ORDER BY {_HISTORY_ORDER.replace("run_seq", "h.run_seq").replace("finished", "h.finished").replace("id DESC", "h.id DESC")}')
         params = [task.key]
         if limit is not None:
             sql += ' LIMIT ?'
@@ -739,25 +771,55 @@ class Sqlite3Backend(MetadataManager):
     def _history_keep(self):
         return self.history_keep if self.history_keep is not None else DEFAULT_HISTORY_KEEP
 
-    def _prune_history(self, run_seq=None, keep=None):
-        """Keep the newest `keep` executions per task: for the tasks run_seq
-        touched (once per run, not per insert), or for every task. Returns
-        the number of rows deleted."""
+    def _prune_history(self, run_seq=None, keep=None, task_ids=None):
+        """Keep the newest `keep` executions per task, for: the given task
+        ids (an ingest batch), the tasks run_seq touched (once per run), or
+        every task (also dropping rows whose task is gone, e.g. deleted by
+        an older remake that doesn't know task_run). Returns rows deleted."""
         keep = self._history_keep() if keep is None else keep
-        scope = ('WHERE task_id IN (SELECT task_id FROM task_run WHERE run_seq = ?)'
-                 if run_seq is not None else '')
-        params = (run_seq,) if run_seq is not None else ()
-        cur = self.conn.execute(
-            'DELETE FROM task_run WHERE id IN ('
-            '  SELECT id FROM ('
-            '    SELECT id, ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY id DESC) AS n '
-            f'   FROM task_run {scope}) WHERE n > ?)', (*params, keep))
-        return cur.rowcount
+        window = ('SELECT id, ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY '
+                  f'{_HISTORY_ORDER}) AS n FROM task_run')
+        deleted = 0
+        if task_ids is not None:
+            ids = sorted(set(task_ids))
+            for i in range(0, len(ids), self.SELECT_CHUNK):
+                chunk = ids[i:i + self.SELECT_CHUNK]
+                marks = ','.join('?' * len(chunk))
+                deleted += self.conn.execute(
+                    f'DELETE FROM task_run WHERE id IN (SELECT id FROM ({window} '
+                    f'WHERE task_id IN ({marks})) WHERE n > ?)', (*chunk, keep)).rowcount
+            return deleted
+        if run_seq is not None:
+            return self.conn.execute(
+                f'DELETE FROM task_run WHERE id IN (SELECT id FROM ({window} WHERE task_id '
+                'IN (SELECT task_id FROM task_run WHERE run_seq = ?)) WHERE n > ?)',
+                (run_seq, keep)).rowcount
+        deleted += self.conn.execute(
+            'DELETE FROM task_run WHERE task_id NOT IN (SELECT id FROM task)').rowcount
+        deleted += self.conn.execute(
+            f'DELETE FROM task_run WHERE id IN (SELECT id FROM ({window}) WHERE n > ?)',
+            (keep,)).rowcount
+        return deleted
 
     @retry_lock_commit
     def prune_history(self, keep=None):
         """`remake history --prune`: apply the cap to every task now."""
+        if keep is not None and (isinstance(keep, bool) or keep < 1):
+            raise RemakeError(f'keep must be a whole number >= 1, not {keep!r}')
         return self._prune_history(keep=keep)
+
+    @staticmethod
+    def _sidecar_execution(execution):
+        """A sidecar's execution record, with the environment's package list
+        read from `.remake/environments/<fingerprint>.json` (written once per
+        environment by the job, not into every sidecar)."""
+        from .sidecar import read_environment
+
+        ex = dict(execution or {})
+        env = ex.get('env')
+        if env and env.get('fingerprint') and 'packages' not in env:
+            ex['env'] = {**env, 'packages': read_environment(env['fingerprint']) or []}
+        return ex
 
     def _write_history(self, key, status, run_seq, resources, output_stats, exception,
                        execution, timestamp=None):
@@ -775,12 +837,13 @@ class Sqlite3Backend(MetadataManager):
             env_id = self._intern_environment(
                 env['fingerprint'], env.get('python_version'), env.get('packages') or [])
         self.conn.execute(
-            'INSERT INTO task_run(task_id, run_seq, finished, status, wall_s, cpu_s, '
+            'INSERT OR IGNORE INTO task_run(task_id, run_seq, finished, status, wall_s, cpu_s, '
             '    max_rss_bytes, rss_method, output_bytes, reason, host, error, env_id) '
             "VALUES (?, ?, COALESCE(?, datetime('now')), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (task_id, run_seq, timestamp, status, res.get('wall_s'), res.get('cpu_s'),
              res.get('max_rss_bytes'), res.get('rss_method'), output_bytes,
              ex.get('reason'), ex.get('host'), error_signature(exception), env_id))
+        return task_id
 
     def _insert_code(self, code):
         cur = self.conn.execute('INSERT INTO code(code) VALUES (?)', (code,))
@@ -1064,6 +1127,7 @@ class Sqlite3Backend(MetadataManager):
                 intern_memo[text] = self._intern_code(text)
             return intern_memo[text]
 
+        touched = []
         for rule, key, payload, _ in pending:
             rule_id, run_code_id, _, cur_io_code_id = self.rule_ids[rule.name]
             io_text = payload.get('io_hash')
@@ -1132,12 +1196,13 @@ class Sqlite3Backend(MetadataManager):
                 self._write_output_stats(key, payload['output_stats'])
             # Every sidecar is an execution (history is append-only, so an
             # older one the guard skipped above is still history).
-            self._write_history(key, payload['status'], payload.get('run_seq'), res,
-                                payload.get('output_stats'), payload.get('exception', ''),
-                                payload.get('execution'), payload.get('timestamp'))
-        for run_seq in {payload.get('run_seq') for _, _, payload, _ in pending}:
-            if run_seq is not None:
-                self._prune_history(run_seq=run_seq)
+            touched.append(self._write_history(
+                key, payload['status'], payload.get('run_seq'), res,
+                payload.get('output_stats'), payload.get('exception', ''),
+                self._sidecar_execution(payload.get('execution')), payload.get('timestamp')))
+        # Only this batch's tasks: a run-wide prune on every `info` poll of a
+        # large SLURM run would cost seconds inside the exclusive lock.
+        self._prune_history(task_ids=touched)
 
     def update_task(self, task, status, exception='', resources=None, output_stats=None,
                     execution=None):

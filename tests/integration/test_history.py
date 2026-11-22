@@ -191,3 +191,124 @@ def test_upgrade_from_schema_1_0_adds_history_and_reruns_nothing(tmp_path, monke
     runnable, deferred = Remake(rules=[y], metadata=db).plan()
     assert runnable == [] and deferred == []
     assert db.conn.execute('PRAGMA user_version').fetchone()[0] == SCHEMA_MAJOR * 1000 + 1
+
+
+# --- review 2026-11-22 (Fable) of the history commit ---
+
+SKIPPING = '''
+from pathlib import Path
+from remake import Remake, rule
+
+@rule(outputs={'o': 'a_{i}.txt'}, matrix={'i': [1, 2]})
+def a(outputs, i):
+    raise RuntimeError('a fails')
+
+@rule(inputs={'i': 'a_1.txt'}, outputs={'o': 'b.txt'}, depends_on=[a])
+def b(inputs, outputs):
+    Path(outputs['o']).write_text('b')
+
+rmk = Remake()
+rmk.rules_from_current_module()
+'''
+
+
+def test_counts_separate_skipped_from_run(project):
+    Path('pipeline.py').write_text(SKIPPING)
+    assert cli('run', 'pipeline.py') == 1
+    (run,) = _db().get_runs()
+    assert (run['n_run'], run['n_succeeded'], run['n_failed'], run['n_skipped']) == (2, 0, 2, 1)
+    assert run['finished'] is not None
+
+
+def test_error_signature_does_not_leak_a_multiline_message():
+    from remake.metadata.sqlite3_backend import error_signature
+
+    tb = ('Traceback (most recent call last):\n'
+          '  File "/x/pipeline.py", line 3, in f\n'
+          '    raise ValueError(msg)\n'
+          'ValueError: bad file /home/me\n'
+          'row 3 has password hunter2\n')
+    assert error_signature(tb) == 'ValueError at pipeline.py:3 in f'
+    assert error_signature('') is None
+
+
+def test_untracked_remakefile_is_recorded_dirty(project):
+    Path('other.py').write_text(PIPELINE)
+    cli('run', 'other.py')
+    (run,) = _db().get_runs()
+    assert run['git_dirty'] is True and run['git_diff_hash']
+
+
+def test_lockfile_outside_a_repo_is_only_looked_for_beside_the_remakefile(tmp_path):
+    from remake.provenance import find_lockfile
+
+    (tmp_path / 'uv.lock').write_text('x')
+    (tmp_path / 'sub').mkdir()
+    assert find_lockfile(tmp_path / 'sub', in_repo=False) == (None, None)
+    assert find_lockfile(tmp_path, in_repo=False)[0].name == 'uv.lock'
+
+
+def _sidecar_db(tmp_path):
+    """A backend with one rule and a SidecarWriter-run task, for ingest tests."""
+    from remake.metadata.sidecar import SidecarWriter
+
+    @rule(outputs={'o': 'x_{i}.txt'}, matrix={'i': [1]})
+    def x(outputs, i):
+        Path(outputs['o']).write_text('x')
+
+    db = Sqlite3Backend(tmp_path / 'remake.db')
+    rmk = Remake(rules=[x], metadata=db)
+    rmk.finalize()
+    (task,) = rmk.tasks()
+    return db, rmk, x, task, SidecarWriter
+
+
+def test_a_sidecar_ingested_twice_is_one_history_row(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    db, rmk, x, task, SidecarWriter = _sidecar_db(tmp_path)
+    rmk.metadata = SidecarWriter(run_seq=5)
+    rmk.run_task(task)
+    (sidecar,) = Path('.remake/tasks/results').rglob('*.json')
+    saved = sidecar.read_text()
+    db.ingest_sidecars([x])
+    sidecar.write_text(saved)  # a crash before the unlink, or a second ingester
+    db.ingest_sidecars([x])
+    assert len(db.get_history(task)) == 1
+
+
+def test_history_cap_applies_to_ingest_outside_run(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    db, rmk, x, task, SidecarWriter = _sidecar_db(tmp_path)
+    db.history_keep = 3
+    for seq in range(1, 6):
+        rmk.metadata = SidecarWriter(run_seq=seq)
+        rmk.run_task(task)
+        db.ingest_sidecars([x])
+    rows = db.get_history(task)
+    assert [r['run_seq'] for r in rows] == [5, 4, 3]
+
+
+def test_late_older_sidecar_does_not_become_the_last_execution(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    db, rmk, x, task, SidecarWriter = _sidecar_db(tmp_path)
+    for seq in (9, 2):
+        rmk.metadata = SidecarWriter(run_seq=seq)
+        rmk.run_task(task)
+        db.ingest_sidecars([x])
+    assert [r['run_seq'] for r in db.get_history(task)] == [9, 2]
+
+
+def test_history_keep_is_validated(project, capsys):
+    cli('run', 'pipeline.py')
+    assert cli('history', 'pipeline.py', '--prune', '--keep', '0') == 2
+    assert cli('history', 'pipeline.py', '--keep', '3') == 2
+    Path('remake.toml').write_text('[history]\nkeep = 0\n')
+    assert cli('info', 'pipeline.py') == 2
+
+
+def test_delete_tasks_removes_their_history(project):
+    cli('run', 'pipeline.py')
+    db = _db()
+    tasks = _load_tasks()
+    db.delete_tasks(tasks)
+    assert db.conn.execute('SELECT COUNT(*) FROM task_run').fetchone()[0] == 0

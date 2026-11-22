@@ -122,10 +122,12 @@ class MetadataManager(abc.ABC):
         `remake.provenance.collect`, 0.10). No-op for backends without a
         store."""
 
-    def finish_run(self, counts):
-        """Record a finished run's counts ({'n_planned', 'n_run',
-        'n_succeeded', 'n_failed', 'n_blocked_rules', 'n_waves'}) and apply
-        the history cap. No-op for backends without a store."""
+    def finish_run(self, counts, finished=True):
+        """Record a run's counts ({'n_planned', 'n_attempted',
+        'n_blocked_rules', 'n_waves'}; a backend with history derives
+        n_run/n_succeeded/n_failed/n_skipped from it) and apply the history
+        cap. finished=False: asynchronous or interrupted, no finish time.
+        No-op for backends without a store."""
 
     def get_run(self, run_seq):
         """The recorded invocation for a run_seq: {run_seq, started,

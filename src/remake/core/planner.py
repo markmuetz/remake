@@ -648,7 +648,9 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
                     rerun, reason = True, 'never-run'
             else:
                 rerun = rec.status != TASK_STATUS_SUCCESS
-                reason = 'last-run-failed' if rerun else 'up-to-date'
+                reason = ('up-to-date' if not rerun else
+                          'last-run-failed' if rec.status == TASK_STATUS_FAILED
+                          else 'last-run-pending')
                 if not rerun and not ignore_code_changes:
                     # All three are cheap int set-memberships, so record every
                     # trigger rather than the first (several can be true at

@@ -32,7 +32,7 @@ from .executor import Executor
 _worker_rmk_cache = {}
 
 
-def _run_spec(remakefile, rule_name, kwargs, run_seq=None):
+def _run_spec(remakefile, rule_name, kwargs, run_seq=None, reason=None):
     """Runs on a dask worker. Returns True on success."""
     from ..loader import load_remake
     from ..metadata.sidecar import SidecarWriter
@@ -47,6 +47,7 @@ def _run_spec(remakefile, rule_name, kwargs, run_seq=None):
     # call because long-lived workers outlive a single invocation.
     rmk.metadata.run_seq = run_seq
     task = rmk.task_from_spec(rule_name, kwargs)
+    task.rerun_reason = reason  # for the task's history row
     logfile = task_log_path(task)
     logfile.parent.mkdir(parents=True, exist_ok=True)
     # In-flight marker, as in multiproc: tells the parent whether a task the
@@ -145,7 +146,7 @@ class DaskExecutor(Executor):
                     futures = {
                         client.submit(
                             _run_spec, self.remakefile, rule.name, task.kwargs, run_seq,
-                            pure=False,
+                            task.rerun_reason, pure=False,
                         ): task
                         for task in pending
                     }

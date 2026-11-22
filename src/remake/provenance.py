@@ -7,6 +7,8 @@ invocation on the `run` row and never compared (it is not a rerun trigger).
   installed distributions read with `importlib.metadata` (no subprocess),
   and the hash of a lockfile if one is found (D1).
 - host and user: hostname in plain text, the username only as a hash (D4).
+  The hash is unsalted, so it is pseudonymous, not anonymous: anyone with
+  a list of candidate usernames can match it.
 
 Everything here is best effort: a missing `git`, a directory outside a
 repo, or an unreadable distribution gives "not recorded", never an error.
@@ -37,8 +39,10 @@ def _sha256(data):
 def _git(directory, *args):
     """stdout of `git -C directory args...`, or None on any failure."""
     try:
+        # --no-optional-locks: never take index.lock (a `git commit` running
+        # alongside must not collide with us).
         proc = subprocess.run(
-            ['git', '-C', str(directory), *args], capture_output=True,
+            ['git', '--no-optional-locks', '-C', str(directory), *args], capture_output=True,
             timeout=GIT_TIMEOUT_S, check=False)
     except (OSError, subprocess.SubprocessError):
         return None
@@ -47,11 +51,12 @@ def _git(directory, *args):
     return proc.stdout
 
 
-def git_state(directory):
+def git_state(directory, remakefile=None):
     """{'commit', 'dirty', 'diff_hash'} for the repo holding `directory`, or
     {} if it isn't in one (or git is unavailable). One `git status` call
-    (plus `git diff` only when dirty). 'dirty' ignores untracked files: only
-    changes to tracked files can change what a committed remakefile does."""
+    (plus `git diff` only when dirty). Untracked files don't make the tree
+    dirty, except the remakefile itself: a pipeline that was never
+    committed is not "at" HEAD, and its content goes into the diff hash."""
     out = _git(directory, 'status', '--porcelain=v2', '--branch',
                '--untracked-files=no')
     if out is None:
@@ -64,10 +69,23 @@ def git_state(directory):
             dirty = True
     if commit in (None, '(initial)'):
         return {}  # a repo with no commits yet
+    untracked = None
+    if remakefile is not None:
+        name = Path(remakefile).name
+        if _git(directory, 'ls-files', '--error-unmatch', '--', name) is None:
+            try:
+                untracked = Path(directory, name).read_bytes()
+                dirty = True
+            except OSError:
+                untracked = None
     diff_hash = None
     if dirty:
-        diff = _git(directory, 'diff', 'HEAD')
-        diff_hash = _sha256(diff) if diff is not None else None
+        # --no-ext-diff/--no-textconv: hash git's own diff, never the output
+        # of a user-configured program.
+        diff = _git(directory, 'diff', '--no-ext-diff', '--no-textconv', 'HEAD')
+        if diff is not None:
+            diff_hash = _sha256(diff + (b'\0untracked remakefile\0' + untracked
+                                        if untracked is not None else b''))
     return {'commit': commit, 'dirty': dirty, 'diff_hash': diff_hash}
 
 
@@ -108,11 +126,13 @@ def current_environment():
     return fingerprint, tuple(packages)
 
 
-def find_lockfile(directory):
-    """The nearest lockfile in `directory` or a parent, stopping at the
-    repo root (a directory holding `.git`): (path, sha256) or (None, None)."""
+def find_lockfile(directory, in_repo=True):
+    """The nearest lockfile in `directory` or, inside a git repo, a parent
+    up to the repo root (a directory holding `.git`): (path, sha256) or
+    (None, None). Outside a repo only `directory` itself is looked at, so an
+    unrelated ~/uv.lock is never recorded."""
     directory = Path(directory).resolve()
-    for d in (directory, *directory.parents):
+    for d in (directory, *(directory.parents if in_repo else ())):
         for name in LOCKFILES:
             candidate = d / name
             if candidate.is_file():
@@ -140,11 +160,11 @@ def host_and_user():
     return host, (_sha256(user)[:16] if user else None)
 
 
-def collect(directory):
+def collect(directory, remakefile=None):
     """Everything recorded on a `run` row, for a remakefile in `directory`."""
-    git = git_state(directory)
+    git = git_state(directory, remakefile)
     fingerprint, packages = current_environment()
-    lockfile, lock_hash = find_lockfile(directory)
+    lockfile, lock_hash = find_lockfile(directory, in_repo=bool(git))
     host, user_hash = host_and_user()
     return {
         'git_commit': git.get('commit'),
