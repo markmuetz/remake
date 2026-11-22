@@ -172,11 +172,17 @@ def outputs_complete_many(tasks):
     from .tokens import complete_many
 
     flat, owners = [], []
+    result = {}
     for task in tasks:
-        for token in flat_values(task.outputs):
+        try:
+            outputs = task.outputs
+        except Exception:
+            result[task.key] = False  # unresolvable: not complete; the task reports it
+            continue
+        result[task.key] = bool(outputs)
+        for token in flat_values(outputs):
             flat.append(token)
             owners.append(task.key)
-    result = {task.key: bool(task.outputs) for task in tasks}
     for key, done in zip(owners, complete_many(flat)):
         if not done:
             result[key] = False
@@ -626,9 +632,17 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
         # The disk checks, batched per rule (only the tasks they apply to).
         disk_complete = {}
         if not force and check_outputs in ('fallback', 'always'):
-            # Records first: resolving t.outputs is the cost to avoid.
-            to_check = [t for t in tasks if (
-                t.key not in records or check_outputs == 'always') and t.outputs]
+            # Only the tasks that reach a disk check: no record (fallback or
+            # always), or a SUCCESS record under always. A failed or pending
+            # task reruns anyway; its outputs may not even resolve (review
+            # 2026-11-22, /code-review #1). Records first: resolving outputs
+            # is the cost to avoid.
+            def reaches_check(t):
+                rec = records.get(t.key)
+                if rec is None:
+                    return True
+                return check_outputs == 'always' and rec.status == TASK_STATUS_SUCCESS
+            to_check = [t for t in tasks if reaches_check(t)]
             disk_complete = outputs_complete_many(to_check)
 
         for task in tasks:

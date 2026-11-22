@@ -323,3 +323,21 @@ def test_failed_output_check_signature_names_the_output():
           'remake.core.exceptions.OutputValidationError: s[]: output check(s) failed:\n'
           '  summary: data/summary.txt is empty\n')
     assert error_signature(tb) == 'OutputValidationError: summary'
+
+
+def test_set_state_closes_its_run_row(tmp_path, monkeypatch):
+    # /code-review 2026-11-22 #13.
+    from remake import Remake, Sqlite3Backend, rule
+
+    monkeypatch.chdir(tmp_path)
+
+    @rule(outputs={'o': 'o_{i}.txt'}, matrix={'i': [1, 2]})
+    def r13(outputs, i):
+        Path(outputs['o']).write_text('x')
+
+    rmk = Remake(rules=[r13], metadata=Sqlite3Backend(tmp_path / 'r.db'))
+    rmk.run()
+    rmk.set_state("rule == 'r13'", pending=True)
+    latest = rmk.history(runs=True)[0]
+    assert latest['command'] == 'set-state'
+    assert latest['finished'] is not None and latest['n_planned'] == 2

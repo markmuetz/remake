@@ -173,6 +173,8 @@ class DaskExecutor(Executor):
                             self.rmk.metadata.update_task(
                                 task, TASK_STATUS_FAILED,
                                 exception=f'{WORKER_DIED}\n\n{type(e).__name__}: {e}',
+                                resources={},  # an execution: a history row (#4)
+                                execution=self.rmk._execution_record(task),
                             )
                         # Drop the result: a future still held pins its
                         # result on its worker, and if that worker dies the

@@ -14,6 +14,7 @@ self-cleaning: sidecars are deleted on ingest.
 """
 import json
 import os
+import uuid
 import time
 from pathlib import Path
 
@@ -30,12 +31,14 @@ from .metadata_manager import MetadataManager
 
 def write_environment(fingerprint, packages):
     """Write an environment's package list once (write-then-rename, so
-    concurrent array elements writing the same file are harmless)."""
+    concurrent array elements writing the same file are harmless). The
+    temporary name is unique across nodes, not just per host: two array
+    elements on different nodes can share a PID (/code-review #7)."""
     path = environments_root() / f'{fingerprint}.json'
     if path.exists():
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(f'.{os.getpid()}.tmp')
+    tmp = path.with_suffix(f'.{uuid.uuid4().hex}.tmp')
     tmp.write_text(json.dumps(list(packages)))
     tmp.replace(path)
 
@@ -79,7 +82,11 @@ class SidecarWriter(MetadataManager):
         env = execution.get('env')
         if env and 'packages' in env:
             env = dict(env)
-            write_environment(env['fingerprint'], env.pop('packages'))
+            try:
+                write_environment(env['fingerprint'], env['packages'])
+                del env['packages']
+            except OSError:
+                pass  # keep the list inline: losing the task's result is worse
             execution['env'] = env
         payload = {
             # Format version (absent = pre-0.9). Readers ignore unknown fields.

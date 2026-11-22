@@ -33,7 +33,17 @@ def set_metadata_dir(value=None, base=None):
     if not value:
         _metadata_dir = DEFAULT_METADATA_DIR
         return _metadata_dir
-    path = Path(os.path.expandvars(os.path.expanduser(str(value))))
+    expanded = os.path.expandvars(os.path.expanduser(str(value)))
+    if '$' in expanded:
+        # expandvars leaves an unset variable as is: refusing beats silently
+        # starting an empty metadata dir under '$SCRATCH/...' and rerunning
+        # everything (/code-review 2026-11-22 #5).
+        from ..core.exceptions import RemakeError
+
+        raise RemakeError(
+            f'metadata_dir {value!r}: environment variable(s) not set '
+            f'(after expansion: {expanded!r})')
+    path = Path(expanded)
     if not path.is_absolute():
         path = Path(base if base is not None else os.getcwd()) / path
     _metadata_dir = Path(os.path.abspath(path))

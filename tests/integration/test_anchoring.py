@@ -62,3 +62,26 @@ def test_explicit_project_dir_wins_and_cwd_is_restored(tmp_path, monkeypatch):
 
 def test_default_in_a_test_function_is_this_file():
     assert Remake().project_dir == str(Path(__file__).parent)
+
+
+def test_subclass_anchors_at_the_file_that_instantiates_it(tmp_path):
+    # /code-review 2026-11-22 #8.
+    lib, proj = tmp_path / 'lib', tmp_path / 'proj'
+    lib.mkdir()
+    proj.mkdir()
+    (lib / 'mylib_r8.py').write_text(textwrap.dedent('''
+        from remake import Remake
+
+        class MyRemake(Remake):
+            def __init__(self, **kw):
+                super().__init__(**kw)
+    '''))
+    (proj / 'pipeline.py').write_text(textwrap.dedent(f'''
+        import sys
+        sys.path.insert(0, {str(lib)!r})
+        from mylib_r8 import MyRemake
+        print(MyRemake().project_dir)
+    '''))
+    out = subprocess.run([sys.executable, str(proj / 'pipeline.py')], cwd=tmp_path,
+                         capture_output=True, text=True, check=True).stdout
+    assert Path(out.strip()) == proj.resolve()

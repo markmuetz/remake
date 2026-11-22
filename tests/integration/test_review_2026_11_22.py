@@ -161,3 +161,113 @@ def test_programmatic_metadata_dir_holds_the_database(tmp_path, monkeypatch):
     assert rmk.run() == 0
     assert (tmp_path / 'meta/remake.db').exists()
     assert not (tmp_path / '.remake').exists()
+
+
+def test_symlinked_remakefile_stays_the_link(tmp_path, monkeypatch):
+    # /code-review 2026-11-22 #6: workers must reload the link, not its target.
+    (tmp_path / 'shared').mkdir()
+    (tmp_path / 'proj').mkdir()
+    (tmp_path / 'shared/pipe_r6.py').write_text(textwrap.dedent('''
+        from pathlib import Path
+        from remake import Remake, rule
+
+        @rule(outputs={'o': 'out_{i}.txt'}, matrix={'i': [1, 2]})
+        def make_r6(outputs, i):
+            Path(outputs['o']).write_text(str(i))
+
+        rmk = Remake()
+        rmk.rules_from_current_module()
+    '''))
+    os.symlink(tmp_path / 'shared/pipe_r6.py', tmp_path / 'proj/pipe_r6.py')
+    monkeypatch.chdir(tmp_path)
+    from remake.executors import MultiprocExecutor
+
+    rmk = load_remake('proj/pipe_r6.py')
+    try:
+        assert rmk.remakefile == str(tmp_path / 'proj/pipe_r6.py')
+        rmk.run(executor=MultiprocExecutor(rmk, nproc=2))
+        assert (tmp_path / 'proj/out_2.txt').read_text() == '2'
+        assert rmk.plan() == ([], [])
+    finally:
+        sys.modules.pop('pipe_r6', None)
+
+
+def test_environment_write_failure_keeps_the_task_result(tmp_path, monkeypatch):
+    # /code-review 2026-11-22 #7: an OSError writing the package file must not
+    # lose the sidecar; the list stays inline and still reaches the DB.
+    import json
+
+    from remake.metadata import sidecar
+    from remake.metadata.sidecar import SidecarWriter, task_result_path
+
+    monkeypatch.chdir(tmp_path)
+
+    @rule(outputs={'o': 'o.txt'})
+    def r7(outputs):
+        pass
+
+    rmk = Remake(rules=[r7], metadata=Sqlite3Backend(tmp_path / 'r.db'))
+    rmk.finalize()
+    (t,) = rmk.tasks()
+
+    def boom(*a):
+        raise OSError('quota')
+
+    monkeypatch.setattr(sidecar, 'write_environment', boom)
+    env = {'fingerprint': 'f' * 16, 'python_version': '3.12', 'packages': ['a==1']}
+    SidecarWriter(run_seq=1).update_task(t, 1, resources={}, execution={'env': env})
+    payload = json.loads(task_result_path('r7', t.key).read_text())
+    assert payload['execution']['env']['packages'] == ['a==1']
+    rmk.metadata.ingest_sidecars(rmk.rules)
+    (row,) = rmk.metadata.get_history(t, limit=5)
+    assert rmk.metadata.get_environment(row['env_id'])['packages'] == ['a==1']
+
+
+@pytest.mark.real_anchoring
+def test_default_backend_made_elsewhere_warns_and_stays_with_its_lock(tmp_path, monkeypatch):
+    # /code-review 2026-11-22 #9.
+    from loguru import logger
+
+    proj, elsewhere = tmp_path / 'proj', tmp_path / 'else'
+    proj.mkdir()
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    backend = Sqlite3Backend()
+    assert os.path.isabs(backend.dbloc)
+    msgs = []
+    sink = logger.add(lambda m: msgs.append(str(m)), level='WARNING')
+    try:
+        Remake(rules=[], metadata=backend, project_dir=proj).finalize()
+    finally:
+        logger.remove(sink)
+    assert any('not in this pipeline' in m for m in msgs), msgs
+
+
+def test_custom_pathlike_token_gets_its_parent_dir(tmp_path, monkeypatch):
+    # /code-review 2026-11-22 #10: an os.PathLike token that isn't a PathToken.
+    from remake.core.tokens import OutputToken
+
+    class MyNc(OutputToken):
+        def __init__(self, path):
+            self.p = str(path)
+
+        def __fspath__(self):
+            return self.p
+
+        def identity(self):
+            return self.p
+
+        def is_complete(self):
+            return os.path.exists(self.p)
+
+        def format(self, **kw):
+            return MyNc(self.p.format(**kw))
+
+    monkeypatch.chdir(tmp_path)
+
+    @rule(outputs={'o': MyNc('out/{x}/a.nc')}, matrix={'x': [1]})
+    def r10(outputs, x):
+        Path(outputs['o']).write_text('x')
+
+    rmk = Remake(rules=[r10], metadata=Sqlite3Backend(':memory:'))
+    assert rmk.run() == 0 and (tmp_path / 'out/1/a.nc').exists()

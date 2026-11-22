@@ -107,3 +107,32 @@ def test_rules_from_modules_claims_only_defined_there(workdir, warnings_log):
     rmk = load_remake('pipe.py', finalize=False)
     assert [r.name for r in rmk.rules] == ['make_a']
     assert warnings_log == []
+
+
+def test_rules_from_modules_does_not_warn_about_a_rule_a_later_module_registers(tmp_path, monkeypatch):
+    # /code-review 2026-11-22 #12: rules_from_modules(analysis, extract) with
+    # analysis importing extract's rule.
+    import importlib
+
+    (tmp_path / 'extract_m12.py').write_text(
+        "from remake import rule\n\n@rule(outputs={'o': 'e.txt'})\ndef extract_obs(outputs):\n    pass\n")
+    (tmp_path / 'analysis_m12.py').write_text(
+        "from remake import rule\nfrom extract_m12 import extract_obs\n\n"
+        "@rule(inputs={'e': 'e.txt'}, outputs={'o': 'a.txt'}, depends_on=[extract_obs])\n"
+        "def analyse(inputs, outputs):\n    pass\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    from remake import Remake
+
+    msgs = []
+    sink = logger.add(lambda m: msgs.append(str(m)), level='WARNING')
+    try:
+        a = importlib.import_module('analysis_m12')
+        e = importlib.import_module('extract_m12')
+        rmk = Remake()
+        rmk.rules_from_modules(a, e)
+    finally:
+        logger.remove(sink)
+        sys.modules.pop('analysis_m12', None)
+        sys.modules.pop('extract_m12', None)
+    assert sorted(r.name for r in rmk.rules) == ['analyse', 'extract_obs']
+    assert not msgs, msgs

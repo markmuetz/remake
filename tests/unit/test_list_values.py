@@ -112,3 +112,20 @@ def test_renamed_methods_keep_deprecated_aliases(tmp_path, monkeypatch):
     with pytest.warns(DeprecationWarning, match='info'):
         assert rmk.status_summary()['totals'] == rmk.info()['totals']
     assert rmk.history(t) == [] and rmk.history(runs=True) == []
+
+
+def test_digest_of_a_callable_list_of_paths_is_unchanged_from_0_9(tmp_path, monkeypatch):
+    # /code-review 2026-11-22 #2: 0.9 stored str(list), "[PosixPath('a.txt')]".
+    from hashlib import sha1
+
+    monkeypatch.chdir(tmp_path)
+
+    @rule(inputs=lambda: {'xs': [Path('a.txt'), Path('b.txt')]}, outputs={'o': 'o.txt'})
+    def r(inputs, outputs):
+        pass
+
+    rmk = Remake(rules=[r], metadata=Sqlite3Backend(':memory:'))
+    rmk.finalize()
+    (t,) = rmk.tasks()
+    items = sorted([('i', repr('xs'), str([Path('a.txt'), Path('b.txt')])), ('o', repr('o'), 'o.txt')])
+    assert paths_digest(t) == f'1:1:{sha1(repr(items).encode()).hexdigest()}'

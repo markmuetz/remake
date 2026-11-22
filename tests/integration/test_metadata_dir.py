@@ -166,3 +166,15 @@ def test_slurm_files_land_in_metadata_dir(slurm_project):
     # resubmit re-executes the relocated submit.sh.
     assert cli('resubmit', 'pipeline.py') == 0
     assert len((shim / 'sbatch.log').read_text().splitlines()) == 2 * n
+
+
+def test_unset_variable_in_metadata_dir_is_an_error(monkeypatch, tmp_path):
+    # /code-review 2026-11-22 #5: '$SCRATCH/proj' with SCRATCH unset.
+    from remake.core.exceptions import RemakeError
+    from remake.util.paths import set_metadata_dir
+
+    monkeypatch.delenv('REMAKE_TEST_UNSET', raising=False)
+    with pytest.raises(RemakeError, match='not set'):
+        set_metadata_dir('$REMAKE_TEST_UNSET/proj', base=tmp_path)
+    monkeypatch.setenv('REMAKE_TEST_UNSET', str(tmp_path / 's'))
+    assert set_metadata_dir('$REMAKE_TEST_UNSET/proj', base=tmp_path) == tmp_path / 's/proj'

@@ -35,7 +35,7 @@ from .planner import (
 from .rule import Rule
 from .scope import check_scope, exec_function
 from .task import Task, flat_items, flat_values
-from .tokens import (Dir, FileToken, OutputToken, PathToken, canonical, canonical_path,
+from .tokens import (Dir, FileToken, OutputToken, canonical, canonical_path,
                      complete_many, dir_keys, is_remote)
 
 
@@ -153,10 +153,24 @@ def _defining_file():
     while frame is not None:
         g = frame.f_globals
         name = g.get('__name__') or ''
-        if not (name == 'remake' or name.startswith('remake.')):
+        in_remake = name == 'remake' or name.startswith('remake.')
+        # A Remake subclass's own __init__ (and anything it calls with self)
+        # is not the defining file: keep walking to its caller
+        # (/code-review 2026-11-22 #8).
+        in_subclass = isinstance(frame.f_locals.get('self'), Remake)
+        if not (in_remake or in_subclass):
             path = g.get('__file__')
             if path and not path.startswith('<'):
-                return os.path.abspath(path)
+                path = os.path.abspath(path)
+                if any(part in ('site-packages', 'dist-packages')
+                       for part in Path(path).parts):
+                    # A factory in an installed package: anchoring there
+                    # would write into the environment. Use the cwd, and say.
+                    logger.warning(
+                        f'Remake created in installed package {path}: anchoring at the '
+                        f'current directory; pass project_dir= to choose')
+                    return None
+                return path
             return None
         frame = frame.f_back
     return None
@@ -326,6 +340,23 @@ class Remake:
         self._apply_metadata_dir()
         return self._effective
 
+    def _check_metadata_location(self):
+        """Warn when a `Sqlite3Backend()` passed in with its default location
+        was created somewhere other than where this Remake keeps metadata:
+        its default was taken from the cwd at construction, so the DB and
+        the rest of `.remake/` would part (/code-review #9)."""
+        if not getattr(self.metadata, 'default_location', False):
+            return
+        from ..util.paths import db_path
+
+        expected = os.path.abspath(db_path())  # anchored: cwd is project_dir
+        if self.metadata.dbloc != expected:
+            logger.warning(
+                f'metadata DB {self.metadata.dbloc} is not in this pipeline\'s '
+                f'metadata dir ({os.path.dirname(expected)}): Sqlite3Backend() took its '
+                f'default from the cwd when created. Pass Sqlite3Backend(path), or '
+                f'leave metadata= out')
+
     def _apply_metadata_dir(self):
         """Point util.paths at this Remake's `metadata_dir` (config key; default
         `.remake`, relative values taken from the project dir). Process-global,
@@ -414,12 +445,18 @@ class Remake:
         """Register the Rules bound to top-level names in each module and
         defined in that module. Rules a module merely imported, or holds in
         containers, are not claimed and are named in a warning."""
+        # Scan them all, then warn once: a rule one module imports may be
+        # registered by scanning a later one (/code-review 2026-11-22 #12).
+        seen = []
         for module in modules:
-            self._scan_namespace(vars(module), module.__name__, module.__name__)
+            seen += self._scan_namespace(vars(module), module.__name__, module.__name__,
+                                         warn=False)
+        self._warn_unregistered(seen, ', '.join(m.__name__ for m in modules))
 
-    def _scan_namespace(self, namespace, module_name, label):
+    def _scan_namespace(self, namespace, module_name, label, warn=True):
         """Add the Rules in `namespace` defined in `module_name`; warn once
-        about Rules seen but not registered (imported, or in a container)."""
+        about Rules seen but not registered (imported, or in a container),
+        or with warn=False return them as (description, rule) pairs."""
         own, seen = [], []  # seen: (description, rule) not claimed
         for name, value in namespace.items():
             if name.startswith('__'):
@@ -436,9 +473,16 @@ class Remake:
                 seen.extend((f'{name}[{k!r}]', v) for k, v in value.items()
                             if isinstance(v, Rule))
         self.add_rules(own)
+        if not warn:
+            return seen
+        self._warn_unregistered(seen, label)
+
+    def _warn_unregistered(self, seen, label):
+        """One warning naming the scanned-but-unregistered rules in `seen`."""
         # Skip any that are registered anyway (also bound to a claimed name,
         # or added earlier with add_rules).
-        unregistered = [d for d, r in seen if not any(r is x for x in self.rules)]
+        unregistered = list(dict.fromkeys(
+            d for d, r in seen if not any(r is x for x in self.rules)))
         if unregistered:
             logger.warning(
                 f'Scan of {label} did not register: {", ".join(unregistered)}. '
@@ -454,6 +498,7 @@ class Remake:
         # backend's database goes (review 2026-11-22, finding 6).
         self.effective_config
         self._apply_metadata_dir()
+        self._check_metadata_location()
         if self.metadata is None:
             from ..metadata.sqlite3_backend import Sqlite3Backend
 
@@ -781,6 +826,9 @@ class Remake:
 
         if not self._finalized:
             self.finalize()
+        # Results workers have left but nobody has ingested (SLURM,
+        # multiproc, dask) first, as plan and info do (/code-review #3).
+        self.metadata.ingest_sidecars(self.rules)
         record = self.metadata.get_tasks_status([task]).get(task.key)
         log_path = task_log_path(task)
         jobids, array_index = last_submission(task.rule.name, task.key)
@@ -1066,10 +1114,10 @@ class Remake:
                             for key in dir_keys(token.path):
                                 dir_owner[key] = rule.name
                                 shown.setdefault(key, token.path)
-                        elif isinstance(token, PathToken):
-                            key = canonical_path(token.path)
+                        elif hasattr(token, '__fspath__'):  # any local path-like token, as 0.9
+                            key = canonical_path(os.fspath(token))
                             file_outputs[key] = rule.name
-                            shown.setdefault(key, token.path)
+                            shown.setdefault(key, os.fspath(token))
             except Defer:
                 deferred.add(rule.name)
                 logger.warning('{}: matrix not ready, outputs unknown — skipped', rule.name)
@@ -1246,6 +1294,8 @@ class Remake:
                 # non-SUCCESS record, and the row keeps the last execution's
                 # measured resources (resource_capture.md, Settled 4).
                 self.metadata.mark_pending(tasks)
+            # Close the run row, as verify does (/code-review #13).
+            self.metadata.finish_run({'n_planned': len(tasks) + len(cascaded)})
         return {'state': state, 'tasks': tasks, 'cascaded': cascaded, 'skipped': skipped}
 
     def status_summary(self, *args, **kwargs):
@@ -1265,6 +1315,7 @@ class Remake:
         executions, newest first, or with runs=True the most recent runs."""
         if not self._finalized:
             self.finalize()
+        self.metadata.ingest_sidecars(self.rules)
         if runs:
             return self.metadata.get_runs(limit=limit)
         if task is None:
@@ -1292,6 +1343,10 @@ class Remake:
         if not self._finalized:
             self.finalize()
         tasks = [t for t in self.tasks(query=query) if t.outputs]
+        # A finished-but-uningested result must not look unrecorded: adopting
+        # it under a newer run_seq would make ingest drop the real (maybe
+        # failed) result (/code-review #3).
+        self.metadata.ingest_sidecars(self.rules)
         records = self.metadata.get_tasks_status(tasks)
         recorded_ok = [t for t in tasks if t.key in records
                        and records[t.key].status == TASK_STATUS_SUCCESS] if outputs else []
@@ -1633,7 +1688,9 @@ class Remake:
                 lambda: [str(p) for p in flat_values(task.outputs)],
             )
             for token in flat_values(task.outputs):
-                if isinstance(token, PathToken):
+                # Any local path-like token, as in 0.9 (a custom os.PathLike
+                # token need not subclass PathToken; /code-review #10).
+                if hasattr(token, '__fspath__') and not is_remote(token):
                     Path(token).parent.mkdir(parents=True, exist_ok=True)
                 token.before_run()
 

@@ -10,6 +10,7 @@ place by `_add_missing_columns`.
 """
 import dataclasses
 import json
+import os
 import random
 import re
 import sqlite3
@@ -406,11 +407,15 @@ class _KeyOnly:
 class Sqlite3Backend(MetadataManager):
     def __init__(self, dbloc=None):
         # Default: <metadata dir>/remake.db, evaluated now (util.paths).
+        self.default_location = dbloc is None
         if dbloc is None:
             from ..util.paths import db_path
 
             dbloc = db_path()
-        self.dbloc = str(dbloc)
+        # Absolute from the start, so the run lock (beside the DB) and
+        # anything else derived from dbloc later, from an anchored cwd, still
+        # point at this DB (/code-review 2026-11-22 #9).
+        self.dbloc = str(dbloc) if str(dbloc) == ':memory:' else os.path.abspath(dbloc)
         self.code_comparer = CodeComparer()
         if self.dbloc != ':memory:':
             Path(self.dbloc).parent.mkdir(parents=True, exist_ok=True)
@@ -716,8 +721,12 @@ class Sqlite3Backend(MetadataManager):
     def _intern_environment(self, fingerprint, python_version, packages):
         """Find-or-insert an environment by fingerprint; its id."""
         row = self.conn.execute(
-            'SELECT id FROM environment WHERE fingerprint = ?', (fingerprint,)).fetchone()
+            'SELECT id, packages FROM environment WHERE fingerprint = ?', (fingerprint,)).fetchone()
         if row is not None:
+            if packages and row[1] in (None, '[]'):
+                # Recorded while its package file was unreadable: fill it in.
+                self.conn.execute('UPDATE environment SET packages = ? WHERE id = ?',
+                                  (json.dumps(list(packages)), row[0]))
             return row[0]
         cur = self.conn.execute(
             'INSERT INTO environment(fingerprint, python_version, packages) '

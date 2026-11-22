@@ -1286,8 +1286,10 @@ class RemakeCLI:
                 return 0
             for r in runs:
                 counts = ''
+                # A SLURM submission (no waves: never run locally), so far;
+                # an interrupted local run has n_waves and keeps its counts.
                 if r.get('n_run') is not None and r.get('n_planned') is not None \
-                        and r.get('finished') is None:  # a SLURM submission, so far
+                        and r.get('finished') is None and r.get('n_waves') is None:
                     counts = (f'{r["n_planned"]} submitted, {r["n_run"]} run, '
                               f'{r["n_failed"] or 0} failed')
                 elif r.get('n_run') is not None:

@@ -373,10 +373,25 @@ class SlurmExecutor(Executor):
         # #SBATCH opts for configs that still set it.
         config.pop('array_threshold', None)
         self.slurm_config = config
-        self.jobs_dir = jobs_dir()
-        self.slurm_dir = slurm_dir()
-        self.output_dir = slurm_output_dir()
-        self.submit_path = submit_path()
+
+    # Evaluated at use, not at construction: a library caller may build the
+    # executor from any cwd, before metadata_dir is applied (/code-review #9).
+    # Relative paths resolve against the anchored cwd when the run writes.
+    @property
+    def jobs_dir(self):
+        return jobs_dir()
+
+    @property
+    def slurm_dir(self):
+        return slurm_dir()
+
+    @property
+    def output_dir(self):
+        return slurm_output_dir()
+
+    @property
+    def submit_path(self):
+        return submit_path()
 
     @staticmethod
     def _check_profile_and_account(rmk, config):

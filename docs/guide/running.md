@@ -20,9 +20,11 @@ path/to/pipeline.py` from anywhere writes `data/` and `.remake/` beside the
 script. Pass `Remake(..., project_dir=...)` to choose another directory. With
 no defining file (a notebook cell, the REPL, `python -c`) it anchors at the
 current directory when it is created. `rmk.project_dir` says where. The
-defining file is the first caller outside remake: a helper that builds the
-`Remake` in a shared package anchors at that package, so pass
-`project_dir=` there. Each
+defining file is the first caller outside remake, skipping a `Remake`
+subclass's own `__init__`. A helper function that builds the `Remake` in a
+shared module anchors at that module's directory, so pass `project_dir=`
+there; one in an installed package (site-packages) anchors at the current
+directory, with a warning. Each
 `Remake` method changes into that directory for its duration and changes
 back afterwards. Since the working directory is process-wide, don't drive two
 `Remake`s from different threads at once. Paths on tasks you hold after a

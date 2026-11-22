@@ -63,9 +63,11 @@ def canonical_path(path):
     """The one canonical spelling of a local path (0.10 item 5a): absolute,
     normalised, with symlinks in its *directory* resolved (one realpath per
     distinct directory, cached). A symlinked final component is kept as is,
-    so a link output is the link, not its target. Used wherever remake
-    compares paths: lint, the missing-inputs check, Dir ownership and
-    dependency matching."""
+    so a link output is the link, not its target. Used by lint, the
+    missing-inputs check and Dir ownership. Not (yet) by dependency matching
+    between tasks (deps._norm, planner._norm_paths compare normpath'd
+    strings), where two spellings of one file make a task depend on every
+    upstream task: conservative, never a missed rerun."""
     absolute = os.path.abspath(os.fspath(path))
     directory, name = os.path.split(absolute)
     return os.path.join(_real_dir(directory), name) if name else _real_dir(directory)

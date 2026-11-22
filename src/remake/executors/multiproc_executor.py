@@ -206,7 +206,12 @@ class MultiprocExecutor(Executor):
     def _worker_died(self, task, failed):
         """Record a task whose worker died: no sidecar was written, so the
         parent records the failure itself."""
-        self.rmk.metadata.update_task(task, TASK_STATUS_FAILED, exception=WORKER_DIED)
+        # An execution with no measurements: resources={} still writes its
+        # history row, so the death shows in `remake history` and counts as
+        # failed, not skipped (/code-review #4).
+        self.rmk.metadata.update_task(task, TASK_STATUS_FAILED, exception=WORKER_DIED,
+                                      resources={},
+                                      execution=self.rmk._execution_record(task))
         self._done += 1
         failed.append(task)
         logger.error(f'{self._done}/{self._ntasks} failed (worker process died): {task}')

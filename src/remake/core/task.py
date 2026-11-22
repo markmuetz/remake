@@ -118,10 +118,13 @@ class Task:
 
 
 def _digest_str(v):
-    """str(v), with list/tuple elements as their path strings: identical to
-    0.9's str(v) for lists of strings (no rerun on upgrade), and stable for
-    lists of tokens, whose repr would otherwise leak into the digest."""
-    if isinstance(v, (list, tuple)):
+    """The digest form of one value: str(v), exactly as 0.9 stored it, so an
+    upgrade reruns nothing, also for a callable input returning a list of
+    Paths (str gives "[PosixPath('a')]"; /code-review 2026-11-22 #2). Only a
+    list holding output tokens (new in 0.10: 0.9 made one bogus token of the
+    whole list) uses the element path strings, so a token's repr does not
+    leak into the digest."""
+    if isinstance(v, (list, tuple)) and any(isinstance(e, OutputToken) for e in v):
         return repr(type(v)(str(e) for e in v))
     return str(v)
 
