@@ -1,0 +1,23 @@
+{
+  "meta": {
+    "machine": "Apple M5 (arm64), macOS Darwin 27.2, local APFS",
+    "date": "2026-11-22",
+    "python": "3.13.15",
+    "runs": 5,
+    "statistic": "median",
+    "n_tasks": 10000,
+    "n_files_per_task": 100,
+    "refresh": "see design_docs/releases/v0.10.0.md item 4 and the check_regression.py docstring"
+  },
+  "calibration": 0.0606,
+  "phases": {
+    "load_finalize": 0.0016,
+    "expand": 0.0095,
+    "resolve_outputs": 0.5095,
+    "plan_never_empty": 0.0264,
+    "plan_fallback_stats": 0.6613,
+    "record_completions": 0.296,
+    "plan_populated": 0.0646,
+    "total": 1.5724
+  }
+}

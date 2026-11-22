@@ -9,9 +9,38 @@ bench_million_tasks.py exercises.
 
 Run manually: PYTHONPATH=src python tests/benchmarks/bench_field_scale.py
 (not collected by pytest — no test_ prefix).
+
+Pass ``--json PATH`` to also write machine-readable timings (phase ->
+seconds, plus a ``calibration`` pure-Python loop time and run metadata);
+CI feeds that to ``check_regression.py``. The full size takes ~2 s, so
+there is no reduced-size option.
 """
+import argparse
+import json
+import platform
 import resource
+import sys
 import time
+
+CALIBRATION_ITERS = 2_000_000
+
+
+def calibrate():
+    """Time a fixed pure-Python loop (best of 5), as a runner-speed yardstick."""
+    best = float('inf')
+    for _ in range(5):
+        t = time.perf_counter()
+        x = 0
+        for i in range(CALIBRATION_ITERS):
+            x += i * i % 7
+        best = min(best, time.perf_counter() - t)
+    return best
+
+
+_parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+_parser.add_argument('--json', metavar='PATH', help='write phase timings as JSON')
+_args = _parser.parse_args()
+calibration = calibrate()
 
 from remake import Remake, Sqlite3Backend, rule
 from remake.core.dag import expand_rule
@@ -74,8 +103,34 @@ t7 = time.perf_counter()
 print(f'plan (populated DB):      {t7 - t6:8.3f} s  ({len(runnable)} runnable)')
 
 print(f'TOTAL:                    {t7 - t0:8.3f} s')
-rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6
+# ru_maxrss is bytes on macOS, kilobytes on Linux.
+_rss_div = 1e9 if sys.platform == 'darwin' else 1e6
+rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / _rss_div
 print(f'peak RSS:                 {rss:8.2f} GB')
+
+if _args.json:
+    result = {
+        'calibration': calibration,
+        'phases': {
+            'load_finalize': t1 - t0,
+            'expand': t2 - t1,
+            'resolve_outputs': t3 - t2,
+            'plan_never_empty': t4 - t3,
+            'plan_fallback_stats': t5 - t4,
+            'record_completions': t6 - t5,
+            'plan_populated': t7 - t6,
+            'total': t7 - t0,
+        },
+        'meta': {
+            'python': platform.python_version(),
+            'machine': f'{platform.system()} {platform.machine()}',
+            'n_tasks': N_TASKS,
+            'n_files_per_task': N_FILES_PER_TASK,
+            'peak_rss_gb': rss,
+        },
+    }
+    with open(_args.json, 'w') as f:
+        json.dump(result, f, indent=2)
 
 # Baseline (2026-07-02, in-memory DB, local ext4, post storage/query rework):
 #   load+finalize 0.006s; expand 1e4 tasks 0.025s;

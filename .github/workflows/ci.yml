@@ -37,3 +37,30 @@ jobs:
 
       - name: Run tests
         run: uv run pytest -q --cov=remake --cov-report=term-missing --cov-report=xml
+
+  bench:
+    name: field-scale benchmark (py3.13)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: "3.13"
+
+      - name: Sync dependencies
+        env:
+          CFLAGS: -std=gnu17
+        run: uv sync --group dev
+
+      - name: Run field-scale benchmark
+        run: uv run python tests/benchmarks/bench_field_scale.py --json bench_field_scale.json
+
+      - name: Check against baseline
+        # Fails if any phase exceeds 2x the (runner-speed-scaled) baseline.
+        # Refresh: see the check_regression.py docstring.
+        run: uv run python tests/benchmarks/check_regression.py bench_field_scale.json --factor 2.0
