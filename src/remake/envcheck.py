@@ -13,6 +13,7 @@ import subprocess as sp
 import sys
 from pathlib import Path
 
+from . import provenance
 from .version import __version__
 
 SRUN_TIME = '00:05:00'
@@ -74,13 +75,22 @@ def loaded_modules():
 
 
 def environment_report():
-    """The in-process report. Call after the remakefile has been loaded so
-    the modules it imports are included."""
+    """The one environment report, as a dict. Call after the remakefile has
+    been loaded so the modules it imports are included. Used for the SLURM
+    submit header and run log (via `format_header_lines`), for `check-env`,
+    and (as JSON) by `_env-report` on the job side. Besides interpreter,
+    paths and imported modules it carries the `remake.provenance`
+    environment fingerprint, the installed `name==version` list it hashes,
+    and the nearest lockfile (name and hash, or None)."""
     import remake
 
+    fingerprint, packages = provenance.current_environment()
+    in_repo = bool(provenance.git_state(os.getcwd()))
+    lockfile, lock_hash = provenance.find_lockfile(os.getcwd(), in_repo=in_repo)
     return {
         'executable': sys.executable,
         'python_version': sys.version.split()[0],
+        'sys_version': sys.version.replace('\n', ' '),
         'cwd': os.getcwd(),
         'pythonpath': os.environ.get('PYTHONPATH', ''),
         'sys_path': list(sys.path),
@@ -89,7 +99,65 @@ def environment_report():
         'remake_on_path': shutil.which('remake'),
         'argv0': sys.argv[0] if sys.argv else None,
         'modules': loaded_modules(),
+        'fingerprint': fingerprint,
+        'packages': list(packages),
+        'lockfile': lockfile.name if lockfile else None,
+        'lockfile_hash': lock_hash,
     }
+
+
+def _is_user_module(info):
+    """True for a module that is not in site-packages: a project module or
+    a development checkout."""
+    f = info['file']
+    return not ('site-packages' in f or 'dist-packages' in f)
+
+
+def format_header_lines(report):
+    """Human-readable lines describing a report, for the SLURM submit.sh
+    header and log: interpreter, remake, PYTHONPATH, sys.path, environment
+    fingerprint, lockfile, then each of the user's own top-level modules
+    (not stdlib, not in site-packages) with its resolved file, so a wrong
+    interpreter or checkout is visible after the fact."""
+    lines = [
+        f'sys.executable: {report["executable"]}',
+        f'sys.version: {report["sys_version"]}',
+        f'remake: {report["remake_version"]} ({report["remake_file"]})',
+        f'PYTHONPATH: {report["pythonpath"]}',
+        f'sys.path: {report["sys_path"]}',
+        f'environment fingerprint: {report["fingerprint"][:16]} '
+        f'({len(report["packages"])} packages)',
+    ]
+    if report['lockfile']:
+        lines.append(f'lockfile: {report["lockfile"]} '
+                     f'(sha256 {(report["lockfile_hash"] or "unreadable")[:16]})')
+    for name, info in report['modules'].items():
+        if _is_user_module(info):
+            lines.append(f'module {name}: {info["file"]}')
+    return lines
+
+
+def _parse_packages(packages):
+    """{name: version} from `name==version` strings."""
+    return dict(p.split('==', 1) for p in packages or [] if '==' in p)
+
+
+def diff_packages(planning, job, limit=20):
+    """Messages naming the `name==version` entries that differ between two
+    package lists: version changes, and packages in only one. At most
+    `limit` are listed, then a count of the rest."""
+    a, b = _parse_packages(planning), _parse_packages(job)
+    msgs = []
+    for name in sorted(set(a) | set(b)):
+        if name not in b:
+            msgs.append(f'{name}=={a[name]} only in planning')
+        elif name not in a:
+            msgs.append(f'{name}=={b[name]} only in job')
+        elif a[name] != b[name]:
+            msgs.append(f'{name}: planning {a[name]}, job {b[name]}')
+    if len(msgs) > limit:
+        msgs = msgs[:limit] + [f'... and {len(msgs) - limit} more']
+    return msgs
 
 
 def srun_prefix(slurm_config):
@@ -169,6 +237,13 @@ def compare_reports(local, job, job_error=None):
         elif a['version'] != b['version']:
             out.append(f'module {name} version differs: planning '
                        f'{a["version"]}, job {b["version"]}')
+    fp_local, fp_job = local.get('fingerprint'), job.get('fingerprint')
+    if fp_local and fp_job and fp_local != fp_job:
+        # The fingerprint also covers the Python version, which is reported
+        # above; only say more if the packages themselves differ.
+        diffs = diff_packages(local.get('packages'), job.get('packages'))
+        if diffs:
+            out.append('installed packages differ: ' + '; '.join(diffs))
     return out
 
 
@@ -184,6 +259,10 @@ def format_text(local, job, mismatches):
             if lm[name] == jm[name]:
                 v = f' {lm[name]["version"]}' if lm[name]['version'] else ''
                 lines.append(f'OK  module {name}{v}: {lm[name]["file"]}')
+    if (job and local.get('fingerprint') and job.get('fingerprint')
+            and not diff_packages(local.get('packages'), job.get('packages'), limit=1)):
+        lines.append(f'OK  same packages: {len(local["packages"])} installed '
+                     f'(fingerprint {local["fingerprint"][:16]})')
     if local.get('remake_on_path'):
         lines.append(f'OK  remake on PATH: {local["remake_on_path"]}')
     lines += [f'MISMATCH  {m}' for m in mismatches]

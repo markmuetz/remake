@@ -54,6 +54,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   upgrading reruns nothing.
 - `remake.__all__` declares the public API, checked against `docs/api/` by a test.
 
+### Changed
+
+- **One environment report.** The SLURM submit header and `check-env` now
+  share one function (`envcheck.environment_report`), which also carries the
+  environment fingerprint, the installed packages and the lockfile hash. The
+  submit header gains `remake`, `environment fingerprint` and `lockfile`
+  lines. `check-env` compares the fingerprint and says `OK  same packages`
+  or lists the `name==version` entries that differ.
+
 ## [0.9.0] — 2026-11-21
 
 Canonical change detection, a config file cascade with profiles, output
