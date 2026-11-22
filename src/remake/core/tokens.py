@@ -7,13 +7,22 @@ of *finished*.
 
 Path-backed tokens are transparent (`os.PathLike`): rule code passes them
 straight to open(), Path(), xarray, zarr — no unwrapping.
+
+The interface below (`OutputToken`) is frozen at 1.0 (0.10 item 5a):
+`identity`, `is_complete`, `format`, `validate`, `before_run`,
+`after_success`, `stat`, `complete_many`, `canonical`, `adopt` and the
+`remote` flag. `str(token) == token.identity()`, and a `PathToken`'s
+`.path` / `__fspath__` are part of it.
 """
 import abc
 import copy
 import hashlib
 import json
 import os
+import re
 import time
+from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from loguru import logger
@@ -27,13 +36,90 @@ def sha256_file(path, bufsize=1 << 20):
     return h.hexdigest()
 
 
+@dataclass(frozen=True, slots=True)
+class OutputStat:
+    """What `OutputToken.stat()` reports, without reading the data.
+
+    exists: something is there (not the same as complete: a Dir without its
+      manifest exists but is not complete).
+    size: bytes, or None if unknown or not cheap to know.
+    mtime: modification time (seconds since the epoch), or None.
+
+    A dataclass, not a tuple, so fields can be added after 1.0."""
+    exists: bool
+    size: int | None = None
+    mtime: float | None = None
+
+
+_URL_RE = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]+:/')
+
+
+@lru_cache(maxsize=65536)
+def _real_dir(directory):
+    return os.path.realpath(directory)
+
+
+def canonical_path(path):
+    """The one canonical spelling of a local path (0.10 item 5a): absolute,
+    normalised, with symlinks in its *directory* resolved (one realpath per
+    distinct directory, cached). A symlinked final component is kept as is,
+    so a link output is the link, not its target. Used wherever remake
+    compares paths: lint, the missing-inputs check, Dir ownership and
+    dependency matching."""
+    absolute = os.path.abspath(os.fspath(path))
+    directory, name = os.path.split(absolute)
+    return os.path.join(_real_dir(directory), name) if name else _real_dir(directory)
+
+
+def canonical(value):
+    """The canonical identity of an input or output value: a token's
+    `canonical()`, a URL string unchanged, a local path `canonical_path`."""
+    if isinstance(value, OutputToken):
+        return value.canonical()
+    text = os.fspath(value) if isinstance(value, os.PathLike) else str(value)
+    if _URL_RE.match(text):
+        return text
+    return canonical_path(text)
+
+
+def is_remote(value):
+    """Is this input/output remote (an S3 object, a URL)? Remote values are
+    skipped by remake's implicit plan-time checks: missing inputs, lint, Dir
+    ownership, creating parent directories. Explicit checks (check_outputs,
+    `remake verify`) still ask them."""
+    if isinstance(value, OutputToken):
+        return value.remote
+    text = os.fspath(value) if isinstance(value, os.PathLike) else str(value)
+    return bool(_URL_RE.match(text))
+
+
+def complete_many(tokens):
+    """[token.is_complete() for token in tokens], batched: tokens are grouped
+    by exact class and each group goes through that class's `complete_many`
+    (local paths: one directory listing per directory instead of one stat per
+    file). The order of the results matches `tokens`."""
+    tokens = list(tokens)
+    results = [None] * len(tokens)
+    groups = {}
+    for i, token in enumerate(tokens):
+        groups.setdefault(type(token), []).append(i)
+    for cls, indices in groups.items():
+        answers = cls.complete_many([tokens[i] for i in indices])
+        for i, answer in zip(indices, answers):
+            results[i] = bool(answer)
+    return results
+
+
 class OutputToken(abc.ABC):
     # Output validation options (0.9.0 item 4), set by `Ensure(...)`. Not part
     # of the token's identity or repr, so adding or changing validation is
-    # not an inputs/outputs change (no rerun).
+    # not an inputs/outputs change (no rerun). Part of the frozen interface:
+    # a custom validate() reads them.
     nonempty = False
     min_size = None
     checksum = False
+    # Remote outputs (S3, ...) are skipped by plan-time checks; see is_remote.
+    remote = False
 
     @abc.abstractmethod
     def identity(self) -> str:
@@ -59,10 +145,40 @@ class OutputToken(abc.ABC):
 
     def after_success(self, checksum=False):
         """Called after a successful run and validation: stats for this
-        output — {'n_files', 'total_bytes', 'checksum'} (any may be None) —
-        or None for nothing to record. `checksum`: the rule/global
-        `checksum_outputs` opt-in; `Ensure(checksum=True)` also turns it on."""
+        output — {'n_files', 'total_bytes', 'checksum'} (any may be None),
+        plus 'aggregate': True for a token summarising many files (a Dir),
+        which is then recorded under its own name rather than summed with
+        the plain files — or None for nothing to record. `checksum`: the
+        rule/global `checksum_outputs` opt-in; `Ensure(checksum=True)` also
+        turns it on."""
         return None
+
+    def stat(self):
+        """Existence (and size/mtime where cheap) without reading the data.
+        Default: exists = is_complete(); override for something cheaper or
+        richer."""
+        return OutputStat(exists=self.is_complete())
+
+    @classmethod
+    def complete_many(cls, tokens):
+        """is_complete() for many tokens of this class at once, in order.
+        Default: a loop. Override where a batch is cheaper (one listing, one
+        API call). Call the module-level `complete_many`, which groups mixed
+        token types."""
+        return [token.is_complete() for token in tokens]
+
+    def canonical(self):
+        """The canonical identity used to compare outputs with inputs and
+        with each other (not for display, and not hashed: identity() is).
+        Default: identity()."""
+        return self.identity()
+
+    def adopt(self, write=True):
+        """Adoption (`remake verify --adopt`, `set-state --success
+        --check-outputs`): may this existing output be recorded as produced
+        by its task? Default: is_complete(). A token whose completion is a
+        marker remake writes (Dir) writes it here, unless write=False."""
+        return self.is_complete()
 
     def __str__(self):
         return self.identity()
@@ -83,14 +199,62 @@ class PathToken(OutputToken):
     def identity(self):
         return self.path
 
+    def canonical(self):
+        return canonical_path(self.path)
+
     def format(self, **kwargs):
         # A copy, so Ensure options (and any subclass state) carry over.
         new = copy.copy(self)
         new.path = self.path.format(**kwargs)
         return new
 
+    def _marker_path(self):
+        """The one file whose existence means complete (no Ensure checks)."""
+        return self.path
+
+    # Below this many tokens in one directory, a stat each beats listing it
+    # (a 1e6-entry directory listed to find one file).
+    _SCAN_THRESHOLD = 8
+
+    @classmethod
+    def complete_many(cls, tokens):
+        """Local paths: one os.scandir per directory holding at least
+        _SCAN_THRESHOLD markers, a stat each otherwise. Tokens with Ensure
+        size checks, and classes that redefine is_complete, fall back to it."""
+        tokens = list(tokens)
+        if cls.is_complete not in _BATCHABLE_IS_COMPLETE:
+            return [t.is_complete() for t in tokens]
+        results = [None] * len(tokens)
+        by_dir = {}
+        for i, token in enumerate(tokens):
+            if token.nonempty or token.min_size is not None:
+                results[i] = token.is_complete()
+                continue
+            directory, name = os.path.split(token._marker_path())
+            by_dir.setdefault(directory, []).append((i, name))
+        for directory, entries in by_dir.items():
+            if len(entries) < cls._SCAN_THRESHOLD:
+                for i, _ in entries:
+                    results[i] = os.path.exists(tokens[i]._marker_path())
+                continue
+            try:
+                with os.scandir(directory or '.') as it:
+                    present = {e.name for e in it if not e.is_symlink() or os.path.exists(e.path)}
+            except (FileNotFoundError, NotADirectoryError):
+                present = set()
+            for i, name in entries:
+                results[i] = name in present
+        return results
+
 
 class FileToken(PathToken):
+    def stat(self):
+        try:
+            st = os.stat(self.path)
+        except (FileNotFoundError, NotADirectoryError):
+            return OutputStat(exists=False)
+        return OutputStat(exists=True, size=st.st_size, mtime=st.st_mtime)
+
     def _problem(self):
         try:
             size = os.stat(self.path).st_size
@@ -164,6 +328,23 @@ class Dir(PathToken):
     @property
     def manifest_path(self):
         return os.path.join(self.path, MANIFEST_NAME)
+
+    def _marker_path(self):
+        return self.manifest_path
+
+    def stat(self):
+        """exists: the directory is there; size: the manifest's total_bytes
+        (None without a manifest)."""
+        if not os.path.isdir(self.path):
+            return OutputStat(exists=False)
+        summary = self.summary()
+        mtime = None
+        try:
+            mtime = os.stat(self.manifest_path).st_mtime
+        except OSError:
+            pass
+        return OutputStat(exists=True,
+                          size=summary['total_bytes'] if summary else None, mtime=mtime)
 
     def format(self, **kwargs):
         new = super().format(**kwargs)
@@ -289,7 +470,7 @@ class Dir(PathToken):
                 '{}: {} file(s) ({} bytes) were not produced by this run and are '
                 'recorded as stale; remake never deletes files, remove them by hand',
                 self.path, agg['n_stale'], agg['stale_bytes'])
-        return {'dir': True, 'n_files': agg['n_files'],
+        return {'aggregate': True, 'n_files': agg['n_files'],
                 'total_bytes': agg['total_bytes'], 'checksum': None}
 
     def _write_manifest(self, files, agg):
@@ -301,10 +482,13 @@ class Dir(PathToken):
         os.replace(tmp, self.manifest_path)  # atomic: complete or absent
 
     def claim(self, write=True):
-        """Adoption (`set-state --success --check-outputs`): a dir that
-        exists without a manifest is scanned and everything present is
-        claimed as produced. True if the dir is (now) complete. With
-        `write=False`, only report whether it would be."""
+        """Deprecated alias of adopt() (0.9.0 name)."""
+        return self.adopt(write=write)
+
+    def adopt(self, write=True):
+        """Adoption: a dir that exists without a manifest is scanned and
+        everything present is claimed as produced. True if the dir is (now)
+        complete. With `write=False`, only report whether it would be."""
         if self.is_complete():
             return True
         if self.manifest() is not None or not os.path.isdir(self.path):
@@ -325,8 +509,19 @@ class ZarrStore(PathToken):
         # metadata written by zarr.consolidate_metadata() marks completion.
         return Path(self.path, '.zmetadata').exists()
 
+    def _marker_path(self):
+        return os.path.join(self.path, '.zmetadata')
+
+    def stat(self):
+        return OutputStat(exists=os.path.isdir(self.path))
+
 
 class S3Object(OutputToken):
+    """An object in S3. Experimental: storage backends are planned for after
+    1.0, so this class is not covered by the 1.0 compatibility promise."""
+
+    remote = True
+
     def __init__(self, bucket, key):
         self.bucket = bucket
         self.key = key
@@ -376,6 +571,13 @@ def Ensure(output, *, nonempty=True, min_size=None, checksum=False):
     token.min_size = min_size
     token.checksum = checksum
     return token
+
+
+# The is_complete implementations that are a plain marker-existence test, so
+# the PathToken batch (a listing) is equivalent. A subclass inherits the
+# batch only if it keeps one of these; one that redefines is_complete (or
+# Dir, which reads its manifest) falls back to calling it per token.
+_BATCHABLE_IS_COMPLETE = (FileToken.is_complete, ZarrStore.is_complete)
 
 
 def as_token(value):

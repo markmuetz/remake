@@ -1,7 +1,6 @@
 """The Remake class — wires rules, planner, metadata and executors together."""
 import inspect
 import os
-import re
 import traceback
 from collections import Counter
 from pathlib import Path
@@ -34,7 +33,7 @@ from .planner import (
 from .rule import Rule
 from .scope import check_scope, exec_function
 from .task import Task
-from .tokens import Dir, OutputToken, PathToken
+from .tokens import Dir, OutputToken, PathToken, canonical, canonical_path, complete_many, is_remote
 
 
 class _TemplatePlaceholder:
@@ -135,7 +134,6 @@ _MISSING = object()
 # A scheme prefix (s3://, https://, gs://): an input that is a URL.
 # Path('s3://b/k') stringifies as 's3:/b/k', hence :// or :/ (but not a
 # Windows drive, C:\\).
-_URL_RE = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]+:/')
 
 
 def _accepts_kwarg(metadata, name):
@@ -820,11 +818,11 @@ class Remake:
                 for name, token in outputs.items():
                     if not isinstance(token, Dir):
                         continue
-                    path = os.path.normpath(token.path)
+                    path = canonical_path(token.path)
                     other = owners.setdefault(path, (task, name))
                     if other != (task, name):
                         raise RemakeError(
-                            f'Dir {path!r} is declared by two outputs: '
+                            f'Dir {token.path!r} is declared by two outputs: '
                             f'{other[0]} ({other[1]}) and {task} ({name}). '
                             f'Each Dir belongs to exactly one task.')
         return owners
@@ -853,28 +851,37 @@ class Remake:
             self.finalize()
         self._check_duplicate_dirs()
 
-        producers = {}  # output path -> set of rule names
-        rule_outputs = {}  # rule name -> [output paths]
-        dir_owner = {}  # normalised Dir path -> rule name
-        file_outputs = {}  # normalised plain output path -> rule name
+        # Paths are matched by their canonical spelling (tokens.canonical:
+        # `./a`, `a` and `/abs/a` are one file) and shown as declared.
+        producers = {}  # canonical output path -> set of rule names
+        rule_outputs = {}  # rule name -> [output paths, as declared]
+        dir_owner = {}  # canonical Dir path -> rule name
+        file_outputs = {}  # canonical plain output path -> rule name
+        shown = {}  # canonical path -> the path as declared
         deferred = set()
         for rule in self.rules:
             paths = []
             try:
                 for task in iter_expand_rule(rule):
                     for token in task.outputs.values():
+                        if is_remote(token):
+                            continue
                         paths.append(str(token))
                         if isinstance(token, Dir):
-                            dir_owner[os.path.normpath(token.path)] = rule.name
-                        elif hasattr(token, '__fspath__'):
-                            file_outputs[os.path.normpath(token.path)] = rule.name
+                            key = canonical_path(token.path)
+                            dir_owner[key] = rule.name
+                            shown.setdefault(key, token.path)
+                        elif isinstance(token, PathToken):
+                            key = canonical_path(token.path)
+                            file_outputs[key] = rule.name
+                            shown.setdefault(key, token.path)
             except Defer:
                 deferred.add(rule.name)
                 logger.warning('{}: matrix not ready, outputs unknown — skipped', rule.name)
                 continue
             rule_outputs[rule.name] = paths
             for path in paths:
-                producers.setdefault(path, set()).add(rule.name)
+                producers.setdefault(canonical(path), set()).add(rule.name)
 
         findings = {}  # (kind, rule, other) -> {'count': n, 'example': ...}
 
@@ -887,24 +894,28 @@ class Remake:
         def enclosing_dir(path, *, proper=False):
             """The nearest Dir output that contains `path` (or is it, unless
             `proper`): (Dir path, owning rule) or None. A walk up the path's
-            parents, so cost is O(depth) per path, not a scan of all Dirs."""
-            path = os.path.normpath(path)
+            parents, so cost is O(depth) per path, not a scan of all Dirs.
+            `path` is canonical; the Dir path returned is as declared."""
             if proper:
                 path = os.path.dirname(path)
-            while path and path not in ('.', '/'):
+            while True:
                 if path in dir_owner:
-                    return path, dir_owner[path]
-                path = os.path.dirname(path)
-            return None
+                    return shown.get(path, path), dir_owner[path]
+                parent = os.path.dirname(path)
+                if parent == path:
+                    return None
+                path = parent
 
         # Nesting: a Dir inside another task's Dir, or a plain file output
         # inside a Dir, makes "everything in the Dir came from one task" false.
         for path, owner in dir_owner.items():
             if (outer := enclosing_dir(path, proper=True)):
-                record('dir_nested', owner, outer[1], {'dir': path, 'inside': outer[0]})
+                record('dir_nested', owner, outer[1],
+                       {'dir': shown.get(path, path), 'inside': outer[0]})
         for path, owner in file_outputs.items():
             if (outer := enclosing_dir(path)) and outer[1] != owner:
-                record('file_in_dir', owner, outer[1], {'file': path, 'inside': outer[0]})
+                record('file_in_dir', owner, outer[1],
+                       {'file': shown.get(path, path), 'inside': outer[0]})
 
         for rule in self.rules:
             if rule.inputs is None or rule.name in deferred:
@@ -915,9 +926,13 @@ class Remake:
                 continue
             candidates = [p for name in dep_names for p in rule_outputs.get(name, [])]
             for task in iter_expand_rule(rule):
-                for path in map(str, task.inputs.values()):
-                    made_by = producers.get(path)
-                    if not made_by and dir_owner and (inside := enclosing_dir(path)):
+                for value in task.inputs.values():
+                    if is_remote(value):
+                        continue  # not a local file: nothing to match
+                    path = str(value)
+                    key = canonical(value)
+                    made_by = producers.get(key)
+                    if not made_by and dir_owner and (inside := enclosing_dir(key)):
                         # An input inside another rule's Dir is that rule's.
                         made_by = {inside[1]}
                     if made_by:
@@ -929,7 +944,7 @@ class Remake:
                         continue
                     close = difflib.get_close_matches(path, candidates, n=1, cutoff=0.9)
                     if close:
-                        producer = min(producers[close[0]])
+                        producer = min(producers[canonical(close[0])])
                         record(
                             'near_miss', rule.name, producer,
                             {'input': path, 'closest': close[0]},
@@ -1009,11 +1024,9 @@ class Remake:
         skipped = 0
         if check_outputs:
             def adoptable(token):
-                # A Dir that exists without a manifest is claimed (scan and
-                # claim everything present), unless this is a dry run.
-                if isinstance(token, Dir):
-                    return token.claim(write=not dry_run)
-                return token.is_complete()
+                # token.adopt: a Dir that exists without a manifest is
+                # claimed (scan, claim everything present) unless dry_run.
+                return token.adopt(write=not dry_run)
 
             verified = [
                 t for t in tasks
@@ -1107,10 +1120,8 @@ class Remake:
                 continue  # unresolvable here: let the task itself report it
             for value in values:
                 path = str(value)
-                if not isinstance(value, OutputToken) and _URL_RE.match(path):
-                    continue  # a URL (s3://, https://, ...): not ours to stat
-                if isinstance(value, OutputToken) and not isinstance(value, PathToken):
-                    continue  # remote (S3Object, ...): no network calls at plan time
+                if is_remote(value):
+                    continue  # S3, a URL: no network calls at plan time
                 if path not in checked:
                     try:
                         if isinstance(value, OutputToken):
@@ -1125,10 +1136,9 @@ class Remake:
             return {}
         from .tokens import Dir
 
-        def canon(p):
-            # The same file spelled two ways (relative vs absolute, `./`,
-            # a symlinked root) must match (ultrareview 2026-11-21).
-            return os.path.realpath(os.path.abspath(p))
+        # The same file spelled two ways (relative vs absolute, `./`, a
+        # symlinked root) must match (ultrareview 2026-11-21).
+        canon = canonical
 
         produced = set()
         produced_dirs = set()
@@ -1137,7 +1147,7 @@ class Remake:
             try:
                 for t in iter_expand_rule(rule):
                     for tok in t.outputs.values():
-                        norm = canon(str(tok))
+                        norm = canon(tok)
                         produced.add(norm)
                         if isinstance(tok, Dir):
                             produced_dirs.add(norm)
@@ -1333,7 +1343,7 @@ class Remake:
                 lambda: [str(p) for p in task.outputs.values()],
             )
             for token in task.outputs.values():
-                if hasattr(token, '__fspath__'):
+                if isinstance(token, PathToken):
                     Path(token).parent.mkdir(parents=True, exist_ok=True)
                 token.before_run()
 

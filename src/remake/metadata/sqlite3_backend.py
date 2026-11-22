@@ -1151,7 +1151,8 @@ class Sqlite3Backend(MetadataManager):
         self.conn.execute('DELETE FROM output_stat WHERE task_id = ?', (task_id,))
         rows, plain_n, plain_bytes = [], 0, 0
         for name, st in sorted(output_stats.items()):
-            if st.get('checksum') is None and not st.get('dir'):
+            # 'aggregate' (0.10) / 'dir' (0.9 sidecars): a Dir's own row.
+            if st.get('checksum') is None and not (st.get('aggregate') or st.get('dir')):
                 plain_n += st.get('n_files') or 0
                 plain_bytes += st.get('total_bytes') or 0
                 continue

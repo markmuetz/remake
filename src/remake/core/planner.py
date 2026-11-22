@@ -165,6 +165,24 @@ def _outputs_complete(task):
     return bool(outputs) and all(token.is_complete() for token in outputs.values())
 
 
+def outputs_complete_many(tasks):
+    """{task.key: all outputs complete} for many tasks, batched through
+    tokens.complete_many (one directory listing per directory rather than a
+    stat per file, 0.10 item 5a). A task with no outputs is not complete."""
+    from .tokens import complete_many
+
+    flat, owners = [], []
+    for task in tasks:
+        for token in task.outputs.values():
+            flat.append(token)
+            owners.append(task.key)
+    result = {task.key: bool(task.outputs) for task in tasks}
+    for key, done in zip(owners, complete_many(flat)):
+        if not done:
+            result[key] = False
+    return result
+
+
 def cascade_settled(rule_set, dag, selected, run_seq, status, edges=None):
     """Guarded downstream cascade for `set-state --success`.
 
@@ -605,6 +623,13 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
             elif dep_rerun:
                 partial_deps.append((dep, dep_rerun))
 
+        # The disk checks, batched per rule (only the tasks they apply to).
+        disk_complete = {}
+        if not force and check_outputs in ('fallback', 'always'):
+            to_check = [t for t in tasks if t.outputs and (
+                t.key not in records or check_outputs == 'always')]
+            disk_complete = outputs_complete_many(to_check)
+
         for task in tasks:
             rec = records.get(task.key)
             task_kwargs = frozenset(task.kwargs.items())
@@ -617,7 +642,7 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
                 # calls under check_outputs) rather than compute-then-discard.
                 rerun, reason = True, 'forced'
             elif rec is None:
-                if check_outputs in ('fallback', 'always') and _outputs_complete(task):
+                if check_outputs in ('fallback', 'always') and disk_complete.get(task.key):
                     rerun, reason = False, 'adopted-outputs'
                 else:
                     rerun, reason = True, 'never-run'
@@ -650,7 +675,7 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
                     elif digest != rec.paths_digest:
                         rerun, reason = True, 'paths-changed'
                 if not rerun and check_outputs == 'always' and task.outputs:
-                    if not _outputs_complete(task):
+                    if not disk_complete.get(task.key, False):
                         rerun, reason = True, 'outputs-missing'
 
             if not rerun:

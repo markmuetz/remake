@@ -8,6 +8,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Breaking
 
+- `OutputToken.after_success` marks a token that summarises many files
+  with `'aggregate': True` (was `'dir': True`); 0.9 sidecars are still
+  read. Custom tokens that are neither local paths nor `remote = True` are
+  now asked `is_complete()` by the missing-inputs check (0.9 skipped every
+  non-path token); set `remote = True` on a token class to opt out.
+
 - **Exit code 3 for a run that stopped short** (0.10 decision D5): when no
   task failed but rules were left blocked (a deferred matrix never became
   ready), `remake run` now exits 3, not 1. A failed task is still 1, also
@@ -20,6 +26,24 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The output-token interface is settled for 1.0** (0.10 item 5a,
+  `remake.core.tokens`): `OutputToken.stat()` (an `OutputStat` of
+  exists/size/mtime, without reading the data), `complete_many()` (batched
+  completion: local paths take one directory listing per directory instead
+  of one stat per file, used by `check_outputs` planning), `canonical()`
+  (one spelling per path, used by lint, the missing-inputs check and `Dir`
+  ownership, so `./a`, `a` and `/abs/a` are one file everywhere), `adopt()`
+  (`Dir.claim` remains as an alias), and a `remote` class flag. `S3Object`
+  is marked experimental: storage backends come after 1.0.
+- **Provenance and run history** (0.10 items 1 and 3): each run records the
+  git commit, a dirty flag and diff hash, Python and remake versions, an
+  installed-distribution fingerprint, a lockfile hash, the host, and a hash
+  of the username. Each task execution is kept (the last `history.keep`,
+  default 10, per task) with its rerun reason, resources, host and error
+  signature. New `remake history <task>`, `remake history --runs` and
+  `--prune`; `task-info` shows the last execution and flags a SLURM job that
+  ran in a different environment from the planner. Schema 1.1, additive:
+  upgrading reruns nothing.
 - `remake.__all__` declares the public API, checked against `docs/api/` by a test.
 
 ## [0.9.0] — 2026-11-21

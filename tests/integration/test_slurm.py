@@ -850,7 +850,7 @@ rmk.rules_from_current_module()
     cli('run-array-task', 'dirs.py', 'tiles', '1')  # the n=2 spec
     payload = json.loads(next(Path('.remake/tasks/results').rglob('*.json')).read_text())
     assert payload['output_stats']['d'] == {
-        'dir': True, 'n_files': 2, 'total_bytes': 6, 'checksum': None}
+        'aggregate': True, 'n_files': 2, 'total_bytes': 6, 'checksum': None}
     assert Path('data/tiles/2/.remake-manifest.json').exists()
 
     capsys.readouterr()
