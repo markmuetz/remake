@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import unicodedata
+import warnings
 import re
 import time
 from dataclasses import dataclass
@@ -559,7 +560,9 @@ class Dir(PathToken):
         os.replace(tmp, self.manifest_path)  # atomic: complete or absent
 
     def claim(self, write=True):
-        """Deprecated alias of adopt() (0.9.0 name)."""
+        """Deprecated alias of adopt() (0.9.0 name; removed at 1.0)."""
+        warnings.warn('Dir.claim() is deprecated; use Dir.adopt() (removed at 1.0)',
+                      DeprecationWarning, stacklevel=2)
         return self.adopt(write=write)
 
     def adopt(self, write=True):

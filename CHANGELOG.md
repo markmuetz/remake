@@ -28,6 +28,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of once per path (`getcwd` costs ~60 µs on macOS): lint and the
   missing-inputs check over 1e6 paths drop from ~100 s to ~2 s there.
 
+### Deprecated
+
+- `Dir.claim()` now warns (`DeprecationWarning`); use `Dir.adopt()`. Removed
+  at 1.0, with `Remake.status_summary()`, `Remake.task_spec()` and the
+  built-in JASMIN SLURM defaults used when no profile is selected (see
+  design_docs/releases/v0.11.0.md item 7).
+
 ## [0.10.0] — 2026-11-22
 
 Provenance and run history, `remake verify`, list-valued inputs and
