@@ -72,6 +72,7 @@ todos.md by review ID once scheduled.
 | [remakefile_deps.md](designs/remakefile_deps.md) — `run-all` + cross-remakefile deps | `run-all` agreed; deps parked | 0.9 (`run-all`) |
 | [rocrate_export.md](designs/rocrate_export.md) — RO-Crate export | Design | after 1.0 |
 | [slurm_already_running.md](designs/slurm_already_running.md) — duplicate-submission guard | Implemented in part; rest parked | — |
+| [temp_outputs.md](designs/temp_outputs.md) — `temp()` outputs after 1.0 | Design check done: additive | after 1.0 |
 | [per_task_logging.md](designs/per_task_logging.md) — per-task log layout | Implemented | — |
 | [claude_remake_skill.md](designs/claude_remake_skill.md) — the Claude Code remake skill | Implemented | — |
 
