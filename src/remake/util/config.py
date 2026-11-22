@@ -38,6 +38,8 @@ _SCHEMA = {
     'resources': {'capture': (bool,), 'rss_interval': (int, float)},
     'external_inputs_hint': (str,),
     'checksum_outputs': (bool,),
+    # Where `.remake/` lives (0.10 item 5f / D7); relative to the project dir.
+    'metadata_dir': (str,),
     # Run history (0.10 item 3): executions kept per task.
     'history': {'keep': (int,)},
 }
@@ -62,6 +64,19 @@ def shipped_profile_dir():
 def shipped_profile_names():
     d = shipped_profile_dir()
     return sorted(p.stem for p in d.glob('*.toml')) if d.is_dir() else []
+
+
+def project_metadata_dir(project_dir):
+    """The `metadata_dir` set in `project_dir/remake.toml`, or None. Read
+    before the full config is loaded (the CLI opens its log files first);
+    unreadable or invalid files give None here and are reported when the
+    config is loaded properly."""
+    path = Path(project_dir) / 'remake.toml'
+    try:
+        value = _load_toml(path).get('metadata_dir') if path.is_file() else None
+    except RemakeError:
+        return None
+    return value if isinstance(value, str) and value else None
 
 
 def _isinstance(v, types):

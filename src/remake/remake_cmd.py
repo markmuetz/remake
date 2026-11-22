@@ -25,6 +25,8 @@ from .util import (
     add_argset,
     task_log_path as _task_log_path,
 )
+from .util.config import project_metadata_dir
+from .util.paths import log_file, metadata_dir, set_metadata_dir, slurm_output_dir, submit_path
 from .version import __version__
 
 # Heavy/optional imports (networkx, the executor stack, squeue) stay local to
@@ -130,7 +132,7 @@ def _failed_line(failure):
 
         _, index = last_submission(failure['rule'], failure['key'])
         if index is not None:
-            err = Path('.remake/slurm/output') / failure['rule'] / f'{index}.err'
+            err = slurm_output_dir() / failure['rule'] / f'{index}.err'
             if err.exists():
                 error = _last_line(err.read_text(errors='replace'))
     return {
@@ -696,7 +698,7 @@ class RemakeCLI:
 
         from .executors.slurm_executor import check_resubmit_safe
 
-        submit = Path('.remake/submit.sh')
+        submit = submit_path()
         if not submit.exists():
             raise RemakeError(
                 f'No {submit} — generate it with: remake run {args.remakefile} --executor slurm'
@@ -1509,9 +1511,12 @@ def remake_cmd(argv=None):
         # correlate e.g. a plan total with its constituent status queries.
         logger.configure(extra={'run_id': uuid.uuid4().hex[:12]})
         try:
-            Path('.remake').mkdir(parents=True, exist_ok=True)
-        except OSError as e:
-            print(f'error: cannot create .remake/ metadata dir: {e}', file=sys.stderr)
+            # metadata_dir from remake.toml, before the config is loaded
+            # (the log sinks below need it).
+            set_metadata_dir(project_metadata_dir(Path.cwd()), base=Path.cwd())
+            metadata_dir().mkdir(parents=True, exist_ok=True)
+        except (OSError, RemakeError) as e:
+            print(f'error: cannot create metadata dir {metadata_dir()}: {e}', file=sys.stderr)
             os.chdir(orig_cwd)
             return 2
         debug_level = 'TRACE' if args.trace else 'DEBUG'
@@ -1523,15 +1528,15 @@ def remake_cmd(argv=None):
         #    per record, with bound fields (event=..., ntasks=..., seconds=...)
         #    under record.extra, so mining is jq, not regex (logs_analysis §4).
         logger.add(
-            '.remake/remake.log', level='INFO',
+            log_file('remake.log'), level='INFO',
             rotation='5 MB', retention=3,
         )
         logger.add(
-            '.remake/remake.debug.log', level=debug_level,
+            log_file('remake.debug.log'), level=debug_level,
             rotation='5 MB', retention=3,
         )
         logger.add(
-            '.remake/remake.jsonl', level=debug_level, serialize=True,
+            log_file('remake.jsonl'), level=debug_level, serialize=True,
             rotation='5 MB', retention=3,
         )
         logger.bind(event='invocation').debug(f'argv: {argv}')

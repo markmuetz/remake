@@ -44,6 +44,7 @@ from loguru import logger
 
 from ..core.deps import Edge, task_id
 from ..core.exceptions import RemakeError
+from ..util.paths import jobs_dir, slurm_dir, slurm_output_dir, submit_path
 from .executor import Executor
 
 DEFAULT_SLURM_CONFIG = {
@@ -134,7 +135,8 @@ def squeue_snapshot():
     return snapshot
 
 
-JOBS_DIR = Path('.remake/jobs')
+# Job specs and sidecars live in util.paths.jobs_dir() (evaluated at use time:
+# the metadata_dir config key moves it).
 
 
 def spec_path(rule_name, run_seq=None):
@@ -142,8 +144,8 @@ def spec_path(rule_name, run_seq=None):
     run_seq, or the legacy unversioned path when run_seq is None (pre-0.9
     submissions, whose sidecars carry no run_seq)."""
     if run_seq is None:
-        return JOBS_DIR / f'{rule_name}.json'
-    return JOBS_DIR / f'{rule_name}.{run_seq}.json'
+        return jobs_dir() / f'{rule_name}.json'
+    return jobs_dir() / f'{rule_name}.{run_seq}.json'
 
 
 def submitted_spec_path(rule_name):
@@ -153,7 +155,7 @@ def submitted_spec_path(rule_name):
     files but never sidecars — can't skew it. Falls back to the newest spec
     file on disk when nothing was ever submitted (dry-run debugging), None
     if there are no specs at all."""
-    recorded = _read_sidecar(JOBS_DIR / f'{rule_name}.jobids.json')
+    recorded = _read_sidecar(jobs_dir() / f'{rule_name}.jobids.json')
     if recorded is not None:
         return spec_path(rule_name, recorded.get('run_seq'))
     return latest_spec_path(rule_name)
@@ -165,7 +167,7 @@ def latest_spec_path(rule_name):
     includes unsubmitted dry-run plans — prefer submitted_spec_path for
     anything that must match a real submission."""
     versioned = []
-    for path in JOBS_DIR.glob(f'{rule_name}.*.json'):
+    for path in jobs_dir().glob(f'{rule_name}.*.json'):
         seq = path.name.removeprefix(f'{rule_name}.').removesuffix('.json')
         if seq.isdigit():
             versioned.append((int(seq), path))
@@ -200,11 +202,11 @@ def prune_spec_files(max_age_days=SPEC_MAX_AGE_DAYS):
     case that outlives the window — the last submission pending for a long
     time. (Full design + accepted residual risk:
     design_docs/designs/slurm_already_running.md, 2026-07-10 decisions.)"""
-    if not JOBS_DIR.exists():
+    if not jobs_dir().exists():
         return
     keep = set()
     skip_rules = set()
-    for sidecar in JOBS_DIR.glob('*.jobids.json'):
+    for sidecar in jobs_dir().glob('*.jobids.json'):
         rule_name = sidecar.name.removesuffix('.jobids.json')
         recorded = _read_sidecar(sidecar)
         if recorded is None:
@@ -214,7 +216,7 @@ def prune_spec_files(max_age_days=SPEC_MAX_AGE_DAYS):
         keep.add(spec_path(rule_name, recorded.get('run_seq')))
     cutoff = time.time() - max_age_days * 86400
     npruned = 0
-    for path in JOBS_DIR.glob('*.json'):
+    for path in jobs_dir().glob('*.json'):
         if path.name.endswith('.jobids.json') or path in keep:
             continue
         if path.name.split('.')[0] in skip_rules:
@@ -231,7 +233,7 @@ def recorded_jobids(rule_name):
     submitted. One base id per rule since arrays-everywhere; 'slurm_job_ids'
     (one id per task) is read for sidecars written by pre-arrays-only
     versions, whose jobs may still be queued."""
-    recorded = _read_sidecar(JOBS_DIR / f'{rule_name}.jobids.json')
+    recorded = _read_sidecar(jobs_dir() / f'{rule_name}.jobids.json')
     if recorded is None:
         return []
     if 'slurm_array_job_id' in recorded:
@@ -308,7 +310,7 @@ def last_submission(rule_name, task_key=None):
     position in the job spec of the submission the sidecar records (pinned by
     its run_seq, so later replans don't skew it); None unless task_key is
     given."""
-    recorded = _read_sidecar(JOBS_DIR / f'{rule_name}.jobids.json')
+    recorded = _read_sidecar(jobs_dir() / f'{rule_name}.jobids.json')
     if recorded is None:
         return None, None
     jobids = recorded_jobids(rule_name)
@@ -371,10 +373,10 @@ class SlurmExecutor(Executor):
         # #SBATCH opts for configs that still set it.
         config.pop('array_threshold', None)
         self.slurm_config = config
-        self.jobs_dir = JOBS_DIR
-        self.slurm_dir = Path('.remake/slurm')
-        self.output_dir = self.slurm_dir / 'output'
-        self.submit_path = Path('.remake/submit.sh')
+        self.jobs_dir = jobs_dir()
+        self.slurm_dir = slurm_dir()
+        self.output_dir = slurm_output_dir()
+        self.submit_path = submit_path()
 
     @staticmethod
     def _check_profile_and_account(rmk, config):
@@ -467,7 +469,7 @@ class SlurmExecutor(Executor):
                 lines.append(f'# Continuation: replans and submits deferred rules ({names}).')
                 lines.append(
                     f'sbatch --parsable --dependency=afterok:{":".join(all_refs)} '
-                    f'{self.slurm_dir}/continuation.sbatch'
+                    f'{shlex.quote(str(self.slurm_dir / "continuation.sbatch"))}'
                 )
                 lines.append('')
             else:
@@ -558,9 +560,9 @@ class SlurmExecutor(Executor):
         sidecar = self.jobs_dir / f'{rule.name}.jobids.json'
         var = f'JOB_{rule.name}'
         return [
-            f'{var}=$(sbatch --parsable {dependency}{sbatch_path})',
+            f'{var}=$(sbatch --parsable {dependency}{shlex.quote(str(sbatch_path))})',
             f'echo "{{\\"slurm_array_job_id\\": \\"${var}\\", '
-            f'\\"run_seq\\": {run_seq}}}" > {sidecar}',
+            f'\\"run_seq\\": {run_seq}}}" > {shlex.quote(str(sidecar))}',
         ]
 
     def _write_continuation(self):

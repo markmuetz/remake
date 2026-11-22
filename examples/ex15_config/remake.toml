@@ -11,6 +11,11 @@ profile = "quick"
 checksum_outputs = true
 external_inputs_hint = "Nothing external here: ex15 generates its own input."
 
+# Where `.remake/` lives (default: next to this file). Relative to this
+# directory; `~` and $VARS are expanded. Left off here so the shared examples'
+# metadata stays put.
+# metadata_dir = "/scratch/me/ex15-meta"
+
 [multiproc]
 nproc = 2
 

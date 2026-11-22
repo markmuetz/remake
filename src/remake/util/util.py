@@ -4,6 +4,8 @@ from io import StringIO
 from pathlib import Path
 from typing import Union
 
+from .paths import task_log_root
+
 
 def sysrun(cmd):
     """Run a system command, returns a CompletedProcess
@@ -50,4 +52,4 @@ class Capturing(list):
 def task_log_path(task):
     """Per-task log file, named by stable task key (sharded: 256 buckets per
     rule, see design_docs/designs/per_task_logging.md)."""
-    return Path('.remake/tasks/log') / task.rule.name / task.key[:2] / f'{task.key[2:]}.log'
+    return task_log_root() / task.rule.name / task.key[:2] / f'{task.key[2:]}.log'
