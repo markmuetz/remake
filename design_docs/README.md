@@ -85,6 +85,8 @@ here when work starts.
 How to cut one (tag, PyPI, GitHub Release, Zenodo DOI check):
 [releasing.md](releasing.md).
 
+- [v0.11.0.md](releases/v0.11.0.md) — draft 2026-11-22: hardening before the
+  1.0 freeze; decisions Q1–Q6 answered.
 - [v0.10.0.md](releases/v0.10.0.md) — released 2026-11-22 (record): provenance
   and run history, `remake verify`, list values, `metadata_dir`, and the
   surfaces 1.0 freezes; DOI 10.5281/zenodo.24446090.
