@@ -63,8 +63,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `task-info` (as `parts[0]`, `parts[1]`), `ls-tasks`, `verify`, the
   missing-inputs check and dependency tracking see each path. Lists must be
   flat. A dict spec that already held a list used to be stringified into
-  one bogus path; it now means the list (its stored hashes are unchanged,
-  so nothing reruns). `task-info` no longer crashes on a tuple from a
+  one bogus path (such a pipeline could not run); it now means the list.
+  `task-info` no longer crashes on a tuple from a
   callable spec. Example: `examples/ex17_list_values.py`.
 - **`remake verify`** (0.10 item 2): reconciles the DB with the disk.
   `--outputs` finds tasks recorded as success whose outputs are missing or
@@ -79,7 +79,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   completion: local paths take one directory listing per directory instead
   of one stat per file, used by `check_outputs` planning), `canonical()`
   (one spelling per path, used by lint, the missing-inputs check and `Dir`
-  ownership, so `./a`, `a` and `/abs/a` are one file everywhere), `adopt()`
+  ownership, so `./a`, `a` and `/abs/a` are one file there; a symlinked
+  `Dir` also matches through its target. Dependency matching between tasks
+  still compares normalised paths, and falls back to depending on every
+  upstream task when spellings differ), `adopt()`
   (`Dir.claim` remains as an alias), and a `remote` class flag. `S3Object`
   is marked experimental: storage backends come after 1.0.
 - **Provenance and run history** (0.10 items 1 and 3): each run records the

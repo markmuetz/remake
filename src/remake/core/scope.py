@@ -459,7 +459,7 @@ def project_dir_of(rule):
     else the current directory."""
     rmk = getattr(rule, 'remake', None)
     remakefile = getattr(rmk, 'remakefile', None)
-    if remakefile:
+    if remakefile:  # absolute, or a bare name in the cwd (load_remake)
         return os.path.dirname(os.path.abspath(remakefile))
     return getattr(rmk, 'project_dir', None) or os.getcwd()
 

@@ -35,7 +35,8 @@ from .planner import (
 from .rule import Rule
 from .scope import check_scope, exec_function
 from .task import Task, flat_items, flat_values
-from .tokens import Dir, FileToken, OutputToken, PathToken, canonical, canonical_path, complete_many, is_remote
+from .tokens import (Dir, FileToken, OutputToken, PathToken, canonical, canonical_path,
+                     complete_many, dir_keys, is_remote)
 
 
 class _TemplatePlaceholder:
@@ -182,9 +183,10 @@ class _Anchored:
         target = self.rmk.project_dir
         if self.rmk._effective is not None:
             self.rmk._apply_metadata_dir()
-        self.saved.append(here if target and here != target else None)
-        if self.saved[-1] is not None:
-            os.chdir(target)
+        move = bool(target) and here != target
+        if move:
+            os.chdir(target)  # before pushing: a bad project_dir leaves no entry
+        self.saved.append(here if move else None)
         return self
 
     def __exit__(self, *exc):
@@ -194,14 +196,42 @@ class _Anchored:
 
 
 def anchored(method):
-    """Decorator: run a Remake method anchored at its project_dir."""
+    """Decorator: run a Remake method anchored at its project_dir. A
+    generator method is anchored for each step it runs, not while the caller
+    holds it between steps (review 2026-11-22, finding 4)."""
     import functools
+
+    if inspect.isgeneratorfunction(method):
+        @functools.wraps(method)
+        def gen_wrapper(self, *args, **kwargs):
+            gen = method(self, *args, **kwargs)
+            while True:
+                with self._anchor:
+                    try:
+                        item = next(gen)
+                    except StopIteration:
+                        return
+                yield item
+        return gen_wrapper
 
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
         with self._anchor:
             return method(self, *args, **kwargs)
     return wrapper
+
+
+def _bound_elsewhere(rule_obj, module_name):
+    """Was this Rule imported into the scanned module, rather than built
+    there? Imported means its function's module is another module that binds
+    this same Rule at top level. A Rule built in the scanned module from a
+    function defined elsewhere (a factory, `rule(...)(lib.fn)`) is the
+    scanned module's (review 2026-11-22, finding 3)."""
+    fn_module = getattr(rule_obj.fn, '__module__', None)
+    if fn_module == module_name:
+        return False
+    source = sys.modules.get(fn_module)
+    return source is not None and any(v is rule_obj for v in vars(source).values())
 
 
 def _deprecated(old, new):
@@ -395,7 +425,7 @@ class Remake:
             if name.startswith('__'):
                 continue
             if isinstance(value, Rule):
-                if getattr(value.fn, '__module__', None) == module_name:
+                if not _bound_elsewhere(value, module_name):
                     own.append(value)
                 else:
                     seen.append((f'{name} (imported from {_where(value)})', value))
@@ -420,6 +450,10 @@ class Remake:
 
     @anchored
     def finalize(self):
+        # Resolve the config first: metadata_dir decides where the default
+        # backend's database goes (review 2026-11-22, finding 6).
+        self.effective_config
+        self._apply_metadata_dir()
         if self.metadata is None:
             from ..metadata.sqlite3_backend import Sqlite3Backend
 
@@ -533,6 +567,7 @@ class Remake:
             tasks = None  # default: explain the runnable set
         return self.explain_tasks(tasks)
 
+    @anchored
     def iter_tasks(self, query=None):
         """Lazily yield tasks of all currently-expandable rules, one at a
         time — constant memory regardless of matrix size.
@@ -568,6 +603,7 @@ class Remake:
                 return Task(rule=rule, kwargs=dict(kwargs))
         raise RemakeError(f'No rule named {rule_name}')
 
+    @anchored
     def task_from_key(self, key):
         """Find a task by key or unambiguous key prefix.
 
@@ -881,6 +917,7 @@ class Remake:
         except Exception as e:
             return {'error': f'{type(e).__name__}: {e}'}
 
+    @anchored
     def rule_info(self, rule):
         """Detail view of one rule as a dict — the data behind `remake
         rule-info`: docstring, dependencies (both directions), matrix
@@ -974,7 +1011,7 @@ class Remake:
                 for name, token in flat_items(outputs):
                     if not isinstance(token, Dir):
                         continue
-                    path = canonical_path(token.path)
+                    path = os.path.realpath(token.path)
                     other = owners.setdefault(path, (task, name))
                     if other != (task, name):
                         raise RemakeError(
@@ -1026,9 +1063,9 @@ class Remake:
                             continue
                         paths.append(str(token))
                         if isinstance(token, Dir):
-                            key = canonical_path(token.path)
-                            dir_owner[key] = rule.name
-                            shown.setdefault(key, token.path)
+                            for key in dir_keys(token.path):
+                                dir_owner[key] = rule.name
+                                shown.setdefault(key, token.path)
                         elif isinstance(token, PathToken):
                             key = canonical_path(token.path)
                             file_outputs[key] = rule.name
@@ -1117,6 +1154,7 @@ class Remake:
             )
         ]
 
+    @anchored
     def rule_dag(self, *, with_matrix=False):
         """The rule dependency DAG as data — behind `remake rule-dag`. Returns
         {'order': [rule names, topological], 'edges': {rule: [dependent rule
@@ -1270,15 +1308,23 @@ class Remake:
                     adoptable.append(t)
         cascaded = []
         if apply and (missing or adoptable):
-            self.metadata.begin_invocation()
-            self._record_run('verify')
-            if missing:
-                self.metadata.mark_pending(missing)
-            if adoptable:
-                adoptable = [t for t in adoptable
-                             if all(tok.adopt(write=True) for tok in flat_values(t.outputs))]
-                cascaded = self._cascade_descendants(adoptable)
-                self.metadata.update_tasks(adoptable + cascaded, TASK_STATUS_SUCCESS)
+            with run_lock(self.metadata):
+                self.metadata.begin_invocation()
+                self._record_run('verify')
+                if missing:
+                    self.metadata.mark_pending(missing)
+                if adoptable:
+                    # Only tokens that write on adoption (Dir's manifest)
+                    # need a second pass: the rest were checked in the batch
+                    # above. Dirs last, as in set_state, so a Dir enclosing
+                    # another output is sealed after it.
+                    adoptable = [t for t in adoptable if all(
+                        tok.adopt(write=True) for tok in sorted(
+                            flat_values(t.outputs), key=lambda tok: isinstance(tok, Dir))
+                        if type(tok).adopt is not OutputToken.adopt)]
+                    cascaded = self._cascade_descendants(adoptable)
+                    self.metadata.update_tasks(adoptable + cascaded, TASK_STATUS_SUCCESS)
+                self.metadata.finish_run({'n_planned': len(missing) + len(adoptable)})
         return {'missing': missing, 'adoptable': adoptable, 'applied': bool(apply),
                 'cascaded': cascaded}
 
@@ -1390,7 +1436,7 @@ class Remake:
                         norm = canon(tok)
                         produced.add(norm)
                         if isinstance(tok, Dir):
-                            produced_dirs.add(norm)
+                            produced_dirs.update(dir_keys(tok.path))
             except Exception:
                 # Deferred, or an output spec that can't be resolved now:
                 # its producers are unknown, so don't blame its consumers.

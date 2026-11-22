@@ -626,8 +626,9 @@ def plan(rules, dag, metadata, *, query=None, force=False, check_outputs='never'
         # The disk checks, batched per rule (only the tasks they apply to).
         disk_complete = {}
         if not force and check_outputs in ('fallback', 'always'):
-            to_check = [t for t in tasks if t.outputs and (
-                t.key not in records or check_outputs == 'always')]
+            # Records first: resolving t.outputs is the cost to avoid.
+            to_check = [t for t in tasks if (
+                t.key not in records or check_outputs == 'always') and t.outputs]
             disk_complete = outputs_complete_many(to_check)
 
         for task in tasks:

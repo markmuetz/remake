@@ -71,6 +71,15 @@ def canonical_path(path):
     return os.path.join(_real_dir(directory), name) if name else _real_dir(directory)
 
 
+def dir_keys(path):
+    """The spellings a Dir output is matched under: `canonical_path` (the
+    link, if the Dir is a symlink) and its full realpath (the target). A Dir
+    symlinked to scratch must still contain the files read through it,
+    whose canonical form resolves the link (review 2026-11-22, finding 1)."""
+    absolute = os.path.abspath(os.fspath(path))
+    return {canonical_path(absolute), os.path.realpath(absolute)}
+
+
 def canonical(value):
     """The canonical identity of an input or output value: a token's
     `canonical()`, a URL string unchanged, a local path `canonical_path`."""
@@ -230,7 +239,7 @@ class PathToken(OutputToken):
             if token.nonempty or token.min_size is not None:
                 results[i] = token.is_complete()
                 continue
-            directory, name = os.path.split(token._marker_path())
+            directory, name = os.path.split(os.path.normpath(token._marker_path()))
             by_dir.setdefault(directory, []).append((i, name))
         for directory, entries in by_dir.items():
             if len(entries) < cls._SCAN_THRESHOLD:
@@ -242,8 +251,15 @@ class PathToken(OutputToken):
                     present = {e.name for e in it if not e.is_symlink() or os.path.exists(e.path)}
             except (FileNotFoundError, NotADirectoryError):
                 present = set()
+            except OSError:  # e.g. a search-only (--x) directory: stat each
+                present = None
             for i, name in entries:
-                results[i] = name in present
+                # A name missing from the listing is checked with a stat
+                # before saying no: a case-insensitive filesystem or a
+                # different Unicode normalisation spells it differently
+                # (review 2026-11-22, finding 2). Misses are the rare case.
+                results[i] = ((present is not None and name in present)
+                              or os.path.exists(tokens[i]._marker_path()))
         return results
 
 

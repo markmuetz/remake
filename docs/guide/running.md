@@ -19,10 +19,17 @@ built in a script anchors at that script's directory, so `python
 path/to/pipeline.py` from anywhere writes `data/` and `.remake/` beside the
 script. Pass `Remake(..., project_dir=...)` to choose another directory. With
 no defining file (a notebook cell, the REPL, `python -c`) it anchors at the
-current directory when it is created. `rmk.project_dir` says where. Each
+current directory when it is created. `rmk.project_dir` says where. The
+defining file is the first caller outside remake: a helper that builds the
+`Remake` in a shared package anchors at that package, so pass
+`project_dir=` there. Each
 `Remake` method changes into that directory for its duration and changes
 back afterwards. Since the working directory is process-wide, don't drive two
-`Remake`s from different threads at once.
+`Remake`s from different threads at once. Paths on tasks you hold after a
+method returns stay relative to `project_dir`: open them from there, or
+join them to `rmk.project_dir`. Likewise create a `Sqlite3Backend` with an
+explicit path if you pass `metadata=`; its default location is relative to
+the current directory at construction.
 
 ## Executors
 
