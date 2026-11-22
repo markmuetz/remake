@@ -12,6 +12,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reached end of life in October 2026. The `tomli` fallback is gone
   (`tomllib` is built in), and the lock now resolves tornado 6.6 or later.
 
+### Added
+
+- `remake.__all__` declares the public API, checked against `docs/api/` by a test.
+
 ## [0.9.0] — 2026-11-21
 
 Canonical change detection, a config file cascade with profiles, output
