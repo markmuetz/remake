@@ -224,6 +224,7 @@ def test_cli_config_json(proj, capsys):
     user_file('[slurm]\naccount = "acc"\n')
     assert cli('--profile', 'jasmin', 'config', 'p.py', '--json') == 0
     data = json.loads(capsys.readouterr().out)
+    assert data['format'] == 1
     assert data['profile'] == 'jasmin'
     assert data['config']['slurm']['mem'] == '2G'
     assert data['provenance']['slurm.mem'] == 'Remake(config=)'

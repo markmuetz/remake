@@ -8,6 +8,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Breaking
 
+- **Every `--json` output is now an object with `"format": 1` as its first
+  key** (documented in `docs/cli.md`, "JSON output"). Bare lists became
+  objects: `info --failed --json` is `{"format": 1, "failures": [...]}`,
+  `ls-tasks --json` is `{"format": 1, "tasks": [...]}`, `lint --json` is
+  `{"format": 1, "findings": [...]}`, and `slurm-status --json` is
+  `{"format": 1, "submissions": [...]}`. `info`, `rule-dag`, `rule-info`,
+  `task-info`, `config` and `check-env` already printed objects and only gain
+  `"format": 1`.
 - `OutputToken.after_success` marks a token that summarises many files
   with `'aggregate': True` (was `'dir': True`); 0.9 sidecars are still
   read. Custom tokens that are neither local paths nor `remote = True` are
