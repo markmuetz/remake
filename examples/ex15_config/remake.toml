@@ -1,0 +1,26 @@
+# examples/ex15_config/remake.toml
+#
+# The project file: committed next to the remakefile, it layers over the
+# built-in defaults, the selected profile and your user file.
+# Unknown keys here are errors, so only valid keys appear.
+
+# Select a profile by default (`remake --profile thorough ...` beats this).
+profile = "quick"
+
+# Pipeline-wide settings (project file / remakefile only).
+checksum_outputs = true
+external_inputs_hint = "Nothing external here: ex15 generates its own input."
+
+[multiproc]
+nproc = 2
+
+# Profiles are named config tables applied *below* the project file.
+[profiles.quick.resources]
+rss_interval = 0.5
+
+[profiles.thorough.resources]
+rss_interval = 0.05
+
+# Overridden by [multiproc] above: the project file beats a profile.
+[profiles.thorough.multiproc]
+nproc = 4
