@@ -211,10 +211,7 @@ def test_project_profile_overrides_shipped(proj):
 
 
 def test_profiles_ship_as_package_data():
-    try:
-        import tomllib
-    except ImportError:  # Python 3.10
-        import tomli as tomllib
+    import tomllib
     toml = tomllib.loads((Path(__file__).parents[2] / 'pyproject.toml').read_text())
     assert 'profiles/*.toml' in toml['tool']['setuptools']['package-data']['remake']
 

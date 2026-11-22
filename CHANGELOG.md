@@ -6,6 +6,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Breaking
+
+- **Python 3.10 is no longer supported; 3.11 is the minimum.** Python 3.10
+  reached end of life in October 2026. The `tomli` fallback is gone
+  (`tomllib` is built in), and the lock now resolves tornado 6.6 or later.
+
 ## [0.9.0] — 2026-11-21
 
 Canonical change detection, a config file cascade with profiles, output
