@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from remake import Remake, Sqlite3Backend, rule
-from remake.metadata.sqlite3_backend import SCHEMA_MAJOR, _RUN_COLUMNS_1_1
+from remake.metadata.sqlite3_backend import SCHEMA_MAJOR, SCHEMA_VERSION, _RUN_COLUMNS_1_1
 from remake.remake_cmd import remake_cmd
 
 PIPELINE = '''
@@ -199,7 +199,7 @@ def test_upgrade_from_schema_1_0_adds_history_and_reruns_nothing(tmp_path, monke
     assert {c for c, _ in _RUN_COLUMNS_1_1} <= cols
     runnable, deferred = Remake(rules=[y], metadata=db).plan()
     assert runnable == [] and deferred == []
-    assert db.conn.execute('PRAGMA user_version').fetchone()[0] == SCHEMA_MAJOR * 1000 + 1
+    assert db.conn.execute('PRAGMA user_version').fetchone()[0] == SCHEMA_VERSION
 
 
 # --- review 2026-11-22 (Fable) of the history commit ---
