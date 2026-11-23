@@ -1255,7 +1255,10 @@ class Remake:
 
         # Read-only and metadata-free: no finalize(), which would create the
         # database in a fresh checkout (soak note 6). Config and scope checks
-        # still run (their warnings are wiring news too).
+        # still run (their warnings are wiring news too). The rule DAG is
+        # built here, as finalize() would: it resolves depends_on given as
+        # rule names (a string avoids a circular import) to Rule objects.
+        build_rule_dag(self.rules)
         self.effective_config
         self._check_scopes()
         self._check_duplicate_dirs()

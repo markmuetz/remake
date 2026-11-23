@@ -539,6 +539,21 @@ def test_lint_clean_pipeline(pipeline_dir, capsys):
     assert 'all inputs wired' in capsys.readouterr().out
 
 
+@pytest.mark.parametrize('args', [
+    ('lint',), ('rule-dag',), ('rule-info', 'process'), ('info',), ('ls-tasks',),
+    ('run', '-n')])
+def test_read_only_commands_resolve_string_depends_on(pipeline_dir, args, capsys):
+    """depends_on given as rule names (to avoid a circular import) is
+    resolved by every command, including those that skip finalize() (lint
+    crashed: 'str' object has no attribute 'name'; JASMIN soak,
+    2026-11-23), in a fresh directory with no .remake/."""
+    Path('pipeline.py').write_text(
+        PIPELINE.replace('depends_on=[generate]', "depends_on=['generate']"))
+    assert cli(args[0], 'pipeline.py', *args[1:]) in (None, 0)
+    if args == ('lint',):
+        assert 'external' not in capsys.readouterr().out
+
+
 def test_lint_flags_near_miss_and_missing_dependency(pipeline_dir, capsys):
     Path('miswired.py').write_text('''
 from pathlib import Path
