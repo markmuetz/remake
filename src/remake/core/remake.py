@@ -1301,11 +1301,15 @@ class Remake:
 
         findings = {}  # (kind, rule, other) -> {'count': n, 'example': ...}
 
+        distinct = {}  # (kind, rule, other) -> set of the paths behind count
+
         def record(kind, rule_name, other, example):
-            entry = findings.setdefault(
-                (kind, rule_name, other), {'count': 0, 'example': example}
-            )
+            key = (kind, rule_name, other)
+            entry = findings.setdefault(key, {'count': 0, 'example': example})
             entry['count'] += 1
+            distinct.setdefault(key, set()).add(
+                example if isinstance(example, str)
+                else example.get('input') or repr(sorted(example.items())))
             if unchecked and kind in ('near_miss', 'external'):
                 entry['unchecked'] = unchecked
 
@@ -1382,6 +1386,10 @@ class Remake:
                     else:
                         record('external', rule.name, None, path)
 
+        # 'distinct': how many different paths the count covers (one input
+        # read by 12 tasks counts 12, distinct 1; soak recheck, item 8 g).
+        for key, entry in findings.items():
+            entry['distinct'] = len(distinct[key])
         return [
             {'kind': kind, 'rule': rule_name, 'other_rule': other, **entry}
             for (kind, rule_name, other), entry in sorted(

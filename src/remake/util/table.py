@@ -58,9 +58,19 @@ def render_table(header, rows, *, total=None, paint=None, styles=None, width=Non
     (or None); zero counts in a styled column are dimmed. width: fit to this
     many characters by shortening column `shrink` (default: the widest text
     column) as `shorten(mode=shrink_mode)` does; None means no limit. Numeric columns (any number in them) are
-    right-aligned. Trailing spaces are stripped."""
-    ncol = len(header)
+    right-aligned. A column empty ('' or None) in every row is left out.
+    Trailing spaces are stripped."""
     body = [list(r) for r in rows] + ([list(total)] if total is not None else [])
+    # A column with nothing in any row (git, note, ...) is left out.
+    keep = [i for i in range(len(header)) if any(r[i] not in ('', None) for r in body)] \
+        if body else list(range(len(header)))
+    header = [header[i] for i in keep]
+    body = [[r[i] for i in keep] for r in body]
+    if styles:
+        styles = [styles[i] for i in keep]
+    if shrink is not None:
+        shrink = keep.index(shrink) if shrink in keep else None
+    ncol = len(header)
     numeric = [any(_is_number(r[i]) for r in body) for i in range(ncol)]
     text = [[('-' if c is None else str(c)) for c in r] for r in [list(header)] + body]
     widths = [max(len(r[i]) for r in text) for i in range(ncol)]

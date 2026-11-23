@@ -564,14 +564,17 @@ rmk.rules_from_current_module()
 ''')
     assert cli('lint', 'miswired.py') == 1
     out = capsys.readouterr().out
-    assert "NEAR MISS           proc (2 task(s)): input produced by nothing; " \
+    assert "NEAR MISS           proc (2 tasks): input produced by nothing; " \
         "nearest is gen's output" in out
     # Stacked, aligned, the difference marked (soak finding 4).
     assert '    wants:   data/genn_1.txt\n' \
            '                    ^\n' \
            '    nearest: data/gen_1.txt\n' in out
-    assert 'MISSING DEPENDENCY  agg' in out and 'produced by proc' in out
-    assert 'external            gen: 2 input(s)' in out  # not a problem, exit 1 is from above
+    # Stacked, not one long line (item 8 e).
+    assert "MISSING DEPENDENCY  agg (2 tasks): reads proc's output but does not " \
+        "depend_on it\n    input:   data/proc_1.txt\n" in out
+    assert 'external            gen: 2 inputs produced by no rule\n' \
+        '    e.g.:    data/src_1.txt' in out  # not a problem, exit 1 is from above
 
     import json
 
