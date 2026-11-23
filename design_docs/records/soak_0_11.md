@@ -103,6 +103,17 @@ Soak pipelines so far: `wescon-tools` (`wescon_radar_dev.py`, v17).
   parameter it names, and the placeholders become one-component patterns
   (a call that raises leaves the rule unchecked); the caveat is one footer
   line. `unchecked` stays on the `--json` rows.
+- **Second recheck (ec88c5b): works** on wescon c8f67d6:
+  `gathered_dZ_stats.hdf` is MISSING DEPENDENCY → `gather_delta_z_stats`,
+  no NEAR MISS, external down from 68 to the genuinely external radarnet
+  files (`conf.deltaZ_outdir(case)` took the placeholder). But after the
+  wescon depends_on fix, the `analyse_*` rules were "upstream matrix not
+  ready — skipped": fixing the dependency made lint check less. Now a rule
+  held only by a deferred upstream is checked like any other (its matrix
+  expanded; inputs matched against the deferred rule's templates). A rule
+  whose tasks or inputs raise while expanding (an inputs callable reading a
+  file the deferred rule hasn't written) is skipped with a warning naming
+  the error; before, that crashed lint.
 
 ## 4. `lint` NEAR MISS paths are hard to compare by eye (done)
 

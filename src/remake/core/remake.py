@@ -1223,8 +1223,10 @@ class Remake:
         inside a rule's `Dir` counts as produced by that rule; 'dir_nested'
         (a Dir inside another rule's Dir) and 'file_in_dir' (a plain output
         inside another rule's Dir) are wiring errors too. Two tasks declaring
-        one Dir raise RemakeError. Materialises all tasks; rules with an unresolved (deferred) matrix are
-        skipped with a warning.
+        one Dir raise RemakeError. Materialises all tasks; rules with an
+        unresolved (deferred) matrix are skipped with a warning, as is a rule
+        whose tasks raise while expanding (e.g. an inputs callable reading an
+        output a deferred rule hasn't written yet).
 
         A deferred rule's outputs are unknown, but their templates are not:
         an input that matches one (each `{field}` any text within one path
@@ -1250,6 +1252,7 @@ class Remake:
         file_outputs = {}  # canonical plain output path -> rule name
         shown = {}  # canonical path -> the path as declared
         deferred = set()
+        unresolved = set()  # rules whose tasks raised while expanding
         for rule in self.rules:
             paths = []
             try:
@@ -1269,6 +1272,13 @@ class Remake:
             except Defer:
                 deferred.add(rule.name)
                 logger.warning('{}: matrix not ready, outputs unknown — skipped', rule.name)
+                continue
+            except Exception as e:
+                # e.g. an inputs callable reading an upstream output that a
+                # deferred rule hasn't written yet: report, don't crash.
+                unresolved.add(rule.name)
+                logger.warning('{}: tasks not resolvable ({}: {}) — skipped',
+                               rule.name, type(e).__name__, e)
                 continue
             rule_outputs[rule.name] = paths
             for path in paths:
@@ -1323,15 +1333,24 @@ class Remake:
                        {'file': shown.get(path, path), 'inside': outer[0]})
 
         for rule in self.rules:
-            if rule.inputs is None or rule.name in deferred:
+            if rule.inputs is None or rule.name in deferred | unresolved:
                 continue
+            # A rule held only by a deferred upstream is checked too (its own
+            # tasks expanded above), as info counts it (soak recheck,
+            # 2026-11-23: fixing a depends_on made lint check less).
             dep_names = {dep.name for dep in rule.depends_on}
-            if dep_names & deferred:
-                logger.warning('{}: upstream matrix not ready — skipped', rule.name)
-                continue
             candidates = [p for name in dep_names for p in rule_outputs.get(name, [])]
-            for task in iter_expand_rule(rule):
-                for value in flat_values(task.inputs):
+            try:
+                # Resolve every input first: an inputs callable may read an
+                # output a deferred rule hasn't written yet (then skip the
+                # rule, with no half-recorded findings).
+                task_inputs = [flat_values(task.inputs) for task in iter_expand_rule(rule)]
+            except Exception as e:
+                logger.warning('{}: inputs not resolvable ({}: {}) — skipped',
+                               rule.name, type(e).__name__, e)
+                continue
+            for values in task_inputs:
+                for value in values:
                     if is_remote(value):
                         continue  # not a local file: nothing to match
                     path = str(value)

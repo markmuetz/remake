@@ -60,6 +60,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   placeholder for each parameter it names to get its templates. A deferred
   rule whose outputs still can't be read is named once under the findings,
   and on `near_miss` and `external` rows in `--json` (`unchecked`).
+  A rule that waits on a deferred rule is now checked too (it was skipped),
+  and a rule whose inputs can't be resolved yet is skipped with a warning
+  instead of crashing lint.
 - **`remake lint` shows where a near miss differs** (soak finding 4): the two
   paths stacked and aligned, the shared prefix collapsed to `…`, the
   difference coloured, or marked with `^` without colour. Compared by

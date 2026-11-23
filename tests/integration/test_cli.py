@@ -627,6 +627,20 @@ def opaque_outputs(k):
 def opaque(outputs, k):
     pass
 
+@rule(inputs={'g': 'out/cmp/gathered_{case}.hdf', 'z': 'out/compre_{case}.hdf'},
+      outputs={'o': 'out/held_{case}.png'}, matrix={'case': [1, 2]},
+      depends_on=[gather])  # held by deferred gather; compare missing, typo'd
+def held(inputs, outputs, case):
+    pass
+
+def unresolvable(case):
+    return {'g': Path(f'out/cmp/gathered_{case}.hdf').read_text()}
+
+@rule(inputs=unresolvable, outputs={'o': 'out/u_{case}.png'}, matrix={'case': [1]},
+      depends_on=[gather])
+def held_unresolvable(inputs, outputs, case):
+    pass
+
 @rule(inputs={'x': 'ext/{case}.txt'}, outputs={'o': 'out/e_{case}.txt'},
       matrix={'case': [1]})
 def uses_external(inputs, outputs, case):
@@ -640,9 +654,15 @@ rmk.rules_from_current_module()
     kinds = {(r['kind'], r['rule'], r['other_rule']) for r in rows}
     assert ('missing_dependency', 'analyse', 'gather') in kinds
     assert ('missing_dependency', 'analyse2', 'gather2') in kinds
+    # A rule held only by a deferred upstream is still checked: its input
+    # from gather is fine (depends_on), the typo'd compare input is external
+    # (compare isn't in its depends_on, so no near miss is looked for).
+    assert any(r['rule'] == 'held' and r['kind'] == 'external'
+               and r['example'] == 'out/compre_1.hdf' for r in rows)
+    assert not any(r['rule'] == 'held_unresolvable' for r in rows)
     assert not any(r['kind'] == 'near_miss' for r in rows)
-    ext = next(r for r in rows if r['kind'] == 'external')
-    assert ext['rule'] == 'uses_external' and ext['unchecked'] == ['opaque']
+    ext = next(r for r in rows if r['kind'] == 'external' and r['rule'] == 'uses_external')
+    assert ext['unchecked'] == ['opaque']
 
     cli('lint', 'p.py')
     out = capsys.readouterr().out
