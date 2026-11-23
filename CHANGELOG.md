@@ -19,6 +19,30 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **SLURM: submitted tasks are pending until their results arrive**
+  (0.11 item 9, soak finding 7). A task killed by SLURM (node failure,
+  time or memory limit) writes no result; it used to keep its older
+  success record, so a killed `run -f` or a killed rerun under
+  `check_outputs='always'` looked up to date, and a killed first run's
+  partial outputs could be adopted. Now it is rerun. While a submission is
+  in flight, `info` shows its tasks as pending; a task you `scancel` is
+  rerun by the next `remake run` (`set-state --success` if not wanted); a
+  failed task's traceback leaves `info --failed` once it is resubmitted;
+  `verify` no longer adopts outputs of a task submitted but never run.
+  A never-run submitted task shows in `why` as "no result yet (pending
+  since ...)".
+- **SLURM: what happened to a task.** `slurm-status` has a `lost` column
+  (in the last submission, not queued, no result). `why` and `task-info`
+  show the task's SLURM state: queued or running (`squeue`), or the end
+  state, node and elapsed time from `sacct` (`NODE_FAIL on host1234 after
+  13:40`). `--json` gains `lost` (slurm-status), `slurm` (why) and
+  `slurm.state` (task-info).
+- **SLURM records per submission.** `jobs/<rule>.<run_seq>.jobids.json` is
+  written for every submission (atomically, with the submit time), so a
+  later submission no longer erases an earlier one's record; job output
+  files are named `<jobid>_<index>.out/.err`, so `info --failed` never
+  shows another submission's error. Old names are still read for
+  submissions made by an older remake.
 - **Dependency matching between tasks uses canonical paths** (0.11 item 3).
   An input that spells its producer's output differently (absolute vs
   relative, `./`, a symlinked directory) now links to the one upstream task
@@ -112,6 +136,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   at 1.0, with `Remake.status_summary()`, `Remake.task_spec()` and the
   built-in JASMIN SLURM defaults used when no profile is selected (see
   design_docs/releases/v0.11.0.md item 7).
+- `remake resubmit` now warns; removed in 1.0. Use `remake run -E slurm`,
+  which replans and skips queued rules. A resubmission doesn't mark tasks
+  pending, so a task killed in it keeps its first attempt's result.
 
 ## [0.10.0] — 2026-11-22
 

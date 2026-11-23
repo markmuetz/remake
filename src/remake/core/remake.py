@@ -973,7 +973,10 @@ class Remake:
         """Detail view of one task as a dict — the data behind `remake
         task-info`: status/timestamp/exception, kwargs, key, input and output
         paths (with exists/complete flags), the per-task log path, and the last
-        SLURM submission's job ids + array index."""
+        SLURM submission's job ids + array index. For a task without a
+        success in a SLURM submission, `slurm.state` is what SLURM says now:
+        this calls squeue and maybe sacct (short timeouts)."""
+        from ..executors.slurm_accounting import tasks_slurm_state
         from ..executors.slurm_executor import last_submission
 
         if not self._finalized:
@@ -1021,7 +1024,14 @@ class Remake:
             # successful run; '*' sums the plain file outputs.
             'output_stats': self.metadata.get_output_stats(task),
             'log': {'path': str(log_path), 'exists': log_path.exists()},
-            'slurm': {'jobids': jobids, 'array_index': array_index},
+            'slurm': {'jobids': jobids, 'array_index': array_index,
+                      # What SLURM says now, for a task without a success
+                      # (display only; squeue, then sacct).
+                      'state': (tasks_slurm_state([(task.rule.name, task.key,
+                                                    record.run_seq if record else None)])
+                                .get(task.key)
+                                if jobids and not (record and record.status
+                                                   == TASK_STATUS_SUCCESS) else None)},
             # 0.10 items 1/3: the last execution's history row and the
             # provenance of the run that recorded it.
             'last_execution': self._last_execution(task, record),

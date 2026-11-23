@@ -202,3 +202,59 @@ Reported by MM.
   log files (`.remake/remake.log` etc.) are still written, as for every
   command; `rule-dag`, `dag` and `rule-info` also finalize (and so create
   the DB) without needing it: worth the same change, not done yet.
+
+## 7. Tasks lost to a node failure look like ordinary stale tasks (planned: release item 9, designs/slurm_reconcile/)
+
+2026-11-23, `wescon_radar_dev.py`, run 81 (SLURM continuation of run 79).
+Reported by MM via the wescon session.
+
+- **What happened.** A node failure killed `compare_rhis_to_radarnet`
+  6133148 elements 11, 12, 15, 16 and `analyse_compare_rhis_to_radarnet`
+  6133150_14. Their dependents were CANCELLED (DependencyNeverSatisfied):
+  6133150_16, 6133152, 6133154. `history --runs`: "293 submitted, 238 run,
+  0 failed".
+- **Symptoms, all misleading.** `slurm-status`: "not queued", no NODE_FAIL
+  or CANCELLED. `info`: 55 stale, 0 failed (lost tasks mixed with tasks in
+  flight). `why`: "uses= changed v15 → v17" and "an upstream ran more
+  recently": true, but secondary; the DB still holds the July success
+  because the killed worker recorded nothing. `task-info`: the job and
+  array index, output missing, nothing about the job's fate. The cause was
+  found only with `sacct -j … -X --format=JobID,State,NodeList`.
+- **Also.** The deferred-rule continuation is submitted with `afterok` on
+  every job and `--kill-on-invalid-dep=yes`, so any failure anywhere in a
+  submission cancels it: deferred rules downstream of an unrelated failure
+  are never planned, silently.
+- **Proposals (MM).** (1) Classify each task of the last submission as
+  queued/running (squeue), done (result for this run_seq) or lost (neither;
+  reason from one `sacct` call), shown in `slurm-status`, `info` (a `lost`
+  column), `why`/`task-info` (cause first). (2) An end-of-submission
+  housekeeping job every submission, `afterany` on all its jobs, that
+  records lost tasks as failed with their reason and summarises the
+  submission in history; possibly taking over the continuation. (1) stays
+  as the backstop. Under review with a Fable advisor before implementation.
+- **Evidence lost on rerun.** Run 82 (18:49) resubmitted the lost tasks
+  before run 81 was reconciled. A submission overwrites the sidecars, specs
+  and `submit.sh` of only the rules it resubmits, so the four resubmitted
+  rules now point to run 82 while the others still point to run 81, and run
+  81's evidence for the resubmitted rules is gone from `.remake/`. Lazy
+  reconciliation (in `info`/`why`) would need per-run_seq sidecar history;
+  otherwise it has to happen before the next submission (a housekeeping job,
+  or `run` reconciling before it plans). Archive on JASMIN:
+  `/work/scratch-nopw2/mmuetz/remake_soak/run81_node_fail/` (full sacct for
+  6133147–6133154; sidecars, specs and DB snapshot partly run 82).
+
+## 8. A formatting-only change to a `uses=` function counts as a code change (open)
+
+2026-11-23, `wescon_radar_dev.py`. A ruff reformat (quotes, line wrapping)
+made `load_data` count as changed, so its dependents would rerun. Idea:
+hash a normalised AST (`ast.dump` without positions); whether docstrings
+and comments count is a policy decision.
+- **Checked (advisor, verified in code).** It is already a normalised AST:
+  `callable_source_ast` → `dump_ast` (core/canonical.py:50) drops
+  positions, so quote style and line wrapping can't change it. To find the
+  real cause, compare with the stored manifest. Candidates: ruff
+  reformatted a docstring (docstrings count); a `uses` entry that is a
+  project module, hashed as the whole file's AST; a pre-0.9 legacy record
+  on the legacy match path; or a real edit (v15 → v17).
+- **Decision (MM, 2026-11-23).** Docstrings keep counting in code hashes.
+  Still to do: find which of the candidates changed `load_data`'s hash.

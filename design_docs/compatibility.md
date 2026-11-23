@@ -41,10 +41,11 @@ the run that wrote them: they can change in any release.
 | `tasks/results/<rule>/<kk>/<key>.json` | contract | per-task result sidecars, ingested by the next plan; a queued job written by an older release must still ingest |
 | `environments/<hash>.json` | contract | environment fingerprints referenced by sidecars |
 | `jobs/<rule>.<run_seq>.json` | contract | SLURM job specs, read by queued array jobs (format 2 since 0.11; format 1 still read) |
-| `jobs/<rule>.jobids.json` | contract | submitted job ids and their `run_seq` |
+| `jobs/<rule>.jobids.json` | contract | the rule's latest submission: `{v, slurm_array_job_id, run_seq, submitted}` (0.11; before: no `v`/`submitted`) |
+| `jobs/<rule>.<run_seq>.jobids.json` | contract | one per submission (0.11), same content; never overwritten by a later submission |
 | `tasks/log/<rule>/<kk>/<key>.log` | scratch (layout documented) | one file per task, overwritten each run; logs of tasks no longer in the pipeline are deleted by `remake history --prune`. The path is shown by `task-info`, so it is not moved without a reason |
 | `tasks/running/` | scratch | in-flight markers for multiproc/dask |
-| `slurm/*.sbatch`, `slurm/output/`, `submit.sh` | scratch | regenerated at each submission; SLURM copies scripts at submit |
+| `slurm/*.sbatch`, `slurm/output/`, `submit.sh` | scratch | regenerated at each submission; SLURM copies scripts at submit; outputs are `<jobid>_<index>.out/.err` since 0.11 |
 | `remake*.log` | scratch | the remake process log; wording is never covered |
 
 ## Pre-1.0 conduct

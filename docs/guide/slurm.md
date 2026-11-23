@@ -142,9 +142,10 @@ On submission remake writes, under `.remake/` (or your `metadata_dir`, see
 |---|---|
 | `jobs/<rule>.<run_seq>.json` | per-submission job spec: one header (rule, `run_seq`, planner environment) and one entry per task, in array-index order (format 2, 0.11; 0.9–0.10 files, a plain list, are still read). Immutable: each submission writes its own file and the sbatch script pins it, so replans never disturb a queued array |
 | `slurm/<rule>.sbatch` | per-rule array script |
-| `slurm/output/<rule>/` | per-element stdout/stderr |
+| `slurm/output/<rule>/` | per-element stdout/stderr, `<jobid>_<index>.out/.err` (0.11; `<index>.*` before) |
 | `submit.sh` | master submission script (re-run it with `remake resubmit`) |
-| `jobs/<rule>.jobids.json` | submitted job ids + the submission's `run_seq` (written at submission) |
+| `jobs/<rule>.<run_seq>.jobids.json` | one per submission (0.11): the array job id, `run_seq` and submit time; a later submission never overwrites it |
+| `jobs/<rule>.jobids.json` | the rule's latest submission (same content) |
 | `tasks/results/...` | per-task result **sidecars**, absorbed into the DB by the next remake invocation |
 
 ## Running again while a submission is in flight
@@ -197,15 +198,67 @@ remake slurm-status pipeline.py --json     # machine-readable
 One row per rule's last submission: its job id, when it was submitted, its
 task count, how many elements `squeue` shows pending (`PD`) and running
 (`R`), how many of its tasks the DB records as done and failed (results of
-finished elements are ingested first), and the pending reason (or `not
-queued` once nothing is left in the queue), with a TOTAL row:
+finished elements are ingested first), how many are **lost** (not queued
+and no result), and the pending reason (or `not queued` once nothing is
+left in the queue), with a TOTAL row:
 
 ```
-rule                     job      submitted         tasks   PD    R  done  failed  reason
-build_gridded_rhi_scans  6058085  2026-11-23 09:12    763  454  306     3       0  QOSMaxMemoryPerUser
-compare_delta_z          6058090  2026-11-23 09:12     17    0    0    17       0  not queued
-TOTAL                                                 780  454  306    20       0
+rule                     job      submitted         tasks   PD    R  done  failed  lost  reason
+build_gridded_rhi_scans  6058085  2026-11-23 09:12    763  454  306     3       0     0  QOSMaxMemoryPerUser
+compare_delta_z          6058090  2026-11-23 09:12     17    0    0    13       0     4  not queued
+TOTAL                                                 780  454  306    16       0     4
 ```
+
+## Tasks killed by SLURM
+
+A task that SLURM kills (a node failure, the time or memory limit) or
+cancels (because a task it depends on failed) never reports a result. From
+0.11, remake marks every task it submits as **pending** until its result
+arrives, so such a task is simply rerun by the next `remake run`. It is
+never taken as up to date from an earlier success, and a partial output it
+left is never adopted (`check_outputs`).
+
+To see what happened, `remake why` and `remake task-info` ask SLURM about
+the task's element in its rule's last submission:
+
+```
+$ remake why pipeline.py 314c51f7
+314c51f7 gen[n=1]  314c51f7049d01bc1c904bb5b87d631ba1b65e48
+- will run: yes
+  - last run pending at 2026-11-23 17:02:11
+    - SLURM job 6133148_11 (run 81): NODE_FAIL on host1234 after 13:40
+```
+
+`queued (PD)` and `running (R)` come from `squeue`; otherwise remake runs
+`sacct` for that one element. `no accounting record` means it was
+cancelled before it started (usually because an upstream task failed), or
+SLURM no longer keeps the job. Nothing about the kill is stored: once SLURM
+has forgotten the job, only "pending" remains.
+
+While a submission is in flight, its tasks show as pending in `remake info`.
+
+Consequences to know about:
+
+- **Cancelling a submission yourself** (`scancel`) leaves its tasks pending,
+  so the next `remake run` reruns them, a cancelled `run -f` included. If you
+  want them taken as done after all, `remake set-state <remakefile> --success
+  -Q ...`.
+- **A local `remake run` while jobs are queued** runs the submitted tasks
+  too (they are pending). As before, remake does not stop a local run from
+  duplicating SLURM work: don't run both at once.
+- **A task submitted but never run** has a record now, so `remake verify`
+  won't adopt outputs made for it some other way; `remake set-state
+  --success --check-outputs` still does.
+- **A resubmitted failed task** loses its traceback in `info --failed`
+  once it is submitted again (it is pending, not failed).
+- **`remake resubmit`** (deprecated) re-executes `submit.sh` without
+  marking anything: a task killed in a resubmission keeps the result of the
+  first attempt. Use `remake run -E slurm`.
+
+**Deferred rules.** The continuation job that plans deferred rules waits
+for every job of the submission to succeed (`afterok`) and is cancelled
+otherwise. If any task fails or is killed, the deferred rules are planned
+by your next `remake run` instead.
 
 ## Logs
 
@@ -222,8 +275,10 @@ last error line, falling back to that `.err` when the database has none.
 
 ## Querying `sacct` yourself
 
-remake itself only calls `squeue`. If you check finished jobs with
+remake calls `squeue`, and `sacct` only for `why`/`task-info` on one
+task. If you check finished jobs with
 `sacct -j <jobid>`, also pass `-S <submission time>` (for example
 `sacct -j 123456 -S 2026-10-14T09:00`): on LOTUS2 job ids are reused, and
 without `-S` sacct can return an unrelated old job with the same id. The
-submission time is the modification time of `.remake/jobs/<rule>.jobids.json`.
+submission time is `submitted` (epoch seconds) in
+`.remake/jobs/<rule>.<run_seq>.jobids.json`.

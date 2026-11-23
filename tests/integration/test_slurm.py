@@ -213,8 +213,11 @@ def test_dry_run_writes_submit_sh_wiring(slurm_dir):
         '.remake/slurm/agg.sbatch)' in submit
     )
     # Sidecar writes: one array-form sidecar per rule.
-    assert '> .remake/jobs/gen.jobids.json' in submit
-    assert '> .remake/jobs/agg.jobids.json' in submit
+    # Each record written to a temp file and renamed (0.11): one per
+    # submission, plus the latest-submission pointer.
+    assert 'mv .remake/jobs/gen.1.jobids.tmp .remake/jobs/gen.jobids.json' in submit
+    assert 'mv .remake/jobs/agg.1.jobids.tmp .remake/jobs/agg.jobids.json' in submit
+    assert '.remake/jobs/gen.1.jobids.json' in submit
     assert 'slurm_array_job_id' in submit and 'slurm_job_ids' not in submit
     assert 'continuation' not in submit  # no dynamic rules
 
@@ -234,8 +237,14 @@ def test_submission_writes_jobid_sidecars(slurm_dir):
     gen_sidecar = json.loads(Path('.remake/jobs/gen.jobids.json').read_text())
     agg_sidecar = json.loads(Path('.remake/jobs/agg.jobids.json').read_text())
     run_seq = read_specs('gen')[0]['run_seq']
-    assert gen_sidecar == {'slurm_array_job_id': '1001', 'run_seq': run_seq}
-    assert agg_sidecar == {'slurm_array_job_id': '1003', 'run_seq': run_seq}
+    assert gen_sidecar.pop('submitted') > 1_700_000_000  # epoch seconds
+    assert gen_sidecar == {'v': 1, 'slurm_array_job_id': '1001', 'run_seq': run_seq}
+    assert agg_sidecar['slurm_array_job_id'] == '1003' and agg_sidecar['run_seq'] == run_seq
+    # The per-submission record has the same content and survives the
+    # next submission (0.11, reconcile reads it).
+    record = Path(f'.remake/jobs/gen.{run_seq}.jobids.json')
+    assert json.loads(record.read_text())['slurm_array_job_id'] == '1001'
+    assert not list(Path('.remake/jobs').glob('*.tmp'))
     assert specs_file('gen').name == f'gen.{run_seq}.json'
 
 
@@ -595,7 +604,7 @@ def test_slurm_status_reports_queue_state(slurm_dir, capsys):
     # A table (soak finding 5): one column per state, the reason last.
     lines = {ln.split()[0]: ln for ln in out.splitlines()}
     assert lines['rule'].split() == ['rule', 'job', 'submitted', 'tasks', 'PD', 'R',
-                                     'done', 'failed', 'reason']
+                                     'done', 'failed', 'lost', 'reason']
     gen = lines['gen'].split()
     # rule, job, submitted (date time), tasks, PD, R, done, failed, reason
     assert gen[1] == '1001' and gen[4:9] == ['12', '1', '1', '0', '0']
@@ -872,8 +881,11 @@ def test_info_failed_falls_back_to_slurm_err(slurm_dir):
     cli('run', 'pipeline.py', '-E', 'slurm')
     specs = read_specs('gen')
     key = specs[3]['task_key']
-    (Path('.remake/slurm/output/gen') / '3.err').write_text(
+    jobid = json.loads(Path('.remake/jobs/gen.jobids.json').read_text())['slurm_array_job_id']
+    (Path('.remake/slurm/output/gen') / f'{jobid}_3.err').write_text(
         'Traceback (most recent call last):\n  ...\nImportError: no module x\n\n')
+    # A stale pre-0.11 name for index 0 is another submission's: ignored.
+    (Path('.remake/slurm/output/gen') / '0.err').write_text('OldError: not this task\n')
     line = _failed_line({'rule': 'gen', 'key': key, 'exception': '', 'log': 'LOG'})
     assert line['error'] == 'ImportError: no module x'
     assert line['log'] == 'LOG'
