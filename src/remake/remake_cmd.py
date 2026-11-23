@@ -134,11 +134,11 @@ def _failed_line(failure):
     task starts, e.g. import errors, never reach the DB)."""
     error = _last_line(failure['exception'])
     if not error:
-        from .executors.slurm_executor import last_submission
+        from .executors.slurm_executor import element_output, last_submission
 
-        _, index = last_submission(failure['rule'], failure['key'])
+        jobids, index = last_submission(failure['rule'], failure['key'])
         if index is not None:
-            err = slurm_output_dir() / failure['rule'] / f'{index}.err'
+            err = element_output(failure['rule'], (jobids or [None])[0], index, 'err')
             if err.exists():
                 error = _last_line(err.read_text(errors='replace'))
     return {

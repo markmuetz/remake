@@ -213,8 +213,11 @@ def test_dry_run_writes_submit_sh_wiring(slurm_dir):
         '.remake/slurm/agg.sbatch)' in submit
     )
     # Sidecar writes: one array-form sidecar per rule.
-    assert '> .remake/jobs/gen.jobids.json' in submit
-    assert '> .remake/jobs/agg.jobids.json' in submit
+    # Each record written to a temp file and renamed (0.11): one per
+    # submission, plus the latest-submission pointer.
+    assert 'mv .remake/jobs/gen.jobids.tmp .remake/jobs/gen.jobids.json' in submit
+    assert 'mv .remake/jobs/agg.jobids.tmp .remake/jobs/agg.jobids.json' in submit
+    assert '.remake/jobs/gen.1.jobids.json' in submit
     assert 'slurm_array_job_id' in submit and 'slurm_job_ids' not in submit
     assert 'continuation' not in submit  # no dynamic rules
 
@@ -234,8 +237,14 @@ def test_submission_writes_jobid_sidecars(slurm_dir):
     gen_sidecar = json.loads(Path('.remake/jobs/gen.jobids.json').read_text())
     agg_sidecar = json.loads(Path('.remake/jobs/agg.jobids.json').read_text())
     run_seq = read_specs('gen')[0]['run_seq']
-    assert gen_sidecar == {'slurm_array_job_id': '1001', 'run_seq': run_seq}
-    assert agg_sidecar == {'slurm_array_job_id': '1003', 'run_seq': run_seq}
+    assert gen_sidecar.pop('submitted') > 1_700_000_000  # epoch seconds
+    assert gen_sidecar == {'v': 1, 'slurm_array_job_id': '1001', 'run_seq': run_seq}
+    assert agg_sidecar['slurm_array_job_id'] == '1003' and agg_sidecar['run_seq'] == run_seq
+    # The per-submission record has the same content and survives the
+    # next submission (0.11, reconcile reads it).
+    record = Path(f'.remake/jobs/gen.{run_seq}.jobids.json')
+    assert json.loads(record.read_text())['slurm_array_job_id'] == '1001'
+    assert not list(Path('.remake/jobs').glob('*.tmp'))
     assert specs_file('gen').name == f'gen.{run_seq}.json'
 
 
