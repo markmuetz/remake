@@ -1153,6 +1153,76 @@ rmk.rules_from_current_module()
     assert '"total:' in out and '-> "dyn"' in out
 
 
+def test_info_counts_rules_deferred_only_by_upstream(tmp_path, monkeypatch, capsys):
+    # Soak finding 2 (2026-11-23): a static-matrix rule deferred only because
+    # an upstream rule is shows its known tasks, naming the upstream; a rule
+    # whose own deferrable matrix is held stays unknown.
+    monkeypatch.chdir(tmp_path)
+    Path('p.py').write_text('''
+from pathlib import Path
+from remake import Remake, rule, deferrable, Defer
+
+@rule(outputs={'o': 'a_{s}.txt'}, matrix={'s': [1, 2]})
+def a(outputs, s):
+    Path(outputs['o']).write_text(str(s))
+
+@deferrable
+def later():
+    raise Defer('not yet')
+
+@rule(inputs=a.outputs, outputs={'o': 'd_{k}.txt'}, matrix=later, depends_on=[a])
+def dyn(inputs, outputs, k):
+    pass
+
+@rule(outputs={'o': 'b_{case}.txt'}, matrix={'case': [1, 2, 3]}, depends_on=[dyn])
+def static_down(outputs, case):
+    pass
+
+@deferrable
+def later2():
+    return [{'j': 1}]
+
+@rule(outputs={'o': 'e_{j}.txt'}, matrix=later2, depends_on=[static_down])
+def dyn_down(outputs, j):
+    pass
+
+def plain():  # not @deferrable; reads an upstream output (review 2026-11-23)
+    return {'n': Path('a_1.txt').read_text().split()}
+
+@rule(outputs={'o': 'f_{n}.txt'}, matrix=plain, depends_on=[dyn])
+def plain_down(outputs, n):
+    pass
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    assert not cli('info', '--json', 'p.py')
+    data = json.loads(capsys.readouterr().out)
+    rows = {r['rule']: r for r in data['rules']}
+    assert rows['dyn'] == {'rule': 'dyn', 'deferred': True, 'deferred_by': []}
+    assert rows['static_down'] == {
+        'rule': 'static_down', 'deferred': True, 'deferred_by': ['dyn'],
+        'tasks': 3, 'succeeded': 0, 'failed': 0, 'pending': 3,
+    }
+    # A callable matrix below a deferred rule (deferrable or not) is never
+    # called: its task set is not known, and the root is still named.
+    assert rows['dyn_down'] == {'rule': 'dyn_down', 'deferred': True, 'deferred_by': ['dyn']}
+    assert rows['plain_down'] == {'rule': 'plain_down', 'deferred': True,
+                                  'deferred_by': ['dyn']}
+    assert data['totals']['tasks'] == 2  # only the planned rule, a
+    assert data['totals']['deferred_tasks'] == 3
+
+    assert not cli('info', 'p.py')
+    out = capsys.readouterr().out
+    line = next(ln for ln in out.splitlines() if ln.startswith('static_down'))
+    assert line.split()[:6] == ['static_down', '3', '?', '?', '0', '3']
+    assert 'deferred (dyn)' in line
+    assert 'not in TOTAL (deferred): 3 known tasks in 1 rule held by an upstream rule; ' \
+        '3 rules with tasks not known yet' in out
+    line = next(ln for ln in out.splitlines() if ln.startswith('dyn_down'))
+    assert line.split()[1:6] == ['?'] * 5 and 'deferred (dyn)' in line
+
+
 def _write_remakefile(path, name, body='pass'):
     path.write_text(f'''
 from pathlib import Path

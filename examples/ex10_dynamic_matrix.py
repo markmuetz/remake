@@ -16,6 +16,11 @@
 # A single `remake run` handles the whole flow: detect_events runs first,
 # then the deferred rules resolve and run.
 #
+# Before the first run, `remake info` shows process_event as deferred with
+# '?' counts (its own matrix is not ready), and summarise_events with its one
+# known task, "deferred (process_event)": its matrix is static, so only the
+# upstream holds it back.
+#
 # DAG: detect_events[year] --> process_event[year, event_id] --> summarise_events
 
 import json

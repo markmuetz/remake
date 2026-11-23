@@ -41,6 +41,18 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - compatibility.md lists which files under `.remake/` are the on-disk
   contract and which are scratch.
 
+### Added
+
+- **`remake info` counts rules deferred only by an upstream rule** (soak
+  finding 2, 2026-11-23). A rule with a static matrix that waits on a
+  deferred rule upstream now shows its task count, and failed and pending
+  from the DB, with `to run` naming the rules holding it (`deferred
+  (process_event)`); a line under TOTAL counts the deferred tasks. Its
+  `--json` row gains `tasks`, `succeeded`, `failed` and `pending`; every
+  deferred row gains `deferred_by` (`[]` when its own matrix is the cause),
+  and `totals` gains `deferred_tasks`. A rule whose matrix is callable
+  still shows `?`.
+
 ### Fixed
 
 - **`uses` values that refer back to themselves no longer hang the hash**

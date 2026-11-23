@@ -107,6 +107,20 @@ always satisfy `up-to-date + stale + failed + pending = tasks` and
 | `pending` | never run, or a run is in flight |
 | `to run` | what `remake run` would do now = `stale + failed + pending` |
 
+Deferred rules are not in `TOTAL`; a line under it counts them. A rule whose
+own `@deferrable` matrix is not ready (or whose upstream reruns) shows `?`
+for every count and `deferred` to run. A rule that waits on a deferred rule
+upstream names it, e.g. `deferred (process_event)`. If its matrix is static
+(a dict, a list or none), its tasks are known: it shows the task count, and
+`failed` and `pending` from the DB, with `up-to-date` and `stale` as `?`
+(they need the plan). A callable matrix there stays `?`.
+
+In `--json` every deferred row has `deferred_by` (`[]` when its own matrix is
+the cause); one with known tasks adds `tasks`, `succeeded`, `failed` and
+`pending` (DB status, not crossed with the plan), and
+`totals.deferred_tasks` sums them. `totals.failed` counts planned rules only:
+failures in deferred rules show in their rows and in `--failed`.
+
 | Option | Meaning |
 |---|---|
 | `-Q, --query` | filter tasks |

@@ -31,7 +31,7 @@ Soak pipelines so far: `wescon-tools` (`wescon_radar_dev.py`, v17).
   so heavy sharing is still exponential (predates the fix). Memoising each
   object's rendering within one hash would fix it.
 
-## 2. `info` shows `?` for rules that are deferred only by an upstream rule (open)
+## 2. `info` shows `?` for rules that are deferred only by an upstream rule (fixed)
 
 2026-11-23, `wescon_radar_dev.py` v17 (nothing run yet). Requested by MM.
 
@@ -52,6 +52,13 @@ Soak pipelines so far: `wescon-tools` (`wescon_radar_dev.py`, v17).
   up-to-date vs stale needs the plan, so show them combined or as `?`; to run =
   `deferred (<upstream rule>)`; included in TOTAL. `info --json` gains fields
   for the same.
+- **Done.** `info` shows the task count, failed and pending (DB status) for a
+  deferred rule with a static matrix, `to run` = `deferred (<root rules>)`,
+  and a line under TOTAL counting deferred tasks. Every deferred `--json` row
+  has `deferred_by` (`[]` when its own matrix is the cause); `totals` gains
+  `deferred_tasks`. A callable matrix (deferrable or not) below a deferred
+  rule stays `?`: the Fable review found that calling a plain one could crash
+  `info` or give a wrong count.
 - **Related, lower priority.** `gather_delta_z_stats` has a static matrix (one
   task per case) but raises `Defer` from it only as a gate, because its
   *inputs* callable reads the brackets file to list the files to gather. Only
@@ -62,3 +69,46 @@ Soak pipelines so far: `wescon-tools` (`wescon_radar_dev.py`, v17).
 - **Also seen** (wescon side, not remake): a `ScopeWarning` in
   `analyse_compare_rhis_to_radarnet` for undeclared `CORR_PLOT_KIND` and
   `plot_corr_grid`. The wescon session is handling it.
+
+## 3. `lint` reports false near misses for outputs of deferred rules (open)
+
+2026-11-23, `wescon_radar_dev.py` v17 (nothing run yet). Reported by MM.
+
+- **Symptom.** `remake lint` says `gather_delta_z_stats: matrix not ready,
+  outputs unknown — skipped`, then reports inputs that rule produces as
+  unproduced: a `NEAR MISS` pointing at an unrelated sibling file
+  (`compare_rhis_to_radarnet.hdf`) and an inflated `external` count (68 inputs,
+  e.g. `comparison/gathered_dZ_stats.hdf`).
+- **Cost.** The false positive hides a real missing dependency: both
+  `analyse_*` rules read `gather_delta_z_stats`' outputs without depending on
+  it. That only shows once the deferred matrix can expand. The other
+  `MISSING DEPENDENCY` findings in the same run were right (fixed wescon-side).
+- **Proposal.** When any rule was skipped as deferred, don't call an unmatched
+  input external or a near miss without saying so. Better: match unmatched
+  inputs against the skipped rules' output *templates* (the format strings
+  are known even when the matrix is not), which would also catch the missing
+  dependency. At least, a summary line: N inputs not checked because rules X,
+  Y were deferred.
+
+## 4. `lint` NEAR MISS paths are hard to compare by eye (open, suggestion)
+
+2026-11-23, `wescon_radar_dev.py`. Suggested by MM.
+
+- **Problem.** A NEAR MISS prints both full paths inline on one wrapped line.
+  JASMIN paths are ~150 characters and share a long prefix, so the difference
+  (here an extra `comparison/` directory and a different file name) is hard to
+  spot.
+- **Proposal.**
+  1. Stack the two paths, labelled and aligned (`wants:` / `nearest:`), with the
+     producing rule and its task count on the heading line.
+  2. Diff by path component (`difflib.SequenceMatcher` on the `/`-split lists),
+     so an inserted directory is one insertion and does not misalign the rest;
+     a character diff only inside a changed component (`v16` vs `v17`).
+  3. Collapse the shared prefix (and suffix) to `…/`, keeping the last one or
+     two shared components for context.
+  4. Colour through `Painter(args.colour)`: the differing span red in `wants`,
+     green in `nearest`, shared parts dimmed; `^^^` markers under the
+     difference when colour is off. `--json` stays plain, perhaps with a
+     `diff` field.
+- **Reuse.** The same helper suits anywhere two paths are shown together:
+  `why`, the paths-changed reason, "expected X, found Y" messages.

@@ -701,8 +701,19 @@ class Remake:
         Returns {'rules': [...], 'totals': {...}} plus 'tasks' (when
         list_tasks) and 'failures' (when list_failures). Rendering, failure
         grouping and JSON serialisation are the caller's job; this method only
-        gathers. Rules are in dependency (topological) order; deferred rules
-        appear as {'rule', 'deferred': True} with no counts.
+        gathers. Rules are in dependency (topological) order.
+
+        A deferred rule's row is {'rule', 'deferred': True, 'deferred_by'}.
+        'deferred_by' is [] when its own matrix is the cause (it raised Defer,
+        or it is deferrable and an upstream reruns); otherwise it names the
+        rules upstream whose own matrices hold it (the planner never tries
+        this rule's matrix). A rule held by upstream rules whose matrix is
+        static (a dict, list or None, not a callable) has known tasks, so its
+        row adds 'tasks' and the DB's view of them, 'succeeded', 'failed' and
+        'pending' (up to date vs stale needs the plan, which can't run it
+        yet). Deferred rules are left out of the totals, which partition the
+        planned rules; 'deferred_tasks' in the totals counts their known
+        tasks (soak finding 2, 2026-11-23).
 
         Counts are a four-state partition of each rule's tasks —
         up_to_date + stale + failed + pending == tasks — where a *stale* task
@@ -747,10 +758,23 @@ class Remake:
                     bucket[r.category] += 1
 
         rule_rows, task_rows, failures = [], [], []
+        # A deferred rule's root causes: the deferred rules upstream of it
+        # (or itself) whose own matrix held them, as rule names. plan() defers
+        # a rule with a deferred dependency without trying its matrix, so
+        # such a rule takes its dependencies' roots.
+        held_by = {}
         for rule in nx.topological_sort(self.dag):
             if rule.name in deferred_names:
-                rule_rows.append({'rule': rule.name, 'deferred': True})
-                continue
+                dep_roots = set().union(*(held_by[d] for d in rule.depends_on
+                                          if d in held_by))
+                held_by[rule] = dep_roots or {rule.name}
+                # Only a static matrix can be expanded now: a callable one
+                # (deferrable or not) may read upstream outputs that don't
+                # exist yet, or exist but are about to be rewritten.
+                if not dep_roots or callable(rule.matrix):
+                    rule_rows.append({'rule': rule.name, 'deferred': True,
+                                      'deferred_by': sorted(dep_roots)})
+                    continue
             tasks = expand_rule(rule, predicate)
             records = cache.get_tasks_status(tasks)
             statuses = {
@@ -759,6 +783,20 @@ class Remake:
                 else 'pending'
                 for t in tasks
             }
+            if rule in held_by:
+                by_status = Counter(statuses.values())
+                rule_rows.append({
+                    'rule': rule.name,
+                    'deferred': True,
+                    'deferred_by': sorted(held_by[rule]),
+                    'tasks': len(tasks),
+                    'succeeded': by_status['success'],
+                    'failed': by_status['failed'],
+                    'pending': len(tasks) - by_status['success'] - by_status['failed'],
+                })
+                self._info_task_rows(rule, tasks, records, statuses, list_tasks,
+                                     list_failures, task_rows, failures)
+                continue
             # Status (DB history) crossed with the plan: a success the plan
             # reruns is stale, not up to date; a pending task the plan skips
             # (adopted outputs) is up to date, not pending.
@@ -778,23 +816,8 @@ class Remake:
             if reasons:
                 row['reasons'] = dict(reasons_by_rule.get(rule.name, {}))
             rule_rows.append(row)
-            if list_tasks:
-                task_rows.extend(
-                    {'task': str(t), 'key': t.key, 'status': statuses[t.key]} for t in tasks
-                )
-            if list_failures:
-                failures.extend(
-                    {
-                        'task': str(t),
-                        'key': t.key,
-                        'rule': rule.name,
-                        'timestamp': records[t.key].timestamp,
-                        'exception': records[t.key].exception,
-                        'log': str(task_log_path(t)),
-                    }
-                    for t in tasks
-                    if t.key in records and records[t.key].status == TASK_STATUS_FAILED
-                )
+            self._info_task_rows(rule, tasks, records, statuses, list_tasks,
+                                 list_failures, task_rows, failures)
 
         # Bytes of recorded outputs per rule: one aggregate query.
         output_bytes = self.metadata.get_rule_output_bytes([r.name for r in self.rules])
@@ -809,12 +832,35 @@ class Remake:
             for field in ('tasks', 'up_to_date', 'stale', 'failed', 'pending', 'to_run',
                           'output_bytes')
         }
+        totals['deferred_tasks'] = sum(r.get('tasks', 0) for r in rule_rows
+                                       if r['deferred'])
         out = {'rules': rule_rows, 'totals': totals}
         if list_tasks:
             out['tasks'] = task_rows
         if list_failures:
             out['failures'] = failures
         return out
+
+    @staticmethod
+    def _info_task_rows(rule, tasks, records, statuses, list_tasks, list_failures,
+                        task_rows, failures):
+        if list_tasks:
+            task_rows.extend(
+                {'task': str(t), 'key': t.key, 'status': statuses[t.key]} for t in tasks
+            )
+        if list_failures:
+            failures.extend(
+                {
+                    'task': str(t),
+                    'key': t.key,
+                    'rule': rule.name,
+                    'timestamp': records[t.key].timestamp,
+                    'exception': records[t.key].exception,
+                    'log': str(task_log_path(t)),
+                }
+                for t in tasks
+                if t.key in records and records[t.key].status == TASK_STATUS_FAILED
+            )
 
     @anchored
     def task_info(self, task):

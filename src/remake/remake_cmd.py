@@ -813,13 +813,18 @@ class RemakeCLI:
         # Four-state partition + the plan's view: up-to-date + stale + failed
         # + pending == tasks, and up-to-date + to-run == tasks.
         header = ('rule', 'tasks', 'up-to-date', 'stale', 'failed', 'pending', 'to run')
-        rows = [
-            (r['rule'], '?', '?', '?', '?', '?', 'deferred')
-            if r['deferred']
-            else (r['rule'], r['tasks'], r['up_to_date'], r['stale'],
-                  r['failed'], r['pending'], r['to_run'])
-            for r in rule_rows
-        ]
+        # A rule deferred only by an upstream rule has known tasks: its count
+        # and DB failed/pending show, up-to-date vs stale can't (no plan yet).
+        def _row(r):
+            if not r['deferred']:
+                return (r['rule'], r['tasks'], r['up_to_date'], r['stale'],
+                        r['failed'], r['pending'], r['to_run'])
+            held = f'deferred ({", ".join(r["deferred_by"])})' if r['deferred_by'] else 'deferred'
+            if 'tasks' in r:
+                return (r['rule'], r['tasks'], '?', '?', r['failed'], r['pending'], held)
+            return (r['rule'], '?', '?', '?', '?', '?', held)
+
+        rows = [_row(r) for r in rule_rows]
         totals_row = (
             'TOTAL', totals['tasks'], totals['up_to_date'], totals['stale'],
             totals['failed'], totals['pending'], totals['to_run'],
@@ -863,6 +868,19 @@ class RemakeCLI:
         for row in rows:
             print(render_row(row))
         print(render_row(totals_row, emphasise=True))
+        deferred_rows = [r for r in rule_rows if r['deferred']]
+        if deferred_rows:
+            known = [r for r in deferred_rows if 'tasks' in r]
+            unknown = len(deferred_rows) - len(known)
+            parts = []
+            if known:
+                n = totals['deferred_tasks']
+                parts.append(f'{n} known task{"s" if n != 1 else ""} in {len(known)} '
+                             f'rule{"s" if len(known) != 1 else ""} held by an upstream rule')
+            if unknown:
+                parts.append(f'{unknown} rule{"s" if unknown != 1 else ""} '
+                             f'with tasks not known yet')
+            print(paint(f'not in TOTAL (deferred): {"; ".join(parts)}', 'dim'))
         if args.reasons:
             for r in rule_rows:
                 rsn = r.get('reasons')
