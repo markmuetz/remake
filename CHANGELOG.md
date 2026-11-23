@@ -77,7 +77,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `run -n`) and heads its `--reasons` tally. `lint` findings are stacked, with
   paths relative to the project and counts of distinct files (`--json` rows
   gain `distinct`). `task-info` and `info --failed` fit long paths to the
-  terminal. `why` and `set-state` gain `--json`. `--colour` is also accepted
+  terminal. `why` and `set-state` gain `--json`. A follow-on line that
+  belongs to the line above starts with `- ` (nested where it is nested),
+  and blank lines separate sections. `run -n` lists deferred rules as
+  `info` does. `info --failed` in a terminal drops the (cut) log path for
+  a `remake task-log` footer; piped lines keep it. `task-info` lists the
+  size of each output, including those with no recorded size ("not
+  measured"), and says "no log file" rather than "no log yet". `verify`
+  says when all is well, with the number of tasks checked. `--colour` is also accepted
   after the subcommand. Golden tests pin every command's text output at 80
   and 120 columns, check no line overflows, and check colour only adds
   escape codes.

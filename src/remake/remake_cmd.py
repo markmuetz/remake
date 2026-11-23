@@ -632,10 +632,14 @@ class RemakeCLI:
                 from .core.remake import deferred_roots
 
                 roots = deferred_roots(rmk.dag, deferred)
-                for rule in deferred:
-                    why = (f'held by {", ".join(roots[rule])}' if roots[rule]
-                           else 'matrix not ready')
-                    print(f'{rule.name}: deferred ({why})')
+                if deferred:
+                    # Same words and layout as `info`'s deferred list.
+                    print('\ndeferred, not run:')
+                    name_w = max(len(rule.name) for rule in deferred)
+                    for rule in deferred:
+                        why = (f'held by {", ".join(roots[rule])}' if roots[rule]
+                               else 'matrix not ready')
+                        print(f'  - {rule.name:<{name_w}}  {why}')
                 return
         nfailed = rmk.run(
             executor=executor,
