@@ -29,8 +29,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   rerun by the next `remake run` (`set-state --success` if not wanted); a
   failed task's traceback leaves `info --failed` once it is resubmitted;
   `verify` no longer adopts outputs of a task submitted but never run.
-  A never-run submitted task shows in `why` as "no result yet (pending
-  since ...)".
+  In `why`, a pending task reads "no result yet (pending since ...)" if it
+  never ran, "rerun pending since ..., no result yet" if it did (was "last
+  run pending at ...").
 - **SLURM: what happened to a task.** `slurm-status` has a `lost` column
   (in the last submission, not queued, no result). `why` and `task-info`
   show the task's SLURM state: queued or running (`squeue`), or the end
@@ -43,6 +44,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   files are named `<jobid>_<index>.out/.err`, so `info --failed` never
   shows another submission's error. Old names are still read for
   submissions made by an older remake.
+- `rule-dag`, `dag` and `rule-info` no longer create the metadata DB in a
+  fresh checkout (as `lint` since earlier in 0.11): they read no metadata.
 - **Dependency matching between tasks uses canonical paths** (0.11 item 3).
   An input that spells its producer's output differently (absolute vs
   relative, `./`, a symlinked directory) now links to the one upstream task

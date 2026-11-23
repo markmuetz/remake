@@ -540,8 +540,8 @@ def test_lint_clean_pipeline(pipeline_dir, capsys):
 
 
 @pytest.mark.parametrize('args', [
-    ('lint',), ('rule-dag',), ('rule-info', 'process'), ('info',), ('ls-tasks',),
-    ('run', '-n')])
+    ('lint',), ('rule-dag',), ('rule-info', 'process'), ('dag',), ('dag', '--tasks'),
+    ('info',), ('ls-tasks',), ('run', '-n')])
 def test_read_only_commands_resolve_string_depends_on(pipeline_dir, args, capsys):
     """depends_on given as rule names (to avoid a circular import) is
     resolved by every command, including those that skip finalize() (lint
@@ -550,6 +550,9 @@ def test_read_only_commands_resolve_string_depends_on(pipeline_dir, args, capsys
     Path('pipeline.py').write_text(
         PIPELINE.replace('depends_on=[generate]', "depends_on=['generate']"))
     assert cli(args[0], 'pipeline.py', *args[1:]) in (None, 0)
+    if args[0] in ('lint', 'rule-dag', 'rule-info', 'dag'):
+        # Static commands read no metadata: no DB in a fresh checkout.
+        assert not Path('.remake/remake.db').exists()
     if args == ('lint',):
         assert 'external' not in capsys.readouterr().out
 

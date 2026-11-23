@@ -225,14 +225,15 @@ the task's element in its rule's last submission:
 $ remake why pipeline.py 314c51f7
 314c51f7 gen[n=1]  314c51f7049d01bc1c904bb5b87d631ba1b65e48
 - will run: yes
-  - last run pending at 2026-11-23 17:02:11
+  - rerun pending since 2026-11-23 17:02:11, no result yet
     - SLURM job 6133148_11 (run 81): NODE_FAIL on host1234 after 13:40
 ```
 
 `queued (PD)` and `running (R)` come from `squeue`; otherwise remake runs
-`sacct` for that one element. `no accounting record` means it was
-cancelled before it started (usually because an upstream task failed), or
-SLURM no longer keeps the job. Nothing about the kill is stored: once SLURM
+`sacct` for that one element. `CANCELLED before it started` and `no
+accounting record` mean it was cancelled before it started (usually
+because an upstream task failed; sacct often keeps no row for such an
+element), or, for the latter, that SLURM no longer keeps the job. Nothing about the kill is stored: once SLURM
 has forgotten the job, only "pending" remains.
 
 While a submission is in flight, its tasks show as pending in `remake info`.

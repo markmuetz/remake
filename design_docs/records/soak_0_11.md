@@ -203,7 +203,7 @@ Reported by MM.
   command; `rule-dag`, `dag` and `rule-info` also finalize (and so create
   the DB) without needing it: worth the same change, not done yet.
 
-## 7. Tasks lost to a node failure look like ordinary stale tasks (planned: release item 9, designs/slurm_reconcile/)
+## 7. Tasks lost to a node failure look like ordinary stale tasks (fixed: release item 9, designs/slurm_reconcile/; checked live)
 
 2026-11-23, `wescon_radar_dev.py`, run 81 (SLURM continuation of run 79).
 Reported by MM via the wescon session.
@@ -243,6 +243,26 @@ Reported by MM via the wescon session.
   `/work/scratch-nopw2/mmuetz/remake_soak/run81_node_fail/` (full sacct for
   6133147–6133154; sidecars, specs and DB snapshot partly run 82).
 
+- **Fix and live check (2026-11-23, b88b7bc).** Fixed by the simple plan
+  in designs/slurm_reconcile/: submitted tasks are PENDING until their
+  results arrive; `slurm-status` counts lost tasks; `why`/`task-info` show
+  squeue/sacct state. Checked on LOTUS2 (debug partition; test dir
+  `/work/scratch-nopw2/mmuetz/remake_slurm_reconcile/live_check/`), by the
+  wescon session: gen (4, 60 s) → proc (aftercorr) → agg (afterok).
+  - Run 1: scancel of running gen_1 (13 s in) and pending proc_2.
+    `slurm-status`: lost gen 1, proc 2, agg 1. `why` gen 1: "CANCELLED on
+    host1002 after 0:13"; proc 1 and 2: "no accounting record" (sacct has
+    none); `run -n`: 4 tasks (gen 1, proc 1, 2, agg). `task-info` showed
+    the same state line.
+  - Run 2: `run -E slurm` submitted exactly the lost set; all done.
+  - Run 3: `-f -Q "rule == 'gen'"`, scancel running gen_2: `run -n` plans
+    gen 2 (the bug case: before the fix it was up to date).
+  - Findings, fixed after the check: agg's sacct row is the range
+    `J_[0]` (never split off), so `why` said "no accounting record"; now
+    "CANCELLED before it started". "last run pending at" for a killed
+    rerun read as still going: now "rerun pending since ..., no result
+    yet". `rule-dag` created the DB (finding 10).
+
 ## 8. A formatting-only change to a `uses=` function counts as a code change (open)
 
 2026-11-23, `wescon_radar_dev.py`. A ruff reformat (quotes, line wrapping)
@@ -258,3 +278,18 @@ and comments count is a policy decision.
   on the legacy match path; or a real edit (v15 → v17).
 - **Decision (MM, 2026-11-23).** Docstrings keep counting in code hashes.
   Still to do: find which of the candidates changed `load_data`'s hash.
+
+## 9. `lint` crashed on a string `depends_on` (fixed, 4811687)
+
+2026-11-23, wescon-tools (`depends_on=['find_candidate_delta_z']`, a string
+to avoid a circular import). Regression from 6914f00: lint no longer
+finalized, and finalize is where `build_rule_dag` resolves names to rules
+(`'str' object has no attribute 'name'`). Lint now builds the rule DAG
+itself; a test runs every read-only command on a string `depends_on`.
+
+## 10. `rule-dag` created the DB in a fresh checkout (fixed)
+
+2026-11-23, found during the item 9 live check. Same class as note 6
+(lint): `rule-dag`, `dag` and `rule-info` finalized, creating
+`.remake/remake.db`, though they read no metadata. They now load without
+finalizing; the read-only-commands test checks no DB appears.

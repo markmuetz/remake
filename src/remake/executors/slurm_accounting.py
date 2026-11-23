@@ -200,8 +200,8 @@ def tasks_slurm_state(tasks):
 
     - 'queued (PD)' / 'running (R)': from squeue;
     - not queued: from sacct, e.g. 'NODE_FAIL on host1234 after 13:40',
-      'COMPLETED', 'no accounting record (cancelled before it started, or
-      purged)', or why sacct couldn't say.
+      'COMPLETED', 'CANCELLED before it started', 'no accounting record
+      (cancelled before it started, or purged)', or why sacct couldn't say.
 
     {} where there is no squeue (not on a cluster)."""
     import shutil
@@ -259,8 +259,16 @@ def tasks_slurm_state(tasks):
                 continue
             # Only an element's own row with a start (parse_sacct): rows
             # without one never name a single element.
-            el = acct[st['jobid']].element(st['index']) if st['jobid'] in acct else None
-            if el is None:
+            job = acct.get(st['jobid'])
+            el = job.element(st['index']) if job else None
+            # A range row naming the index (`J_[0-3]`): never split off the
+            # array, so it never started (JASMIN live check: an afterok
+            # dependent cancelled by kill-on-invalid-dep).
+            ranged = next((row for idx, row in (job.unsplit if job else [])
+                           if idx is not None and st['index'] in idx), None)
+            if el is None and ranged is not None:
+                st['summary'] = f'not queued; {ranged.state} before it started'
+            elif el is None:
                 st['summary'] = ('not queued; no accounting record (cancelled before it '
                                  'started, or purged)')
             elif el.state == 'COMPLETED':

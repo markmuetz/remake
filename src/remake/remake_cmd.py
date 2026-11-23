@@ -1108,7 +1108,9 @@ class RemakeCLI:
         return 1 if problems else 0
 
     def remake_rule_dag(self, args):
-        rmk = self._track(load_remake(args.remakefile, profile=args.profile))
+        # Static: no metadata, so not finalized (finalize would create the
+        # DB in a fresh checkout; soak notes 6 and 10).
+        rmk = self._track(load_remake(args.remakefile, finalize=False, profile=args.profile))
         need_matrix = args.number_of_tasks or args.matrix_keys
         info = rmk.rule_dag(with_matrix=need_matrix)
         order, edges = info['order'], info['edges']
@@ -1142,7 +1144,9 @@ class RemakeCLI:
     def remake_dag(self, args):
         from .core.dot import rule_dot, task_dot
 
-        rmk = self._track(load_remake(args.remakefile, profile=args.profile))
+        # Static: no metadata, so not finalized (finalize would create the
+        # DB in a fresh checkout; soak notes 6 and 10).
+        rmk = self._track(load_remake(args.remakefile, finalize=False, profile=args.profile))
         text = task_dot(rmk) if args.tasks else rule_dot(rmk)
         if args.output:
             Path(args.output).write_text(text)
@@ -1228,7 +1232,9 @@ class RemakeCLI:
         return EXIT_BLOCKED if counts['blocked'] else EXIT_OK
 
     def remake_rule_info(self, args):
-        rmk = self._track(load_remake(args.remakefile, profile=args.profile))
+        # Static: no metadata, so not finalized (finalize would create the
+        # DB in a fresh checkout; soak notes 6 and 10).
+        rmk = self._track(load_remake(args.remakefile, finalize=False, profile=args.profile))
         rule = rmk.rule_from_name(args.rule_name)
         data = rmk.rule_info(rule)
         if args.json:

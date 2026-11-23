@@ -123,6 +123,10 @@ def test_slurm_status_why_and_task_info_report_the_kill(cluster, capsys):
     assert f'SLURM job {gen}_1' in out and 'NODE_FAIL on host' in out
     cli('why', 'pipeline.py', proc_key)
     assert 'no accounting record (cancelled before it started' in capsys.readouterr().out
+    # agg (afterok) keeps a range row `J_[0]`, CANCELLED, never started.
+    agg_key = next(t.key for t in rmk.tasks() if t.rule.name == 'agg')
+    cli('why', 'pipeline.py', agg_key)
+    assert 'not queued; CANCELLED before it started' in capsys.readouterr().out
     cli('task-info', 'pipeline.py', key)
     assert 'NODE_FAIL on host' in capsys.readouterr().out
 
