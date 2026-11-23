@@ -1017,7 +1017,7 @@ class RemakeCLI:
 
         def path(p, label_width=13):
             # Relative to the project where possible, cut to the terminal.
-            return display_path(p, base, (width - label_width) if width else None)
+            return display_path(p, base, max(width - label_width, 20) if width else None)
 
         def head(label, style, row, text):
             tasks = plural(row['count'], 'task')
@@ -1495,7 +1495,6 @@ class RemakeCLI:
         import datetime as dt
 
         from .core.dag import expand_rule
-        from .core.exceptions import Defer
         from .executors.slurm_executor import (_read_sidecar, load_job_specs,
                                                recorded_jobids, spec_path,
                                                squeue_snapshot)
@@ -1513,38 +1512,46 @@ class RemakeCLI:
             recorded = _read_sidecar(sidecar_path)
             if recorded is None:
                 continue
+            jobids = recorded_jobids(rule.name)
             submitted = dt.datetime.fromtimestamp(
-                sidecar_path.stat().st_mtime).strftime('%Y-%m-%d %H:%M')
-            # The submission's tasks (its job spec) and what the DB says of them.
-            keys = None
-            specs = spec_path(rule.name, recorded.get('run_seq'))
-            if specs.exists():
+                sidecar_path.stat().st_mtime).isoformat(sep=' ', timespec='seconds')
+            # The submission's tasks (its job spec), and how many of them the
+            # DB records as done/failed BY this submission (a record from an
+            # earlier run has a lower run_seq: a resubmitted task that
+            # succeeded before is not done yet). None when unknown: no spec
+            # (pruned, or a pre-0.9 sidecar without run_seq) or no matrix.
+            run_seq = recorded.get('run_seq')
+            ntasks = succeeded = failed = None
+            specs = spec_path(rule.name, run_seq)
+            if run_seq is not None and specs.exists():
                 keys = {spec['task_key'] for spec in load_job_specs(specs)}
-            db = Counter()
-            if keys:
+                ntasks = len(keys)
                 try:
                     tasks = [t for t in expand_rule(rule) if t.key in keys]
-                except Defer:
-                    tasks = []
-                records = rmk.metadata.get_tasks_status(tasks) if tasks else {}
-                db = Counter(STATUS_NAMES.get(rec.status, 'pending')
-                             for rec in records.values())
-            for jobid in recorded_jobids(rule.name):
-                elements = snapshot.get(jobid, [])
-                states = Counter(state for _, state, _ in elements)
-                reasons = sorted(
-                    {reason for *_, reason in elements if reason and reason != 'None'}
-                )
-                rows.append({
-                    'rule': rule.name,
-                    'jobid': jobid,
-                    'states': dict(states),
-                    'reasons': reasons,
-                    'submitted': submitted,
-                    'tasks': len(keys) if keys is not None else None,
-                    'succeeded': db['success'],
-                    'failed': db['failed'],
-                })
+                except Exception:  # Defer, or a callable matrix that raises
+                    tasks = None
+                if tasks is not None:
+                    records = rmk.metadata.get_tasks_status(tasks) if tasks else {}
+                    db = Counter(STATUS_NAMES.get(rec.status, 'pending')
+                                 for rec in records.values()
+                                 if rec.run_seq is not None and rec.run_seq >= run_seq)
+                    succeeded, failed = db['success'], db['failed']
+            # One row per rule: a pre-arrays sidecar lists one job id per task.
+            elements = [e for jobid in jobids for e in snapshot.get(jobid, [])]
+            states = Counter(state for _, state, _ in elements)
+            reasons = sorted(
+                {reason for *_, reason in elements if reason and reason != 'None'}
+            )
+            rows.append({
+                'rule': rule.name,
+                'jobid': ','.join(jobids),
+                'states': dict(states),
+                'reasons': reasons,
+                'submitted': submitted,
+                'tasks': ntasks,
+                'succeeded': succeeded,
+                'failed': failed,
+            })
         if args.json:
             _print_json({'submissions': rows})
             return
@@ -1562,11 +1569,11 @@ class RemakeCLI:
                 note.append('not queued')
             note += [f'{k}:{v}' for k, v in sorted(states.items())]  # CG, S, ...
             note += row['reasons']
-            table.append((row['rule'], row['jobid'], row['submitted'], row['tasks'],
+            table.append((row['rule'], row['jobid'], row['submitted'][:16], row['tasks'],
                           pd, r, row['succeeded'], row['failed'], ', '.join(note)))
-            for k, v in (('tasks', row['tasks'] or 0), ('PD', pd), ('R', r),
+            for k, v in (('tasks', row['tasks']), ('PD', pd), ('R', r),
                          ('done', row['succeeded']), ('failed', row['failed'])):
-                totals[k] += v
+                totals[k] += v or 0
         total = ('TOTAL', '', '', totals['tasks'], totals['PD'], totals['R'],
                  totals['done'], totals['failed'], '')
 
@@ -1576,10 +1583,10 @@ class RemakeCLI:
         styles = [None, None, None, None, style(('yellow',)), style(('cyan',)),
                   style(('green',)), style(('red', 'bold')), None]
         for line in render_table(header, table, total=total, paint=paint, styles=styles,
-                                 width=terminal_width()):
+                                 width=terminal_width(), shrink=8):
             print(line)
-        print(paint('PD pending, R running (from squeue); done/failed: the DB record '
-                    "of the submission's tasks", 'dim'))
+        print(paint('PD pending, R running (squeue); done/failed: DB, this submission',
+                    'dim'))
 
     def remake_check_env(self, args):
         from . import envcheck

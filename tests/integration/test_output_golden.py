@@ -7,15 +7,14 @@ Regenerate after an intended change, then review the diff:
 
     UPDATE_GOLDEN=1 uv run pytest tests/integration/test_output_golden.py
 
-Times, the host name, durations and versions are normalised to fixed text
-of the same width (so alignment is still checked).
+The fixture pins the host name and the Python and remake versions the run
+records, and turns off peak-RSS capture; times and durations are normalised to
+fixed text of the same width (so alignment is still checked).
 """
 import contextlib
 import io
 import os
 import re
-import socket
-import sys
 from pathlib import Path
 
 import pytest
@@ -30,7 +29,8 @@ PIPELINE = '''
 from pathlib import Path
 from remake import Defer, Remake, deferrable, rule
 
-rmk = Remake()
+# No peak-RSS capture: Linux records it, macOS may not (same text everywhere).
+rmk = Remake(config={'resources': {'capture': False}})
 SITES = ['oxford', 'cambridge']
 
 
@@ -122,6 +122,17 @@ def project(tmp_path_factory):
     root = tmp_path_factory.mktemp('golden')
     cwd = os.getcwd()
     os.chdir(root)
+    # What the run records is the same on every machine (review 2026-11-23:
+    # same-width placeholders tied the snapshots to this host's name length
+    # and to the Python and remake versions).
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr('socket.gethostname', lambda: 'testhost')
+        mp.setattr('platform.python_version', lambda: '3.x')
+        mp.setattr('remake.provenance.__version__', '0.0.test')
+        return _build(root, cwd)
+
+
+def _build(root, cwd):
     try:
         Path('pipeline.py').write_text(PIPELINE)
         Path('miswired.py').write_text(MISWIRED)
@@ -163,8 +174,7 @@ def commands(key):
 
 
 _TIME = re.compile(r'\d{4}-\d\d-\d\d[ T]\d\d:\d\d(:\d\d(\.\d+)?)?')
-_DURATION = re.compile(r'\b(\d+\.\d+)s\b')
-_SIZE = re.compile(r'\b\d+(\.\d+)?[KMG]?B?\b(?= )')
+_DURATION = re.compile(r'\b\d\.\d\ds\b')  # wall/cpu of these tiny tasks: 0.00s
 
 
 def _same_width(pattern, text, fill):
@@ -174,16 +184,7 @@ def _same_width(pattern, text, fill):
 def normalise(text, root):
     text = text.replace(str(root), '<PROJECT>')
     text = _same_width(_TIME, text, 'T')
-    text = _same_width(_DURATION, text, 'D')
-    host = socket.gethostname()
-    if host:
-        text = text.replace(host, ('H' * len(host)))
-    v = sys.version.split()[0]
-    text = text.replace(f'Python {v}', 'Python ' + 'V' * len(v))
-    from remake.version import __version__
-
-    text = text.replace(f'remake {__version__}', 'remake ' + 'V' * len(__version__))
-    return text
+    return _same_width(_DURATION, text, 'D')
 
 
 def _cases():

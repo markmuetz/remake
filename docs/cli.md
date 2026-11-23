@@ -20,8 +20,9 @@ may also go after it (`remake info --colour never pipeline.py`):
 
 Tables (`info`, `slurm-status`, `history`) have a header row, numbers
 right-aligned, and leave out a column with nothing in it. Output is fitted to
-the terminal (`$COLUMNS` if set): a long name or path is shortened with `…`
-rather than wrapped. Piped output is not shortened, except where noted.
+the terminal: a long name or path is shortened with `…` rather than wrapped.
+The width is `$COLUMNS` if set (piped output too), else the terminal's; piped
+output with no `$COLUMNS` is not shortened.
 
 ## Commands
 
@@ -286,7 +287,7 @@ keys per command:
 | `task-info` | the task's detail fields (`status`, `kwargs`, `inputs`, `outputs`, `slurm`, ...) |
 | `history` | `executions` (with `task` and `key`); `runs` with `--runs`; `deleted` with `--prune` |
 | `config` | `profile`, `profile_source`, `files`, `config`, `provenance` |
-| `slurm-status` | `submissions` (list of `{rule, jobid, states, reasons, submitted, tasks, succeeded, failed}`) |
+| `slurm-status` | `submissions`: one per rule's last submission, `{rule, jobid, states, reasons, submitted, tasks, succeeded, failed}`; `submitted` is local time `YYYY-MM-DD HH:MM:SS`; `tasks` and the counts (results recorded by this submission) are `null` when unknown |
 | `why` | `tasks` (list of `{task, key, will_run, reasons: [{category, message}]}`) |
 | `set-state` | `state`, `dry_run`, `skipped`, `tasks` (list of `{task, key, cascade}`) |
 | `verify` | see [`verify`](#verify) |

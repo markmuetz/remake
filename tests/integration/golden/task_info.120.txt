@@ -4,6 +4,6 @@ ran with: wall DDDDD, cpu DDDDD
 input:    out/clean/oxford.txt  [exists]  (clean)
 output:   out/stats/oxford.txt  [complete]  (stats)
 size:     plain file outputs: 1 file(s), 2B
-last ran: run 1 at TTTTTTTTTTTTTTTTTTT on HHHHHHHHHH (never-run)
-env:      Python VVVVVVV, remake VVVVVVVVVVV
+last ran: run 1 at TTTTTTTTTTTTTTTTTTT on testhost (never-run)
+env:      Python 3.x, remake 0.0.test
 log:      .remake/tasks/log/stats/fd/43dc9bc0fd44e15badd66024f9a9ed99d30613.log  [no log yet]

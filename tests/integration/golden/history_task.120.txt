@@ -1,3 +1,3 @@
 fd43dc9b stats[site=oxford]  fd43dc9bc0fd44e15badd66024f9a9ed99d30613
 run  finished             status   resources              reason     host
-  1  TTTTTTTTTTTTTTTTTTT  success  wall DDDDD, cpu DDDDD  never-run  HHHHHHHHHH
+  1  TTTTTTTTTTTTTTTTTTT  success  wall DDDDD, cpu DDDDD  never-run  testhost

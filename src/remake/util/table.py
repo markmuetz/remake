@@ -77,25 +77,31 @@ def render_table(header, rows, *, total=None, paint=None, styles=None, width=Non
 
     if width is not None:
         over = sum(widths) + len(gap) * (ncol - 1) - width
-        if over > 0:
-            col = shrink
-            if col is None:
-                candidates = [i for i in range(ncol) if not numeric[i]]
-                col = max(candidates, key=lambda i: widths[i]) if candidates else None
-            if col is not None:
-                new = max(widths[col] - over, len(header[col]), 8)
-                widths[col] = new
-                for r in text:
-                    r[col] = shorten(r[col], new, shrink_mode)
+        # Shrink `shrink` first, then the other text columns, widest first;
+        # never below the header or 8 characters, and never wider than now.
+        order = [shrink] if shrink is not None else []
+        order += sorted((i for i in range(ncol) if not numeric[i] and i not in order),
+                        key=lambda i: -widths[i])
+        for col in order:
+            if over <= 0:
+                break
+            floor = min(widths[col], max(len(header[col]), 8))
+            new = max(widths[col] - over, floor)
+            over -= widths[col] - new
+            widths[col] = new
+            for r in text:
+                r[col] = shorten(r[col], new, shrink_mode)
 
-    def cell(i, value, raw, row_is_header):
+    def cell(i, value, raw, row_is_header, last):
+        if value == '':
+            return ' ' * widths[i] if i < last else ''
         # In a number column: numbers (and the '?' / '-' placeholders, and
         # the header) right-aligned; words (`deferred (x)`) left-aligned.
         if numeric[i] and (row_is_header or _is_number(raw) or raw is None
                            or value in ('?', '-')):
             padded = value.rjust(widths[i])
-        elif i == ncol - 1:
-            padded = value  # nothing to align after it: no trailing spaces
+        elif i >= last:
+            padded = value  # nothing after it in this row: no trailing spaces
         else:
             padded = value.ljust(widths[i])
         if paint is None or row_is_header:
@@ -110,7 +116,8 @@ def render_table(header, rows, *, total=None, paint=None, styles=None, width=Non
     lines = []
     for n, (cells, raw) in enumerate(zip(text, [list(header)] + body)):
         is_header = n == 0
-        out = [cell(i, v, raw[i], is_header) for i, v in enumerate(cells)]
+        last = max((k for k, v in enumerate(cells) if v != ''), default=0)
+        out = [cell(i, v, raw[i], is_header, last) for i, v in enumerate(cells)]
         if total is not None and n == len(text) - 1 and paint is not None:
             out[0] = paint(out[0], 'bold')
         lines.append(gap.join(out).rstrip())

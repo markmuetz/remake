@@ -614,6 +614,21 @@ def test_slurm_status_reports_queue_state(slurm_dir, capsys):
     assert by_rule['gen']['tasks'] == 12 and by_rule['gen']['succeeded'] == 0
 
 
+def test_slurm_status_counts_only_this_submissions_results(slurm_dir, capsys):
+    # Review 2026-11-23: a task that succeeded in an earlier run and is
+    # resubmitted is pending, not done, until this submission records it.
+    cli('run', 'pipeline.py')  # everything succeeds locally (run 1)
+    cli('run', 'pipeline.py', '-E', 'slurm', '-f', '-Q', "rule == 'gen'")
+    (slurm_dir / 'shim/squeue.out').write_text(
+        ''.join(f'1001_{i} PD Priority\n' for i in range(12)))
+    capsys.readouterr()
+    cli('slurm-status', 'pipeline.py', '--json')
+    gen = {r['rule']: r for r in json.loads(capsys.readouterr().out)['submissions']}['gen']
+    assert gen['tasks'] == 12 and gen['states'] == {'PD': 12}
+    assert gen['succeeded'] == 0 and gen['failed'] == 0
+    assert len(gen['submitted']) == 19  # YYYY-MM-DD HH:MM:SS
+
+
 def test_task_info_shows_slurm_submission(slurm_dir, capsys):
     cli('run', 'pipeline.py', '-E', 'slurm')
     capsys.readouterr()
