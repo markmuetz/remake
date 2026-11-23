@@ -388,7 +388,7 @@ class FakeCluster:
         (self.bin / 'sacct.out').write_text(''.join(f'{ln}\n' for ln in sacct))
 
     def _sacct_rows(self, job):
-        """sacct -X -P rows: JobID|JobName|State|ExitCode|Start|End|Elapsed|NodeList,
+        """sacct -X -P rows: JobID|State|ExitCode|Start|End|Elapsed|NodeList,
         times as epoch seconds (remake sets SLURM_TIME_FORMAT=%s)."""
         rows, pending, whole = [], [], []
         for i, el in sorted(job.elements.items()):
@@ -431,8 +431,8 @@ class FakeCluster:
         elapsed = (el.end if el.end is not None else self.clock) - el.start \
             if el.start is not None else 0
         node = el.node or 'None assigned'
-        return '|'.join([jobid, name, state, el.exit_code, start, end,
-                         _hms(elapsed), node])
+        # Exactly the fields remake asks for (slurm_accounting.SACCT_FIELDS).
+        return '|'.join([jobid, state, el.exit_code, start, end, _hms(elapsed), node])
 
 
 def _ranges(indices):

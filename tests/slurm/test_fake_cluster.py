@@ -60,7 +60,7 @@ def test_squeue_and_sacct_rendering(cluster):
     cluster.kill(gen, 0, 'NODE_FAIL')
     sacct = (cluster.bin / 'sacct.out').read_text().splitlines()
     row = next(r for r in sacct if r.startswith(f'{gen}_0|'))
-    assert row.split('|')[2] == 'NODE_FAIL' and row.split('|')[7] == 'host1'
+    assert row.split('|')[1] == 'NODE_FAIL' and row.split('|')[6] == 'host1'
     # Finished elements leave squeue at once (as on JASMIN)...
     assert f'{gen}_0 ' not in (cluster.bin / 'squeue.out').read_text()
     # ...unless MinJobAge keeps them for a few ticks.
@@ -93,8 +93,8 @@ def test_sacct_never_started_rows_follow_the_live_probe(cluster):
     rows = {r.split('|')[0]: r.split('|') for r in sacct()}
     # proc_1 (aftercorr-cancelled) has no row; agg's remainder is CANCELLED.
     assert f'{proc}_1' not in rows
-    assert rows[f'{agg}_[0]'][2] == 'CANCELLED' and rows[f'{agg}_[0]'][4] == 'None'
-    assert rows[f'{agg}_[0]'][7] == 'None assigned'
+    assert rows[f'{agg}_[0]'][1] == 'CANCELLED' and rows[f'{agg}_[0]'][3] == 'None'
+    assert rows[f'{agg}_[0]'][6] == 'None assigned'
     # A user's scancel of one pending element: no row either.
     cluster.cancel(gen, 3)
     assert not any(r.startswith(f'{gen}_3|') for r in sacct())
