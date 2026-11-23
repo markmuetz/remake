@@ -912,7 +912,7 @@ rmk.rules_from_current_module()
     data = json.loads(capsys.readouterr().out)
     assert data['rules'][0]['output_bytes'] == 6
     cli('task-info', 'dirs.py', '-Q', 'rule == "tiles" and n == 2')
-    assert 'size:     d: 2 file(s), 6B' in capsys.readouterr().out
+    assert 'size:\n  - d: 2 files, 6B' in capsys.readouterr().out
 
 
 def test_history_runs_counts_a_submission_as_its_tasks_are_ingested(slurm_dir, capsys):

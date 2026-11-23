@@ -1,9 +1,9 @@
 fd43dc9b stats[site=oxford]  fd43dc9bc0fd44e15badd66024f9a9ed99d30613
 status:   success at TTTTTTTTTTTTTTTTTTT
-ran with: wall DDDDD, cpu DDDDD
 input:    out/clean/oxford.txt  [exists]  (clean)
 output:   out/stats/oxford.txt  [complete]  (stats)
-size:     plain file outputs: 1 file(s), 2B
+size:     1 file, 2B
 last ran: run 1 at TTTTTTTTTTTTTTTTTTT on testhost (never-run)
+ran with: wall DDDDD, cpu DDDDD
 env:      Python 3.x, remake 0.0.test
-log:      .remake/tasks/log/stats/fd/…5badd66024f9a9ed99d30613.log  [no log yet]
+log:      .remake/tasks/log/stats/fd/…badd66024f9a9ed99d30613.log  [no log file]

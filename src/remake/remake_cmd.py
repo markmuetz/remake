@@ -1287,10 +1287,6 @@ class RemakeCLI:
         print(f'{task}  {task.key}')
         when = f' at {data["timestamp"]}' if data['timestamp'] else ''
         print(f'status:   {paint.status(data["status"])}{when}')
-        resources = _resources_line(data['resources'])
-        if resources:
-            # Of the last execution — set-state doesn't un-measure a run.
-            print(f'ran with: {resources}')
         for name, path_info in data['inputs'].items():
             mark = (paint('exists', 'green') if path_info['exists']
                     else paint('missing', 'red', 'bold'))
@@ -1305,17 +1301,48 @@ class RemakeCLI:
                             f'{_format_bytes(dir_info["stale_bytes"])}, not produced by '
                             f'the last run (see the manifest; remake never deletes them)',
                             'yellow'))
-        for name, st in data.get('output_stats', {}).items():
-            label = 'plain file outputs' if name == '*' else name
-            line = f'{st["n_files"]} file(s), {_format_bytes(st["total_bytes"] or 0)}'
-            if st.get('checksum'):
-                line += f', sha256 {st["checksum"]}'
-            print(f'size:     {label}: {line}')
+        stats = data.get('output_stats') or {}
+        if stats:
+            # Plain files are summed under '*'; a Dir (or a checksummed file)
+            # has its own entry; other outputs (ZarrStore, S3Object, a plain
+            # path that turned out to be a directory) record no size: say so,
+            # or one file's size reads as the task's.
+            from .core.task import flat_items
+            from .core.tokens import FileToken
+            from .util.pathdiff import plural
+
+            def size(st):
+                text = (f'{plural(st["n_files"] or 0, "file")}, '
+                        f'{_format_bytes(st["total_bytes"] or 0)}')
+                return text + (f', sha256 {st["checksum"]}' if st.get('checksum') else '')
+
+            entries = [(name, size(st)) for name, st in stats.items() if name != '*']
+            unmeasured = [
+                (name, f'not measured ({type(token).__name__})')
+                for name, token in flat_items(task.outputs)
+                if name not in stats
+                and not ('*' in stats and isinstance(token, FileToken)
+                         and not os.path.isdir(token.path))]
+            if '*' in stats:
+                entries.append(('other files' if entries or unmeasured else None,
+                                size(stats['*'])))
+            entries += unmeasured
+            if len(entries) == 1 and entries[0][0] is None:
+                print(f'size:     {entries[0][1]}')
+            else:
+                print('size:')
+                for label, text in entries:
+                    print(f'  - {label}: {text}')
         last = data.get('last_execution')
         if last:
             where = f' on {last["host"]}' if last['host'] else ''
             why = f' ({last["reason"]})' if last['reason'] else ''
             print(f'last ran: run {last["run_seq"]} at {last["finished"]}{where}{why}')
+        resources = _resources_line(data['resources'])
+        if resources:
+            # Of the last execution — set-state doesn't un-measure a run.
+            print(f'ran with: {resources}')
+        if last:
             run = last.get('run') or {}
             if run.get('git_commit'):
                 dirty = (f' + uncommitted changes (diff {run["git_diff_hash"][:12]})'
@@ -1331,8 +1358,9 @@ class RemakeCLI:
                             'planned it (see `remake history` and `remake check-env`)',
                             'yellow'))
         log = data['log']
-        mark = '' if log['exists'] else paint('  [no log yet]', 'dim')
-        print(f'log:      {fit(log["path"], 0 if log["exists"] else 14)}{mark}')
+        # The local executor runs tasks in-process and writes no task log.
+        mark = '' if log['exists'] else paint('  [no log file]', 'dim')
+        print(f'log:      {fit(log["path"], 0 if log["exists"] else 15)}{mark}')
         jobids, array_index = data['slurm']['jobids'], data['slurm']['array_index']
         if jobids is not None:
             index = f', array index {array_index}' if array_index is not None else ''

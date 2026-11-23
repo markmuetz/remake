@@ -1414,3 +1414,38 @@ rmk.rules_from_current_module()
     monkeypatch.chdir(tmp_path)
     assert cli('export-task', 'pipes/p.py', '-Q', 'True', '-o', 'spec.json') in (0, None)
     assert (tmp_path / 'spec.json').exists()
+
+
+def test_task_info_size_lists_every_output(tmp_path, monkeypatch, capsys):
+    # MM's snapshot review 2026-11-23: plain files are summed, a Dir has its
+    # own entry, and an output with no recorded size says so (else one
+    # file's size reads as the whole task's).
+    monkeypatch.chdir(tmp_path)
+    Path('mixed.py').write_text('''
+from pathlib import Path
+from remake import Dir, Remake, ZarrStore, rule
+
+rmk = Remake()
+
+
+@rule(outputs={'a': 'out/a.txt', 'b': 'out/b.txt', 'maps': Dir('out/maps'),
+               'store': ZarrStore('out/s.zarr')})
+def mixed(outputs):
+    for k in ('maps', 'store'):
+        Path(outputs[k]).mkdir(parents=True, exist_ok=True)
+    for k in ('a', 'b'):
+        Path(outputs[k]).write_text('xx')
+    Path(outputs['maps'], 'm1').write_text('123')
+    Path(outputs['store'], '.zmetadata').write_text('{}')
+
+
+rmk.rules_from_current_module()
+''')
+    assert cli('run', 'mixed.py') == 0
+    capsys.readouterr()
+    cli('task-info', 'mixed.py', '-Q', "rule == 'mixed'")
+    out = capsys.readouterr().out
+    assert ('size:\n'
+            '  - maps: 1 file, 3B\n'
+            '  - other files: 2 files, 4B\n'
+            '  - store: not measured (ZarrStore)\n') in out
