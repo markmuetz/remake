@@ -58,3 +58,15 @@ changed).
   row" therefore can't mean "unknown" forever. The plan classifies it as
   `not_started` when the job has left squeue, sacct has rows for the job,
   and there is no `.out` file. To confirm live.
+- **Live probe (plan step 0), JASMIN.** Plain sbatch arrays covering each
+  outcome; results and findings in
+  `tests/slurm/fixtures/jasmin_probe_2026-11-23/README.md`. It confirmed
+  the archive: never-started elements often have no sacct row of their
+  own. It also showed that sacct labels an aftercorr array's unsplit
+  pending remainder with a single index (`J_5`, unbracketed), so a
+  Start-less row is evidence about no element in particular. The plan's
+  `not_started` rule now rests on squeue alone (`-r` lists every pending
+  element) plus "never started". Also: `SLURM_TIME_FORMAT=%s` works; sacct
+  runs on compute nodes; requeue is disabled on JASMIN (`scontrol
+  requeue`: "presently disabled"), so requeue stays a simulator-only case;
+  finished elements leave squeue within seconds.

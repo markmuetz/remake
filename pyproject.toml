@@ -94,6 +94,7 @@ version = { attr = "remake.version.__version__" }
 testpaths = ["tests"]
 markers = [
     "real_anchoring: build Remakes with the real project_dir default (D6), not the cwd",
+    "live_slurm: needs a real SLURM cluster; run with --live-slurm (tests/slurm/live)",
 ]
 
 [tool.coverage.run]

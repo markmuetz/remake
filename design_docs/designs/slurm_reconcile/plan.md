@@ -47,10 +47,14 @@ commands don't need SLURM at all.
     SIGNALING (what `INACTIVE_STATES` doesn't exclude today).
   - TERMINAL states (sacct): COMPLETED, FAILED, CANCELLED, NODE_FAIL,
     TIMEOUT, OUT_OF_MEMORY, PREEMPTED, BOOT_FAIL, DEADLINE, REVOKED.
-  - **Started** = sacct Start is a timestamp **and** NodeList is not
-    `None assigned`, **or** the element's `%A_%a.out` exists (written by
-    SLURM when the batch script starts; closes the requeued-then-cancelled
-    hole, where sacct shows only the latest, never-started incarnation).
+  - **Started** = the element's **own** sacct row has a Start timestamp
+    and a NodeList other than `None assigned`, **or** its `%A_%a.out`
+    exists (written when the batch script starts; closes the
+    requeued-then-cancelled hole). Rows with Start `None`/`Unknown` are
+    never evidence of starting, and never evidence about one element
+    alone: sacct shows an array's unsplit pending elements as one row,
+    labelled with a range (`J_[0,2-3]`) or, for aftercorr arrays, with a
+    single index (`J_5` stood for elements 0, 2, 3, 5 in the live probe).
 
 | Outcome | Evidence | Written to the DB |
 |---|---|---|
@@ -58,17 +62,16 @@ commands don't need SLURM at all.
 | `superseded` | a record with run_seq **greater** (a later run or `set-state` got there first) | nothing |
 | `queued` / `running` | squeue lists the element in an ACTIVE state | nothing |
 | `killed` | TERMINAL, not COMPLETED, started; no record ≥ run_seq | FAILED record + history row, reason `Slurm<State>: …` |
-| `not_started` | TERMINAL, not started (any state: dependency-cancelled, user scancel while pending, DEADLINE/BOOT_FAIL before start); **or** no sacct row while the whole job has left squeue and sacct has terminal rows for it, and no `.out` file | nothing (counted as skipped) |
+| `not_started` | not listed by squeue (`-r` lists every pending element individually), and not started; whatever sacct shows (often **no row at all**: aftercorr-cancelled and individually cancelled pending elements vanish from sacct, live probe and soak archive) | nothing (counted as skipped) |
 | `result_missing` | COMPLETED, no record, after a grace period | nothing; reported (quota, quarantined sidecar) |
 | `expired` | not in squeue, no sacct row at all for the job, and older than the spec prune age (7 days); or its spec file / rule is gone | nothing; settles the submission |
-| `unknown` | squeue or sacct failed; or an unlisted state; or no row while the job is still in squeue; or COMPLETED inside the grace period | nothing; reported |
+| `unknown` | squeue or sacct failed; or started but no terminal sacct state yet (accounting lag); or an unlisted state; or COMPLETED inside the grace period | nothing; reported |
 
-  The no-row rule comes from the soak archive: after 6133148_11/12/15
-  died, the aftercorr dependents 6133150_11/12/15 have **no sacct rows**;
-  only 6133150_16 appears (CANCELLED, Start None). sacct may keep only one
-  record for a never-split pending remainder. To confirm on JASMIN (live
-  test); until then the rule above (job gone from squeue, sacct has rows
-  for the job, no `.out` file) is what we rely on.
+  The not_started rule comes from the soak archive (after 6133148_11/12/15
+  died, the aftercorr dependents 6133150_11/12/15 have no sacct rows; only
+  the remainder row 6133150_16 appears) and was confirmed by the live
+  probe (`tests/slurm/fixtures/jasmin_probe_2026-11-23/`). It needs no
+  sacct row: squeue says the element is gone, and nothing shows it ran.
 
 - **Settled / reconciled**: a submission is reconciled when every element
   is `done`, `superseded`, `killed`, `not_started`, `result_missing` (past
