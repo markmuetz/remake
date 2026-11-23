@@ -70,3 +70,46 @@ changed).
   runs on compute nodes; requeue is disabled on JASMIN (`scontrol
   requeue`: "presently disabled"), so requeue stays a simulator-only case;
   finished elements leave squeue within seconds.
+
+## 2026-11-23: steps 2-4, and the advisor's review of step 2
+
+- Steps 2 (per-submission records, `<jobid>_<index>` output names), 3
+  (`sacct_snapshot`, parsed against the archive and probe) and 4
+  (`slurm_submission`, schema 1.2; the strict-guard killed write) are in.
+  The schema bump broke one test that hard-coded 1.1; it now compares with
+  `SCHEMA_VERSION`.
+- **Advisor review of step 2.** Taken:
+  - `not_started` was a permanent verdict built on missing evidence
+    (squeue not yet listing a new job; sacct and the shared filesystem
+    lagging a short-lived element). It now needs corroboration or a start
+    grace (plan §2).
+  - Start evidence from `.out` uses the exact `<jobid>_<index>` name and
+    an mtime check. `element_output` no longer falls back from the new name
+    to the old one: a stale `<index>.err` could show another task's error
+    in `info --failed`. The old name is used only for a pre-0.11
+    submission (pointer without `v`).
+  - The `resubmit` guard's regex missed rules when the path was quoted (a
+    metadata dir with a space), so the guard passed silently. Fixed and
+    tested.
+  - Temp files are named per run_seq (two runs may submit the same rule);
+    `id;cluster` from `sbatch --parsable` is stripped; stale `.tmp` files
+    are pruned; prune stays after reconcile (comment added).
+  - Simulator: `sacct` now prints only the jobs asked for with `-j` and
+    rejects an unexpected `--format`; lag for start (not yet split out),
+    squeue listing and `.out` visibility; non-array jobs render as `J`
+    without `SLURM_ARRAY_*`; the clock is based on real time; payload
+    stdout/stderr go to the `.out`/`.err` files; `kill(partial=True)`;
+    exit codes as in the probe.
+- **The aftercorr remainder row belongs to the array's highest index.**
+  The advisor noted that the archive keeps a row for 6133150_16 (CANCELLED,
+  never started), which the simulator didn't. Reading the probe again: at
+  t15, `B_5` stood for 0, 2, 3 and 5; B_5 then ran, so the final sacct has
+  no remainder row for B. In the archive, `_16` never ran and kept the
+  CANCELLED row. So the row is held by the array's last index, and becomes
+  that element's own row if it starts. Modelled, and checked by replaying
+  the probe's A-D sequence through the shims against
+  `sacct_epoch_final.psv` (matched first time).
+- Not taken: pointing `-e` at the `-o` file to halve the output files.
+  The files are pruned after 7 days; noted for the docs instead.
+- Requeue is disabled on JASMIN, so the requeue scenarios rest on the
+  simulator alone.

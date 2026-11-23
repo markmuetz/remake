@@ -40,13 +40,37 @@ def test_outputs_are_named_by_job_and_index(cluster):
     assert out.name == f'{gen.jobid}_2.out' and out.exists()
 
 
-def test_element_output_falls_back_to_pre_0_11_names(tmp_path, monkeypatch):
+def test_element_output_uses_old_names_only_for_old_submissions(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     d = Path('.remake/slurm/output/gen')
     d.mkdir(parents=True)
     (d / '3.err').write_text('boom')
-    assert element_output('gen', '1001', 3, 'err') == d / '3.err'
-    assert element_output('gen', None, 3, 'err') == d / '3.err'
+    # A pre-0.11 submission's file...
+    assert element_output('gen', '1001', 3, 'err', legacy=True) == d / '3.err'
+    # ...is never taken for a 0.11 submission's (it may be another task's).
+    assert element_output('gen', '1001', 3, 'err') == d / '1001_3.err'
+
+
+def test_resubmit_guard_finds_rules_in_a_quoted_path(tmp_path, monkeypatch):
+    # A metadata dir with a space: shlex.quote adds quotes, and the guard
+    # must still see which rules the script submits (else it passes
+    # silently, the unsafe way).
+    import re
+
+    from remake.executors import slurm_executor as se
+
+    text = ("mv '/a b/.remake/jobs/gen.3.jobids.tmp' '/a b/.remake/jobs/gen.jobids.json'\n"
+            "echo x > .remake/jobs/proc.jobids.json\n")
+    calls = []
+    monkeypatch.setattr(se, 'active_jobids', lambda: {'1001'})
+    monkeypatch.setattr(se, 'recorded_jobids', lambda rule: calls.append(rule) or ['1001'])
+    p = tmp_path / 'submit.sh'
+    p.write_text(text)
+    import pytest
+    from remake.core.exceptions import RemakeError
+    with pytest.raises(RemakeError, match='Still queued'):
+        se.check_resubmit_safe(p)
+    assert calls == ['gen', 'proc']
 
 
 def test_pruning_takes_old_records_and_outputs_but_keeps_the_latest(cluster):

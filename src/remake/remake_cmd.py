@@ -134,11 +134,14 @@ def _failed_line(failure):
     task starts, e.g. import errors, never reach the DB)."""
     error = _last_line(failure['exception'])
     if not error:
-        from .executors.slurm_executor import element_output, last_submission
+        from .executors.slurm_executor import (_read_sidecar, element_output,
+                                               last_submission, pointer_path)
 
         jobids, index = last_submission(failure['rule'], failure['key'])
         if index is not None:
-            err = element_output(failure['rule'], (jobids or [None])[0], index, 'err')
+            legacy = 'v' not in (_read_sidecar(pointer_path(failure['rule'])) or {})
+            err = element_output(failure['rule'], (jobids or [None])[0], index, 'err',
+                                 legacy=legacy)
             if err.exists():
                 error = _last_line(err.read_text(errors='replace'))
     return {

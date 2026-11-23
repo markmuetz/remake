@@ -48,9 +48,13 @@ commands don't need SLURM at all.
   - TERMINAL states (sacct): COMPLETED, FAILED, CANCELLED, NODE_FAIL,
     TIMEOUT, OUT_OF_MEMORY, PREEMPTED, BOOT_FAIL, DEADLINE, REVOKED.
   - **Started** = the element's **own** sacct row has a Start timestamp
-    and a NodeList other than `None assigned`, **or** its `%A_%a.out`
-    exists (written when the batch script starts; closes the
-    requeued-then-cancelled hole). Rows with Start `None`/`Unknown` are
+    and a NodeList other than `None assigned`, **or** its
+    `<jobid>_<index>.out` exists with an mtime no earlier than the
+    submission's `submitted` minus an hour (written when the batch script
+    starts; closes the requeued-then-cancelled hole; the mtime check
+    rejects a stale file left by an earlier owner of a reused job id).
+    The exact name only: the pre-0.11 `<index>.out` is never start
+    evidence, since every submission reused it. Rows with Start `None`/`Unknown` are
     never evidence of starting, and never evidence about one element
     alone: sacct shows an array's unsplit pending elements as one row,
     labelled with a range (`J_[0,2-3]`) or, for aftercorr arrays, with a
@@ -62,16 +66,27 @@ commands don't need SLURM at all.
 | `superseded` | a record with run_seq **greater** (a later run or `set-state` got there first) | nothing |
 | `queued` / `running` | squeue lists the element in an ACTIVE state | nothing |
 | `killed` | TERMINAL, not COMPLETED, started; no record ≥ run_seq | FAILED record + history row, reason `Slurm<State>: …` |
-| `not_started` | not listed by squeue (`-r` lists every pending element individually), and not started; whatever sacct shows (often **no row at all**: aftercorr-cancelled and individually cancelled pending elements vanish from sacct, live probe and soak archive) | nothing (counted as skipped) |
+| `not_started` | not listed by squeue (`-r` lists every pending element individually), not started, **and** either corroborated (an element it depends on, by the rule DAG, did not succeed in this submission's chain; or the array has a CANCELLED remainder row) or past the start grace (below); whatever sacct shows (often **no row at all**: aftercorr-cancelled and individually cancelled pending elements vanish from sacct, live probe and soak archive) | nothing (counted as skipped) |
 | `result_missing` | COMPLETED, no record, after a grace period | nothing; reported (quota, quarantined sidecar) |
 | `expired` | not in squeue, no sacct row at all for the job, and older than the spec prune age (7 days); or its spec file / rule is gone | nothing; settles the submission |
-| `unknown` | squeue or sacct failed; or started but no terminal sacct state yet (accounting lag); or an unlisted state; or COMPLETED inside the grace period | nothing; reported |
+| `unknown` | squeue or sacct failed (for any chunk of the job ids: a failed chunk is never read as "no rows"); or started but no terminal sacct state yet (accounting lag); or an unlisted state; or COMPLETED inside the grace period; or would be `not_started` but uncorroborated inside the start grace | nothing; reported |
 
   The not_started rule comes from the soak archive (after 6133148_11/12/15
   died, the aftercorr dependents 6133150_11/12/15 have no sacct rows; only
   the remainder row 6133150_16 appears) and was confirmed by the live
   probe (`tests/slurm/fixtures/jasmin_probe_2026-11-23/`). It needs no
   sacct row: squeue says the element is gone, and nothing shows it ran.
+
+  **Start grace** (advisor review of step 2): "nothing shows it ran" is
+  missing evidence, and a settled submission is never looked at again, so
+  an uncorroborated `not_started` waits until `now` is past both
+  `submitted + 2 min` (squeue may not list a just-submitted job yet) and
+  the job's last visible activity (latest Start/End in its sacct rows)
+  `+ 5 min` (a short-lived element killed seconds after starting may not
+  be split out in sacct yet, and its `.out` may not be visible on the
+  reading node). Until then it is `unknown`. Corroboration (a failed or
+  killed upstream, a CANCELLED remainder row) makes it final at once,
+  which is the common case: the dependents of a killed task.
 
 - **Settled / reconciled**: a submission is reconciled when every element
   is `done`, `superseded`, `killed`, `not_started`, `result_missing` (past

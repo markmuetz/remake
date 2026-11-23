@@ -215,8 +215,8 @@ def test_dry_run_writes_submit_sh_wiring(slurm_dir):
     # Sidecar writes: one array-form sidecar per rule.
     # Each record written to a temp file and renamed (0.11): one per
     # submission, plus the latest-submission pointer.
-    assert 'mv .remake/jobs/gen.jobids.tmp .remake/jobs/gen.jobids.json' in submit
-    assert 'mv .remake/jobs/agg.jobids.tmp .remake/jobs/agg.jobids.json' in submit
+    assert 'mv .remake/jobs/gen.1.jobids.tmp .remake/jobs/gen.jobids.json' in submit
+    assert 'mv .remake/jobs/agg.1.jobids.tmp .remake/jobs/agg.jobids.json' in submit
     assert '.remake/jobs/gen.1.jobids.json' in submit
     assert 'slurm_array_job_id' in submit and 'slurm_job_ids' not in submit
     assert 'continuation' not in submit  # no dynamic rules
@@ -881,8 +881,11 @@ def test_info_failed_falls_back_to_slurm_err(slurm_dir):
     cli('run', 'pipeline.py', '-E', 'slurm')
     specs = read_specs('gen')
     key = specs[3]['task_key']
-    (Path('.remake/slurm/output/gen') / '3.err').write_text(
+    jobid = json.loads(Path('.remake/jobs/gen.jobids.json').read_text())['slurm_array_job_id']
+    (Path('.remake/slurm/output/gen') / f'{jobid}_3.err').write_text(
         'Traceback (most recent call last):\n  ...\nImportError: no module x\n\n')
+    # A stale pre-0.11 name for index 0 is another submission's: ignored.
+    (Path('.remake/slurm/output/gen') / '0.err').write_text('OldError: not this task\n')
     line = _failed_line({'rule': 'gen', 'key': key, 'exception': '', 'log': 'LOG'})
     assert line['error'] == 'ImportError: no module x'
     assert line['log'] == 'LOG'

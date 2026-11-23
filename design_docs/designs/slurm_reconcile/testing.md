@@ -124,6 +124,10 @@ writes, and what `slurm-status`, `info`, `why`, `task-info`, `history
 | `metadata_dir` relocated | files and table found there |
 | a run whose every rule was skipped as already queued | no end-of-submission job |
 | a `-Q` run with deferred rules (phase 2) | the continuation keeps the query |
+| reconcile seconds after submission (squeue not listing the job yet) | unknown, not not_started |
+| element killed seconds after starting; sacct not split out, `.out` not visible | unknown until the start grace passes or evidence arrives; then killed |
+| one sacct chunk fails, the others succeed | that chunk's elements unknown |
+| stale `<index>.out` / reused job id's old `<jobid>_<index>.out` | not start evidence |
 
 ## Hypothesis state-machine tests (`test_state_machine.py`)
 
@@ -178,6 +182,8 @@ simulator's model against SLURM itself:
   past `--mem`), CANCELLED (scancel while running), dependency-cancelled
   (a failing upstream), FAILED before the task (a broken import),
   requeue (`scontrol requeue`), sacct immediately after a job ends.
+- Requeue is disabled on JASMIN (`scontrol requeue`: "presently
+  disabled"), so the requeue scenarios rest on the simulator alone.
 - NODE_FAIL can't be caused on demand; it is covered by the simulator,
   with formats checked against the soak's archived sacct output
   (`/work/scratch-nopw2/mmuetz/remake_soak/run81_node_fail/`), copied as

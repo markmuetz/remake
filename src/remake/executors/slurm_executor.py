@@ -246,16 +246,17 @@ def submission_files():
     return out
 
 
-def element_output(rule_name, jobid, index, ext):
-    """A SLURM element's stdout ('out') or stderr ('err') file: named by job
-    id and index since 0.11, by index alone before (the fallback, for
-    submissions made by an older remake)."""
+def element_output(rule_name, jobid, index, ext, *, legacy=False):
+    """A SLURM element's stdout ('out') or stderr ('err') file:
+    `<jobid>_<index>` for 0.11 submissions; `<index>` alone (reused by every
+    submission) only when `legacy` (the submission's record has no "v", so
+    an older remake wrote it). Never falls back from one to the other: a
+    stale `<index>` file belongs to some earlier submission, maybe another
+    task."""
     base = slurm_output_dir() / rule_name
-    new = base / f'{jobid}_{index}.{ext}' if jobid else None
-    if new is not None and new.exists():
-        return new
-    old = base / f'{index}.{ext}'
-    return old if old.exists() or new is None else new
+    if legacy or not jobid:
+        return base / f'{index}.{ext}'
+    return base / f'{jobid}_{index}.{ext}'
 
 
 SPEC_MAX_AGE_DAYS = 7
@@ -305,8 +306,14 @@ def prune_spec_files(max_age_days=SPEC_MAX_AGE_DAYS):
             if jobid.isdigit() and jobid not in keep_jobs and path.stat().st_mtime < cutoff:
                 path.unlink()
                 npruned += 1
+    # Temp files a killed submit.sh left behind.
+    for path in jobs_dir().glob('*.tmp'):
+        if path.stat().st_mtime < cutoff:
+            path.unlink()
+            npruned += 1
     if npruned:
-        logger.info(f'Pruned {npruned} job-spec file(s) older than {max_age_days} day(s)')
+        logger.info(f'Pruned {npruned} job-spec/record/output file(s) older than '
+                    f'{max_age_days} day(s)')
 
 
 def recorded_jobids(rule_name):
@@ -353,7 +360,8 @@ def check_resubmit_safe(submit_path):
 
     # One sidecar write per rule the script submits.
     # 0.11: `mv <tmp> .../<rule>.jobids.json`; before: `> .../<rule>.jobids.json`.
-    submitted_rules = re.findall(r'(?:>|mv \S+) \S*/([^/.\s]+)\.jobids\.json$', text,
+    # A quoted path (a metadata dir with a space) ends in a quote.
+    submitted_rules = re.findall(r"^(?:mv .*|.*> .*)/([^/.\s']+)\.jobids\.json'?$", text,
                                  re.MULTILINE)
     queued = {
         rule: ids for rule in submitted_rules
@@ -516,6 +524,8 @@ class SlurmExecutor(Executor):
     # --- generation ---
 
     def run_tasks(self, tasks, deferred_rules=()):
+        # After `run` has reconciled earlier submissions (it does so before
+        # planning): pruning first could remove the evidence reconcile reads.
         prune_spec_files()
         rule_tasks = {}  # rule -> [task], in plan (topological) order
         for task in tasks:
@@ -675,7 +685,9 @@ class SlurmExecutor(Executor):
         sbatch_path = self.slurm_dir / f'{rule.name}.sbatch'
         pointer = self.jobs_dir / f'{rule.name}.jobids.json'
         record = self.jobs_dir / f'{rule.name}.{run_seq}.jobids.json'
-        tmp = self.jobs_dir / f'{rule.name}.jobids.tmp'
+        # The run_seq in the temp name: SLURM runs take no lock, and two
+        # runs may submit the same rule at once.
+        tmp = self.jobs_dir / f'{rule.name}.{run_seq}.jobids.tmp'
         var = f'JOB_{rule.name}'
         q = shlex.quote
         # One record per submission (never overwritten: reconcile reads it
@@ -684,6 +696,8 @@ class SlurmExecutor(Executor):
         # can't leave a truncated record).
         return [
             f'{var}=$(sbatch --parsable {dependency}{q(str(sbatch_path))})',
+            # `id;cluster` on multi-cluster sites.
+            f'{var}=${{{var}%%;*}}',
             f'echo "{{\\"v\\": 1, \\"slurm_array_job_id\\": \\"${var}\\", '
             f'\\"run_seq\\": {run_seq}, \\"submitted\\": $(date +%s)}}" > {q(str(tmp))}',
             f'cp {q(str(tmp))} {q(str(record))}.tmp && mv {q(str(record))}.tmp {q(str(record))}',
