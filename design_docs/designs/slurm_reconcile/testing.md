@@ -1,6 +1,7 @@
 # Testing SLURM reconciliation
 
-**Status: Agreed in outline by MM (2026-11-23); under advisor review.**
+**Status: Agreed by MM (2026-11-23); revised after the Fable advisor's
+review the same day.**
 Companion to [plan.md](plan.md).
 
 Reconciliation is about rare, timing-dependent events (a node dies, an
@@ -33,43 +34,53 @@ are skipped unless `--live-slurm` is given (a conftest option) and
 
 ## The simulated cluster (`fake_cluster.py`)
 
-A small in-process model of the parts of SLURM remake relies on, exposed
-as executables on PATH (`sbatch`, `squeue`, `sacct`, `scancel`) that read
-and write one JSON state file, plus a Python controller the tests drive.
+A small model of the parts of SLURM remake relies on. The executables on
+PATH are **dumb bash shims**, like the existing ones (a Python start-up per
+call would make the state-machine tests far too slow): `sbatch` appends its
+arguments to a log, **copies the script** (SLURM does; the next submission
+rewrites `slurm/<rule>.sbatch`) and prints the next job id; `squeue` and
+`sacct` `cat` files that the controller re-renders after every state
+change; each can be switched to fail (exit 1) or hang. All parsing and
+modelling happens in the test process.
 
-Model:
-- Jobs and array elements, each with a state (PENDING, RUNNING,
-  COMPLETED, FAILED, CANCELLED, NODE_FAIL, TIMEOUT, OUT_OF_MEMORY,
-  PREEMPTED, REQUEUED…), start/end times, node, exit code.
-- `sbatch --parsable` parses the `#SBATCH` lines remake writes (array
-  range and throttle, `--dependency=afterok/aftercorr/afterany:…`,
-  `--kill-on-invalid-dep`, output paths) and returns a job id.
+Model (built from the soak archive and the step-0 live sample, not from
+memory):
+- Jobs and array elements, each with a state, start/end on a logical
+  clock, node, exit code; and how many times squeue and sacct were called.
+- Submission: the controller reads the sbatch log and the copied scripts
+  (array range and throttle, `--dependency=afterok/aftercorr/afterany`,
+  `--kill-on-invalid-dep`, output paths). A dependency on a job id the
+  controller has forgotten is **rejected**, as real sbatch does, so the
+  `submit.sh`-aborts-under-`set -e` path is testable.
 - Dependencies: an element becomes eligible when its dependency is met;
-  when a dependency can never be met and `kill-on-invalid-dep=yes`, it is
-  CANCELLED without starting (DependencyNeverSatisfied), as SLURM does.
-- `squeue` and `sacct` print in the exact formats remake requests,
-  including collapsed pending ranges (`1001_[3-7%2]`) and `CANCELLED by
-  <uid>`. Faults: either can be made to fail (exit 1, timeout); sacct can
-  lag (an element that ended isn't in accounting yet, or still shows
-  RUNNING).
-- A logical clock; no sleeping.
+  when it can never be met and `kill-on-invalid-dep=yes`, it is CANCELLED
+  without starting, and, as in the archive, may leave no sacct row of its
+  own (one record for the never-split remainder).
+- `squeue -r` output: **one element per line** (no collapsed ranges);
+  finished jobs stay listed in their terminal state for a few ticks
+  (MinJobAge). `sacct` output: the requested fields, collapsed pending /
+  never-split ranges (`1001_[3-7%2]`), `CANCELLED by <uid>`, Start
+  `None`/`Unknown`, `None assigned`; can lag (an ended element missing or
+  still RUNNING) or be purged (no rows for an old job).
+- `%A_%a.out/.err` files are written when an element starts.
 
 Controller (what tests call):
 - `start(job, index, node=…)`, `finish(job, index)`: **runs the real
-  `remake run-array-task`** for that element (in-process, in the project
-  dir), so sidecars, logs and outputs are real. Exit code from it.
-- `kill(job, index, state)`: NODE_FAIL / TIMEOUT / OUT_OF_MEMORY /
-  PREEMPTED / CANCELLED; the worker never runs, or runs partway
-  (`partial=True` writes some output then stops, no sidecar).
-- `requeue(job, index)`, `cancel_job(job)`, `fail_sacct()`,
-  `lag_sacct(n_ticks)`, `fail_squeue()`, `late_sidecar(...)` (hold a
-  worker's sidecar back and release it later).
-- `drain()`: run everything eligible to completion (the happy path).
-
-The cluster runs remake's real submission path: `remake run -E slurm`
-writes `submit.sh`, which calls the fake `sbatch`. Continuation /
-end-of-submission jobs are jobs like any other; `finish` runs their
-script's `remake` command.
+  `remake run-array-task`** in-process (as `tests/integration/test_slurm.py`
+  already does), with `SLURM_ARRAY_JOB_ID`/`SLURM_ARRAY_TASK_ID` and the
+  script's `export` lines set for the call and **restored** afterwards (a
+  leaked `REMAKE_PARENT_RUN_SEQ` changes later submissions).
+- `kill(job, index, state, partial=False)`: NODE_FAIL / TIMEOUT /
+  OUT_OF_MEMORY / PREEMPTED / CANCELLED / BOOT_FAIL. `partial=True` runs
+  the task with a function that writes some output and then raises a
+  `BaseException` subclass (not caught by `run_task`), so no sidecar is
+  written; to check the CLI wrapper lets it through.
+- `requeue`, `cancel(job, index=None)` (pending or running), `purge(job)`
+  (sacct forgets it), `fail_sacct()`, `lag_sacct(n)`, `fail_squeue()`,
+  `hold_sidecars()`/`release_sidecars()`, `tick(n)`, `drain()` (run
+  everything eligible to completion).
+- The end-of-submission job is a job like any other; `finish` runs its
+  `remake` command.
 
 ## Scenario tests (`test_scenarios.py`)
 
@@ -98,33 +109,60 @@ writes, and what `slurm-status`, `info`, `why`, `task-info`, `history
 | deterministic failure in a chain (phase 2) | not resubmitted in a loop |
 | end-of-submission job itself lost (phase 2) | next `run`/`slurm-status` reconciles |
 | legacy sidecars (pre-0.9, pre-0.11 `%a.out`) | still read; no crash |
+| an ordinary task failure (sidecar FAILED) | failed by the worker; dependents not_started; no killed record |
+| user scancel of a pending element; of a whole array | not_started; no records |
+| BOOT_FAIL; an unrecognised state | not_started or killed by the started rule; unknown |
+| requeued, ran partly, then cancelled while pending | killed (the `.out` file shows it started) |
+| run 81 reconciled after run 82 succeeded | superseded; nothing written |
+| `set-state` between the kill and the reconcile | superseded |
+| `resubmit` (same run_seq, new job id) | the new job is reconciled; the old one isn't confused with it |
+| `submit.sh` aborted midway (sbatch rejects a dependency) | submitted rules reconciled; the rest never recorded as submitted |
+| rule removed or renamed; spec pruned; sacct purged | expired; settles; no SLURM calls afterwards |
+| upgrade: legacy pointer files, in-flight pre-upgrade arrays (`%a.out`), a queued pre-upgrade `afterok` continuation | old pointers settled as legacy unless queued or recent; no reruns caused by the upgrade |
+| two reconciles of the same killed element | one task record, one history row |
+| aftercorr dependents of killed elements with no sacct rows (archive) | not_started |
+| `metadata_dir` relocated | files and table found there |
+| a run whose every rule was skipped as already queued | no end-of-submission job |
+| a `-Q` run with deferred rules (phase 2) | the continuation keeps the query |
 
 ## Hypothesis state-machine tests (`test_state_machine.py`)
 
 A `RuleBasedStateMachine` over a few fixed pipelines (a chain, a fan-out
-with `aftercorr`, one with a deferred rule). Rules generate the events:
-submit (`remake run -E slurm`), start/finish/kill/requeue an eligible
-element, cancel a job, make squeue/sacct fail or lag, hold/release a
-sidecar, run a read-only command, run reconcile. Invariants checked after
-every step:
+with `aftercorr`, one with a deferred rule). The machine owns its temp
+dir, cwd and PATH (state machines can't use function-scoped fixtures like
+`tmp_path`/`monkeypatch`). Rules generate the events: submit (`remake run
+-E slurm`), start/finish/kill/requeue/cancel an eligible element, make
+squeue/sacct fail or lag or purge, hold/release sidecars, tick the clock,
+`set-state`, run a read-only command, run reconcile. Local `run` is left
+out (invariant 7 would fail by design). Invariants, checked after every
+step:
 
-1. No element is `killed`/`not_started` unless the simulator says it
+1. An element is `killed`/`not_started` only if the simulator says it
    ended without its worker writing a result.
-2. A worker's real result is never lost or overwritten by a killed record.
-3. A failed squeue/sacct call leads to no DB writes.
-4. Reconcile is idempotent: a second call changes nothing.
-5. Once the cluster is drained and accounting has caught up, every
-   submission is reconciled with no `unknown`.
-6. The next plan never calls a killed task up to date.
-7. No task is submitted twice while an element for it is active.
-8. (phase 2) The continuation runs whenever deferred rules exist and the
-   end-of-submission job ran; it never resubmits a task that failed in
-   its chain.
+2. For every result a simulated worker wrote, the task record has a
+   run_seq ≥ its own, and, if equal, the worker's status.
+3. A step in which squeue or sacct failed writes no killed records and
+   sets no `reconciled` flags (ingest and the submission import still
+   write).
+4. With cluster state and clock unchanged, a second reconcile changes
+   nothing.
+5. Once faults are cleared, held sidecars released, accounting caught up
+   and the grace period passed, every submission is reconciled with no
+   `unknown`.
+6. After a successful reconcile, a task whose latest ended element was
+   killed, with no later worker result, is in the plan.
+7. No task key is in two active SLURM submissions at once.
+8. (phase 2) No task key appears in two submissions of one chain; and
+   after a clean drain, every task not downstream of a failed, killed or
+   cancelled one is SUCCESS.
+9. Per submission, the outcome counts sum to `n_tasks`.
+10. Once everything is settled, commands make zero squeue/sacct calls.
+11. Read-only commands allocate no run_seq and add no `run` row.
 
-Each step is cheap (in-process remake commands on a tiny project), so a
-few hundred steps per run is affordable; `settings(max_examples=…,
-stateful_step_count=…)` keeps CI time to a minute or so, with a larger
-profile (`HYPOTHESIS_PROFILE=deep`) for local runs. Failing examples are
+Each step is an in-process remake command on a tiny project, and the
+shims are bash `cat`s, so a few hundred steps per run fit in CI with
+`settings(max_examples=…, stateful_step_count=…)` kept to about a minute;
+`HYPOTHESIS_PROFILE=deep` runs longer locally. A failing example is
 shrunk to a minimal event sequence and added to `test_scenarios.py`.
 
 ## Live tests (`live/test_live_slurm.py`, JASMIN)
@@ -132,6 +170,10 @@ shrunk to a minimal event sequence and added to `test_scenarios.py`.
 The scenarios that can be produced on a real cluster, to check the
 simulator's model against SLURM itself:
 
+- First (plan step 0): one sacct sample covering a completed, a failed,
+  a timed-out, a scancelled-running and a cancelled-pending element and an
+  aftercorr dependent, plus `SLURM_TIME_FORMAT=%s`, `-S`, and sacct on a
+  compute node. Saved as fixtures.
 - TIMEOUT (a task that sleeps past `--time`), OUT_OF_MEMORY (allocates
   past `--mem`), CANCELLED (scancel while running), dependency-cancelled
   (a failing upstream), FAILED before the task (a broken import),

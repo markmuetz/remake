@@ -1,7 +1,8 @@
 # Plan: reconciling SLURM submissions
 
-**Status: Agreed in outline by MM (2026-11-23); this text under Fable
-advisor review before implementation.** Background: soak finding 7
+**Status: Agreed by MM (2026-11-23); revised after the Fable advisor's
+review the same day (outcomes made total, chain mode defined, write
+semantics, gate liveness, upgrade path).** Background: soak finding 7
 (design_docs/records/soak_0_11.md) and the advisor's design review of the
 same date. Decisions 1–8 are in [README.md](README.md).
 
@@ -38,127 +39,167 @@ commands don't need SLURM at all.
   `jobs/<rule>.<run_seq>.json` (array index → task key), and a submit time.
   A rule skipped as already queued is not a new submission.
 - **Element**: one array index of a submission = one task.
-- **Element outcome** (what reconcile decides, per element):
+- **Element outcome** (what reconcile decides, per element). The rules
+  are state-agnostic, so every SLURM state lands somewhere; a state on
+  neither list below is `unknown`.
+  - ACTIVE states (squeue): PENDING, RUNNING, REQUEUED, REQUEUE_HOLD,
+    REQUEUE_FED, RESIZING, SUSPENDED, COMPLETING, CONFIGURING, STAGE_OUT,
+    SIGNALING (what `INACTIVE_STATES` doesn't exclude today).
+  - TERMINAL states (sacct): COMPLETED, FAILED, CANCELLED, NODE_FAIL,
+    TIMEOUT, OUT_OF_MEMORY, PREEMPTED, BOOT_FAIL, DEADLINE, REVOKED.
+  - **Started** = sacct Start is a timestamp **and** NodeList is not
+    `None assigned`, **or** the element's `%A_%a.out` exists (written by
+    SLURM when the batch script starts; closes the requeued-then-cancelled
+    hole, where sacct shows only the latest, never-started incarnation).
 
 | Outcome | Evidence | Written to the DB |
 |---|---|---|
-| `done` | a task record (from the worker's sidecar) with run_seq ≥ the submission's | nothing new |
-| `queued` / `running` | squeue shows the element in a non-terminal state (incl. requeued, held) | nothing |
-| `killed` | sacct: terminal state in KILLED_STATES, with a start time; no record ≥ run_seq | FAILED record + history row, reason `Slurm<State>: …` |
-| `not_started` | sacct: terminal (CANCELLED, BOOT_FAIL…) with no start time; no record | nothing (counted as skipped) |
-| `result_missing` | sacct: COMPLETED, no record after a grace period | nothing; reported (quota, quarantined sidecar) |
-| `unknown` | squeue or sacct failed, or sacct shows no row / a non-terminal state while squeue doesn't list the element | nothing; reported as unknown |
+| `done` | a task record with run_seq **equal** to the submission's | nothing new |
+| `superseded` | a record with run_seq **greater** (a later run or `set-state` got there first) | nothing |
+| `queued` / `running` | squeue lists the element in an ACTIVE state | nothing |
+| `killed` | TERMINAL, not COMPLETED, started; no record ≥ run_seq | FAILED record + history row, reason `Slurm<State>: …` |
+| `not_started` | TERMINAL, not started (any state: dependency-cancelled, user scancel while pending, DEADLINE/BOOT_FAIL before start); **or** no sacct row while the whole job has left squeue and sacct has terminal rows for it, and no `.out` file | nothing (counted as skipped) |
+| `result_missing` | COMPLETED, no record, after a grace period | nothing; reported (quota, quarantined sidecar) |
+| `expired` | not in squeue, no sacct row at all for the job, and older than the spec prune age (7 days); or its spec file / rule is gone | nothing; settles the submission |
+| `unknown` | squeue or sacct failed; or an unlisted state; or no row while the job is still in squeue; or COMPLETED inside the grace period | nothing; reported |
 
-KILLED_STATES: FAILED, NODE_FAIL, TIMEOUT, OUT_OF_MEMORY, CANCELLED (when
-started), PREEMPTED, DEADLINE. A FAILED element with no sidecar is a
-failure before the task ran (import error, bad index): still `killed`,
-reason `SlurmFailed: exit <code>, no result recorded`.
+  The no-row rule comes from the soak archive: after 6133148_11/12/15
+  died, the aftercorr dependents 6133150_11/12/15 have **no sacct rows**;
+  only 6133150_16 appears (CANCELLED, Start None). sacct may keep only one
+  record for a never-split pending remainder. To confirm on JASMIN (live
+  test); until then the rule above (job gone from squeue, sacct has rows
+  for the job, no `.out` file) is what we rely on.
 
-- **Reconciled**: a submission is reconciled when no element is `queued`,
-  `running` or `unknown` and no `result_missing` is still inside its grace
-  period. Reconciled submissions are never queried again.
+- **Settled / reconciled**: a submission is reconciled when every element
+  is `done`, `superseded`, `killed`, `not_started`, `result_missing` (past
+  grace) or `expired`. Reconciled submissions are never queried again.
 
-Rule: **unknown is never lost.** Anything short of a terminal sacct state
-with no result is `unknown`, and nothing is written.
+Rule: **unknown is never lost.** Nothing is written for `unknown`.
 
 ## 3. Records (on-disk contract additions)
 
 1. **Per-submission job-id files.** `submit.sh` writes
    `jobs/<rule>.<run_seq>.jobids.json` (`{"v": 1, "slurm_array_job_id",
-   "run_seq", "submitted"}`) and keeps `jobs/<rule>.jobids.json` as the
-   "latest" pointer (same content). Pruned with the matching spec file.
-   The continuation/end-of-submission job's id goes in
-   `jobs/_finish.<run_seq>.jobids.json`.
-2. **Job output names include the job id**: `%A_%a.out/.err`. Readers
-   (`_failed_line`, `task-log`) look up the file for the task's last
-   submission's job id, falling back to `%a.*` for old submissions.
-3. **DB: a `slurm_submission` table** (schema 1.2, additive):
-   `(rule_id, run_seq, jobid, n_tasks, submitted, reconciled TIMESTAMP NULL,
-   counts JSON)`. Filled from the per-submission files at the start of
-   reconcile; `reconciled` set once the submission is settled; `counts`
-   holds `{done, failed, killed: {NODE_FAIL: 4, …}, not_started,
-   result_missing}` for `history --runs` and `slurm-status`. It makes the
-   gate ("anything unreconciled?") a single query.
-4. **Killed-task records** go through the ingest path's guarded upsert at
-   the **submission's** run_seq, with a strict guard: written only if the
-   task has no record with run_seq ≥ the submission's. A worker sidecar
-   ingested later (run_seq ≥) still overwrites it, so a late real result
-   always wins. History rows use sacct's End as `finished` (the unique
-   index makes repeats idempotent); `host` = NodeList, `wall_s` = Elapsed,
-   `error` = the reason text. The reason starts with an exception-like word
-   so `error_signature` keeps it: `SlurmNodeFail: job 6133148_11 on
-   host1234 after 13:40 (run 81)`.
-5. Optionally, workers add `slurm_job` (`$SLURM_ARRAY_JOB_ID_$SLURM_ARRAY_TASK_ID`)
-   to their result sidecar, recorded in `task_run`, so history shows which
-   job ran it. (Nice to have; not needed for reconcile.)
+   "run_seq", "submitted"}`) via a temp file and `mv` (a shell redirect can
+   leave a truncated file), and keeps `jobs/<rule>.jobids.json` as the
+   "latest" pointer (same content, same atomic write). The files **own**
+   the job id and submit time.
+2. **The end-of-submission job's id**: `jobs/<run_seq>.finish.json` (a name
+   no rule can have: `_finish` is a valid rule name and the
+   `*.jobids.json` globs treat the prefix as one).
+3. **Job output names include the job id**: `%A_%a.out/.err`. Readers
+   (`_failed_line`, `task-log`) use the task's submission's job id and fall
+   back to `%a.*` for pre-upgrade submissions. The simulator writes them.
+4. **Pruning** (step 2, not later): `prune_spec_files` also prunes
+   per-submission jobids files (today it skips every `*.jobids.json`) and
+   the `%A_%a` outputs of pruned submissions, by the same 7-day rule.
+5. **DB: a `slurm_submission` table** (schema 1.2, additive; created by the
+   idempotent `_schema_statements`; a 1.1 remake opens a 1.2 DB and ignores
+   it). Keyed by **rule name** and run_seq (a removed or renamed rule's
+   submission can still settle): `(rule, run_seq, jobid, n_tasks,
+   submitted, reconciled TIMESTAMP NULL, counts JSON)`. The table **owns**
+   `reconciled` and `counts`. `counts` is a snapshot at reconcile time
+   (informational; keys may be added); `slurm-status` takes done/failed
+   live from task records. Import from the files is an upsert on (rule,
+   run_seq) that updates the job id and clears `reconciled` when it
+   changed (`resubmit` reuses the run_seq with a new job id).
+6. **Killed-task records**: a new metadata method (not `_ingest_records`
+   as is):
+   - one SQL upsert with a **strict** guard in the statement itself:
+     `WHERE task.run_seq IS NULL OR excluded.run_seq > task.run_seq`
+     (another process may ingest the real sidecar at any moment; a later
+     real result, at run_seq ≥, still overwrites the killed record through
+     the normal ingest guard);
+   - on conflict it updates only status, exception, run_seq and timestamp:
+     code ids, `paths_digest` and resources stay as the last real run left
+     them (nothing ran to completion; `why` can still diff against it);
+   - the history row is written **only if the upsert applied**
+     (`rowcount`), with `finished` = sacct End normalised to the DB's UTC
+     `YYYY-MM-DD HH:MM:SS` (sacct runs with `SLURM_TIME_FORMAT` set, so no
+     local-time/DST ambiguity; the unique index then makes repeats one
+     row), `host` = NodeList, `wall_s` = Elapsed, `reason` = the spec's
+     per-task reason, `error` through `error_signature` as usual, the full
+     text in `task.exception`: `SlurmNodeFail: job 6133148_11 on host1234
+     after 13:40 (run 81)`.
+   - A metadata backend without these methods (third-party) makes
+     reconcile a no-op with a debug log.
+7. Optionally, workers add `slurm_job` (`<array job id>_<index>`) to their
+   result sidecar, recorded in `task_run` (nice to have).
 
 ## 4. `sacct_snapshot`
 
-Beside `squeue_snapshot`, in `executors/slurm_executor.py` (or a new
-`executors/slurm_query.py` if the module gets long):
+Beside `squeue_snapshot`:
 
 ```
-sacct -X -n -P -j <id1>,<id2>,… \
+SLURM_TIME_FORMAT=%s sacct -X -n -P -S <earliest submit> -j <id1>,<id2>,… \
       --format=JobID,State,ExitCode,Start,End,Elapsed,NodeList
 ```
 
-- Returns `{base_id: {index: Element(state, start, end, elapsed, node, exit)}}`.
-- Parses collapsed never-started elements (`6133152_[0-3,7%4]`) into
-  indices; `CANCELLED by 12345` → `CANCELLED`; `Start = Unknown/None` →
-  not started.
+- `SLURM_TIME_FORMAT=%s` (epoch seconds) if JASMIN's sacct accepts it,
+  else an explicit ISO format; `-S` from the earliest submit time unless
+  the live check shows `-j` alone searches all time. `-X`: no steps.
+- Returns `{base_id: {index: Element(state, start, end, elapsed, node,
+  exit)}, …}` plus, per job, whether it has any rows at all.
+- Parses collapsed elements (`6133152_[0]`, `6133151_[0-33]`,
+  `_[0-3,7%4]`); `CANCELLED by 12345` → `CANCELLED`; Start `None`/`Unknown`
+  → no start.
 - Raises `SacctError` on a non-zero exit, a timeout, or output it can't
-  parse. Callers turn that into `unknown`.
-- Batched (one call per reconcile, chunked if the id list is long).
-- To verify on JASMIN before relying on it: field formats, collapsed
-  ranges, requeued elements (latest state without `-D`), slurmdbd lag just
-  after a job ends, sacct on compute nodes.
+  parse. Batched, chunked for long id lists.
+- The format and behaviour are taken from the soak archive
+  (`tests/slurm/fixtures/sacct_run81_node_fail.psv`) and a live sample
+  taken **before** the simulator is written (step 0).
 
 ## 5. `reconcile`
 
-One idempotent function, `reconcile(rmk, *, run_seq=None, write=True,
-grace=…)` in a new module `core/reconcile.py` (or `executors/`), used by
-every caller:
+One idempotent function `reconcile(rmk, *, run_seq=None, write=True,
+now=None, squeue_timeout=None)` in `core/reconcile.py`:
 
 1. Ingest sidecars (as today).
-2. Load submissions: per-submission files not yet in `slurm_submission`
-   are added; select the unreconciled ones (all, or those at `run_seq`).
-   If none: return immediately (no SLURM calls).
-3. Snapshot squeue **before** reading task records, then ingest again
-   (a result that lands in between is seen as done, never as lost).
-4. For elements not done and not in squeue: one sacct call.
-5. Classify each element (§2). Write killed records (§3.4) if `write`.
-6. Update `slurm_submission.counts`; set `reconciled` when settled. Stamp
-   the run's counts (`n_failed` etc.) for runs whose submissions are all
-   reconciled.
-7. Return a report: per submission and per element, used by the commands.
+2. Import submissions from the per-submission files into the table (§3.5).
+   **Legacy pointer files** (pre-0.11, no per-submission file): imported
+   only if the job is in squeue or the file is younger than the prune age;
+   otherwise settled at once as `legacy` (never written as killed: an
+   upgrade must not cause reruns).
+3. Select unreconciled submissions (all, or those at `run_seq`). None:
+   return at once, with no SLURM calls (the gate).
+4. Snapshot squeue (with a short timeout for read-only callers; 60 s
+   only for `run`/the end job), **then** ingest again, then read records:
+   a result that lands in between is `done`, never `killed`. squeue
+   rows in a terminal state (MinJobAge keeps them ~5 min) count as not
+   in the queue.
+5. One sacct call for elements not done and not active.
+6. Classify (§2), with `now` as the clock (grace period, expiry).
+7. Write killed records (§3.6) if `write`.
+8. Update counts; set `reconciled` when settled. Stamp the run's counts
+   for runs whose submissions are all reconciled (`n_failed` includes
+   killed; `n_skipped` includes not_started).
+9. Return a report per submission and element for the commands.
 
-Guarantees (each a test invariant, see testing.md):
-
-- Never classifies an element `killed`/`not_started` without a terminal
-  sacct state and no result.
-- Never overwrites a record at run_seq ≥ the submission's.
-- Writes nothing when squeue or sacct fails.
-- Twice is the same as once.
-- Only reads a submission's own files (a later submission of the same
-  rule doesn't confuse an earlier one).
+Reconcile **never allocates a run_seq** (`current_run_seq()` allocates)
+and adds no `run` row.
 
 ## 6. Callers
 
-- **`run` (any executor)** reconciles before planning, so a killed task
-  has a FAILED record and is rerun (fixing the correctness cases in §1).
-  Off-cluster (no squeue/sacct) with unreconciled submissions: warn
-  once, plan with what the DB says.
+- **`run` (any executor, and `run -n`)** reconciles before planning, so a
+  killed task has a FAILED record and is rerun. Off-cluster with
+  unreconciled submissions: one warning, plan with what the DB says.
+  Reconcile knows which planned tasks are queued or running, so a local
+  `run` warns about them (nearly free; the rest of "local vs SLURM" stays
+  deferred).
 - **The end-of-submission job** (phase 2) reconciles its own run_seq.
-- **`slurm-status`, `info`, `why`, `task-info`**: reconcile first, gated
-  on unreconciled submissions; `SqueueError`/`SacctError` → a warning and
-  `unknown`, not a crash (`slurm-status` crashes on `SqueueError` today).
+- **`slurm-status`, `info`, `why`, `task-info`**: reconcile first, gated;
+  `SqueueError`/`SacctError` → a warning and `unknown`, not a crash
+  (`slurm-status` crashes on `SqueueError` today).
+- `n_planned` counts what the executor actually submitted (today it
+  includes rules skipped as already queued).
 
 ## 7. Reporting
 
 - `slurm-status`: per rule's latest submission, columns `tasks, PD, R,
   done, failed, killed, not started, reason`; a killed breakdown by state
   (`NODE_FAIL 4`) in the reason column or under the table. `--json` gains
-  `killed` (by state), `not_started`, `result_missing`, `unknown`.
+  `killed` (by state), `not_started`, `result_missing`, `superseded`,
+  `expired`, `unknown`, and the end job's state.
 - `why`: when the task's last submission killed it, that comes first:
   `last attempt killed: job 6133148_11 NODE_FAIL on host1234 after 13:40
   (run 81)`; other reasons follow as secondary (dashed, nested).
@@ -176,64 +217,91 @@ Guarantees (each a test invariant, see testing.md):
 
 Replaces the continuation job.
 
-- Submitted with **every** submission (decision 3), `--dependency=afterany`
-  on all the submission's job refs (`afterany` never becomes invalid, so
-  it is never killed by `kill-on-invalid-dep`). Resources as the
-  continuation today (10 min, 1G).
-- Runs `remake slurm-finish <remakefile> --run-seq N` (name to settle;
-  hidden or documented as internal):
-  1. `reconcile(run_seq=N)`, retrying for up to ~2 min while sacct still
-     shows non-terminal states (slurmdbd lag); what's left stays
-     unreconciled for the next caller.
-  2. If deferred rules exist: plan and submit the continuation **in
-     chain mode** — tasks that failed or were killed in this chain
-     (run_seq ≥ `REMAKE_PARENT_RUN_SEQ`) and everything downstream of
-     them are excluded (logged: `excluded: N tasks failed in this chain;
-     rerun with remake run`), so a deterministic failure is not resubmitted
-     in a loop.
+- Submitted when this run submitted at least one array (or deferred rules
+  remain and there are queued refs to wait on); never by a run that
+  submitted nothing (or it could spawn another, forever).
+  `--dependency=afterany` on all the submission's refs (`afterany` never
+  becomes invalid, so `kill-on-invalid-dep` never kills it). Resources as
+  the continuation today (10 min, 1G).
+- Command: `remake slurm-finish <remakefile> --run-seq N --chain P
+  [--continue] [-Q <query>]`. Its arguments are a **compatibility
+  contract**: SLURM copies the script at submission, so a job queued by
+  one version runs under the next (compatibility.md says so).
+  `--continue` is decided at submit time (deferred rules exist), so the end
+  job doesn't plan unconditionally and submit whatever the user made stale
+  meanwhile. `-Q` carries the original run's query (today's continuation
+  drops it: a filtered run continues over the whole pipeline; fixed here).
+  `REMAKE_PARENT_RUN_SEQ` stays readable for pre-upgrade continuation jobs
+  only (sbatch exports the environment, so the variable leaks into every
+  job a continuation submits).
+- It runs:
+  1. `reconcile(run_seq=N)`, retrying for up to ~2 min while sacct shows
+     non-terminal states (slurmdbd lag); the rest stays unreconciled for
+     the next caller.
+  2. With `--continue`: plan, then **chain mode**: the continuation never
+     submits a task already submitted in this chain. Excluded: every task
+     key in the chain's spec files that is not SUCCESS at run_seq ≥ the
+     chain root, plus everything downstream (walked in the plan's
+     topological order with the local executors' `record_failure` /
+     `upstream_failed` helpers, seeded from the spec keys via
+     `task_from_spec`, since a killed `--force` task with no record is not
+     in the runnable list). This covers failed, killed, unknown (sacct
+     still lagging), result_missing and user-cancelled tasks alike.
+     Chain members are runs whose `run.parent_run_seq` is P (plus P
+     itself), not "run_seq ≥ P": a manual `run` during the chain is not
+     part of it. Logged: `excluded: N tasks submitted earlier in this
+     chain and not successful; rerun with remake run`. Deferred rules
+     downstream of a failure stay deferred by themselves (the planner
+     defers below a rerunning upstream).
   3. Logs a one-line submission summary.
-- If it is itself lost, cancelled or never runs, nothing is wrong: the next
-  `run`/`slurm-status` reconciles (the backstop).
-- `--kill-on-invalid-dep` and `afterok` stay on the task arrays (dependents
-  of a failed task must not run).
-
-Open for phase 2: whether the chain exclusion needs a planner option
-(`exclude_failed_since`) or can be done by filtering the plan; how it
-interacts with rules skipped as already queued.
+- If it is lost, cancelled or never runs, the next `run`/`slurm-status`
+  reconciles (the backstop); only the continuation is lost, as today, but
+  now visibly (`slurm-status`: `finish job 1234 CANCELLED`).
+- `--kill-on-invalid-dep` and `afterok`/`aftercorr` stay on the task
+  arrays: dependents of a failed task must not run.
 
 ## 9. What changes elsewhere
 
-- `remake resubmit`: documented as deprecated (to be removed at 1.0);
-  reconcile runs first so its submissions are at least recorded.
-- `prune_spec_files` also prunes per-submission jobids files and old
-  `%A_%a` outputs of pruned submissions.
+- `remake resubmit`: deprecated (removed at 1.0); reconcile runs first,
+  and the import upserts the new job id under the same run_seq.
 - docs: `docs/guide/slurm.md` gains "When jobs are killed or lost";
-  `compatibility.md` lists the new files and table; `cli.md` the new
-  columns and JSON keys; CHANGELOG.
+  `compatibility.md` lists the new files, the table, `slurm-finish`'s
+  arguments, and what freezes at 1.0 (the `--json` outcome keys, the
+  `Slurm<State>:` reason prefix); `cli.md` the new columns and keys;
+  CHANGELOG; old-DB fixture tests cover the 1.2 table, and a 0.10 remake
+  still opens a migrated DB.
 
 ## 10. Out of scope (deferred)
 
 A SIGTERM handler that records TIMEOUT/scancel from the worker; `--requeue`
-support; automatic retry of NODE_FAIL; guarding local runs against tasks
-queued on SLURM; a submission lock for two concurrent `run -E slurm`;
-retiring `resubmit` (1.0).
+support (`_sbatch_opts` can't emit a bare flag today); automatic retry of
+NODE_FAIL; refusing local runs of tasks queued on SLURM (we only warn); a
+submission lock for two concurrent `run -E slurm`; removing `resubmit`
+(1.0).
 
 ## 11. Order of work
+
+0. **Facts first**: from the soak archive (done: §2, implementation.md)
+   and one live sacct sample on JASMIN (a small array with a completed, a
+   failed, a timed-out, a scancelled-running and a cancelled-pending
+   element, and an aftercorr dependent): Start/NodeList, collapsed and
+   missing rows, `SLURM_TIME_FORMAT`, `-S`, requeue, sacct on a compute
+   node. The simulator is built from these, not from memory.
 
 Phase 1:
 1. Test framework skeleton (testing.md): the simulated cluster and one
    scenario, before the code it tests.
-2. Per-submission jobids files, `%A_%a` outputs, readers updated.
-3. `sacct_snapshot` + parsing tests.
-4. `slurm_submission` table (schema 1.2) and the guarded killed-record write.
+2. Per-submission jobids files (atomic), `%A_%a` outputs, readers, pruning.
+3. `sacct_snapshot` + parsing tests (archive and live fixtures).
+4. `slurm_submission` table (schema 1.2), import, the killed-record write.
 5. `reconcile` + scenario tests for every outcome.
 6. Callers (`run`, commands) + reporting + golden snapshots.
 7. Hypothesis state-machine tests.
 8. Docs; live JASMIN tests.
 
 Phase 2:
-9. `slurm-finish` command and job, chain-mode continuation, tests.
+9. `slurm-finish` command and job, chain mode, `-Q` carried, tests.
 10. Live JASMIN run of the soak scenario.
 
-Each step: review by the advisor at its judgement of risk (the record
-format, reconcile, and the continuation change certainly).
+The advisor reviews the record format (2, 4), reconcile (5) and the
+continuation change (9) before each is committed.
