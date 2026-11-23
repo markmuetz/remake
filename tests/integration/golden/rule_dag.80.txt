@@ -1,0 +1,4 @@
+clean[2](site) -> stats
+stats[2](site) -> dyn
+dyn[?](?) -> report
+report[2](site)

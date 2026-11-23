@@ -148,7 +148,7 @@ Soak pipelines so far: `wescon-tools` (`wescon_radar_dev.py`, v17).
   components, prefix collapsed to `…` keeping one directory, colour or `^`.
   `--json` unchanged. Not yet used in `why` or elsewhere.
 
-## 5. `slurm-status` output is hard to read (open; to item 8)
+## 5. `slurm-status` output is hard to read (fixed in item 8)
 
 2026-11-23, `wescon_radar_dev.py` with a live v17 submission, bbc1ccb.
 Reported by MM.

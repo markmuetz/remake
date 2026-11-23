@@ -46,8 +46,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`remake info` counts rules deferred only by an upstream rule** (soak
   finding 2, 2026-11-23). A rule with a static matrix that waits on a
   deferred rule upstream now shows its task count, and failed and pending
-  from the DB, with `to run` naming the rules holding it (`deferred
-  (process_event)`); a line under TOTAL counts the deferred tasks. Its
+  from the DB, and lines under TOTAL count the deferred tasks and name the
+  rules holding each (`held by process_event`). Its
   `--json` row gains `tasks`, `succeeded`, `failed` and `pending`; every
   deferred row gains `deferred_by` (`[]` when its own matrix is the cause),
   and `totals` gains `deferred_tasks`. A rule whose matrix is callable
@@ -65,6 +65,22 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of crashing lint.
 - `remake lint` no longer creates `.remake/remake.db` in a fresh checkout: it
   reads no metadata, so it doesn't open the database.
+- **Readable output across the CLI** (0.11 item 8). One table renderer for
+  `info`, `slurm-status` and `history`: a header row, numbers right-aligned,
+  a TOTAL row, colour that never shifts alignment, empty columns left out,
+  and output fitted to the terminal (`$COLUMNS`) by shortening names and paths
+  with `…` instead of wrapping. `slurm-status` is a table (soak finding 5):
+  job, submitted, tasks, `PD`, `R`, done and failed (from the DB), and the
+  reason or "not queued"; its `--json` gains `submitted`, `tasks`,
+  `succeeded` and `failed`. `info` lists why each deferred rule is deferred
+  under the table (`matrix not ready` / `held by <rule>`, the same words as
+  `run -n`) and heads its `--reasons` tally. `lint` findings are stacked, with
+  paths relative to the project and counts of distinct files (`--json` rows
+  gain `distinct`). `task-info` and `info --failed` fit long paths to the
+  terminal. `why` and `set-state` gain `--json`. `--colour` is also accepted
+  after the subcommand. Golden tests pin every command's text output at 80
+  and 120 columns, check no line overflows, and check colour only adds
+  escape codes.
 - **`remake lint` shows where a near miss differs** (soak finding 4): the two
   paths stacked and aligned, the shared prefix collapsed to `…`, the
   difference coloured, or marked with `^` without colour. Compared by

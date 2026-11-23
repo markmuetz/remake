@@ -345,6 +345,7 @@ class RemakeCLI:
                          'upstream)'),
                 Arg('--dry-run', '-n', help='Show affected tasks, change nothing',
                     action='store_true'),
+                Arg('--json', help='Machine-readable output', action='store_true'),
             ],
         },
         'verify': {
@@ -517,6 +518,7 @@ class RemakeCLI:
                 Arg('--query', '-Q',
                     help='Explain all tasks matching this kwargs query; '
                          'omit both key and query to explain the runnable set'),
+                Arg('--json', help='Machine-readable output', action='store_true'),
             ],
         },
         'slurm-status': {
@@ -626,8 +628,13 @@ class RemakeCLI:
                     print(task)
                 print(f'{len(runnable)} task(s) would run')
                 rmk._check_external_inputs(runnable, dry_run=True)
+                from .core.remake import deferred_roots
+
+                roots = deferred_roots(rmk.dag, deferred)
                 for rule in deferred:
-                    print(f'{rule.name}: deferred (matrix not ready)')
+                    why = (f'held by {", ".join(roots[rule])}' if roots[rule]
+                           else 'matrix not ready')
+                    print(f'{rule.name}: deferred ({why})')
                 return
         nfailed = rmk.run(
             executor=executor,
@@ -739,6 +746,13 @@ class RemakeCLI:
         )
         state, tasks, cascaded = result['state'], result['tasks'], result['cascaded']
         skipped = result['skipped']
+        if args.json:
+            _print_json({
+                'state': state, 'dry_run': bool(args.dry_run), 'skipped': skipped,
+                'tasks': [{'task': str(t), 'key': t.key, 'cascade': False} for t in tasks]
+                + [{'task': str(t), 'key': t.key, 'cascade': True} for t in cascaded],
+            })
+            return
         for task in tasks:
             print(f'{task} -> {state}')
         for task in cascaded:
@@ -806,9 +820,15 @@ class RemakeCLI:
             if args.json:
                 _print_json({'failures': lines})
             else:
+                from .util.pathdiff import display_path
+
+                width = terminal_width()
                 for line in lines:
-                    print(f'{line["rule"]}  {line["key"][:8]}  {line["error"]}  '
-                          f'[{line["log"]}]')
+                    # One line per task (grep-able): in a terminal the log path
+                    # is cut in the middle to fit; piped, it is whole.
+                    first = f'{line["rule"]}  {line["key"][:8]}  {line["error"]}  '
+                    room = max(width - len(first) - 2, 20) if width else None
+                    print(f'{first}[{display_path(line["log"], rmk.project_dir, room)}]')
             return
 
         if args.json:
@@ -882,7 +902,8 @@ class RemakeCLI:
             name_w = max(len(r['rule']) for r in deferred_rows)
             for r in deferred_rows:
                 print(paint(f'  {r["rule"]:<{name_w}}  {_note(r)}', 'dim'))
-        if args.reasons:
+        if args.reasons and any(r.get('reasons') for r in rule_rows):
+            print('why the to-run tasks would run:')
             for r in rule_rows:
                 rsn = r.get('reasons')
                 if rsn:
@@ -999,7 +1020,13 @@ class RemakeCLI:
 
         def head(label, style, row, text):
             tasks = plural(row['count'], 'task')
-            print(f"{paint(f'{label:<18}', *style)}  {row['rule']} ({tasks}): {text}")
+            first = f"{label:<18}  {row['rule']} ({tasks}):"
+            if width and len(first) + 1 + len(text) > width:
+                # Too wide for one line: the explanation goes under it.
+                print(f"{paint(f'{label:<18}', *style)}  {row['rule']} ({tasks}):")
+                print(f'    {text}')
+            else:
+                print(f"{paint(f'{label:<18}', *style)}  {row['rule']} ({tasks}): {text}")
 
         def show(label, p):
             print(f'    {label + ":":<9}{path(p)}')
@@ -1031,8 +1058,13 @@ class RemakeCLI:
                 count = plural(row['count'], 'input')
                 if files != row['count']:
                     count += f" ({plural(files, 'file')})"
-                print(f"{paint(f'{"external":<18}', 'dim')}  {row['rule']}: {count} "
-                      f"produced by no rule")
+                first = f"{'external':<18}  {row['rule']}: {count} produced by no rule"
+                if width and len(first) > width:
+                    print(f"{paint(f'{"external":<18}', 'dim')}  {row['rule']}: {count}")
+                    print('    produced by no rule')
+                else:
+                    print(f"{paint(f'{"external":<18}', 'dim')}  {row['rule']}: {count} "
+                          f"produced by no rule")
                 show('e.g.', ex)
         unchecked = sorted({name for row in rows for name in row.get('unchecked', ())})
         if unchecked:
@@ -1230,22 +1262,31 @@ class RemakeCLI:
             _print_json(data)
             return
 
+        from .util.pathdiff import display_path
+
         paint = Painter(args.colour)
+        width = terminal_width()
+
+        def fit(path, reserve=0):
+            # Relative to the project, cut to the terminal (10 = the label).
+            return display_path(path, rmk.project_dir,
+                                max(width - 10 - reserve, 20) if width else None)
+
         print(f'{task}  {task.key}')
         when = f' at {data["timestamp"]}' if data['timestamp'] else ''
         print(f'status:   {paint.status(data["status"])}{when}')
         resources = _resources_line(data['resources'])
         if resources:
             # Of the last execution — set-state doesn't un-measure a run.
-            print(f'resources: {resources}')
+            print(f'ran with: {resources}')
         for name, path_info in data['inputs'].items():
             mark = (paint('exists', 'green') if path_info['exists']
                     else paint('missing', 'red', 'bold'))
-            print(f'input:    {path_info["path"]}  [{mark}]  ({name})')
+            print(f'input:    {fit(path_info["path"], 14 + len(name))}  [{mark}]  ({name})')
         for name, path_info in data['outputs'].items():
             mark = (paint('complete', 'green') if path_info['complete']
                     else paint('missing', 'red', 'bold'))
-            print(f'output:   {path_info["path"]}  [{mark}]  ({name})')
+            print(f'output:   {fit(path_info["path"], 16 + len(name))}  [{mark}]  ({name})')
             dir_info = path_info.get('dir')
             if dir_info and dir_info['n_stale']:
                 print(paint(f'          {dir_info["n_stale"]} stale file(s), '
@@ -1279,7 +1320,7 @@ class RemakeCLI:
                             'yellow'))
         log = data['log']
         mark = '' if log['exists'] else paint('  [no log yet]', 'dim')
-        print(f'log:      {log["path"]}{mark}')
+        print(f'log:      {fit(log["path"], 0 if log["exists"] else 14)}{mark}')
         jobids, array_index = data['slurm']['jobids'], data['slurm']['array_index']
         if jobids is not None:
             index = f', array index {array_index}' if array_index is not None else ''
@@ -1390,6 +1431,13 @@ class RemakeCLI:
     def remake_why(self, args):
         rmk = self._load(args)
         results = list(rmk.why(args.task_key, args.query))
+        if args.json:
+            _print_json({'tasks': [
+                {'task': str(task), 'key': task.key, 'will_run': bool(will_run),
+                 'reasons': [{'category': r.category, 'message': r.message}
+                             for r in reasons]}
+                for task, will_run, reasons in results]})
+            return
         if not results:
             print('nothing would run: all tasks are up to date')
             return

@@ -1,0 +1,11 @@
+rule    tasks  up-to-date  stale  failed  pending  to run  output
+clean       2           2      0       0        0       0  12B
+stats       2           1      0       1        0       1  2B
+dyn         ?           ?      ?       ?        ?       ?  ?
+report      2           ?      ?       0        2       ?  ?
+TOTAL       4           3      0       1        0       1  14B
+deferred, not in TOTAL: 2 tasks in 1 held rule; 1 rule with tasks unknown
+  dyn     matrix not ready
+  report  held by dyn
+why the to-run tasks would run:
+  stats: 1 last-run-failed
