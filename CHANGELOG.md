@@ -52,6 +52,16 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   deferred row gains `deferred_by` (`[]` when its own matrix is the cause),
   and `totals` gains `deferred_tasks`. A rule whose matrix is callable
   still shows `?`.
+- **`remake lint` checks inputs against deferred rules' output templates**
+  (soak finding 3). An input that a deferred rule would produce was reported
+  as a near miss of an unrelated file, or as external, hiding a missing
+  `depends_on`. It now matches the deferred rule's output templates, so the
+  missing dependency is reported. A deferred rule with callable outputs is
+  named on `near_miss` and `external` rows (`unchecked` in `--json`).
+- **`remake lint` shows where a near miss differs** (soak finding 4): the two
+  paths stacked and aligned, the shared prefix collapsed to `…`, the
+  difference coloured, or marked with `^` without colour. Compared by
+  directory, so an extra directory doesn't misalign the rest.
 
 ### Fixed
 

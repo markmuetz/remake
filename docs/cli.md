@@ -131,6 +131,34 @@ failures in deferred rules show in their rows and in `--failed`.
 | `--reasons` | per-rule tally of *why* the to-run tasks would rerun |
 | `--json` | machine-readable output |
 
+## `lint`
+
+`remake lint REMAKEFILE` checks that every input of a rule is produced by one
+of the rules it `depends_on`. Exit 1 if it finds a problem:
+
+| Finding | Meaning |
+|---|---|
+| `NEAR MISS` | nothing produces the input, but a dependency produces a near-identical path (a likely typo) |
+| `MISSING DEPENDENCY` | another rule produces the input, but it is not in `depends_on` |
+| `DIR NESTED`, `FILE IN DIR` | an output inside another rule's `Dir` |
+| `external` | no rule produces the input (information, not a problem) |
+
+A near miss shows the two paths stacked, the shared leading directories
+collapsed to `…`, and the difference in colour (red in the input, green in the
+nearest output), or marked with `^` when colour is off (`--colour never`, or
+not a terminal). Paths are compared directory by directory, so an extra
+directory is one difference.
+
+A rule whose matrix is deferred (not ready) has unknown outputs, but its output
+templates are known: an input matching one (each `{field}` any text within one
+path component) counts as that rule's, so a rule reading it without
+`depends_on` is a missing dependency. A broad template (`data/{name}.nc`) can
+claim an external file of the same shape; such a finding goes away once the
+matrix is ready and the real outputs are known.
+A deferred rule with callable outputs can't be checked this way; `external` and
+near-miss findings then say which deferred rules might produce the input
+(`unchecked` in `--json`).
+
 ## `dag`
 
 `remake dag [--rules | --tasks] [-o FILE] REMAKEFILE` writes the graph as

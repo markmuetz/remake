@@ -70,7 +70,7 @@ Soak pipelines so far: `wescon-tools` (`wescon_radar_dev.py`, v17).
   `analyse_compare_rhis_to_radarnet` for undeclared `CORR_PLOT_KIND` and
   `plot_corr_grid`. The wescon session is handling it.
 
-## 3. `lint` reports false near misses for outputs of deferred rules (open)
+## 3. `lint` reports false near misses for outputs of deferred rules (fixed)
 
 2026-11-23, `wescon_radar_dev.py` v17 (nothing run yet). Reported by MM.
 
@@ -89,8 +89,14 @@ Soak pipelines so far: `wescon-tools` (`wescon_radar_dev.py`, v17).
   are known even when the matrix is not), which would also catch the missing
   dependency. At least, a summary line: N inputs not checked because rules X,
   Y were deferred.
+- **Done.** Unmatched inputs are matched against deferred rules' output
+  templates (`{field}` = text within one path component, the fixed leading directory canonicalised),
+  so the wescon case becomes `MISSING DEPENDENCY analyse_* -> gather_delta_z_stats`.
+  A deferred rule with callable outputs is named on near-miss and external
+  findings (`unchecked`). Rules downstream of a deferred rule are still
+  skipped: their inputs may come from callables that read missing files.
 
-## 4. `lint` NEAR MISS paths are hard to compare by eye (open, suggestion)
+## 4. `lint` NEAR MISS paths are hard to compare by eye (done)
 
 2026-11-23, `wescon_radar_dev.py`. Suggested by MM.
 
@@ -112,3 +118,7 @@ Soak pipelines so far: `wescon-tools` (`wescon_radar_dev.py`, v17).
      `diff` field.
 - **Reuse.** The same helper suits anywhere two paths are shown together:
   `why`, the paths-changed reason, "expected X, found Y" messages.
+- **Done** for `lint` (`remake/util/pathdiff.py`): stacked `wants:` /
+  `nearest:`, component diff with a character diff inside similar
+  components, prefix collapsed to `…` keeping one directory, colour or `^`.
+  `--json` unchanged. Not yet used in `why` or elsewhere.

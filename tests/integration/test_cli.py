@@ -564,8 +564,12 @@ rmk.rules_from_current_module()
 ''')
     assert cli('lint', 'miswired.py') == 1
     out = capsys.readouterr().out
-    assert "NEAR MISS           proc: input 'data/genn_1.txt'" in out
-    assert "gen produces 'data/gen_1.txt'" in out and '(2 task(s))' in out
+    assert "NEAR MISS           proc (2 task(s)): input produced by nothing; " \
+        "nearest is gen's output" in out
+    # Stacked, aligned, the difference marked (soak finding 4).
+    assert '    wants:   data/genn_1.txt\n' \
+           '                    ^\n' \
+           '    nearest: data/gen_1.txt\n' in out
     assert 'MISSING DEPENDENCY  agg' in out and 'produced by proc' in out
     assert 'external            gen: 2 input(s)' in out  # not a problem, exit 1 is from above
 
@@ -575,6 +579,61 @@ rmk.rules_from_current_module()
     payload = json.loads(capsys.readouterr().out)
     assert list(payload)[0] == 'format' and payload['format'] == 1
     assert {r['kind'] for r in payload['findings']} == {'near_miss', 'missing_dependency', 'external'}
+
+
+def test_lint_matches_inputs_against_deferred_rules_templates(tmp_path, monkeypatch, capsys):
+    # Soak finding 3 (2026-11-23): an input made by a rule whose matrix is
+    # deferred was reported as a near miss of an unrelated sibling, hiding a
+    # missing depends_on. Its output template is known: match it.
+    monkeypatch.chdir(tmp_path)
+    Path('p.py').write_text('''
+from pathlib import Path
+from remake import Remake, rule, deferrable, Defer
+
+@deferrable
+def later():
+    raise Defer('brackets missing')
+
+@rule(outputs={'o': 'out/cmp/gathered_{case}.hdf'}, matrix=later)
+def gather(outputs, case):
+    pass
+
+@rule(outputs={'o': 'out/compare_{case}.hdf'}, matrix={'case': [1, 2]})
+def compare(outputs, case):
+    pass
+
+@rule(inputs={'g': 'out/cmp/gathered_{case}.hdf', 'c': 'out/compare_{case}.hdf'},
+      outputs={'o': 'out/analyse_{case}.png'}, matrix={'case': [1, 2]},
+      depends_on=[compare])  # gather missing
+def analyse(inputs, outputs, case):
+    pass
+
+def opaque_outputs(k):
+    return {'o': f'other/{k}.txt'}
+
+@rule(outputs=opaque_outputs, matrix=later)
+def opaque(outputs, k):
+    pass
+
+@rule(inputs={'x': 'ext/{case}.txt'}, outputs={'o': 'out/e_{case}.txt'},
+      matrix={'case': [1]})
+def uses_external(inputs, outputs, case):
+    pass
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    assert cli('lint', '--json', 'p.py') == 1
+    rows = json.loads(capsys.readouterr().out)['findings']
+    kinds = {(r['kind'], r['rule'], r['other_rule']) for r in rows}
+    assert ('missing_dependency', 'analyse', 'gather') in kinds
+    assert not any(r['kind'] == 'near_miss' for r in rows)
+    ext = next(r for r in rows if r['kind'] == 'external')
+    assert ext['rule'] == 'uses_external' and ext['unchecked'] == ['opaque']
+
+    cli('lint', 'p.py')
+    out = capsys.readouterr().out
+    assert 'may be produced by deferred rule(s) opaque' in out
 
 
 def test_ls_tasks(pipeline_dir, capsys):

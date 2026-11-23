@@ -984,14 +984,25 @@ class RemakeCLI:
             _print_json({'findings': rows})
             return 1 if problems else 0
 
+        from .util.pathdiff import render_path_diff
+
+        paint = Painter(args.colour)
+
+        def unchecked(row):
+            names = row.get('unchecked')
+            return (f"\n    (may be produced by deferred rule(s) {', '.join(names)}: "
+                    f"outputs unknown, not checked)") if names else ''
+
         for row in rows:
             if row['kind'] == 'near_miss':
                 ex = row['example']
-                print(
-                    f"NEAR MISS           {row['rule']}: input {ex['input']!r} is produced "
-                    f"by nothing, but {row['other_rule']} produces {ex['closest']!r} "
-                    f"({row['count']} task(s))"
-                )
+                print(f"{paint('NEAR MISS', 'yellow', 'bold')}           {row['rule']} "
+                      f"({row['count']} task(s)): input produced by nothing; nearest is "
+                      f"{row['other_rule']}'s output")
+                for line in render_path_diff(ex['input'], ex['closest'], paint):
+                    print(line)
+                if unchecked(row):
+                    print(unchecked(row).lstrip('\n'))
             elif row['kind'] == 'missing_dependency':
                 print(
                     f"MISSING DEPENDENCY  {row['rule']}: input {row['example']!r} is "
@@ -1013,7 +1024,7 @@ class RemakeCLI:
             else:
                 print(
                     f"external            {row['rule']}: {row['count']} input(s) not "
-                    f"produced by any rule (e.g. {row['example']!r})"
+                    f"produced by any rule (e.g. {row['example']!r}){unchecked(row)}"
                 )
         if not rows:
             print('all inputs wired to declared dependencies')

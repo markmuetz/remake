@@ -21,6 +21,11 @@
 # known task, "deferred (process_event)": its matrix is static, so only the
 # upstream holds it back.
 #
+# `remake lint` can't expand process_event before detect_events has run, but
+# it knows its output template, data/event_stats/{year}_{event_id}.json: a
+# rule reading those files without depends_on=[process_event] is still
+# reported as a missing dependency.
+#
 # DAG: detect_events[year] --> process_event[year, event_id] --> summarise_events
 
 import json

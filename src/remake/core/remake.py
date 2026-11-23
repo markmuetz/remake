@@ -75,6 +75,46 @@ def _resource_fields(resources):
     return fields
 
 
+def _output_patterns(rule, cwd):
+    """Regexes for the canonical paths a rule's outputs can take: each output
+    template with each `{field}` as one path component's text, its fixed leading directory
+    canonicalised as lint's paths are. None if the outputs are not a dict of
+    templates (a callable spec: unknown until the matrix is)."""
+    import re
+    import string
+
+    from .tokens import PathToken
+
+    if not isinstance(rule.outputs, dict):
+        return None
+    templates = []
+    for value in rule.outputs.values():
+        for item in (value if isinstance(value, (list, tuple)) else [value]):
+            if isinstance(item, str):
+                templates.append(item)
+            elif isinstance(item, PathToken) and not item.remote:
+                templates.append(item.path)
+            elif not is_remote(item):
+                return None  # a token we can't read a template from
+    patterns = []
+    for template in templates:
+        parts = list(string.Formatter().parse(template))
+        literal_head = parts[0][0] if parts else ''
+        fixed_dir, slash, _ = literal_head.rpartition('/')
+        if slash and not fixed_dir:
+            fixed_dir = '/'
+        # The fixed directory, canonicalised (symlinks, ./, relative): the
+        # rest of the template is matched as written.
+        head = os.path.dirname(canonical_path(os.path.join(fixed_dir or '.', '_'), cwd))
+        rest = template[len(fixed_dir) + (1 if slash and fixed_dir != '/' else 0):] if slash else template
+        # A field matches within one path component: broad enough for
+        # kwargs values, narrow enough not to claim a whole directory tree.
+        regex = ''.join(re.escape(lit) + ('[^/]+' if field is not None else '')
+                        for lit, field, _, _ in string.Formatter().parse(rest))
+        patterns.append(re.compile(re.escape(head.rstrip('/') + '/') + regex))
+    return patterns
+
+
 def _blocked_reason(rule):
     """Why a rule is still deferred when a local run has nothing left to
     try: its matrix's Defer paths if it still can't expand, else (it would
@@ -1133,7 +1173,16 @@ class Remake:
         (a Dir inside another rule's Dir) and 'file_in_dir' (a plain output
         inside another rule's Dir) are wiring errors too. Two tasks declaring
         one Dir raise RemakeError. Materialises all tasks; rules with an unresolved (deferred) matrix are
-        skipped with a warning."""
+        skipped with a warning.
+
+        A deferred rule's outputs are unknown, but their templates are not:
+        an input that matches one (each `{field}` any text within one path
+        component) counts as
+        produced by that rule, so reading it without depends_on is a
+        missing_dependency, not a near miss or external (soak finding 3,
+        2026-11-23). When a deferred rule's outputs have no template (a
+        callable spec), 'near_miss' and 'external' rows carry 'unchecked':
+        the names of those rules, which might produce the input."""
         import difflib
 
         if not self._finalized:
@@ -1174,6 +1223,18 @@ class Remake:
             for path in paths:
                 producers.setdefault(canonical(path, cwd), set()).add(rule.name)
 
+        # Deferred rules: match inputs against their output templates instead.
+        deferred_templates = []  # (rule name, compiled pattern)
+        unchecked = set()  # deferred rules with no usable templates
+        for rule in self.rules:
+            if rule.name in deferred:
+                patterns = _output_patterns(rule, cwd)
+                if patterns is None:
+                    unchecked.add(rule.name)
+                else:
+                    deferred_templates += [(rule.name, pat) for pat in patterns]
+        unchecked = sorted(unchecked)
+
         findings = {}  # (kind, rule, other) -> {'count': n, 'example': ...}
 
         def record(kind, rule_name, other, example):
@@ -1181,6 +1242,8 @@ class Remake:
                 (kind, rule_name, other), {'count': 0, 'example': example}
             )
             entry['count'] += 1
+            if unchecked and kind in ('near_miss', 'external'):
+                entry['unchecked'] = unchecked
 
         def enclosing_dir(path, *, proper=False):
             """The nearest Dir output that contains `path` (or is it, unless
@@ -1226,6 +1289,9 @@ class Remake:
                     if not made_by and dir_owner and (inside := enclosing_dir(key)):
                         # An input inside another rule's Dir is that rule's.
                         made_by = {inside[1]}
+                    if not made_by and deferred_templates:
+                        made_by = {name for name, pat in deferred_templates
+                                   if pat.fullmatch(key)}
                     if made_by:
                         if not made_by & (dep_names | {rule.name}):
                             record('missing_dependency', rule.name, min(made_by), path)
