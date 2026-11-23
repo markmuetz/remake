@@ -122,3 +122,36 @@ Soak pipelines so far: `wescon-tools` (`wescon_radar_dev.py`, v17).
   `nearest:`, component diff with a character diff inside similar
   components, prefix collapsed to `…` keeping one directory, colour or `^`.
   `--json` unchanged. Not yet used in `why` or elsewhere.
+
+## 5. `slurm-status` output is hard to read (open; to item 8)
+
+2026-11-23, `wescon_radar_dev.py` with a live v17 submission, bbc1ccb.
+Reported by MM.
+
+- **Symptom.**
+  ```
+  build_gridded_rhi_scans job 6058085      PD:454 R:306  [QOSMaxMemoryPerUser]
+  plot_regridded_camra_kepler_l1 job 6058087      PD:763  [Dependency]
+  compare_delta_z_candidates job 38926070     not in queue
+  ```
+  - No columns: the rule-name width varies, so job ids, counts and reasons
+    start at a different offset on every line. No header or totals.
+  - States are packed into one field (`PD:454 R:306`), so a column of
+    running or pending counts can't be scanned. 454 + 306 = 760 of 763: the
+    other 3 (completed? failed?) aren't shown.
+  - "not in queue" doesn't say what it means. Here those are July job ids
+    (389xxxxx) from the last submission of rules that are deferred now:
+    finished, failed, cancelled, or just old?
+  - The pending reason, the most useful field, is in brackets at the end.
+- **Proposal.**
+  ```
+  rule                            job       tasks  PD   R    CD  F  reason
+  build_gridded_rhi_scans         6058085   763    454  306  3   0  QOSMaxMemoryPerUser
+  plot_regridded_camra_kepler_l1  6058087   763    763  0    0   0  Dependency
+  compare_delta_z_candidates      38926070  -      -    -    -   -  not queued (last submitted 2026-07-10)
+  TOTAL                                     ...
+  ```
+  For a job not in the queue, say when it was submitted and what the DB
+  records (e.g. "DB: 17 succeeded"). Use `info`'s table rendering and
+  `Painter`; `--json` unchanged. To be done in release item 8 (output
+  readability), with its shared table helper.
