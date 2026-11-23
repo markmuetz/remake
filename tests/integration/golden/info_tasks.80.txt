@@ -5,8 +5,9 @@ dyn         ?           ?      ?       ?        ?       ?
 report      1           ?      ?       0        1       ?
 TOTAL       2           2      0       0        0       0
 deferred, not in TOTAL: 1 task in 1 held rule; 1 rule with tasks unknown
-  dyn     matrix not ready
-  report  held by dyn
+  - dyn     matrix not ready
+  - report  held by dyn
+
 success  dbc2616d clean[site=oxford]
 success  fd43dc9b stats[site=oxford]
 pending  f116aff5 report[site=oxford]

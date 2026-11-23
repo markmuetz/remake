@@ -70,7 +70,7 @@ def _flatten(components):
     return segs
 
 
-def render_path_diff(a, b, paint, labels=('wants', 'nearest'), indent='    '):
+def render_path_diff(a, b, paint, labels=('wants', 'nearest'), indent='  - '):
     """Lines showing a over b, aligned and labelled, the differing spans red
     (in a) and green (in b), the shared parts dimmed. With colour off, a
     line of `^` under each path marks its differing spans instead."""
@@ -87,7 +87,7 @@ def render_path_diff(a, b, paint, labels=('wants', 'nearest'), indent='    '):
             lines.append(head + ''.join(t for t, _ in segs))
             marks = ''.join(('^' if changed else ' ') * len(t) for t, changed in segs)
             if marks.strip():
-                lines.append(' ' * len(head) + marks.rstrip())
+                lines.append(' ' * len(head) + marks.rstrip())  # no dash: not an item
     return lines
 
 

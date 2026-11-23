@@ -134,7 +134,7 @@ failures in deferred rules show in their rows and in `--failed`.
 | `-t, --tasks` | list individual tasks with status |
 | `-F, --show-failures` | show failures grouped by unique traceback signature + count |
 | `--all-failures` | with `-F`, show every failed task individually (not grouped) |
-| `--failed` | one line per failed task (and nothing else): rule, short key, last line of its error, log path. The error is the stored exception's last line; if none is stored, the last non-empty line of the task's SLURM `.err` (`.remake/slurm/output/<rule>/<index>.err`). With `--json`, `{"format": 1, "failures": [{rule, key, error, log}, ...]}` |
+| `--failed` | one line per failed task: rule, short key, last line of its error, and, when piped, the log path (in a terminal, a footer line says to use `remake task-log <key>` instead). The error is the stored exception's last line; if none is stored, the last non-empty line of the task's SLURM `.err` (`.remake/slurm/output/<rule>/<index>.err`). With `--json`, `{"format": 1, "failures": [{rule, key, error, log}, ...]}` |
 | `--reasons` | per-rule tally of *why* the to-run tasks would rerun |
 | `--json` | machine-readable output |
 

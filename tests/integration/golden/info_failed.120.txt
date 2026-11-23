@@ -1,1 +1,3 @@
-stats  b3c1de2c  ValueError: bad readings for cambridge  [.remake/tasks/log/stats/b3/c1d…924a219852cac04b1ad59c368e.log]
+stats  b3c1de2c  ValueError: bad readings for cambridge
+
+logs: remake task-log pipeline.py <key>

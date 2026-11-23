@@ -3,8 +3,8 @@ clean
 
 dependents:  stats
 matrix:      (site) — 2 task(s)
-  site: ['oxford', 'cambridge']
+  - site: ['oxford', 'cambridge']
 inputs:
-  raw/{site}.txt  (raw)
+  - raw/{site}.txt  (raw)
 outputs:
-  out/clean/{site}.txt  (clean)
+  - out/clean/{site}.txt  (clean)

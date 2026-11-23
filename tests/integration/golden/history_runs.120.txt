@@ -1,2 +1,2 @@
 run  started              command  tasks
-  1  TTTTTTTTTTTTTTTTTTT  run      4 run, 1 failed, 2 blocked rule(s)
+  1  TTTTTTTTTTTTTTTTTTT  run      4 run, 1 failed, 2 blocked rules

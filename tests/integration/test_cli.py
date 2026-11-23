@@ -567,14 +567,14 @@ rmk.rules_from_current_module()
     assert "NEAR MISS           proc (2 tasks): input produced by nothing; " \
         "nearest is gen's output" in out
     # Stacked, aligned, the difference marked (soak finding 4).
-    assert '    wants:   data/genn_1.txt\n' \
+    assert '  - wants:   data/genn_1.txt\n' \
            '                    ^\n' \
-           '    nearest: data/gen_1.txt\n' in out
+           '  - nearest: data/gen_1.txt\n' in out
     # Stacked, not one long line (item 8 e).
     assert "MISSING DEPENDENCY  agg (2 tasks): reads proc's output but does not " \
-        "depend_on it\n    input:   data/proc_1.txt\n" in out
+        "depend_on it\n  - input:   data/proc_1.txt\n" in out
     assert 'external            gen: 2 inputs produced by no rule\n' \
-        '    e.g.:    data/src_1.txt' in out  # not a problem, exit 1 is from above
+        '  - e.g.:    data/src_1.txt' in out  # not a problem, exit 1 is from above
 
     import json
 
@@ -1317,8 +1317,8 @@ rmk.rules_from_current_module()
     assert line.split()[1:] == ['?'] * 6
     # Why each is deferred, under the table (item 8: no column to truncate).
     assert 'deferred, not in TOTAL: 3 tasks in 1 held rule; 3 rules with tasks unknown' in out
-    reasons = {ln.split()[0]: ' '.join(ln.split()[1:]) for ln in out.splitlines()
-               if ln.startswith('  ')}
+    reasons = {ln.split()[1]: ' '.join(ln.split()[2:]) for ln in out.splitlines()
+               if ln.startswith('  - ')}
     assert reasons == {'dyn': 'matrix not ready', 'static_down': 'held by dyn',
                        'dyn_down': 'held by dyn', 'plain_down': 'held by dyn'}
 

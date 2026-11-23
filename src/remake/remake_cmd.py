@@ -821,15 +821,17 @@ class RemakeCLI:
             if args.json:
                 _print_json({'failures': lines})
             else:
-                from .util.pathdiff import display_path
-
+                # One line per task (grep-able). Piped, it ends with the log
+                # path; in a terminal (where the path would be cut to fit and
+                # be useless) a footer says how to get a log from the key.
                 width = terminal_width()
                 for line in lines:
-                    # One line per task (grep-able): in a terminal the log path
-                    # is cut in the middle to fit; piped, it is whole.
-                    first = f'{line["rule"]}  {line["key"][:8]}  {line["error"]}  '
-                    room = max(width - len(first) - 2, 20) if width else None
-                    print(f'{first}[{display_path(line["log"], rmk.project_dir, room)}]')
+                    first = f'{line["rule"]}  {line["key"][:8]}  {line["error"]}'
+                    print(first if width else f'{first}  [{line["log"]}]')
+                if width and lines:
+                    paint = Painter(args.colour)
+                    print()
+                    print(paint(f'logs: remake task-log {args.remakefile} <key>', 'dim'))
             return
 
         if args.json:
@@ -902,14 +904,16 @@ class RemakeCLI:
             print(paint(f'deferred, not in TOTAL: {"; ".join(parts)}', 'dim'))
             name_w = max(len(r['rule']) for r in deferred_rows)
             for r in deferred_rows:
-                print(paint(f'  {r["rule"]:<{name_w}}  {_note(r)}', 'dim'))
+                print(paint(f'  - {r["rule"]:<{name_w}}  {_note(r)}', 'dim'))
         if args.reasons and any(r.get('reasons') for r in rule_rows):
-            print('why the to-run tasks would run:')
+            print('\nwhy the to-run tasks would run:')
             for r in rule_rows:
                 rsn = r.get('reasons')
                 if rsn:
                     tally = ', '.join(f'{n} {cat}' for cat, n in sorted(rsn.items()))
-                    print(f'  {r["rule"]}: {tally}')
+                    print(f'  - {r["rule"]}: {tally}')
+        if task_rows:
+            print()  # the task list is not part of the section above it
         for task_row in task_rows:
             status = task_row['status']
             print(f'{paint.status(status, f"{status:<8}")} {task_row["task"]}')
@@ -987,13 +991,13 @@ class RemakeCLI:
                             mark = '' if not args.check else (
                                 paint(' [exists]', 'green') if f['exists']
                                 else paint(' [missing]', 'red', 'bold'))
-                            print(f'  in  {f["name"]}: {f["path"]}{mark}')
+                            print(f'  - in  {f["name"]}: {f["path"]}{mark}')
                     if args.outputs:
                         for f in output_files(task):
                             mark = '' if not args.check else (
                                 paint(' [complete]', 'green') if f['complete']
                                 else paint(' [missing]', 'red', 'bold'))
-                            print(f'  out {f["name"]}: {f["path"]}{mark}')
+                            print(f'  - out {f["name"]}: {f["path"]}{mark}')
             except Defer:
                 logger.warning(f'{rule.name}: deferred (matrix not ready), tasks unknown')
         if args.json:
@@ -1025,15 +1029,22 @@ class RemakeCLI:
             if width and len(first) + 1 + len(text) > width:
                 # Too wide for one line: the explanation goes under it.
                 print(f"{paint(f'{label:<18}', *style)}  {row['rule']} ({tasks}):")
-                print(f'    {text}')
+                print(f'  - {text}')
             else:
                 print(f"{paint(f'{label:<18}', *style)}  {row['rule']} ({tasks}): {text}")
 
         def show(label, p):
-            print(f'    {label + ":":<9}{path(p)}')
+            print(f'  - {label + ":":<9}{path(p)}')
 
-        for row in rows:
+        # Problems first, by kind; the external lines (information) last.
+        order = ('near_miss', 'missing_dependency', 'dir_nested', 'file_in_dir', 'external')
+        ordered = sorted(rows, key=lambda r: order.index(r['kind'])
+                         if r['kind'] in order else len(order))
+        for n, row in enumerate(ordered):
             ex = row['example']
+            if row['kind'] == 'external' and (n == 0 or ordered[n - 1]['kind'] != 'external') \
+                    and n > 0:
+                print()
             if row['kind'] == 'near_miss':
                 head('NEAR MISS', ('yellow', 'bold'), row,
                      f"input produced by nothing; nearest is {row['other_rule']}'s output")
@@ -1062,7 +1073,7 @@ class RemakeCLI:
                 first = f"{'external':<18}  {row['rule']}: {count} produced by no rule"
                 if width and len(first) > width:
                     print(f"{paint(f'{"external":<18}', 'dim')}  {row['rule']}: {count}")
-                    print('    produced by no rule')
+                    print('  - produced by no rule')
                 else:
                     print(f"{paint(f'{"external":<18}', 'dim')}  {row['rule']}: {count} "
                           f"produced by no rule")
@@ -1226,7 +1237,7 @@ class RemakeCLI:
             keys = ', '.join(m['keys'])
             print(f'matrix:      ({keys}) — {m["n_tasks"]} task(s)')
             for key, values in (m['values'] or {}).items():
-                print(f'  {key}: {values!r}')
+                print(f'  - {key}: {values!r}')
 
         for part in ('inputs', 'outputs'):
             part_info = data[part]
@@ -1238,19 +1249,19 @@ class RemakeCLI:
                 continue
             print(f'{part}:')
             for name, template in part_info['templates'].items():
-                print(f'  {template}  ({name})')
+                print(f'  - {template}  ({name})')
 
         if data['uses']:
             print('uses:')
             for entry in data['uses']:
                 if entry['kind'] == 'value':
-                    print(f'  {entry["name"]} = {entry["rendering"]}')
+                    print(f'  - {entry["name"]} = {entry["rendering"]}')
                 elif entry['kind'] == 'source':
-                    print(f'  {entry["name"]}:')
+                    print(f'  - {entry["name"]}:')
                     for line in entry['rendering'].rstrip().splitlines():
-                        print(f'    {line}')
+                        print(f'      {line}')  # source code: no dashes
                 else:
-                    print(f'  {entry["name"]}: '
+                    print(f'  - {entry["name"]}: '
                           + paint(f'{entry["rendering"]} (source unavailable)', 'dim'))
         if data['config']:
             print(f'config:      {data["config"]!r}')
@@ -1290,7 +1301,7 @@ class RemakeCLI:
             print(f'output:   {fit(path_info["path"], 16 + len(name))}  [{mark}]  ({name})')
             dir_info = path_info.get('dir')
             if dir_info and dir_info['n_stale']:
-                print(paint(f'          {dir_info["n_stale"]} stale file(s), '
+                print(paint(f'  - {dir_info["n_stale"]} stale file(s), '
                             f'{_format_bytes(dir_info["stale_bytes"])}, not produced by '
                             f'the last run (see the manifest; remake never deletes them)',
                             'yellow'))
@@ -1316,7 +1327,7 @@ class RemakeCLI:
                       + (f', {run["lockfile"]} {run["lockfile_hash"][:12]}'
                          if run.get('lockfile') and run.get('lockfile_hash') else ''))
             if last['different_environment']:
-                print(paint('          ran in a different environment from the one that '
+                print(paint('  - ran in a different environment from the one that '
                             'planned it (see `remake history` and `remake check-env`)',
                             'yellow'))
         log = data['log']
@@ -1380,7 +1391,8 @@ class RemakeCLI:
                               f'{r["n_failed"] or 0} failed')
                 elif r.get('n_run') is not None:
                     counts = (f'{r["n_run"]} run, {r["n_failed"] or 0} failed'
-                              + (f', {r["n_blocked_rules"]} blocked rule(s)'
+                              + (f', {r["n_blocked_rules"]} blocked '
+                                 f'{"rule" if r["n_blocked_rules"] == 1 else "rules"}'
                                  if r.get('n_blocked_rules') else ''))
                 elif r.get('n_planned') is not None:
                     counts = f'{r["n_planned"]} submitted'
@@ -1415,8 +1427,8 @@ class RemakeCLI:
         for row in rows:
             table.append((row['run_seq'], row['finished'], row['status'],
                           _resources_line(row) or '', row['reason'] or '', row['host'] or ''))
-            notes.append([(paint(f'    {row["error"]}', 'red') if row['error'] else None),
-                          (paint('    ran in a different environment from the planning run',
+            notes.append([(paint(f'  - {row["error"]}', 'red') if row['error'] else None),
+                          (paint('  - ran in a different environment from the planning run',
                                  'yellow') if row['different_environment'] else None)])
         status_style = [None, None, lambda v: STATUS_STYLE.get(v), None, None, None]
         lines = render_table(('run', 'finished', 'status', 'resources', 'reason', 'host'),
@@ -1450,13 +1462,15 @@ class RemakeCLI:
             print(f'{task}  {task.key}')
             verdict = (paint('yes', 'cyan', 'bold') if will_run
                        else paint('no', 'green'))
-            print(f'will run: {verdict}')
+            print(f'- will run: {verdict}')
             if not reasons:
-                print(paint('up to date: recorded success, code and uses '
+                print(paint('- up to date: recorded success, code and uses '
                             'unchanged, no upstream reruns', 'dim'))
             for reason in reasons:
-                print(paint(f'- {reason.message}', 'yellow'))
-            print()
+                # The reasons belong to "will run: yes": nested under it.
+                print(paint(f'  - {reason.message}', 'yellow'))
+            if len(results) > 1:
+                print()  # between tasks, and before the summary
         if len(results) > 1:
             print(f'{len(results)} task(s): {n_run} would run, '
                   f'{len(results) - n_run} up to date')
@@ -1473,7 +1487,7 @@ class RemakeCLI:
               + (f' (from {eff.profile_source})' if eff.profile else ''))
         print('files consulted:')
         for layer, path, exists in eff.files:
-            print(f'  {layer}: {path} ({"found" if exists else "not found"})')
+            print(f'  - {layer}: {path} ({"found" if exists else "not found"})')
         print('config (layer that set each key):')
 
         def walk(d, prefix=''):
@@ -1486,7 +1500,7 @@ class RemakeCLI:
 
         rows = list(walk(eff.values))
         for key, v in rows:
-            print(f'  {key} = {v!r}  [{eff.provenance.get(key, "?")}]')
+            print(f'  - {key} = {v!r}  [{eff.provenance.get(key, "?")}]')
         if not rows:
             print('  (empty)')
         return 0
