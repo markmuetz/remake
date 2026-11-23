@@ -197,4 +197,8 @@ Reported by MM.
   fails): item 8 d.
 - **`lint` creates `.remake/remake.db`** in a fresh checkout ("Creating
   sqlite3 database"). A read-only check shouldn't create metadata: open it
-  read-only, or skip the DB when there is none. Open.
+  read-only, or skip the DB when there is none. **Fixed:** lint loads the
+  remakefile without finalizing (it reads no metadata), so no DB. The CLI's
+  log files (`.remake/remake.log` etc.) are still written, as for every
+  command; `rule-dag`, `dag` and `rule-info` also finalize (and so create
+  the DB) without needing it: worth the same change, not done yet.

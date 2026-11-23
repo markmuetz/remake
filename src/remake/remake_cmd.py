@@ -977,7 +977,9 @@ class RemakeCLI:
             _print_json({'tasks': rows})
 
     def remake_lint(self, args):
-        rmk = self._load(args)
+        # Not finalized: lint reads no metadata, and finalize would create the
+        # DB in a fresh checkout (soak note 6).
+        rmk = self._track(load_remake(args.remakefile, finalize=False, profile=args.profile))
         rows = rmk.lint()
         problems = [r for r in rows if r['kind'] != 'external']
         if args.json:

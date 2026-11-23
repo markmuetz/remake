@@ -63,6 +63,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   A rule that waits on a deferred rule is now checked too (it was skipped),
   and a rule whose inputs can't be resolved yet is skipped with a warning
   instead of crashing lint.
+- `remake lint` no longer creates `.remake/remake.db` in a fresh checkout: it
+  reads no metadata, so it doesn't open the database.
 - **`remake lint` shows where a near miss differs** (soak finding 4): the two
   paths stacked and aligned, the shared prefix collapsed to `…`, the
   difference coloured, or marked with `^` without colour. Compared by

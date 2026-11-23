@@ -1238,8 +1238,11 @@ class Remake:
         the names of those rules, which might produce the input."""
         import difflib
 
-        if not self._finalized:
-            self.finalize()
+        # Read-only and metadata-free: no finalize(), which would create the
+        # database in a fresh checkout (soak note 6). Config and scope checks
+        # still run (their warnings are wiring news too).
+        self.effective_config
+        self._check_scopes()
         self._check_duplicate_dirs()
 
         # Paths are matched by their canonical spelling (tokens.canonical:

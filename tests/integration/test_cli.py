@@ -650,6 +650,7 @@ rmk = Remake()
 rmk.rules_from_current_module()
 ''')
     assert cli('lint', '--json', 'p.py') == 1
+    assert not Path('.remake/remake.db').exists()  # read-only: no DB in a fresh checkout
     rows = json.loads(capsys.readouterr().out)['findings']
     kinds = {(r['kind'], r['rule'], r['other_rule']) for r in rows}
     assert ('missing_dependency', 'analyse', 'gather') in kinds
