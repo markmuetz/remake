@@ -522,7 +522,8 @@ class RemakeCLI:
             ],
         },
         'slurm-status': {
-            'help': 'Live SLURM queue state of the last submission, per rule',
+            'help': 'Live SLURM queue state of the last submission, per rule '
+                    '(PD pending, R running, from squeue; done/failed from the DB)',
             'args': [
                 Arg('remakefile'),
                 Arg('--json', help='Machine-readable output', action='store_true'),
