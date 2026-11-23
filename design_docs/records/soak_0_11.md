@@ -114,6 +114,12 @@ Soak pipelines so far: `wescon-tools` (`wescon_radar_dev.py`, v17).
   whose tasks or inputs raise while expanding (an inputs callable reading a
   file the deferred rule hasn't written) is skipped with a warning naming
   the error; before, that crashed lint.
+- **Third recheck (4d45c1b), wescon 27151b9: works.** Only the two rules
+  whose own matrix defers are skipped; no "inputs not resolvable" warnings.
+  Two more real missing dependencies found (`compare_rhis_to_radarnet` and
+  `match_rhis_to_storms` → `find_candidate_delta_z`, fixed wescon-side); no
+  false positives seen. Not visible to lint, by design: inputs read by a glob
+  inside a rule body.
 
 ## 4. `lint` NEAR MISS paths are hard to compare by eye (done)
 
