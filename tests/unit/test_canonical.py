@@ -389,6 +389,104 @@ def test_bound_method_of_self_referencing_object_terminates():
     assert 'method' in uses_hash({'f': obj.process})
 
 
+def test_object_with_several_bound_methods_of_itself_is_fast_and_stable():
+    # Soak finding 2026-11-23: scipy.stats.chi2 holds several bound methods of
+    # itself; rendering was exponential in _MAX_DEPTH (never finished).
+    code = '''
+from remake.core.canonical import canonical_value
+class Gen:
+    def a(self): pass
+    def b(self): pass
+    def c(self): pass
+    def d(self): pass
+g = Gen()
+g.x = 1
+g.fa, g.fb, g.fc, g.fd = g.a, g.b, g.c, g.d
+g.vec = [g.a, {'inner': g.b}]
+print(canonical_value(g))
+'''
+    outs = {subprocess.run([sys.executable, '-c', code], capture_output=True, text=True,
+                           env={'PYTHONHASHSEED': str(seed), 'PATH': ''},
+                           check=True, timeout=60).stdout
+            for seed in (1, 2)}
+    assert len(outs) == 1
+    out = outs.pop()
+    assert '<cycle ' in out and '<too deep>' not in out
+    assert len(out) < 2000
+
+
+def test_self_referencing_object_renders_fixed_text_and_sees_attribute_changes():
+    class A:
+        def m(self):
+            pass
+
+        def __init__(self, n):
+            self.n = n
+            self.f = self.m
+
+    text = canonical.canonical_value(A(1))
+    assert text == canonical.canonical_value(A(1))
+    assert '<cycle ' in text and '<too deep>' not in text
+    assert uses_hash({'a': A(1)}) != uses_hash({'a': A(2)})
+
+
+def test_cyclic_container_renders_as_cycle():
+    lst = [1]
+    lst.append(lst)
+    assert canonical.canonical_value(lst) == '[1, <cycle ^1 builtins.list>]'
+
+
+def test_cycle_marker_names_the_ancestor():
+    # Review 2026-11-23: a cycle to the parent and one to the grandparent
+    # must not render alike.
+    a = []
+    b = [a]
+    a.append(b)
+    c = []
+    c.append(c)
+    d = [c]
+    assert canonical.canonical_value(b) == '[[<cycle ^2 builtins.list>]]'
+    assert canonical.canonical_value(d) == '[[<cycle ^1 builtins.list>]]'
+
+
+def test_mutual_and_container_subclass_cycles():
+    import collections
+
+    class Node:
+        pass
+
+    x, y = Node(), Node()
+    x.peer, y.peer = y, x
+    text = canonical.canonical_value(x)
+    assert '<cycle ^4 ' in text and '<too deep>' not in text  # x, its __dict__, y, its __dict__
+
+    class D(dict):
+        pass
+
+    dd = D()
+    dd['me'] = dd
+    assert '<cycle ' in canonical.canonical_value(dd)
+    NT = collections.namedtuple('NT', 'items')
+    nt = NT([])
+    nt.items.append(nt)
+    assert '<cycle ' in canonical.canonical_value(nt)
+
+
+def test_shared_subobject_is_not_a_cycle():
+    shared = {'k': 1}
+    assert '<cycle' not in canonical.canonical_value([shared, shared, (shared,)])
+
+
+def test_scipy_distribution_renders_fast():
+    stats = pytest.importorskip('scipy.stats')
+    import time
+
+    t = time.perf_counter()
+    text = canonical.canonical_value(stats.chi2)
+    assert time.perf_counter() - t < 5
+    assert '<too deep>' not in text
+
+
 def test_dataclass_with_unset_init_false_field_renders():
     import dataclasses
 

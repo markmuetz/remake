@@ -41,6 +41,19 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - compatibility.md lists which files under `.remake/` are the on-disk
   contract and which are scratch.
 
+### Fixed
+
+- **`uses` values that refer back to themselves no longer hang the hash**
+  (soak finding, 2026-11-23). An object holding several bound methods of
+  itself, such as `scipy.stats.chi2`, was rendered in time exponential in
+  the depth limit, so loading the remakefile never finished (`remake info`
+  ran >12 min at 10 GB). An object met again inside its own rendering now
+  renders as `<cycle T>`. Rules whose `uses` hold such a self-referencing
+  object get a new hash and rerun once after upgrading from 0.9/0.10;
+  other `uses` values hash as before. Such an object (a library instance
+  whose repr has an address) is still hashed by its whole `__dict__`, so
+  upgrading the library that defines it (scipy, here) may rerun the rule.
+
 ### Deprecated
 
 - `Dir.claim()` now warns (`DeprecationWarning`); use `Dir.adopt()`. Removed
