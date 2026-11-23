@@ -40,8 +40,7 @@ from .metadata_manager import (TASK_STATUS_FAILED, TASK_STATUS_PENDING, TASK_STA
 # Bump on every change to SQL_SCHEMA or _add_missing_columns, and add the
 # migration step there. Sidecars and job specs carry their own "v" field.
 SCHEMA_MAJOR = 1
-SCHEMA_MINOR = 2  # 1.1 (0.10): run provenance + counts, environment, task_run;
-#                  1.2 (0.11): slurm_submission
+SCHEMA_MINOR = 1  # 1.1 (0.10): run provenance + counts, environment, task_run
 SCHEMA_VERSION = SCHEMA_MAJOR * 1000 + SCHEMA_MINOR
 
 
@@ -217,23 +216,6 @@ CREATE TABLE task_run (
 -- unlink, two processes ingesting) is one history row, not two.
 CREATE UNIQUE INDEX task_run_unique ON task_run(task_id, run_seq, finished);
 CREATE INDEX task_run_seq_index ON task_run(run_seq);
-
--- One row per SLURM array submission (rule, run_seq), imported from the
--- per-submission jobids files, which own the job id and submit time; this
--- table owns what reconcile decided (design_docs/designs/slurm_reconcile/).
--- Keyed by rule name, not rule_id: a removed or renamed rule's submission
--- must still settle. counts: a JSON snapshot taken at reconcile time
--- (informational; keys may be added). reconciled: NULL until settled.
-CREATE TABLE slurm_submission (
-    rule TEXT NOT NULL,
-    run_seq INTEGER NOT NULL,
-    jobid TEXT NOT NULL,
-    n_tasks INTEGER,
-    submitted INTEGER,
-    reconciled TIMESTAMP,
-    counts TEXT,
-    PRIMARY KEY (rule, run_seq)
-);
 
 -- Key/value store. run_seq: a monotonic counter, one value allocated per
 -- `remake run`/`set-state` invocation, stamped onto every task that
@@ -1254,101 +1236,6 @@ class Sqlite3Backend(MetadataManager):
         # Only this batch's tasks: a run-wide prune on every `info` poll of a
         # large SLURM run would cost seconds inside the exclusive lock.
         self._prune_history(task_ids=touched)
-
-    # --- SLURM reconciliation (design_docs/designs/slurm_reconcile/plan.md) ---
-
-    @retry_lock_commit
-    def record_submissions(self, rows):
-        """Upsert submissions [(rule, run_seq, jobid, n_tasks, submitted)].
-        A changed job id (`remake resubmit` reuses the run_seq) clears
-        `reconciled`, so the new job is reconciled in turn."""
-        for rule, run_seq, jobid, n_tasks, submitted in rows:
-            self.conn.execute(
-                'INSERT INTO slurm_submission(rule, run_seq, jobid, n_tasks, submitted) '
-                'VALUES (?, ?, ?, ?, ?) '
-                'ON CONFLICT(rule, run_seq) DO UPDATE SET '
-                '    reconciled = CASE WHEN slurm_submission.jobid = excluded.jobid '
-                '                      THEN slurm_submission.reconciled END, '
-                '    jobid = excluded.jobid, '
-                '    n_tasks = COALESCE(excluded.n_tasks, slurm_submission.n_tasks), '
-                '    submitted = COALESCE(excluded.submitted, slurm_submission.submitted)',
-                (rule, run_seq, str(jobid), n_tasks, submitted))
-
-    def submissions(self, *, unreconciled=False, run_seq=None):
-        """Submissions as dicts (rule, run_seq, jobid, n_tasks, submitted,
-        reconciled, counts), oldest first."""
-        where, params = [], []
-        if unreconciled:
-            where.append('reconciled IS NULL')
-        if run_seq is not None:
-            where.append('run_seq = ?')
-            params.append(run_seq)
-        sql = ('SELECT rule, run_seq, jobid, n_tasks, submitted, reconciled, counts '
-               'FROM slurm_submission' + (f' WHERE {" AND ".join(where)}' if where else '')
-               + ' ORDER BY run_seq, rule')
-        return [{'rule': r, 'run_seq': seq, 'jobid': j, 'n_tasks': n, 'submitted': sub,
-                 'reconciled': rec, 'counts': json.loads(c) if c else None}
-                for r, seq, j, n, sub, rec, c in self.conn.execute(sql, params)]
-
-    def status_by_key(self, keys):
-        """{key: (status, run_seq)} for the stored records among `keys`
-        (task keys from job specs: no Task objects, no legacy-key lookup)."""
-        out = {}
-        keys = list(keys)
-        for i in range(0, len(keys), self.SELECT_CHUNK):
-            chunk = keys[i:i + self.SELECT_CHUNK]
-            rows = self.conn.execute(
-                'SELECT key, last_run_status, run_seq FROM task '
-                f'WHERE key IN ({",".join("?" * len(chunk))})', chunk)
-            out.update({k: (st, seq) for k, st, seq in rows})
-        return out
-
-    @retry_lock_commit
-    def settle_submission(self, rule, run_seq, counts, settled):
-        """Store a submission's outcome counts; mark it reconciled if settled."""
-        self.conn.execute(
-            'UPDATE slurm_submission SET counts = ?, '
-            "    reconciled = CASE WHEN ? THEN datetime('now') END "
-            'WHERE rule = ? AND run_seq = ?',
-            (json.dumps(counts, sort_keys=True), bool(settled), rule, run_seq))
-
-    @retry_lock_commit
-    def record_killed(self, rule_name, key, run_seq, exception, finished, host=None,
-                      wall_s=None, reason=None):
-        """Record a SLURM element that ended without its worker writing a
-        result as FAILED, at its submission's run_seq. True if applied.
-
-        Strict guard, in the statement itself: only over a record older than
-        the submission (or none). Another process may ingest the worker's
-        real sidecar at any moment; that write (run_seq >=) still replaces
-        this one through the normal ingest guard, so a real result always
-        wins. On conflict only the status, exception, run_seq and timestamp
-        change: the code ids, paths digest and resources stay as the last
-        run that finished left them. History is written only if applied, with
-        `finished` (UTC 'YYYY-MM-DD HH:MM:SS', from sacct's End) making a
-        repeat the same row."""
-        ids = self.rule_ids.get(rule_name)
-        if ids is None:
-            return False  # rule gone from the remakefile: nothing to attach to
-        rule_id, run_code_id, _, io_code_id = ids
-        cur = self.conn.execute(
-            'INSERT INTO task(key, rule_id, run_code_id, io_code_id, run_seq, '
-            '                 last_run_timestamp, last_run_status, exception) '
-            'VALUES (?, ?, ?, ?, ?, ?, ?, ?) '
-            'ON CONFLICT(key) DO UPDATE SET '
-            '    run_seq = excluded.run_seq, '
-            '    last_run_timestamp = excluded.last_run_timestamp, '
-            '    last_run_status = excluded.last_run_status, '
-            '    exception = excluded.exception '
-            'WHERE task.run_seq IS NULL OR excluded.run_seq > task.run_seq',
-            (key, rule_id, run_code_id, io_code_id, run_seq, finished,
-             TASK_STATUS_FAILED, exception))
-        if not cur.rowcount:
-            return False
-        self._write_history(key, TASK_STATUS_FAILED, run_seq,
-                            {'wall_s': wall_s}, None, exception,
-                            {'reason': reason, 'host': host}, finished)
-        return True
 
     def update_task(self, task, status, exception='', resources=None, output_stats=None,
                     execution=None):
