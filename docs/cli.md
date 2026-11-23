@@ -45,7 +45,7 @@ output with no `$COLUMNS` is not shortened.
 | `run-all` | Run every remakefile found in a directory |
 | `slurm-status` | Live SLURM queue state of the last submission, per rule |
 | `check-env` | Check a SLURM job would import the same code as this process (`--srun`, `--json`) |
-| `resubmit` | Re-execute `.remake/submit.sh` without replanning |
+| `resubmit` | Re-execute `.remake/submit.sh` without replanning (deprecated, removed in 1.0: use `run -E slurm`) |
 | `version` | Print remake version |
 
 `run-task` and `run-array-task` also exist but are invoked by remake itself

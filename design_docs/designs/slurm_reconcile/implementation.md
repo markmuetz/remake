@@ -146,3 +146,23 @@ changed).
   result file it wrote.
 - `info` was left alone: it makes no SLURM calls today, and adding squeue
   would put a cluster call (that can fail or hang) into every `info`.
+
+## 2026-11-23: Fable review of the simple change (e8f91fb)
+
+Core judged correct (planner, the upstream-newer backstop, the ingest
+guard, queued reruns, continuations, cost). Taken:
+- `why` made a squeue (60 s timeout) and a sacct call per task: now one of
+  each for all tasks (`tasks_slurm_state`), 15 s timeout.
+- The SLURM line showed for records newer than the submission (a later
+  local run) and "squeue not found" off the cluster: both now show nothing.
+- Mark before `submit()`, not in a `finally` after it: simpler, no window
+  with unmarked jobs, and a marking error can't hide a submit error.
+- `lost` counted tasks removed from the pipeline; the footer promised a
+  rerun that unmarked (pre-0.11) submissions don't get.
+- `remake resubmit` marks nothing: deprecated now (warns), as planned for 1.0.
+- `why` says "no result yet (pending since ...)" for a never-run task.
+- Documented: scancel leaves tasks pending; local runs while jobs are
+  queued; `verify` doesn't adopt a submitted never-run task's outputs; a
+  resubmitted failed task loses its traceback in `info --failed`.
+Not needed: the review's worry about remainder rows reading "CANCELLED on
+None": the parser files only rows with a start under an element.

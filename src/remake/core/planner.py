@@ -451,7 +451,12 @@ def explain_task(rules, dag, metadata, task, *, check_outputs='never', runnable=
     else:
         if rec.status != TASK_STATUS_SUCCESS:
             state = 'failed' if rec.status == TASK_STATUS_FAILED else 'pending'
-            reasons.append(Reason(f'last-run-{state}', f'last run {state} at {rec.timestamp}'))
+            if state == 'pending' and rec.run_seq is None:
+                # Never ran (e.g. a SLURM submission's placeholder record).
+                message = f'no result yet (pending since {rec.timestamp})'
+            else:
+                message = f'last run {state} at {rec.timestamp}'
+            reasons.append(Reason(f'last-run-{state}', message))
         # Records carry code ids; resolve this one task's stored texts (the
         # lazy fetch — only `why` pays for the full source, never the planner).
         codes = metadata.get_codes(

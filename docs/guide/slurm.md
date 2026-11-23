@@ -237,6 +237,24 @@ has forgotten the job, only "pending" remains.
 
 While a submission is in flight, its tasks show as pending in `remake info`.
 
+Consequences to know about:
+
+- **Cancelling a submission yourself** (`scancel`) leaves its tasks pending,
+  so the next `remake run` reruns them, a cancelled `run -f` included. If you
+  want them taken as done after all, `remake set-state <remakefile> --success
+  -Q ...`.
+- **A local `remake run` while jobs are queued** runs the submitted tasks
+  too (they are pending). As before, remake does not stop a local run from
+  duplicating SLURM work: don't run both at once.
+- **A task submitted but never run** has a record now, so `remake verify`
+  won't adopt outputs made for it some other way; `remake set-state
+  --success --check-outputs` still does.
+- **A resubmitted failed task** loses its traceback in `info --failed`
+  once it is submitted again (it is pending, not failed).
+- **`remake resubmit`** (deprecated) re-executes `submit.sh` without
+  marking anything: a task killed in a resubmission keeps the result of the
+  first attempt. Use `remake run -E slurm`.
+
 **Deferred rules.** The continuation job that plans deferred rules waits
 for every job of the submission to succeed (`afterok`) and is cancelled
 otherwise. If any task fails or is killed, the deferred rules are planned

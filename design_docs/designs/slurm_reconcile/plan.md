@@ -21,10 +21,11 @@ dies without writing its result sidecar, so the DB never hears of it.
 
 ## The design
 
-1. **PENDING at submission.** After `submit.sh` runs (never on a dry run),
-   the submitting process marks the tasks of every rule whose
-   per-submission record (`jobs/<rule>.<run_seq>.jobids.json`) exists as
-   PENDING: `metadata.mark_submitted(tasks, run_seq)`.
+1. **PENDING at submission.** Just before `submit.sh` runs (never on a dry
+   run), the submitting process marks every task it submits as PENDING:
+   `metadata.mark_submitted(tasks, run_seq)`. Before, so no job runs
+   unmarked; if an sbatch fails, its tasks stay pending (they were planned
+   to rerun anyway).
    - Only over records older than the submission (`run_seq <` it): a result
      this submission already delivered is kept.
    - The stored run_seq, code ids and resources are kept, as
@@ -44,7 +45,10 @@ dies without writing its result sidecar, so the DB never hears of it.
      neither queued (`squeue`) nor with a result. Not judged in the first
      minute (squeue may not list a new job yet).
    - `why` (for a pending or failed last run) and `task-info` (for a task
-     without a success): one line from `task_slurm_state`: `queued (PD)` /
+     without a success): one line per task from `tasks_slurm_state`, only
+     when the task's record is no newer than its rule's last submission,
+     and only where `squeue` exists; one squeue and one sacct call for all
+     tasks, with a 15 s timeout: `queued (PD)` /
      `running (R)` from squeue; otherwise from one `sacct` call for that
      element, e.g. `NODE_FAIL on host1234 after 13:40`, or `no accounting
      record (cancelled before it started, or purged)`. A failed squeue or
@@ -62,5 +66,6 @@ dies without writing its result sidecar, so the DB never hears of it.
   submission; the deferred rules are planned by the next `remake run`.
   Documented; a smarter continuation needs its own small design (a failed
   task must not be resubmitted in a loop).
-- `remake resubmit` reuses the run_seq, so a first attempt's results
-  aren't marked pending again (it is to be retired at 1.0).
+- `remake resubmit` runs `submit.sh` without marking anything, and reuses
+  the run_seq: a task killed in a resubmission keeps its first attempt's
+  result. Deprecated in 0.11 (warns), removed in 1.0.

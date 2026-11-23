@@ -115,7 +115,7 @@ SQUEUE_TIMEOUT = 60
 INACTIVE_STATES = frozenset(('BF', 'CA', 'CD', 'DL', 'F', 'NF', 'OOM', 'TO'))
 
 
-def squeue_snapshot():
+def squeue_snapshot(timeout=None):
     """{base_jobid: [(element_id, state, reason)]} for this user's queued/
     running jobs, one squeue call. {} means squeue ran and the queue is
     empty; raises SqueueError when squeue is missing, fails or hangs —
@@ -123,13 +123,14 @@ def squeue_snapshot():
     try:
         result = sp.run(
             ['squeue', '-h', '-r', '-u', getpass.getuser(), '-o', '%i %t %r'],
-            capture_output=True, text=True, check=True, timeout=SQUEUE_TIMEOUT,
+            capture_output=True, text=True, check=True, timeout=timeout or SQUEUE_TIMEOUT,
         )
     except FileNotFoundError as e:
         raise SqueueError('squeue not found: cannot check the job queue') from e
     except sp.TimeoutExpired as e:
         raise SqueueError(
-            f'squeue gave no response within {SQUEUE_TIMEOUT}s: queue state unknown'
+            f'squeue gave no response within {timeout or SQUEUE_TIMEOUT}s: '
+            'queue state unknown'
         ) from e
     except sp.CalledProcessError as e:
         detail = (e.stderr or '').strip() or f'exit {e.returncode}'
@@ -616,17 +617,14 @@ class SlurmExecutor(Executor):
         if self.dry_run:
             logger.info('Dry run: not submitting')
             return
-        try:
-            self.submit()
-        finally:
-            # PENDING until results arrive (killed workers write none). Only
-            # rules whose submission record exists: submit.sh stops at the
-            # first failure (set -e), and the rules after it were never
-            # submitted.
-            done = [sub.tasks for sub in submitted.values()
-                    if sub.tasks and submission_path(sub.rule.name, run_seq).exists()]
-            if done:
-                self.rmk.metadata.mark_submitted([t for ts in done for t in ts], run_seq)
+        # PENDING until their results arrive: a worker SLURM kills writes
+        # none, and must not leave an older success looking current. Before
+        # submitting, so no job runs unmarked; if sbatch then fails, the
+        # tasks stay pending, which they were planned to rerun anyway.
+        to_mark = [t for sub in submitted.values() if sub.tasks for t in sub.tasks]
+        if to_mark:
+            self.rmk.metadata.mark_submitted(to_mark, run_seq)
+        self.submit()
 
     def _write_job_specs(self, rule, tasks, run_seq):
         from .. import provenance

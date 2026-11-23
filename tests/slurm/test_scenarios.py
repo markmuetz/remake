@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 
 from remake.loader import load_remake
-from remake.metadata.metadata_manager import TASK_STATUS_PENDING, TASK_STATUS_SUCCESS
+from remake.metadata.metadata_manager import (TASK_STATUS_FAILED, TASK_STATUS_PENDING,
+                                              TASK_STATUS_SUCCESS)
 from remake.remake_cmd import remake_cmd
 
 
@@ -85,14 +86,16 @@ def test_dry_run_marks_nothing(cluster):
     assert status('gen', n=0) == TASK_STATUS_SUCCESS
 
 
-def test_only_rules_actually_submitted_are_marked(cluster):
-    # submit.sh stops at the first failing sbatch (set -e): here proc's,
-    # whose dependency on a forgotten job is rejected.
+def test_a_failed_submission_leaves_its_tasks_pending(cluster):
+    # Marked before submit.sh runs, so no job runs unmarked. submit.sh stops
+    # at the first failing sbatch (set -e: here proc's, whose dependency on
+    # a forgotten job is rejected); the rules not submitted stay pending,
+    # which they were planned to rerun anyway.
     cli('run', 'pipeline.py')
     cluster.forget('1001')  # the next job id: gen's
     cli('run', 'pipeline.py', '-E', 'slurm', '-f')
     assert status('gen', n=0) == TASK_STATUS_PENDING
-    assert status('proc', n=0) == TASK_STATUS_SUCCESS
+    assert status('proc', n=0) == TASK_STATUS_PENDING
 
 
 def test_slurm_status_why_and_task_info_report_the_kill(cluster, capsys):
@@ -149,3 +152,38 @@ def test_sacct_failure_is_reported_not_raised(cluster, capsys):
     cli('why', 'pipeline.py', key)
     assert 'not queued; sacct failed' in capsys.readouterr().out
 
+
+
+def test_why_asks_slurm_once_for_many_tasks(cluster, capsys):
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    gen = jobs(cluster)['gen'].jobid
+    cluster.kill(gen, 1, 'NODE_FAIL')
+    cluster.kill(gen, 2, 'TIMEOUT')
+    before = len(cluster.calls('squeue')), len(cluster.calls('sacct'))
+    capsys.readouterr()
+    cli('why', 'pipeline.py', '-Q', "rule == 'gen'")
+    out = capsys.readouterr().out
+    assert 'NODE_FAIL on host' in out and 'TIMEOUT on host' in out
+    assert (len(cluster.calls('squeue')), len(cluster.calls('sacct'))) == (
+        before[0] + 1, before[1] + 1)
+
+
+def test_no_slurm_line_for_a_later_record_or_off_cluster(cluster, capsys, monkeypatch):
+    cli('run', 'pipeline.py', '-E', 'slurm')
+    gen = jobs(cluster)['gen'].jobid
+    cluster.kill(gen, 1, 'NODE_FAIL')
+    rmk = load_remake('pipeline.py')
+    key = next(t.key for t in rmk.tasks() if t.rule.name == 'gen' and t.kwargs == {'n': 1})
+    # Off the cluster (no squeue on PATH): nothing about SLURM.
+    monkeypatch.setenv('PATH', '/usr/bin:/bin')
+    capsys.readouterr()
+    cli('why', 'pipeline.py', key)
+    assert 'SLURM job' not in capsys.readouterr().out
+    monkeypatch.setenv('PATH', f'{cluster.bin}:/usr/bin:/bin')
+    # A later failure (a local run: a newer run_seq) is not that
+    # submission's business.
+    task = next(t for t in rmk.tasks() if t.key == key)
+    rmk.metadata.update_task(task, TASK_STATUS_FAILED, 'ValueError: local')
+    capsys.readouterr()
+    cli('why', 'pipeline.py', key)
+    assert 'SLURM job' not in capsys.readouterr().out

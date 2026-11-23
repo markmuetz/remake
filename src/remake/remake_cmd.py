@@ -320,7 +320,8 @@ class RemakeCLI:
             ],
         },
         'resubmit': {
-            'help': 'Re-execute .remake/submit.sh without replanning',
+            'help': 'Re-execute .remake/submit.sh without replanning (deprecated: '
+                    'removed in 1.0; use run -E slurm)',
             'args': [
                 Arg('remakefile'),
             ],
@@ -725,6 +726,11 @@ class RemakeCLI:
 
         from .executors.slurm_executor import check_resubmit_safe
 
+        logger.warning(
+            '`remake resubmit` is deprecated and will be removed in 1.0: use '
+            '`remake run <remakefile> -E slurm`, which replans and skips rules '
+            'still queued. A task killed in a resubmission keeps the result of '
+            'its first attempt.')
         submit = submit_path()
         if not submit.exists():
             raise RemakeError(
@@ -1486,21 +1492,20 @@ class RemakeCLI:
         return 0
 
     def remake_why(self, args):
-        from .executors.slurm_accounting import task_slurm_state
+        from .executors.slurm_accounting import tasks_slurm_state
 
         rmk = self._load(args)
         results = list(rmk.why(args.task_key, args.query))
-
-        def slurm(task, reasons):
-            # Only for a pending or failed last run: what SLURM says about
-            # the task's element in its rule's last submission (display
-            # only; one squeue/sacct call per task, so not for many).
-            if len(results) > 20 or not any(
-                    r.category in ('last-run-pending', 'last-run-failed') for r in reasons):
-                return None
-            return task_slurm_state(task.rule.name, task.key)
-
-        states = {task.key: slurm(task, reasons) for task, _, reasons in results}
+        # For tasks whose last run is pending or failed: what SLURM says
+        # about their elements (display only; one squeue + one sacct call).
+        asking = [task for task, _, reasons in results
+                  if any(r.category in ('last-run-pending', 'last-run-failed')
+                         for r in reasons)]
+        records = rmk.metadata.get_tasks_status(asking) if asking else {}
+        found = tasks_slurm_state(
+            [(t.rule.name, t.key, getattr(records.get(t.key), 'run_seq', None))
+             for t in asking])
+        states = {task.key: found.get(task.key) for task, _, _ in results}
         if args.json:
             _print_json({'tasks': [
                 {'task': str(task), 'key': task.key, 'will_run': bool(will_run),
@@ -1599,7 +1604,7 @@ class RemakeCLI:
             # succeeded before is not done yet). None when unknown: no spec
             # (pruned, or a pre-0.9 sidecar without run_seq) or no matrix.
             run_seq = recorded.get('run_seq')
-            ntasks = succeeded = failed = None
+            ntasks = succeeded = failed = in_pipeline = None
             specs = spec_path(rule.name, run_seq)
             if run_seq is not None and specs.exists():
                 keys = {spec['task_key'] for spec in load_job_specs(specs)}
@@ -1609,6 +1614,7 @@ class RemakeCLI:
                 except Exception:  # Defer, or a callable matrix that raises
                     tasks = None
                 if tasks is not None:
+                    in_pipeline = len(tasks)
                     records = rmk.metadata.get_tasks_status(tasks) if tasks else {}
                     db = Counter(STATUS_NAMES.get(rec.status, 'pending')
                                  for rec in records.values()
@@ -1626,9 +1632,11 @@ class RemakeCLI:
             # may not list a new job yet.
             lost = None
             recent = time.time() - (recorded.get('submitted') or 0) < 60
-            if None not in (ntasks, succeeded, failed) and not recent:
+            if None not in (in_pipeline, succeeded, failed) and not recent:
+                # Over tasks still in the pipeline (a task removed since
+                # can't be lost).
                 active = sum(st not in INACTIVE_STATES for _, st, _ in elements)
-                lost = max(ntasks - succeeded - failed - active, 0)
+                lost = max(in_pipeline - succeeded - failed - active, 0)
             rows.append({
                 'rule': rule.name,
                 'jobid': ','.join(jobids),
@@ -1680,7 +1688,8 @@ class RemakeCLI:
                     'lost: not queued, no result (killed, or never started): '
                     'see remake why', 'dim'))
         if totals['lost']:
-            print(f'{totals["lost"]} lost task(s) will rerun at the next `remake run`')
+            print(f'{totals["lost"]} task(s) not queued and with no result: '
+                  '`remake why` shows what SLURM did')
 
     def remake_check_env(self, args):
         from . import envcheck

@@ -184,58 +184,89 @@ def _hms(seconds):
     return f'{h}:{m:02d}:{s:02d}' if h else f'{m}:{s:02d}'
 
 
-def task_slurm_state(rule_name, key, *, use_sacct=True):
-    """What SLURM says about a task's element in its rule's last
-    submission, for display (`why`, `task-info`); nothing is stored. None
-    if the task isn't in that submission. Otherwise a dict: jobid, index,
-    run_seq, `element` ('<jobid>_<index>'), and `summary`, one line:
+# Display-only lookups (`why`, `task-info`) give up sooner than a submission.
+DISPLAY_TIMEOUT = 15
+
+
+def tasks_slurm_state(tasks):
+    """What SLURM says about tasks' elements in their rules' last
+    submissions, for display (`why`, `task-info`); nothing is stored.
+    `tasks`: [(rule name, task key, stored record run_seq or None)].
+    Returns {key: state} for tasks that state applies to: in the rule's
+    last submission, and with a record no newer than it (a later local run
+    or `set-state` is not that submission's business). One squeue call and
+    one sacct call for all of them. A state is a dict: jobid, index,
+    run_seq, `element` ('<jobid>_<index>') and `summary`, one line:
 
     - 'queued (PD)' / 'running (R)': from squeue;
     - not queued: from sacct, e.g. 'NODE_FAIL on host1234 after 13:40',
       'COMPLETED', 'no accounting record (cancelled before it started, or
-      purged)', or why sacct couldn't say."""
-    from .slurm_executor import (
-        INACTIVE_STATES,
-        SqueueError,
-        _read_sidecar,
-        load_job_specs,
-        pointer_path,
-        spec_path,
-        squeue_snapshot,
-    )
+      purged)', or why sacct couldn't say.
 
-    recorded = _read_sidecar(pointer_path(rule_name))
-    if not recorded or 'slurm_array_job_id' not in recorded:
-        return None
-    jobid, run_seq = recorded['slurm_array_job_id'], recorded.get('run_seq')
-    specs = spec_path(rule_name, run_seq)
-    if run_seq is None or not specs.exists():
-        return None
-    index = next((i for i, s in enumerate(load_job_specs(specs)) if s['task_key'] == key),
-                 None)
-    if index is None:
-        return None
-    element = f'{jobid}_{index}'
-    out = {'jobid': jobid, 'index': index, 'run_seq': run_seq, 'element': element}
+    {} where there is no squeue (not on a cluster)."""
+    import shutil
+
+    from .slurm_executor import (INACTIVE_STATES, SqueueError, _read_sidecar,
+                                 load_job_specs, pointer_path, spec_path, squeue_snapshot)
+
+    if not tasks or shutil.which('squeue') is None:
+        return {}
+    found, specs_memo = {}, {}
+    for rule_name, key, record_seq in tasks:
+        if rule_name not in specs_memo:
+            recorded = _read_sidecar(pointer_path(rule_name)) or {}
+            run_seq = recorded.get('run_seq')
+            path = spec_path(rule_name, run_seq)
+            if 'slurm_array_job_id' in recorded and run_seq is not None and path.exists():
+                keys = {s['task_key']: i for i, s in enumerate(load_job_specs(path))}
+                specs_memo[rule_name] = (recorded, keys)
+            else:
+                specs_memo[rule_name] = None
+        if specs_memo[rule_name] is None:
+            continue
+        recorded, keys = specs_memo[rule_name]
+        if key not in keys or (record_seq is not None and record_seq > recorded['run_seq']):
+            continue
+        jobid, index = recorded['slurm_array_job_id'], keys[key]
+        found[key] = {'jobid': jobid, 'index': index, 'run_seq': recorded['run_seq'],
+                      'element': f'{jobid}_{index}', 'submitted': recorded.get('submitted')}
+    if not found:
+        return {}
     try:
-        queued = [st for eid, st, _ in squeue_snapshot().get(jobid, [])
-                  if eid == element and st not in INACTIVE_STATES]
+        queue = squeue_snapshot(timeout=DISPLAY_TIMEOUT)
     except SqueueError as e:
-        return {**out, 'summary': f'unknown ({e})'}
-    if queued:
-        name = {'PD': 'queued', 'R': 'running'}.get(queued[0], 'in the queue')
-        return {**out, 'summary': f'{name} ({queued[0]})'}
-    if not use_sacct:
-        return {**out, 'summary': 'not queued'}
-    try:
-        acct = sacct_snapshot([jobid], since=recorded.get('submitted'))
-    except SacctError as e:
-        return {**out, 'summary': f'not queued; {e}'}
-    el = acct[jobid].element(index) if jobid in acct else None
-    if el is None:
-        summary = 'not queued; no accounting record (cancelled before it started, or purged)'
-    elif el.state == 'COMPLETED':
-        summary = 'COMPLETED'
-    else:
-        summary = f'{el.state} on {el.node} after {_hms(el.elapsed)}'
-    return {**out, 'summary': summary}
+        return {k: {**st, 'summary': f'unknown ({e})'} for k, st in found.items()}
+    gone = {}
+    for key, st in found.items():
+        states = [s for eid, s, _ in queue.get(st['jobid'], [])
+                  if eid == st['element'] and s not in INACTIVE_STATES]
+        if states:
+            name = {'PD': 'queued', 'R': 'running'}.get(states[0], 'in the queue')
+            st['summary'] = f'{name} ({states[0]})'
+        else:
+            gone[key] = st
+    if gone:
+        since = min((st['submitted'] for st in gone.values() if st['submitted']),
+                    default=None)
+        try:
+            acct = sacct_snapshot({st['jobid'] for st in gone.values()}, since=since,
+                                  timeout=DISPLAY_TIMEOUT)
+        except SacctError as e:
+            acct, error = None, e
+        for st in gone.values():
+            if acct is None:
+                st['summary'] = f'not queued; {error}'
+                continue
+            # Only an element's own row with a start (parse_sacct): rows
+            # without one never name a single element.
+            el = acct[st['jobid']].element(st['index']) if st['jobid'] in acct else None
+            if el is None:
+                st['summary'] = ('not queued; no accounting record (cancelled before it '
+                                 'started, or purged)')
+            elif el.state == 'COMPLETED':
+                st['summary'] = 'COMPLETED'
+            else:
+                st['summary'] = f'{el.state} on {el.node} after {_hms(el.elapsed)}'
+    for st in found.values():
+        st.pop('submitted')
+    return found
