@@ -604,7 +604,7 @@ def test_slurm_status_reports_queue_state(slurm_dir, capsys):
     # A table (soak finding 5): one column per state, the reason last.
     lines = {ln.split()[0]: ln for ln in out.splitlines()}
     assert lines['rule'].split() == ['rule', 'job', 'submitted', 'tasks', 'PD', 'R',
-                                     'done', 'failed', 'reason']
+                                     'done', 'failed', 'lost', 'reason']
     gen = lines['gen'].split()
     # rule, job, submitted (date time), tasks, PD, R, done, failed, reason
     assert gen[1] == '1001' and gen[4:9] == ['12', '1', '1', '0', '0']

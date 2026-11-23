@@ -284,11 +284,11 @@ keys per command:
 | `lint` | `findings` (list of rows, each with a `kind`, `count` and `distinct`) |
 | `rule-dag` | `order`, `edges`; plus `rules` with `-N`/`-M` |
 | `rule-info` | the rule's detail fields (`rule`, `docstring`, `matrix`, `outputs`, `uses`, ...) |
-| `task-info` | the task's detail fields (`status`, `kwargs`, `inputs`, `outputs`, `slurm`, ...) |
+| `task-info` | the task's detail fields (`status`, `kwargs`, `inputs`, `outputs`, `slurm`, ...); `slurm.state` as `why`'s `slurm`, for a task without a success |
 | `history` | `executions` (with `task` and `key`); `runs` with `--runs`; `deleted` with `--prune` |
 | `config` | `profile`, `profile_source`, `files`, `config`, `provenance` |
-| `slurm-status` | `submissions`: one per rule's last submission, `{rule, jobid, states, reasons, submitted, tasks, succeeded, failed}`; `submitted` is local time `YYYY-MM-DD HH:MM:SS`; `tasks` and the counts (results recorded by this submission) are `null` when unknown |
-| `why` | `tasks` (list of `{task, key, will_run, reasons: [{category, message}]}`) |
+| `slurm-status` | `submissions`: one per rule's last submission, `{rule, jobid, states, reasons, submitted, tasks, succeeded, failed, lost}`; `submitted` is local time `YYYY-MM-DD HH:MM:SS`; `tasks` and the counts (results recorded by this submission) are `null` when unknown; `lost` (not queued, no result) is `null` in the first minute after submission |
+| `why` | `tasks` (list of `{task, key, will_run, reasons: [{category, message}], slurm}`); `slurm` (a pending or failed last run in a SLURM submission, else `null`): `{jobid, index, run_seq, element, summary}` |
 | `set-state` | `state`, `dry_run`, `skipped`, `tasks` (list of `{task, key, cascade}`) |
 | `verify` | see [`verify`](#verify) |
 | `check-env` | `planning`, `job`, `mismatches` |

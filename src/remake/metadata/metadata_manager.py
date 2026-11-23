@@ -203,6 +203,12 @@ class MetadataManager(abc.ABC):
         (keep their run_seq). Backends that can't should override."""
         self.update_tasks(tasks, TASK_STATUS_PENDING)
 
+    def mark_submitted(self, tasks, run_seq):
+        """Tasks just submitted to a batch system (SLURM) as run `run_seq`:
+        PENDING until their results arrive, so a task killed without
+        reporting a result is rerun, not taken as up to date from an older
+        success. Optional: the default does nothing."""
+
     def delete_tasks(self, tasks):
         """Remove stored records (tasks become never-run/pending)."""
         raise NotImplementedError(f'{type(self).__name__} cannot delete records')

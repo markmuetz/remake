@@ -712,7 +712,7 @@ def test_task_info_text_and_json(pipeline_dir, capsys):
     assert data['format'] == 1
     assert data['status'] == 'success' and data['kwargs'] == {'n': 1}
     assert all(o['complete'] for o in data['outputs'].values())
-    assert data['slurm'] == {'jobids': None, 'array_index': None}  # never submitted
+    assert data['slurm'] == {'jobids': None, 'array_index': None, 'state': None}  # never submitted
 
 
 RULE_INFO_PIPELINE = '''

@@ -5,8 +5,12 @@ import os
 import time
 from pathlib import Path
 
-from remake.executors.slurm_executor import (element_output, pointer_files,
-                                             prune_spec_files, submission_files)
+from remake.executors.slurm_executor import (
+    element_output,
+    pointer_files,
+    prune_spec_files,
+    submission_files,
+)
 from remake.remake_cmd import remake_cmd
 
 
@@ -55,7 +59,6 @@ def test_resubmit_guard_finds_rules_in_a_quoted_path(tmp_path, monkeypatch):
     # A metadata dir with a space: shlex.quote adds quotes, and the guard
     # must still see which rules the script submits (else it passes
     # silently, the unsafe way).
-    import re
 
     from remake.executors import slurm_executor as se
 
@@ -67,6 +70,7 @@ def test_resubmit_guard_finds_rules_in_a_quoted_path(tmp_path, monkeypatch):
     p = tmp_path / 'submit.sh'
     p.write_text(text)
     import pytest
+
     from remake.core.exceptions import RemakeError
     with pytest.raises(RemakeError, match='Still queued'):
         se.check_resubmit_safe(p)

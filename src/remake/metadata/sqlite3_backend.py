@@ -1302,6 +1302,40 @@ class Sqlite3Backend(MetadataManager):
         self._commit_updates(tasks, TASK_STATUS_PENDING, '', None)
 
     @retry_lock_commit
+    def mark_submitted(self, tasks, run_seq):
+        """Submitted to SLURM as run `run_seq`: PENDING until a result
+        arrives (design_docs/designs/slurm_reconcile/). A worker killed by
+        SLURM (node failure, time or memory limit) writes no result, so
+        without this the task's older SUCCESS record would make a forced
+        rerun look up to date, and a killed first run would have its partial
+        outputs adopted.
+
+        Only over records older than this submission: a result it already
+        delivered (run_seq equal) is kept. The stored run_seq is kept, as
+        `set-state --pending` does, and so are the code ids and resources:
+        nothing new has run yet. Tasks without a record get one (run_seq
+        NULL), so that check_outputs can't adopt what a killed worker left.
+        A plain UPDATE/INSERT: no per-task hashing on a 10k-task submission."""
+        rows = []
+        for task in tasks:
+            rule_id, run_code_id, uses_code_id, io_code_id = self.rule_ids[task.rule.name]
+            rows.append((task.key, rule_id, run_code_id, uses_code_id, io_code_id))
+        keys = [r[0] for r in rows]
+        for i in range(0, len(keys), self.SELECT_CHUNK):
+            chunk = keys[i:i + self.SELECT_CHUNK]
+            self.conn.execute(
+                "UPDATE task SET last_run_status = ?, exception = '', "
+                "    last_run_timestamp = datetime('now') "
+                f'WHERE key IN ({",".join("?" * len(chunk))}) '
+                '  AND (run_seq IS NULL OR run_seq < ?)',
+                (TASK_STATUS_PENDING, *chunk, run_seq))
+        self.conn.executemany(
+            'INSERT OR IGNORE INTO task(key, rule_id, run_code_id, uses_code_id, io_code_id, '
+            '                           last_run_timestamp, last_run_status, exception) '
+            "VALUES (?, ?, ?, ?, ?, datetime('now'), ?, '')",
+            [(*row, TASK_STATUS_PENDING) for row in rows])
+
+    @retry_lock_commit
     def delete_tasks(self, tasks):
         keys = [task.key for task in tasks]
         for i in range(0, len(keys), self.SELECT_CHUNK):

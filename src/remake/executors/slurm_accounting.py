@@ -176,3 +176,66 @@ def sacct_snapshot(jobids, *, since=None, timeout=SACCT_TIMEOUT):
         parsed = parse_sacct(result.stdout)
         out.update({k: v for k, v in parsed.items() if k in set(chunk)})
     return out
+
+
+def _hms(seconds):
+    h, rem = divmod(int(seconds), 3600)
+    m, s = divmod(rem, 60)
+    return f'{h}:{m:02d}:{s:02d}' if h else f'{m}:{s:02d}'
+
+
+def task_slurm_state(rule_name, key, *, use_sacct=True):
+    """What SLURM says about a task's element in its rule's last
+    submission, for display (`why`, `task-info`); nothing is stored. None
+    if the task isn't in that submission. Otherwise a dict: jobid, index,
+    run_seq, `element` ('<jobid>_<index>'), and `summary`, one line:
+
+    - 'queued (PD)' / 'running (R)': from squeue;
+    - not queued: from sacct, e.g. 'NODE_FAIL on host1234 after 13:40',
+      'COMPLETED', 'no accounting record (cancelled before it started, or
+      purged)', or why sacct couldn't say."""
+    from .slurm_executor import (
+        INACTIVE_STATES,
+        SqueueError,
+        _read_sidecar,
+        load_job_specs,
+        pointer_path,
+        spec_path,
+        squeue_snapshot,
+    )
+
+    recorded = _read_sidecar(pointer_path(rule_name))
+    if not recorded or 'slurm_array_job_id' not in recorded:
+        return None
+    jobid, run_seq = recorded['slurm_array_job_id'], recorded.get('run_seq')
+    specs = spec_path(rule_name, run_seq)
+    if run_seq is None or not specs.exists():
+        return None
+    index = next((i for i, s in enumerate(load_job_specs(specs)) if s['task_key'] == key),
+                 None)
+    if index is None:
+        return None
+    element = f'{jobid}_{index}'
+    out = {'jobid': jobid, 'index': index, 'run_seq': run_seq, 'element': element}
+    try:
+        queued = [st for eid, st, _ in squeue_snapshot().get(jobid, [])
+                  if eid == element and st not in INACTIVE_STATES]
+    except SqueueError as e:
+        return {**out, 'summary': f'unknown ({e})'}
+    if queued:
+        name = {'PD': 'queued', 'R': 'running'}.get(queued[0], 'in the queue')
+        return {**out, 'summary': f'{name} ({queued[0]})'}
+    if not use_sacct:
+        return {**out, 'summary': 'not queued'}
+    try:
+        acct = sacct_snapshot([jobid], since=recorded.get('submitted'))
+    except SacctError as e:
+        return {**out, 'summary': f'not queued; {e}'}
+    el = acct[jobid].element(index) if jobid in acct else None
+    if el is None:
+        summary = 'not queued; no accounting record (cancelled before it started, or purged)'
+    elif el.state == 'COMPLETED':
+        summary = 'COMPLETED'
+    else:
+        summary = f'{el.state} on {el.node} after {_hms(el.elapsed)}'
+    return {**out, 'summary': summary}

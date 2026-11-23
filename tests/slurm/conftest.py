@@ -13,6 +13,9 @@ from pathlib import Path
 from remake import Remake, rule
 
 N = 4
+CHECK_OUTPUTS = 'never'
+
+
 
 @rule(outputs={'o': 'data/gen_{n}.txt'}, matrix={'n': list(range(N))})
 def gen(outputs, n):
@@ -30,7 +33,7 @@ def agg_inputs():
 def agg(inputs, outputs):
     Path(outputs['o']).write_text(','.join(Path(p).read_text() for p in inputs.values()))
 
-rmk = Remake(config={'slurm': {'partition': 'test-par'}})
+rmk = Remake(config={'slurm': {'partition': 'test-par'}}, check_outputs=CHECK_OUTPUTS)
 rmk.rules_from_current_module()
 '''
 

@@ -1,5 +1,20 @@
 # remake: instructions for Claude
 
+## Keep it simple
+
+Simple is better than complex. Don't overengineer: prefer the smallest
+design that fixes the user-visible problem, and the fewest new files,
+records, states and code paths. Reuse what remake already has. When a
+design needs grace periods, corroboration rules or a state machine to be
+safe, step back and look for a simpler shape: if MM couldn't debug it,
+it's too complex. Example: SLURM reconciliation (0.11) was cut from a
+~1500-line sacct classifier to marking submitted tasks PENDING plus
+read-only reporting (`design_docs/designs/slurm_reconcile/`).
+
+Read and follow [The Zen of Python (PEP 20)](https://peps.python.org/pep-0020/)
+(`python -c "import this"`), especially: "If the implementation is hard to
+explain, it's a bad idea."
+
 ## How to staff implementation work
 
 - **Opus 5.5** (`claude-opus-5-5`) is the orchestrator and main implementor:

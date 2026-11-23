@@ -387,21 +387,21 @@ class FakeCluster:
         """End an element without its payload finishing: no sidecar. A
         pending element is started first unless `state` is one a pending
         element can get (DEADLINE, BOOT_FAIL; cancel() for CANCELLED).
-        partial=True runs the payload with REMAKE_FAKE_DIE=1 set: a test
-        pipeline that checks it writes some output and then raises a
-        BaseException (which run_task doesn't catch), so the task dies
-        after writing, as a killed process would."""
+        partial=True: killed after writing its outputs but before
+        reporting (the payload runs; its result file is dropped)."""
         assert state in TERMINAL and state != 'COMPLETED', state
         self.sync()
         job, el = self.jobs[str(jobid)], self._el(jobid, index)
         if el.state == 'PENDING' and state not in ('DEADLINE', 'BOOT_FAIL'):
             self.start(jobid, index)
         if partial:
-            try:
-                self._run_payload(job, int(index), {'REMAKE_FAKE_DIE': '1'})
-            except BaseException as e:  # noqa: B036 - the simulated death
-                if isinstance(e, KeyboardInterrupt):
-                    raise
+            # Killed after writing its outputs, before reporting: run the
+            # payload, then drop the result file it wrote.
+            results = self.root / '.remake'
+            before = set(results.rglob('results/**/*.json'))
+            self._run_payload(job, int(index))
+            for path in set(results.rglob('results/**/*.json')) - before:
+                path.unlink()
         el.state, el.end = state, self.clock
         el.exit_code = self.EXIT_CODES[state] if el.start is not None else '0:0'
         self._settle()

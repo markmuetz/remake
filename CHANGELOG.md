@@ -19,6 +19,25 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **SLURM: submitted tasks are pending until their results arrive**
+  (0.11 item 9, soak finding 7). A task killed by SLURM (node failure,
+  time or memory limit) writes no result; it used to keep its older
+  success record, so a killed `run -f` or a killed rerun under
+  `check_outputs='always'` looked up to date, and a killed first run's
+  partial outputs could be adopted. Now it is rerun. While a submission is
+  in flight, `info` shows its tasks as pending.
+- **SLURM: what happened to a task.** `slurm-status` has a `lost` column
+  (in the last submission, not queued, no result). `why` and `task-info`
+  show the task's SLURM state: queued or running (`squeue`), or the end
+  state, node and elapsed time from `sacct` (`NODE_FAIL on host1234 after
+  13:40`). `--json` gains `lost` (slurm-status), `slurm` (why) and
+  `slurm.state` (task-info).
+- **SLURM records per submission.** `jobs/<rule>.<run_seq>.jobids.json` is
+  written for every submission (atomically, with the submit time), so a
+  later submission no longer erases an earlier one's record; job output
+  files are named `<jobid>_<index>.out/.err`, so `info --failed` never
+  shows another submission's error. Old names are still read for
+  submissions made by an older remake.
 - **Dependency matching between tasks uses canonical paths** (0.11 item 3).
   An input that spells its producer's output differently (absolute vs
   relative, `./`, a symlinked directory) now links to the one upstream task

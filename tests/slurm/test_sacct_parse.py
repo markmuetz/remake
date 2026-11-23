@@ -1,12 +1,16 @@
 """Parsing sacct output (reconcile plan §4), against real samples: the soak
 archive (run 81, a node failure) and the live probe on JASMIN."""
-import subprocess as sp
 from pathlib import Path
 
 import pytest
 
-from remake.executors.slurm_accounting import (SacctError, _indices, _seconds,
-                                               parse_sacct, sacct_snapshot)
+from remake.executors.slurm_accounting import (
+    SacctError,
+    _indices,
+    _seconds,
+    parse_sacct,
+    sacct_snapshot,
+)
 
 FIX = Path(__file__).parent / 'fixtures'
 PROBE = FIX / 'jasmin_probe_2026-11-23'

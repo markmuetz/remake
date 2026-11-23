@@ -1379,6 +1379,8 @@ class RemakeCLI:
         if jobids is not None:
             index = f', array index {array_index}' if array_index is not None else ''
             print(f'slurm:    job {",".join(jobids)} (last submission{index})')
+            if data['slurm'].get('state'):
+                print(f'          - {data["slurm"]["state"]["summary"]}')
         if data['exception']:
             print(f'\n{paint(data["exception"].rstrip(), "red")}')
 
@@ -1484,13 +1486,27 @@ class RemakeCLI:
         return 0
 
     def remake_why(self, args):
+        from .executors.slurm_accounting import task_slurm_state
+
         rmk = self._load(args)
         results = list(rmk.why(args.task_key, args.query))
+
+        def slurm(task, reasons):
+            # Only for a pending or failed last run: what SLURM says about
+            # the task's element in its rule's last submission (display
+            # only; one squeue/sacct call per task, so not for many).
+            if len(results) > 20 or not any(
+                    r.category in ('last-run-pending', 'last-run-failed') for r in reasons):
+                return None
+            return task_slurm_state(task.rule.name, task.key)
+
+        states = {task.key: slurm(task, reasons) for task, _, reasons in results}
         if args.json:
             _print_json({'tasks': [
                 {'task': str(task), 'key': task.key, 'will_run': bool(will_run),
                  'reasons': [{'category': r.category, 'message': r.message}
-                             for r in reasons]}
+                             for r in reasons],
+                 'slurm': states[task.key]}
                 for task, will_run, reasons in results]})
             return
         if not results:
@@ -1511,6 +1527,10 @@ class RemakeCLI:
             for reason in reasons:
                 # The reasons belong to "will run: yes": nested under it.
                 print(paint(f'  - {reason.message}', 'yellow'))
+                state = states[task.key]
+                if state and reason.category.startswith('last-run-'):
+                    print(paint(f'    - SLURM job {state["element"]} (run {state["run_seq"]}): '
+                                f'{state["summary"]}', 'yellow'))
             if len(results) > 1:
                 print()  # between tasks, and before the summary
         if len(results) > 1:
@@ -1551,8 +1571,10 @@ class RemakeCLI:
         import datetime as dt
 
         from .core.dag import expand_rule
-        from .executors.slurm_executor import (_read_sidecar, load_job_specs,
-                                               recorded_jobids, spec_path,
+        import time
+
+        from .executors.slurm_executor import (INACTIVE_STATES, _read_sidecar,
+                                               load_job_specs, recorded_jobids, spec_path,
                                                squeue_snapshot)
         from .metadata.metadata_manager import STATUS_NAMES
         from .util.paths import jobs_dir
@@ -1598,9 +1620,19 @@ class RemakeCLI:
             reasons = sorted(
                 {reason for *_, reason in elements if reason and reason != 'None'}
             )
+            # Lost: in this submission, but neither queued nor with a result
+            # (killed by SLURM, or cancelled before starting: `remake why`
+            # asks sacct which). Not judged in the first minute, when squeue
+            # may not list a new job yet.
+            lost = None
+            recent = time.time() - (recorded.get('submitted') or 0) < 60
+            if None not in (ntasks, succeeded, failed) and not recent:
+                active = sum(st not in INACTIVE_STATES for _, st, _ in elements)
+                lost = max(ntasks - succeeded - failed - active, 0)
             rows.append({
                 'rule': rule.name,
                 'jobid': ','.join(jobids),
+                'lost': lost,
                 'states': dict(states),
                 'reasons': reasons,
                 'submitted': submitted,
@@ -1615,7 +1647,8 @@ class RemakeCLI:
             print('No SLURM submissions recorded (.remake/jobs/*.jobids.json)')
             return
         paint = Painter(args.colour)
-        header = ('rule', 'job', 'submitted', 'tasks', 'PD', 'R', 'done', 'failed', 'reason')
+        header = ('rule', 'job', 'submitted', 'tasks', 'PD', 'R', 'done', 'failed', 'lost',
+                  'reason')
         table, totals = [], Counter()
         for row in rows:
             states = Counter(row['states'])
@@ -1626,23 +1659,28 @@ class RemakeCLI:
             note += [f'{k}:{v}' for k, v in sorted(states.items())]  # CG, S, ...
             note += row['reasons']
             table.append((row['rule'], row['jobid'], row['submitted'][:16], row['tasks'],
-                          pd, r, row['succeeded'], row['failed'], ', '.join(note)))
+                          pd, r, row['succeeded'], row['failed'], row['lost'],
+                          ', '.join(note)))
             for k, v in (('tasks', row['tasks']), ('PD', pd), ('R', r),
-                         ('done', row['succeeded']), ('failed', row['failed'])):
+                         ('done', row['succeeded']), ('failed', row['failed']),
+                         ('lost', row['lost'])):
                 totals[k] += v or 0
         total = ('TOTAL', '', '', totals['tasks'], totals['PD'], totals['R'],
-                 totals['done'], totals['failed'], '')
+                 totals['done'], totals['failed'], totals['lost'], '')
 
         def style(st):
             return lambda v: st if _is_count(v) and v != 0 else None
 
         styles = [None, None, None, None, style(('yellow',)), style(('cyan',)),
-                  style(('green',)), style(('red', 'bold')), None]
+                  style(('green',)), style(('red', 'bold')), style(('red', 'bold')), None]
         for line in render_table(header, table, total=total, paint=paint, styles=styles,
                                  width=terminal_width(), shrink=8):
             print(line)
-        print(paint('PD pending, R running (squeue); done/failed: DB, this submission',
-                    'dim'))
+        print(paint('PD pending, R running (squeue); done/failed: DB, this submission;\n'
+                    'lost: not queued, no result (killed, or never started): '
+                    'see remake why', 'dim'))
+        if totals['lost']:
+            print(f'{totals["lost"]} lost task(s) will rerun at the next `remake run`')
 
     def remake_check_env(self, args):
         from . import envcheck

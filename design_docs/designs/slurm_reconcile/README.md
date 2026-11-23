@@ -1,30 +1,27 @@
-# SLURM reconciliation: lost tasks and the end-of-submission job
+# SLURM: tasks killed without a result
 
-**Status: Agreed (plan under advisor review), 2026-11-23. Release 0.11.0,
-item 9 (phases 1 and 2).**
+**Status: Implemented (simple plan), 2026-11-23. Release 0.11.0, item 9.**
 
-A node failure in the 0.11 soak killed SLURM array elements that never
-recorded anything, and every remake command misreported what had happened
-(design_docs/records/soak_0_11.md, finding 7). This folder holds the work
-that fixes it.
+A node failure in the 0.11 soak killed SLURM array elements, which recorded
+nothing, and every remake command misreported what had happened
+(design_docs/records/soak_0_11.md, finding 7). This folder holds the fix.
 
 | Doc | What it is |
 |---|---|
-| [plan.md](plan.md) | The design and phased plan: records, `reconcile`, reporting, the end-of-submission job. Settled before implementation; reviewed by a Fable advisor. |
-| [testing.md](testing.md) | The test framework: a simulated SLURM cluster, scenario tests, Hypothesis state-machine tests, and live tests on JASMIN. |
-| [implementation.md](implementation.md) | A running log of difficulties, surprises and changes of plan during implementation. |
+| [plan.md](plan.md) | The design: PENDING at submission, live state from `squeue`, the cause from `sacct` on demand. |
+| [testing.md](testing.md) | The tests: a simulated SLURM cluster, scenario tests, the live JASMIN probe. |
+| [implementation.md](implementation.md) | A log of difficulties and changes of plan, including why a much larger first plan was dropped. |
 
-Decisions taken by MM (2026-11-23), from the advisor review:
+Decisions (MM, 2026-11-23):
 
-1. A killed task is recorded as **failed** with a reason, not a new status.
-2. A task that never started (cancelled because a dependency failed) gets
-   **no task record**, only a skipped count.
-3. The end-of-submission job is submitted **every** submission.
-4. No automatic retry of node failures (deferred).
-5. `remake resubmit` is to be **retired** at 1.0 (`run` replans and skips
-   queued rules).
-6. Read-only commands (`info`, `why`, `task-info`, `slurm-status`) **may**
-   write killed-task records, as they already ingest sidecars; only when
-   something is unreconciled.
-7. Phases 1 and 2 both go into **0.11**.
-8. **Docstrings count** in code hashes (`uses=` and rule code): unchanged.
+1. **Simple over complete.** A first plan (a reconcile step classifying
+   every element from `sacct`, storing killed tasks as failed, an
+   end-of-submission job) was dropped after ~400 lines as too complex to
+   debug. Two advisors (Fable, Opus) independently agreed.
+2. Submitted tasks are **PENDING until their results arrive**; nothing
+   records why a task died. The cause is read from `sacct` when asked.
+3. **No worker-written "started" marker**: `squeue` gives the live state.
+4. The continuation being cancelled by any failure (soak finding 7, "also")
+   is a **separate** issue, not fixed here: documented.
+5. **Docstrings count** in code hashes (`uses=` and rule code): unchanged
+   (soak finding 8).

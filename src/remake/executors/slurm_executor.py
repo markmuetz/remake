@@ -616,7 +616,17 @@ class SlurmExecutor(Executor):
         if self.dry_run:
             logger.info('Dry run: not submitting')
             return
-        self.submit()
+        try:
+            self.submit()
+        finally:
+            # PENDING until results arrive (killed workers write none). Only
+            # rules whose submission record exists: submit.sh stops at the
+            # first failure (set -e), and the rules after it were never
+            # submitted.
+            done = [sub.tasks for sub in submitted.values()
+                    if sub.tasks and submission_path(sub.rule.name, run_seq).exists()]
+            if done:
+                self.rmk.metadata.mark_submitted([t for ts in done for t in ts], run_seq)
 
     def _write_job_specs(self, rule, tasks, run_seq):
         from .. import provenance

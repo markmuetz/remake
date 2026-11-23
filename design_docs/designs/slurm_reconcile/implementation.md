@@ -113,3 +113,36 @@ changed).
   The files are pruned after 7 days; noted for the docs instead.
 - Requeue is disabled on JASMIN, so the requeue scenarios rest on the
   simulator alone.
+
+## 2026-11-23: the plan cut down
+
+- While starting step 5 (the classifier), one more piece of evidence was
+  needed (each submission's dependency kinds, so `not_started` could be
+  corroborated per element). MM asked whether the complexity was worth it.
+- Claude, a Fable advisor and an Opus advisor (the latter two independently)
+  all said no. The planner check (by the Opus advisor) showed killed tasks
+  already rerun for most reasons; the real holes are a killed `-f` rerun
+  and adopted partial outputs. Every verdict the classifier stored
+  permanently (killed, not started) had needed a grace period or extra
+  evidence, because sacct is a poor witness (no rows for never-started
+  elements; remainder rows labelled with one index). MM: "too complex for
+  me (or perhaps even you) to ever debug".
+- Done instead: submitted tasks are PENDING until results arrive (fixes the
+  wrong decisions), and reporting reads squeue/sacct without storing
+  anything. Kept: step 2's per-submission records, step 3's sacct parser,
+  the simulator. Reverted: step 4 (the `slurm_submission` table, schema
+  1.2, and the killed-task write; commit 67371f7). Dropped: the classifier,
+  grace periods, corroboration, the Hypothesis state machine, phase 2. The
+  full plan is in git history (`git show 61a556e:design_docs/designs/slurm_reconcile/plan.md`).
+- MM asked about marking a task "running" when it starts: not a DB write
+  (thousands of workers on a shared SQLite file). A worker-written started
+  sidecar was considered and dropped too: squeue gives the live state.
+- `slurm-status` already exits cleanly (code 2) when squeue fails; the
+  first version of this change turned that into a warning, which an
+  existing test caught; reverted.
+- Simulating a kill after the outputs are written: raising `SystemExit` in
+  the payload doesn't work (remake records it as FAILED; a real SIGKILL
+  can't be caught), so `kill(partial=True)` runs the payload and drops the
+  result file it wrote.
+- `info` was left alone: it makes no SLURM calls today, and adding squeue
+  would put a cluster call (that can fail or hang) into every `info`.
