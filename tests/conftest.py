@@ -15,6 +15,9 @@ def _isolated_user_config(tmp_path_factory, monkeypatch):
     """Never read the real user's remake config (or profile selection)."""
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path_factory.mktemp('xdg')))
     monkeypatch.delenv('REMAKE_PROFILE', raising=False)
+    # Output is fitted to $COLUMNS (0.11 item 8): an exported value would
+    # change the layout tests check (review 2026-11-23).
+    monkeypatch.delenv('COLUMNS', raising=False)
 
 
 @pytest.fixture(autouse=True)

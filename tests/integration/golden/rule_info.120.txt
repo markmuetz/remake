@@ -1,0 +1,10 @@
+clean
+  Strip blank lines from a site's raw readings.
+
+dependents:  stats
+matrix:      (site) — 2 task(s)
+  - site: ['oxford', 'cambridge']
+inputs:
+  - raw/{site}.txt  (raw)
+outputs:
+  - out/clean/{site}.txt  (clean)

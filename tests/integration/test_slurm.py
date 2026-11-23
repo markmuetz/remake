@@ -592,9 +592,18 @@ def test_slurm_status_reports_queue_state(slurm_dir, capsys):
     capsys.readouterr()
     cli('slurm-status', 'pipeline.py')
     out = capsys.readouterr().out
-    assert 'PD:1 R:1' in out and '[Dependency]' in out  # gen, job 1001
-    assert 'not in queue' in out  # proc, job 1002, no squeue rows
-    assert 'DependencyNeverSatisfied' in out  # agg, job 1003
+    # A table (soak finding 5): one column per state, the reason last.
+    lines = {ln.split()[0]: ln for ln in out.splitlines()}
+    assert lines['rule'].split() == ['rule', 'job', 'submitted', 'tasks', 'PD', 'R',
+                                     'done', 'failed', 'reason']
+    gen = lines['gen'].split()
+    # rule, job, submitted (date time), tasks, PD, R, done, failed, reason
+    assert gen[1] == '1001' and gen[4:9] == ['12', '1', '1', '0', '0']
+    assert gen[-1] == 'Dependency'
+    assert lines['proc'].endswith('not queued')  # job 1002, no squeue rows
+    assert lines['agg'].endswith('DependencyNeverSatisfied')  # job 1003
+    assert lines['TOTAL'].split()[1:3] == [str(sum(int(lines[r].split()[4])
+                                                   for r in ('gen', 'proc', 'agg'))), '2']
 
     cli('slurm-status', 'pipeline.py', '--json')
     payload = json.loads(capsys.readouterr().out)
@@ -602,6 +611,22 @@ def test_slurm_status_reports_queue_state(slurm_dir, capsys):
     by_rule = {row['rule']: row for row in payload['submissions']}
     assert by_rule['gen']['jobid'] == '1001' and by_rule['gen']['states'] == {'PD': 1, 'R': 1}
     assert by_rule['agg']['reasons'] == ['DependencyNeverSatisfied']
+    assert by_rule['gen']['tasks'] == 12 and by_rule['gen']['succeeded'] == 0
+
+
+def test_slurm_status_counts_only_this_submissions_results(slurm_dir, capsys):
+    # Review 2026-11-23: a task that succeeded in an earlier run and is
+    # resubmitted is pending, not done, until this submission records it.
+    cli('run', 'pipeline.py')  # everything succeeds locally (run 1)
+    cli('run', 'pipeline.py', '-E', 'slurm', '-f', '-Q', "rule == 'gen'")
+    (slurm_dir / 'shim/squeue.out').write_text(
+        ''.join(f'1001_{i} PD Priority\n' for i in range(12)))
+    capsys.readouterr()
+    cli('slurm-status', 'pipeline.py', '--json')
+    gen = {r['rule']: r for r in json.loads(capsys.readouterr().out)['submissions']}['gen']
+    assert gen['tasks'] == 12 and gen['states'] == {'PD': 12}
+    assert gen['succeeded'] == 0 and gen['failed'] == 0
+    assert len(gen['submitted']) == 19  # YYYY-MM-DD HH:MM:SS
 
 
 def test_task_info_shows_slurm_submission(slurm_dir, capsys):
@@ -887,7 +912,7 @@ rmk.rules_from_current_module()
     data = json.loads(capsys.readouterr().out)
     assert data['rules'][0]['output_bytes'] == 6
     cli('task-info', 'dirs.py', '-Q', 'rule == "tiles" and n == 2')
-    assert 'size:     d: 2 file(s), 6B' in capsys.readouterr().out
+    assert 'size:\n  - d: 2 files, 6B' in capsys.readouterr().out
 
 
 def test_history_runs_counts_a_submission_as_its_tasks_are_ingested(slurm_dir, capsys):

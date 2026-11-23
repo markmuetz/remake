@@ -564,14 +564,17 @@ rmk.rules_from_current_module()
 ''')
     assert cli('lint', 'miswired.py') == 1
     out = capsys.readouterr().out
-    assert "NEAR MISS           proc (2 task(s)): input produced by nothing; " \
+    assert "NEAR MISS           proc (2 tasks): input produced by nothing; " \
         "nearest is gen's output" in out
     # Stacked, aligned, the difference marked (soak finding 4).
-    assert '    wants:   data/genn_1.txt\n' \
+    assert '  - wants:   data/genn_1.txt\n' \
            '                    ^\n' \
-           '    nearest: data/gen_1.txt\n' in out
-    assert 'MISSING DEPENDENCY  agg' in out and 'produced by proc' in out
-    assert 'external            gen: 2 input(s)' in out  # not a problem, exit 1 is from above
+           '  - nearest: data/gen_1.txt\n' in out
+    # Stacked, not one long line (item 8 e).
+    assert "MISSING DEPENDENCY  agg (2 tasks): reads proc's output but does not " \
+        "depend_on it\n  - input:   data/proc_1.txt\n" in out
+    assert 'external            gen: 2 inputs produced by no rule\n' \
+        '  - e.g.:    data/src_1.txt' in out  # not a problem, exit 1 is from above
 
     import json
 
@@ -1309,12 +1312,15 @@ rmk.rules_from_current_module()
     assert not cli('info', 'p.py')
     out = capsys.readouterr().out
     line = next(ln for ln in out.splitlines() if ln.startswith('static_down'))
-    assert line.split()[:6] == ['static_down', '3', '?', '?', '0', '3']
-    assert 'deferred (dyn)' in line
-    assert 'not in TOTAL (deferred): 3 known tasks in 1 rule held by an upstream rule; ' \
-        '3 rules with tasks not known yet' in out
+    assert line.split() == ['static_down', '3', '?', '?', '0', '3', '?']
     line = next(ln for ln in out.splitlines() if ln.startswith('dyn_down'))
-    assert line.split()[1:6] == ['?'] * 5 and 'deferred (dyn)' in line
+    assert line.split()[1:] == ['?'] * 6
+    # Why each is deferred, under the table (item 8: no column to truncate).
+    assert 'deferred, not in TOTAL: 3 tasks in 1 held rule; 3 rules with tasks unknown' in out
+    reasons = {ln.split()[1]: ' '.join(ln.split()[2:]) for ln in out.splitlines()
+               if ln.startswith('  - ')}
+    assert reasons == {'dyn': 'matrix not ready', 'static_down': 'held by dyn',
+                       'dyn_down': 'held by dyn', 'plain_down': 'held by dyn'}
 
 
 def _write_remakefile(path, name, body='pass'):
@@ -1408,3 +1414,38 @@ rmk.rules_from_current_module()
     monkeypatch.chdir(tmp_path)
     assert cli('export-task', 'pipes/p.py', '-Q', 'True', '-o', 'spec.json') in (0, None)
     assert (tmp_path / 'spec.json').exists()
+
+
+def test_task_info_size_lists_every_output(tmp_path, monkeypatch, capsys):
+    # MM's snapshot review 2026-11-23: plain files are summed, a Dir has its
+    # own entry, and an output with no recorded size says so (else one
+    # file's size reads as the whole task's).
+    monkeypatch.chdir(tmp_path)
+    Path('mixed.py').write_text('''
+from pathlib import Path
+from remake import Dir, Remake, ZarrStore, rule
+
+rmk = Remake()
+
+
+@rule(outputs={'a': 'out/a.txt', 'b': 'out/b.txt', 'maps': Dir('out/maps'),
+               'store': ZarrStore('out/s.zarr')})
+def mixed(outputs):
+    for k in ('maps', 'store'):
+        Path(outputs[k]).mkdir(parents=True, exist_ok=True)
+    for k in ('a', 'b'):
+        Path(outputs[k]).write_text('xx')
+    Path(outputs['maps'], 'm1').write_text('123')
+    Path(outputs['store'], '.zmetadata').write_text('{}')
+
+
+rmk.rules_from_current_module()
+''')
+    assert cli('run', 'mixed.py') == 0
+    capsys.readouterr()
+    cli('task-info', 'mixed.py', '-Q', "rule == 'mixed'")
+    out = capsys.readouterr().out
+    assert ('size:\n'
+            '  - maps: 1 file, 3B\n'
+            '  - other files: 2 files, 4B\n'
+            '  - store: not measured (ZarrStore)\n') in out

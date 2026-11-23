@@ -166,6 +166,24 @@ def _output_patterns(rule, cwd):
     return patterns
 
 
+def deferred_roots(dag, deferred):
+    """{rule: sorted names of the rules holding it} for each deferred rule:
+    [] when its own matrix is the cause, else the root deferred rules
+    upstream (plan() never tries a rule's matrix while a dependency is
+    deferred, so those are what hold it). Shared by info and run -n."""
+    import networkx as nx
+
+    deferred = set(deferred)
+    roots = {}
+    for rule in nx.topological_sort(dag):
+        if rule not in deferred:
+            continue
+        dep_roots = set().union(*(roots[d] or {d.name} for d in rule.depends_on
+                                  if d in roots))
+        roots[rule] = dep_roots
+    return {rule: sorted(r) for rule, r in roots.items()}
+
+
 def _blocked_reason(rule):
     """Why a rule is still deferred when a local run has nothing left to
     try: its matrix's Defer paths if it still can't expand, else (it would
@@ -853,18 +871,15 @@ class Remake:
         # (or itself) whose own matrix held them, as rule names. plan() defers
         # a rule with a deferred dependency without trying its matrix, so
         # such a rule takes its dependencies' roots.
-        held_by = {}
+        held_by = deferred_roots(self.dag, deferred)
         for rule in nx.topological_sort(self.dag):
-            if rule.name in deferred_names:
-                dep_roots = set().union(*(held_by[d] for d in rule.depends_on
-                                          if d in held_by))
-                held_by[rule] = dep_roots or {rule.name}
+            if rule in held_by:
                 # Only a static matrix can be expanded now: a callable one
                 # (deferrable or not) may read upstream outputs that don't
                 # exist yet, or exist but are about to be rewritten.
-                if not dep_roots or callable(rule.matrix):
+                if not held_by[rule] or callable(rule.matrix):
                     rule_rows.append({'rule': rule.name, 'deferred': True,
-                                      'deferred_by': sorted(dep_roots)})
+                                      'deferred_by': held_by[rule]})
                     continue
             tasks = expand_rule(rule, predicate)
             records = cache.get_tasks_status(tasks)
@@ -879,7 +894,7 @@ class Remake:
                 rule_rows.append({
                     'rule': rule.name,
                     'deferred': True,
-                    'deferred_by': sorted(held_by[rule]),
+                    'deferred_by': held_by[rule],
                     'tasks': len(tasks),
                     'succeeded': by_status['success'],
                     'failed': by_status['failed'],
@@ -1301,11 +1316,15 @@ class Remake:
 
         findings = {}  # (kind, rule, other) -> {'count': n, 'example': ...}
 
+        distinct = {}  # (kind, rule, other) -> set of the paths behind count
+
         def record(kind, rule_name, other, example):
-            entry = findings.setdefault(
-                (kind, rule_name, other), {'count': 0, 'example': example}
-            )
+            key = (kind, rule_name, other)
+            entry = findings.setdefault(key, {'count': 0, 'example': example})
             entry['count'] += 1
+            distinct.setdefault(key, set()).add(
+                example if isinstance(example, str)
+                else example.get('input') or repr(sorted(example.items())))
             if unchecked and kind in ('near_miss', 'external'):
                 entry['unchecked'] = unchecked
 
@@ -1382,6 +1401,10 @@ class Remake:
                     else:
                         record('external', rule.name, None, path)
 
+        # 'distinct': how many different paths the count covers (one input
+        # read by 12 tasks counts 12, distinct 1; soak recheck, item 8 g).
+        for key, entry in findings.items():
+            entry['distinct'] = len(distinct[key])
         return [
             {'kind': kind, 'rule': rule_name, 'other_rule': other, **entry}
             for (kind, rule_name, other), entry in sorted(
@@ -1564,7 +1587,8 @@ class Remake:
         Read-only unless apply. Completion is checked in batches
         (tokens.complete_many). Tasks of rules whose matrix is not ready are
         not examined. Returns {'missing': [tasks], 'adoptable': [tasks],
-        'applied': bool, 'cascaded': [tasks]}."""
+        'applied': bool, 'cascaded': [tasks], 'checked': number of tasks
+        examined}."""
         if not self._finalized:
             self.finalize()
         tasks = [t for t in self.tasks(query=query) if t.outputs]
@@ -1606,6 +1630,7 @@ class Remake:
                     self.metadata.update_tasks(adoptable + cascaded, TASK_STATUS_SUCCESS)
                 self.metadata.finish_run({'n_planned': len(missing) + len(adoptable)})
         return {'missing': missing, 'adoptable': adoptable, 'applied': bool(apply),
+                'checked': len(tasks),
                 'cascaded': cascaded}
 
     def _cascade_descendants(self, selected_tasks):

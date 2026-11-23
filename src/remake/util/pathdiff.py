@@ -70,7 +70,7 @@ def _flatten(components):
     return segs
 
 
-def render_path_diff(a, b, paint, labels=('wants', 'nearest'), indent='    '):
+def render_path_diff(a, b, paint, labels=('wants', 'nearest'), indent='  - '):
     """Lines showing a over b, aligned and labelled, the differing spans red
     (in a) and green (in b), the shared parts dimmed. With colour off, a
     line of `^` under each path marks its differing spans instead."""
@@ -87,5 +87,26 @@ def render_path_diff(a, b, paint, labels=('wants', 'nearest'), indent='    '):
             lines.append(head + ''.join(t for t, _ in segs))
             marks = ''.join(('^' if changed else ' ') * len(t) for t, changed in segs)
             if marks.strip():
-                lines.append(' ' * len(head) + marks.rstrip())
+                lines.append(' ' * len(head) + marks.rstrip())  # no dash: not an item
     return lines
+
+
+def display_path(path, base=None, width=None):
+    """A path as shown to a person: relative to `base` (the project
+    directory) when it is inside it, then cut in the middle to `width`
+    characters if given (head and file name kept)."""
+    import os
+
+    from .table import shorten
+
+    text = str(path)
+    if base and os.path.isabs(text):
+        rel = os.path.relpath(text, base)
+        if not rel.startswith('..'):
+            text = rel
+    return shorten(text, width, 'middle') if width else text
+
+
+def plural(n, word, words=None):
+    """'1 task', '2 tasks'."""
+    return f'{n} {word if n == 1 else (words or word + "s")}'

@@ -194,8 +194,18 @@ remake slurm-status pipeline.py            # live squeue view per rule/job
 remake slurm-status pipeline.py --json     # machine-readable
 ```
 
-This reads the recorded job ids and queries `squeue` for current states and
-reasons.
+One row per rule's last submission: its job id, when it was submitted, its
+task count, how many elements `squeue` shows pending (`PD`) and running
+(`R`), how many of its tasks the DB records as done and failed (results of
+finished elements are ingested first), and the pending reason (or `not
+queued` once nothing is left in the queue), with a TOTAL row:
+
+```
+rule                     job      submitted         tasks   PD    R  done  failed  reason
+build_gridded_rhi_scans  6058085  2026-11-23 09:12    763  454  306     3       0  QOSMaxMemoryPerUser
+compare_delta_z          6058090  2026-11-23 09:12     17    0    0    17       0  not queued
+TOTAL                                                 780  454  306    20       0
+```
 
 ## Logs
 

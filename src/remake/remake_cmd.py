@@ -26,6 +26,8 @@ from .util import (
     task_log_path as _task_log_path,
 )
 from .util.config import project_metadata_dir
+from .util.colour import STATUS_STYLE
+from .util.table import render_table, terminal_width
 from .util.paths import log_file, metadata_dir, set_metadata_dir, slurm_output_dir, submit_path
 from .version import __version__
 
@@ -88,6 +90,10 @@ def _group_failures(failures):
             'members': [m['task'] for m in members],
         })
     return out
+
+
+def _is_count(v):
+    return isinstance(v, int) and not isinstance(v, bool)
 
 
 def _format_bytes(nbytes):
@@ -339,6 +345,7 @@ class RemakeCLI:
                          'upstream)'),
                 Arg('--dry-run', '-n', help='Show affected tasks, change nothing',
                     action='store_true'),
+                Arg('--json', help='Machine-readable output', action='store_true'),
             ],
         },
         'verify': {
@@ -511,10 +518,12 @@ class RemakeCLI:
                 Arg('--query', '-Q',
                     help='Explain all tasks matching this kwargs query; '
                          'omit both key and query to explain the runnable set'),
+                Arg('--json', help='Machine-readable output', action='store_true'),
             ],
         },
         'slurm-status': {
-            'help': 'Live SLURM queue state of the last submission, per rule',
+            'help': 'Live SLURM queue state of the last submission, per rule '
+                    '(PD pending, R running, from squeue; done/failed from the DB)',
             'args': [
                 Arg('remakefile'),
                 Arg('--json', help='Machine-readable output', action='store_true'),
@@ -557,6 +566,12 @@ class RemakeCLI:
             subparser = subparsers.add_parser(cmd_key, help=cmd_kwargs['help'])
             for argset in cmd_kwargs['args']:
                 add_argset(subparser, argset)
+            # Also accepted after the subcommand (`remake info --colour never
+            # x.py`); SUPPRESS keeps the top-level value when it's absent.
+            subparser.add_argument(
+                '--colour', '--color', dest='colour', choices=['auto', 'always', 'never'],
+                default=argparse.SUPPRESS,
+                help='as `remake --colour`: auto (TTY only), always or never')
 
         return parser
 
@@ -614,8 +629,17 @@ class RemakeCLI:
                     print(task)
                 print(f'{len(runnable)} task(s) would run')
                 rmk._check_external_inputs(runnable, dry_run=True)
-                for rule in deferred:
-                    print(f'{rule.name}: deferred (matrix not ready)')
+                from .core.remake import deferred_roots
+
+                roots = deferred_roots(rmk.dag, deferred)
+                if deferred:
+                    # Same words and layout as `info`'s deferred list.
+                    print('\ndeferred, not run:')
+                    name_w = max(len(rule.name) for rule in deferred)
+                    for rule in deferred:
+                        why = (f'held by {", ".join(roots[rule])}' if roots[rule]
+                               else 'matrix not ready')
+                        print(f'  - {rule.name:<{name_w}}  {why}')
                 return
         nfailed = rmk.run(
             executor=executor,
@@ -727,6 +751,13 @@ class RemakeCLI:
         )
         state, tasks, cascaded = result['state'], result['tasks'], result['cascaded']
         skipped = result['skipped']
+        if args.json:
+            _print_json({
+                'state': state, 'dry_run': bool(args.dry_run), 'skipped': skipped,
+                'tasks': [{'task': str(t), 'key': t.key, 'cascade': False} for t in tasks]
+                + [{'task': str(t), 'key': t.key, 'cascade': True} for t in cascaded],
+            })
+            return
         for task in tasks:
             print(f'{task} -> {state}')
         for task in cascaded:
@@ -763,10 +794,17 @@ class RemakeCLI:
                       + (' -> success' if args.apply else ''))
             for t in result['cascaded']:
                 print(f'{t}  -> success (cascade)')
-            print(f'{len(missing)} recorded success with outputs missing, '
-                  f'{len(adoptable)} unrecorded with outputs complete'
-                  + ('' if args.apply or not (missing or adoptable)
-                     else '; rerun with --apply to record'))
+            if not (missing or adoptable):
+                # All well: say so, rather than two zeros to decode.
+                what = ('the DB matches the outputs on disk' if both else
+                        'every recorded success has its outputs' if args.outputs else
+                        'no unrecorded task has complete outputs')
+                n = result['checked']
+                print(f'{what} ({n} task{"" if n == 1 else "s"} checked)')
+            else:
+                print(f'{len(missing)} recorded success with outputs missing, '
+                      f'{len(adoptable)} unrecorded with outputs complete'
+                      + ('' if args.apply else '; rerun with --apply to record'))
         return 1 if (missing or adoptable) and not args.apply else 0
 
     def remake_info(self, args):
@@ -794,9 +832,17 @@ class RemakeCLI:
             if args.json:
                 _print_json({'failures': lines})
             else:
+                # One line per task (grep-able). Piped, it ends with the log
+                # path; in a terminal (where the path would be cut to fit and
+                # be useless) a footer says how to get a log from the key.
+                width = terminal_width()
                 for line in lines:
-                    print(f'{line["rule"]}  {line["key"][:8]}  {line["error"]}  '
-                          f'[{line["log"]}]')
+                    first = f'{line["rule"]}  {line["key"][:8]}  {line["error"]}'
+                    print(first if width else f'{first}  [{line["log"]}]')
+                if width and lines:
+                    paint = Painter(args.colour)
+                    print()
+                    print(paint(f'logs: remake task-log {args.remakefile} <key>', 'dim'))
             return
 
         if args.json:
@@ -815,14 +861,20 @@ class RemakeCLI:
         header = ('rule', 'tasks', 'up-to-date', 'stale', 'failed', 'pending', 'to run')
         # A rule deferred only by an upstream rule has known tasks: its count
         # and DB failed/pending show, up-to-date vs stale can't (no plan yet).
+        # A deferred rule's to-run is unknown ('?'); lines under TOTAL say why.
         def _row(r):
             if not r['deferred']:
                 return (r['rule'], r['tasks'], r['up_to_date'], r['stale'],
                         r['failed'], r['pending'], r['to_run'])
-            held = f'deferred ({", ".join(r["deferred_by"])})' if r['deferred_by'] else 'deferred'
             if 'tasks' in r:
-                return (r['rule'], r['tasks'], '?', '?', r['failed'], r['pending'], held)
-            return (r['rule'], '?', '?', '?', '?', '?', held)
+                return (r['rule'], r['tasks'], '?', '?', r['failed'], r['pending'], '?')
+            return (r['rule'], '?', '?', '?', '?', '?', '?')
+
+        def _note(r):
+            if not r['deferred']:
+                return ''
+            return (f'held by {", ".join(r["deferred_by"])}' if r['deferred_by']
+                    else 'matrix not ready')
 
         rows = [_row(r) for r in rule_rows]
         totals_row = (
@@ -840,34 +892,15 @@ class RemakeCLI:
                 for row, r in zip(rows, rule_rows)
             ]
             totals_row += (_format_bytes(totals['output_bytes']),)
-        widths = [
-            max(len(str(r[i])) for r in rows + [header, totals_row])
-            for i in range(len(header))
-        ]
+        def styled(style):
+            # Colour a count; '?' and words stay plain (zero is dimmed by
+            # render_table).
+            return lambda v: style if _is_count(v) and v != 0 else None
 
-        # Per-column styling (col_style, above) for the count columns: rule
-        # name, tasks count and sizes are left plain. A zero count is dimmed
-        # so non-zero cells stand out.
-
-        def render_row(row, *, emphasise=False):
-            cells = []
-            for i, (v, w) in enumerate(zip(row, widths)):
-                cell = f'{str(v):<{w}}'  # pad on raw text, colour after
-                style = col_style[i]
-                if style is not None and str(v) not in ('0', '?'):
-                    cell = paint(cell, *style)
-                elif style is not None and str(v) == '0':
-                    cell = paint(cell, 'dim')
-                if emphasise and i == 0:
-                    cell = paint(cell, 'bold')
-                cells.append(cell)
-            return '  '.join(cells)
-
-        # Header row stays uncoloured (it labels the colours below it).
-        print('  '.join(f'{str(v):<{w}}' for v, w in zip(header, widths)))
-        for row in rows:
-            print(render_row(row))
-        print(render_row(totals_row, emphasise=True))
+        styles = [None if st is None else styled(st) for st in col_style]
+        for line in render_table(header, rows, total=totals_row, paint=paint,
+                                 styles=styles, width=terminal_width()):
+            print(line)
         deferred_rows = [r for r in rule_rows if r['deferred']]
         if deferred_rows:
             known = [r for r in deferred_rows if 'tasks' in r]
@@ -875,18 +908,23 @@ class RemakeCLI:
             parts = []
             if known:
                 n = totals['deferred_tasks']
-                parts.append(f'{n} known task{"s" if n != 1 else ""} in {len(known)} '
-                             f'rule{"s" if len(known) != 1 else ""} held by an upstream rule')
+                parts.append(f'{n} task{"s" if n != 1 else ""} in {len(known)} '
+                             f'held rule{"s" if len(known) != 1 else ""}')
             if unknown:
-                parts.append(f'{unknown} rule{"s" if unknown != 1 else ""} '
-                             f'with tasks not known yet')
-            print(paint(f'not in TOTAL (deferred): {"; ".join(parts)}', 'dim'))
-        if args.reasons:
+                parts.append(f'{unknown} rule{"s" if unknown != 1 else ""} with tasks unknown')
+            print(paint(f'deferred, not in TOTAL: {"; ".join(parts)}', 'dim'))
+            name_w = max(len(r['rule']) for r in deferred_rows)
+            for r in deferred_rows:
+                print(paint(f'  - {r["rule"]:<{name_w}}  {_note(r)}', 'dim'))
+        if args.reasons and any(r.get('reasons') for r in rule_rows):
+            print('\nwhy the to-run tasks would run:')
             for r in rule_rows:
                 rsn = r.get('reasons')
                 if rsn:
                     tally = ', '.join(f'{n} {cat}' for cat, n in sorted(rsn.items()))
-                    print(f'  {r["rule"]}: {tally}')
+                    print(f'  - {r["rule"]}: {tally}')
+        if task_rows:
+            print()  # the task list is not part of the section above it
         for task_row in task_rows:
             status = task_row['status']
             print(f'{paint.status(status, f"{status:<8}")} {task_row["task"]}')
@@ -964,13 +1002,13 @@ class RemakeCLI:
                             mark = '' if not args.check else (
                                 paint(' [exists]', 'green') if f['exists']
                                 else paint(' [missing]', 'red', 'bold'))
-                            print(f'  in  {f["name"]}: {f["path"]}{mark}')
+                            print(f'  - in  {f["name"]}: {f["path"]}{mark}')
                     if args.outputs:
                         for f in output_files(task):
                             mark = '' if not args.check else (
                                 paint(' [complete]', 'green') if f['complete']
                                 else paint(' [missing]', 'red', 'bold'))
-                            print(f'  out {f["name"]}: {f["path"]}{mark}')
+                            print(f'  - out {f["name"]}: {f["path"]}{mark}')
             except Defer:
                 logger.warning(f'{rule.name}: deferred (matrix not ready), tasks unknown')
         if args.json:
@@ -986,41 +1024,71 @@ class RemakeCLI:
             _print_json({'findings': rows})
             return 1 if problems else 0
 
-        from .util.pathdiff import render_path_diff
+        from .util.pathdiff import display_path, plural, render_path_diff
 
         paint = Painter(args.colour)
+        width = terminal_width()
+        base = rmk.project_dir
 
-        for row in rows:
+        def path(p, label_width=13):
+            # Relative to the project where possible, cut to the terminal.
+            return display_path(p, base, max(width - label_width, 20) if width else None)
+
+        def head(label, style, row, text):
+            tasks = plural(row['count'], 'task')
+            first = f"{label:<18}  {row['rule']} ({tasks}):"
+            if width and len(first) + 1 + len(text) > width:
+                # Too wide for one line: the explanation goes under it.
+                print(f"{paint(f'{label:<18}', *style)}  {row['rule']} ({tasks}):")
+                print(f'  - {text}')
+            else:
+                print(f"{paint(f'{label:<18}', *style)}  {row['rule']} ({tasks}): {text}")
+
+        def show(label, p):
+            print(f'  - {label + ":":<9}{path(p)}')
+
+        # Problems first, by kind; the external lines (information) last.
+        order = ('near_miss', 'missing_dependency', 'dir_nested', 'file_in_dir', 'external')
+        ordered = sorted(rows, key=lambda r: order.index(r['kind'])
+                         if r['kind'] in order else len(order))
+        for n, row in enumerate(ordered):
+            ex = row['example']
+            if row['kind'] == 'external' and (n == 0 or ordered[n - 1]['kind'] != 'external') \
+                    and n > 0:
+                print()
             if row['kind'] == 'near_miss':
-                ex = row['example']
-                print(f"{paint('NEAR MISS', 'yellow', 'bold')}           {row['rule']} "
-                      f"({row['count']} task(s)): input produced by nothing; nearest is "
-                      f"{row['other_rule']}'s output")
-                for line in render_path_diff(ex['input'], ex['closest'], paint):
+                head('NEAR MISS', ('yellow', 'bold'), row,
+                     f"input produced by nothing; nearest is {row['other_rule']}'s output")
+                for line in render_path_diff(display_path(ex['input'], base),
+                                             display_path(ex['closest'], base), paint):
                     print(line)
             elif row['kind'] == 'missing_dependency':
-                print(
-                    f"MISSING DEPENDENCY  {row['rule']}: input {row['example']!r} is "
-                    f"produced by {row['other_rule']}, which {row['rule']} does not "
-                    f"depend_on ({row['count']} task(s))"
-                )
+                head('MISSING DEPENDENCY', ('red', 'bold'), row,
+                     f"reads {row['other_rule']}'s output but does not depend_on it")
+                show('input', ex)
             elif row['kind'] == 'dir_nested':
-                ex = row['example']
-                print(
-                    f"DIR NESTED          {row['rule']}: Dir {ex['dir']!r} is inside "
-                    f"{row['other_rule']}'s Dir {ex['inside']!r} ({row['count']} task(s))"
-                )
+                head('DIR NESTED', ('red', 'bold'), row,
+                     f"its Dir is inside {row['other_rule']}'s Dir")
+                show('dir', ex['dir'])
+                show('inside', ex['inside'])
             elif row['kind'] == 'file_in_dir':
-                ex = row['example']
-                print(
-                    f"FILE IN DIR         {row['rule']}: output {ex['file']!r} is inside "
-                    f"{row['other_rule']}'s Dir {ex['inside']!r} ({row['count']} task(s))"
-                )
+                head('FILE IN DIR', ('red', 'bold'), row,
+                     f"an output is inside {row['other_rule']}'s Dir")
+                show('output', ex['file'])
+                show('inside', ex['inside'])
             else:
-                print(
-                    f"external            {row['rule']}: {row['count']} input(s) not "
-                    f"produced by any rule (e.g. {row['example']!r})"
-                )
+                files = row.get('distinct', row['count'])
+                count = plural(row['count'], 'input')
+                if files != row['count']:
+                    count += f" ({plural(files, 'file')})"
+                first = f"{'external':<18}  {row['rule']}: {count} produced by no rule"
+                if width and len(first) > width:
+                    print(f"{paint(f'{"external":<18}', 'dim')}  {row['rule']}: {count}")
+                    print('  - produced by no rule')
+                else:
+                    print(f"{paint(f'{"external":<18}', 'dim')}  {row['rule']}: {count} "
+                          f"produced by no rule")
+                show('e.g.', ex)
         unchecked = sorted({name for row in rows for name in row.get('unchecked', ())})
         if unchecked:
             print(paint(f"note: deferred rule(s) {', '.join(unchecked)} have outputs lint "
@@ -1180,7 +1248,7 @@ class RemakeCLI:
             keys = ', '.join(m['keys'])
             print(f'matrix:      ({keys}) — {m["n_tasks"]} task(s)')
             for key, values in (m['values'] or {}).items():
-                print(f'  {key}: {values!r}')
+                print(f'  - {key}: {values!r}')
 
         for part in ('inputs', 'outputs'):
             part_info = data[part]
@@ -1192,19 +1260,19 @@ class RemakeCLI:
                 continue
             print(f'{part}:')
             for name, template in part_info['templates'].items():
-                print(f'  {template}  ({name})')
+                print(f'  - {template}  ({name})')
 
         if data['uses']:
             print('uses:')
             for entry in data['uses']:
                 if entry['kind'] == 'value':
-                    print(f'  {entry["name"]} = {entry["rendering"]}')
+                    print(f'  - {entry["name"]} = {entry["rendering"]}')
                 elif entry['kind'] == 'source':
-                    print(f'  {entry["name"]}:')
+                    print(f'  - {entry["name"]}:')
                     for line in entry['rendering'].rstrip().splitlines():
-                        print(f'    {line}')
+                        print(f'      {line}')  # source code: no dashes
                 else:
-                    print(f'  {entry["name"]}: '
+                    print(f'  - {entry["name"]}: '
                           + paint(f'{entry["rendering"]} (source unavailable)', 'dim'))
         if data['config']:
             print(f'config:      {data["config"]!r}')
@@ -1217,39 +1285,75 @@ class RemakeCLI:
             _print_json(data)
             return
 
+        from .util.pathdiff import display_path
+
         paint = Painter(args.colour)
+        width = terminal_width()
+
+        def fit(path, reserve=0):
+            # Relative to the project, cut to the terminal (10 = the label).
+            return display_path(path, rmk.project_dir,
+                                max(width - 10 - reserve, 20) if width else None)
+
         print(f'{task}  {task.key}')
         when = f' at {data["timestamp"]}' if data['timestamp'] else ''
         print(f'status:   {paint.status(data["status"])}{when}')
-        resources = _resources_line(data['resources'])
-        if resources:
-            # Of the last execution — set-state doesn't un-measure a run.
-            print(f'resources: {resources}')
         for name, path_info in data['inputs'].items():
             mark = (paint('exists', 'green') if path_info['exists']
                     else paint('missing', 'red', 'bold'))
-            print(f'input:    {path_info["path"]}  [{mark}]  ({name})')
+            print(f'input:    {fit(path_info["path"], 14 + len(name))}  [{mark}]  ({name})')
         for name, path_info in data['outputs'].items():
             mark = (paint('complete', 'green') if path_info['complete']
                     else paint('missing', 'red', 'bold'))
-            print(f'output:   {path_info["path"]}  [{mark}]  ({name})')
+            print(f'output:   {fit(path_info["path"], 16 + len(name))}  [{mark}]  ({name})')
             dir_info = path_info.get('dir')
             if dir_info and dir_info['n_stale']:
-                print(paint(f'          {dir_info["n_stale"]} stale file(s), '
+                print(paint(f'  - {dir_info["n_stale"]} stale file(s), '
                             f'{_format_bytes(dir_info["stale_bytes"])}, not produced by '
                             f'the last run (see the manifest; remake never deletes them)',
                             'yellow'))
-        for name, st in data.get('output_stats', {}).items():
-            label = 'plain file outputs' if name == '*' else name
-            line = f'{st["n_files"]} file(s), {_format_bytes(st["total_bytes"] or 0)}'
-            if st.get('checksum'):
-                line += f', sha256 {st["checksum"]}'
-            print(f'size:     {label}: {line}')
+        stats = data.get('output_stats') or {}
+        if stats:
+            # Plain files are summed under '*'; a Dir (or a checksummed file)
+            # has its own entry; other outputs (ZarrStore, S3Object, a plain
+            # path that turned out to be a directory) record no size: say so,
+            # or one file's size reads as the task's.
+            from .core.task import flat_items
+            from .core.tokens import FileToken
+            from .util.pathdiff import plural
+
+            def size(st):
+                text = (f'{plural(st["n_files"] or 0, "file")}, '
+                        f'{_format_bytes(st["total_bytes"] or 0)}')
+                return text + (f', sha256 {st["checksum"]}' if st.get('checksum') else '')
+
+            entries = [(name, size(st)) for name, st in stats.items() if name != '*']
+            unmeasured = [
+                (name, f'not measured ({type(token).__name__})')
+                for name, token in flat_items(task.outputs)
+                if name not in stats
+                and not ('*' in stats and isinstance(token, FileToken)
+                         and not os.path.isdir(token.path))]
+            if '*' in stats:
+                entries.append(('other files' if entries or unmeasured else None,
+                                size(stats['*'])))
+            entries += unmeasured
+            if len(entries) == 1 and entries[0][0] is None:
+                print(f'size:     {entries[0][1]}')
+            else:
+                print('size:')
+                for label, text in entries:
+                    print(f'  - {label}: {text}')
         last = data.get('last_execution')
         if last:
             where = f' on {last["host"]}' if last['host'] else ''
             why = f' ({last["reason"]})' if last['reason'] else ''
             print(f'last ran: run {last["run_seq"]} at {last["finished"]}{where}{why}')
+        resources = _resources_line(data['resources'])
+        if resources:
+            # Of the last execution — set-state doesn't un-measure a run.
+            print(f'ran with: {resources}')
+        if last:
             run = last.get('run') or {}
             if run.get('git_commit'):
                 dirty = (f' + uncommitted changes (diff {run["git_diff_hash"][:12]})'
@@ -1261,12 +1365,13 @@ class RemakeCLI:
                       + (f', {run["lockfile"]} {run["lockfile_hash"][:12]}'
                          if run.get('lockfile') and run.get('lockfile_hash') else ''))
             if last['different_environment']:
-                print(paint('          ran in a different environment from the one that '
+                print(paint('  - ran in a different environment from the one that '
                             'planned it (see `remake history` and `remake check-env`)',
                             'yellow'))
         log = data['log']
-        mark = '' if log['exists'] else paint('  [no log yet]', 'dim')
-        print(f'log:      {log["path"]}{mark}')
+        # The local executor runs tasks in-process and writes no task log.
+        mark = '' if log['exists'] else paint('  [no log file]', 'dim')
+        print(f'log:      {fit(log["path"], 0 if log["exists"] else 15)}{mark}')
         jobids, array_index = data['slurm']['jobids'], data['slurm']['array_index']
         if jobids is not None:
             index = f', array index {array_index}' if array_index is not None else ''
@@ -1314,6 +1419,7 @@ class RemakeCLI:
             if args.json:
                 _print_json({'runs': runs})
                 return 0
+            table = []
             for r in runs:
                 counts = ''
                 # A SLURM submission (no waves: never run locally), so far;
@@ -1324,16 +1430,23 @@ class RemakeCLI:
                               f'{r["n_failed"] or 0} failed')
                 elif r.get('n_run') is not None:
                     counts = (f'{r["n_run"]} run, {r["n_failed"] or 0} failed'
-                              + (f', {r["n_blocked_rules"]} blocked rule(s)'
+                              + (f', {r["n_blocked_rules"]} blocked '
+                                 f'{"rule" if r["n_blocked_rules"] == 1 else "rules"}'
                                  if r.get('n_blocked_rules') else ''))
                 elif r.get('n_planned') is not None:
                     counts = f'{r["n_planned"]} submitted'
                 git = ''
                 if r.get('git_commit'):
                     git = r['git_commit'][:10] + ('+dirty' if r.get('git_dirty') else '')
-                parent = f' (continues {r["parent_run_seq"]})' if r.get('parent_run_seq') else ''
-                print(f'{r["run_seq"]:>5}  {r["started"]}  {r["command"] or "":<9} '
-                      f'{counts:<28} {git}{parent}')
+                parent = f'continues {r["parent_run_seq"]}' if r.get('parent_run_seq') else ''
+                table.append((r['run_seq'], r['started'], r['command'] or '', counts, git,
+                              parent))
+            if not table:
+                print('no recorded runs (history starts with remake 0.10)')
+                return 0
+            for line in render_table(('run', 'started', 'command', 'tasks', 'git', 'note'),
+                                     table, width=terminal_width()):
+                print(line)
             return 0
         task = rmk.select_task(args.task_key, args.query)
         rows = meta.get_history(task, limit=args.limit)
@@ -1348,24 +1461,35 @@ class RemakeCLI:
         print(f'{task}  {task.key}')
         if not rows:
             print('no recorded executions (history starts with remake 0.10)')
+            return 0
+        table, notes = [], []
         for row in rows:
-            res = _resources_line(row) or ''
-            extra = [x for x in (row['reason'], row['host']) if x]
-            line = (f'run {row["run_seq"]!s:>5}  {row["finished"]}  '
-                    f'{paint.status(row["status"]):<8} {res}')
-            if extra:
-                line += f'  [{", ".join(extra)}]'
+            table.append((row['run_seq'], row['finished'], row['status'],
+                          _resources_line(row) or '', row['reason'] or '', row['host'] or ''))
+            notes.append([(paint(f'  - {row["error"]}', 'red') if row['error'] else None),
+                          (paint('  - ran in a different environment from the planning run',
+                                 'yellow') if row['different_environment'] else None)])
+        status_style = [None, None, lambda v: STATUS_STYLE.get(v), None, None, None]
+        lines = render_table(('run', 'finished', 'status', 'resources', 'reason', 'host'),
+                             table, paint=paint, styles=status_style, width=terminal_width())
+        print(lines[0])
+        for line, extra in zip(lines[1:], notes):
             print(line)
-            if row['error']:
-                print(paint(f'      {row["error"]}', 'red'))
-            if row['different_environment']:
-                print(paint('      ran in a different environment from the planning run',
-                            'yellow'))
+            for note in extra:
+                if note:
+                    print(note)
         return 0
 
     def remake_why(self, args):
         rmk = self._load(args)
         results = list(rmk.why(args.task_key, args.query))
+        if args.json:
+            _print_json({'tasks': [
+                {'task': str(task), 'key': task.key, 'will_run': bool(will_run),
+                 'reasons': [{'category': r.category, 'message': r.message}
+                             for r in reasons]}
+                for task, will_run, reasons in results]})
+            return
         if not results:
             print('nothing would run: all tasks are up to date')
             return
@@ -1377,13 +1501,15 @@ class RemakeCLI:
             print(f'{task}  {task.key}')
             verdict = (paint('yes', 'cyan', 'bold') if will_run
                        else paint('no', 'green'))
-            print(f'will run: {verdict}')
+            print(f'- will run: {verdict}')
             if not reasons:
-                print(paint('up to date: recorded success, code and uses '
+                print(paint('- up to date: recorded success, code and uses '
                             'unchanged, no upstream reruns', 'dim'))
             for reason in reasons:
-                print(paint(f'- {reason.message}', 'yellow'))
-            print()
+                # The reasons belong to "will run: yes": nested under it.
+                print(paint(f'  - {reason.message}', 'yellow'))
+            if len(results) > 1:
+                print()  # between tasks, and before the summary
         if len(results) > 1:
             print(f'{len(results)} task(s): {n_run} would run, '
                   f'{len(results) - n_run} up to date')
@@ -1400,7 +1526,7 @@ class RemakeCLI:
               + (f' (from {eff.profile_source})' if eff.profile else ''))
         print('files consulted:')
         for layer, path, exists in eff.files:
-            print(f'  {layer}: {path} ({"found" if exists else "not found"})')
+            print(f'  - {layer}: {path} ({"found" if exists else "not found"})')
         print('config (layer that set each key):')
 
         def walk(d, prefix=''):
@@ -1413,48 +1539,107 @@ class RemakeCLI:
 
         rows = list(walk(eff.values))
         for key, v in rows:
-            print(f'  {key} = {v!r}  [{eff.provenance.get(key, "?")}]')
+            print(f'  - {key} = {v!r}  [{eff.provenance.get(key, "?")}]')
         if not rows:
             print('  (empty)')
         return 0
 
     def remake_slurm_status(self, args):
-        from .executors.slurm_executor import last_submission, squeue_snapshot
+        import datetime as dt
+
+        from .core.dag import expand_rule
+        from .executors.slurm_executor import (_read_sidecar, load_job_specs,
+                                               recorded_jobids, spec_path,
+                                               squeue_snapshot)
+        from .metadata.metadata_manager import STATUS_NAMES
+        from .util.paths import jobs_dir
 
         rmk = self._load(args)
         snapshot = squeue_snapshot()
+        # Finished elements leave their results as sidecars: absorb them, or
+        # the done/failed counts lag the queue.
+        rmk.metadata.ingest_sidecars(rmk.rules)
         rows = []
         for rule in rmk.rules:
-            jobids, _ = last_submission(rule.name)
-            if jobids is None:
+            sidecar_path = jobs_dir() / f'{rule.name}.jobids.json'
+            recorded = _read_sidecar(sidecar_path)
+            if recorded is None:
                 continue
-            for jobid in jobids:
-                elements = snapshot.get(jobid, [])
-                states = Counter(state for _, state, _ in elements)
-                reasons = sorted(
-                    {reason for *_, reason in elements if reason and reason != 'None'}
-                )
-                rows.append(
-                    {
-                        'rule': rule.name,
-                        'jobid': jobid,
-                        'states': dict(states),
-                        'reasons': reasons,
-                    }
-                )
+            jobids = recorded_jobids(rule.name)
+            submitted = dt.datetime.fromtimestamp(
+                sidecar_path.stat().st_mtime).isoformat(sep=' ', timespec='seconds')
+            # The submission's tasks (its job spec), and how many of them the
+            # DB records as done/failed BY this submission (a record from an
+            # earlier run has a lower run_seq: a resubmitted task that
+            # succeeded before is not done yet). None when unknown: no spec
+            # (pruned, or a pre-0.9 sidecar without run_seq) or no matrix.
+            run_seq = recorded.get('run_seq')
+            ntasks = succeeded = failed = None
+            specs = spec_path(rule.name, run_seq)
+            if run_seq is not None and specs.exists():
+                keys = {spec['task_key'] for spec in load_job_specs(specs)}
+                ntasks = len(keys)
+                try:
+                    tasks = [t for t in expand_rule(rule) if t.key in keys]
+                except Exception:  # Defer, or a callable matrix that raises
+                    tasks = None
+                if tasks is not None:
+                    records = rmk.metadata.get_tasks_status(tasks) if tasks else {}
+                    db = Counter(STATUS_NAMES.get(rec.status, 'pending')
+                                 for rec in records.values()
+                                 if rec.run_seq is not None and rec.run_seq >= run_seq)
+                    succeeded, failed = db['success'], db['failed']
+            # One row per rule: a pre-arrays sidecar lists one job id per task.
+            elements = [e for jobid in jobids for e in snapshot.get(jobid, [])]
+            states = Counter(state for _, state, _ in elements)
+            reasons = sorted(
+                {reason for *_, reason in elements if reason and reason != 'None'}
+            )
+            rows.append({
+                'rule': rule.name,
+                'jobid': ','.join(jobids),
+                'states': dict(states),
+                'reasons': reasons,
+                'submitted': submitted,
+                'tasks': ntasks,
+                'succeeded': succeeded,
+                'failed': failed,
+            })
         if args.json:
             _print_json({'submissions': rows})
             return
         if not rows:
             print('No SLURM submissions recorded (.remake/jobs/*.jobids.json)')
             return
+        paint = Painter(args.colour)
+        header = ('rule', 'job', 'submitted', 'tasks', 'PD', 'R', 'done', 'failed', 'reason')
+        table, totals = [], Counter()
         for row in rows:
-            states = (
-                ' '.join(f'{k}:{v}' for k, v in sorted(row['states'].items()))
-                or 'not in queue'
-            )
-            reasons = f'  [{", ".join(row["reasons"])}]' if row['reasons'] else ''
-            print(f'{row["rule"]:<20} job {row["jobid"]:<12} {states}{reasons}')
+            states = Counter(row['states'])
+            pd, r = states.pop('PD', 0), states.pop('R', 0)
+            note = []
+            if not row['states']:
+                note.append('not queued')
+            note += [f'{k}:{v}' for k, v in sorted(states.items())]  # CG, S, ...
+            note += row['reasons']
+            table.append((row['rule'], row['jobid'], row['submitted'][:16], row['tasks'],
+                          pd, r, row['succeeded'], row['failed'], ', '.join(note)))
+            for k, v in (('tasks', row['tasks']), ('PD', pd), ('R', r),
+                         ('done', row['succeeded']), ('failed', row['failed'])):
+                totals[k] += v or 0
+        total = ('TOTAL', '', '', totals['tasks'], totals['PD'], totals['R'],
+                 totals['done'], totals['failed'], '')
+
+        def style(st):
+            return lambda v: st if _is_count(v) and v != 0 else None
+
+        styles = [None, None, None, None, style(('yellow',)), style(('cyan',)),
+                  style(('green',)), style(('red', 'bold')), None]
+        for line in render_table(header, table, total=total, paint=paint, styles=styles,
+                                 width=terminal_width(), shrink=8):
+            print(line)
+        print(paint('PD pending, R running (squeue); done/failed: DB, this submission',
+                    'dim'))
 
     def remake_check_env(self, args):
         from . import envcheck

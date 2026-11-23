@@ -28,9 +28,9 @@ def test_similar_components_diff_by_character():
 
 def test_no_colour_marks_with_carets_and_colour_uses_ansi():
     lines = render_path_diff('data/genn_1.txt', 'data/gen_1.txt', Painter('never'))
-    assert lines == ['    wants:   data/genn_1.txt',
+    assert lines == ['  - wants:   data/genn_1.txt',
                      '                    ^',
-                     '    nearest: data/gen_1.txt']
+                     '  - nearest: data/gen_1.txt']
     coloured = render_path_diff('data/a.txt', 'data/b.txt', Painter('always'))
     assert len(coloured) == 2 and '\033[' in coloured[0] and '^' not in ''.join(coloured)
 

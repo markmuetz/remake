@@ -9,13 +9,20 @@ remake <command> pipeline.py [options]
 
 ## Global options
 
-These go *before* the command name (`remake -D run pipeline.py`):
+These go *before* the command name (`remake -D run pipeline.py`); `--colour`
+may also go after it (`remake info --colour never pipeline.py`):
 
 | Option | Meaning |
 |---|---|
 | `-T, --trace` / `-D, --debug` / `-I, --info` / `-W, --warning` | console log level (default: info) |
 | `--profile NAME` | config profile (e.g. `jasmin`); beats `$REMAKE_PROFILE` and config files — see [Configuration](guide/configuration.md) |
 | `--colour {auto,always,never}` | colourise output; `auto` (the default) colours TTYs only and honours `NO_COLOR`/`FORCE_COLOR` |
+
+Tables (`info`, `slurm-status`, `history`) have a header row, numbers
+right-aligned, and leave out a column with nothing in it. Output is fitted to
+the terminal: a long name or path is shortened with `…` rather than wrapped.
+The width is `$COLUMNS` if set (piped output too), else the terminal's; piped
+output with no `$COLUMNS` is not shortened.
 
 ## Commands
 
@@ -107,13 +114,13 @@ always satisfy `up-to-date + stale + failed + pending = tasks` and
 | `pending` | never run, or a run is in flight |
 | `to run` | what `remake run` would do now = `stale + failed + pending` |
 
-Deferred rules are not in `TOTAL`; a line under it counts them. A rule whose
-own `@deferrable` matrix is not ready (or whose upstream reruns) shows `?`
-for every count and `deferred` to run. A rule that waits on a deferred rule
-upstream names it, e.g. `deferred (process_event)`. If its matrix is static
-(a dict, a list or none), its tasks are known: it shows the task count, and
-`failed` and `pending` from the DB, with `up-to-date` and `stale` as `?`
-(they need the plan). A callable matrix there stays `?`.
+Deferred rules are not in `TOTAL`; lines under it count them and say why
+each is deferred: `matrix not ready` (its own `@deferrable` matrix, or its
+upstream reruns) or `held by <rule>` (it waits on that deferred rule; `run -n`
+uses the same words). A deferred rule's `to run` is `?`. If a held rule's
+matrix is static (a dict, a list or none), its tasks are known: it shows the
+task count, and `failed` and `pending` from the DB, with `up-to-date` and
+`stale` as `?` (they need the plan). A callable matrix there stays `?`.
 
 In `--json` every deferred row has `deferred_by` (`[]` when its own matrix is
 the cause); one with known tasks adds `tasks`, `succeeded`, `failed` and
@@ -127,7 +134,7 @@ failures in deferred rules show in their rows and in `--failed`.
 | `-t, --tasks` | list individual tasks with status |
 | `-F, --show-failures` | show failures grouped by unique traceback signature + count |
 | `--all-failures` | with `-F`, show every failed task individually (not grouped) |
-| `--failed` | one line per failed task (and nothing else): rule, short key, last line of its error, log path. The error is the stored exception's last line; if none is stored, the last non-empty line of the task's SLURM `.err` (`.remake/slurm/output/<rule>/<index>.err`). With `--json`, `{"format": 1, "failures": [{rule, key, error, log}, ...]}` |
+| `--failed` | one line per failed task: rule, short key, last line of its error, and, when piped, the log path (in a terminal, a footer line says to use `remake task-log <key>` instead). The error is the stored exception's last line; if none is stored, the last non-empty line of the task's SLURM `.err` (`.remake/slurm/output/<rule>/<index>.err`). With `--json`, `{"format": 1, "failures": [{rule, key, error, log}, ...]}` |
 | `--reasons` | per-rule tally of *why* the to-run tasks would rerun |
 | `--json` | machine-readable output |
 
@@ -274,13 +281,16 @@ keys per command:
 | `info` | `rules`, `totals`; plus `tasks` with `-t`, `failures` with `-F` |
 | `info --failed` | `failures` (list of `{rule, key, error, log}`) |
 | `ls-tasks` | `tasks` (list of `{key, rule, kwargs}`, plus `inputs`/`outputs` with `-i`/`-o`) |
-| `lint` | `findings` (list of rows, each with a `kind`) |
+| `lint` | `findings` (list of rows, each with a `kind`, `count` and `distinct`) |
 | `rule-dag` | `order`, `edges`; plus `rules` with `-N`/`-M` |
 | `rule-info` | the rule's detail fields (`rule`, `docstring`, `matrix`, `outputs`, `uses`, ...) |
 | `task-info` | the task's detail fields (`status`, `kwargs`, `inputs`, `outputs`, `slurm`, ...) |
 | `history` | `executions` (with `task` and `key`); `runs` with `--runs`; `deleted` with `--prune` |
 | `config` | `profile`, `profile_source`, `files`, `config`, `provenance` |
-| `slurm-status` | `submissions` (list of `{rule, jobid, states, reasons}`) |
+| `slurm-status` | `submissions`: one per rule's last submission, `{rule, jobid, states, reasons, submitted, tasks, succeeded, failed}`; `submitted` is local time `YYYY-MM-DD HH:MM:SS`; `tasks` and the counts (results recorded by this submission) are `null` when unknown |
+| `why` | `tasks` (list of `{task, key, will_run, reasons: [{category, message}]}`) |
+| `set-state` | `state`, `dry_run`, `skipped`, `tasks` (list of `{task, key, cascade}`) |
+| `verify` | see [`verify`](#verify) |
 | `check-env` | `planning`, `job`, `mismatches` |
 
 Compatibility: after 1.0, adding a key is not a breaking change, so ignore
