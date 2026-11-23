@@ -1587,7 +1587,8 @@ class Remake:
         Read-only unless apply. Completion is checked in batches
         (tokens.complete_many). Tasks of rules whose matrix is not ready are
         not examined. Returns {'missing': [tasks], 'adoptable': [tasks],
-        'applied': bool, 'cascaded': [tasks]}."""
+        'applied': bool, 'cascaded': [tasks], 'checked': number of tasks
+        examined}."""
         if not self._finalized:
             self.finalize()
         tasks = [t for t in self.tasks(query=query) if t.outputs]
@@ -1629,6 +1630,7 @@ class Remake:
                     self.metadata.update_tasks(adoptable + cascaded, TASK_STATUS_SUCCESS)
                 self.metadata.finish_run({'n_planned': len(missing) + len(adoptable)})
         return {'missing': missing, 'adoptable': adoptable, 'applied': bool(apply),
+                'checked': len(tasks),
                 'cascaded': cascaded}
 
     def _cascade_descendants(self, selected_tasks):

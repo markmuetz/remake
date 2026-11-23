@@ -790,10 +790,17 @@ class RemakeCLI:
                       + (' -> success' if args.apply else ''))
             for t in result['cascaded']:
                 print(f'{t}  -> success (cascade)')
-            print(f'{len(missing)} recorded success with outputs missing, '
-                  f'{len(adoptable)} unrecorded with outputs complete'
-                  + ('' if args.apply or not (missing or adoptable)
-                     else '; rerun with --apply to record'))
+            if not (missing or adoptable):
+                # All well: say so, rather than two zeros to decode.
+                what = ('the DB matches the outputs on disk' if both else
+                        'every recorded success has its outputs' if args.outputs else
+                        'no unrecorded task has complete outputs')
+                n = result['checked']
+                print(f'{what} ({n} task{"" if n == 1 else "s"} checked)')
+            else:
+                print(f'{len(missing)} recorded success with outputs missing, '
+                      f'{len(adoptable)} unrecorded with outputs complete'
+                      + ('' if args.apply else '; rerun with --apply to record'))
         return 1 if (missing or adoptable) and not args.apply else 0
 
     def remake_info(self, args):
