@@ -95,6 +95,14 @@ Soak pipelines so far: `wescon-tools` (`wescon_radar_dev.py`, v17).
   A deferred rule with callable outputs is named on near-miss and external
   findings (`unchecked`). Rules downstream of a deferred rule are still
   skipped: their inputs may come from callables that read missing files.
+- **Recheck on wescon (bbc1ccb): didn't fire.** There, deferred rules'
+  outputs are callables (`gather_delta_z_stats_outputs(case)`), so there was
+  no template; and the "may be produced by deferred rules" caveat went on
+  every external line, including thousands of raw inputs those rules can't
+  make. Now: a callable outputs spec is called with a placeholder for each
+  parameter it names, and the placeholders become one-component patterns
+  (a call that raises leaves the rule unchecked); the caveat is one footer
+  line. `unchecked` stays on the `--json` rows.
 
 ## 4. `lint` NEAR MISS paths are hard to compare by eye (done)
 
@@ -155,3 +163,21 @@ Reported by MM.
   records (e.g. "DB: 17 succeeded"). Use `info`'s table rendering and
   `Painter`; `--json` unchanged. To be done in release item 8 (output
   readability), with its shared table helper.
+
+## 6. Recheck notes on findings 2–4 (2026-11-23, bbc1ccb)
+
+- **`info` names the root, not the nearest deferred rule.** Every held row
+  says `deferred (compare_delta_z_candidates)`, including
+  `gather_delta_z_stats`, whose own matrix would also defer. That is right
+  for what the planner does (it never tries a rule's matrix while an upstream
+  is deferred, so `compare_delta_z_candidates` is the only rule actually
+  holding things up), but it surprised the reader. Open: show the nearest
+  too, e.g. `deferred (gather_delta_z_stats ← compare_delta_z_candidates)`;
+  to settle with item 8's vocabulary.
+- **`lint` MISSING DEPENDENCY lines** are still ~260 characters with full
+  paths: give them the stacked, `…/`-shortened layout (item 8 e).
+- **`--colour` only before the subcommand** (`remake info --colour never`
+  fails): item 8 d.
+- **`lint` creates `.remake/remake.db`** in a fresh checkout ("Creating
+  sqlite3 database"). A read-only check shouldn't create metadata: open it
+  read-only, or skip the DB when there is none. Open.

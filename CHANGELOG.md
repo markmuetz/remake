@@ -56,8 +56,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (soak finding 3). An input that a deferred rule would produce was reported
   as a near miss of an unrelated file, or as external, hiding a missing
   `depends_on`. It now matches the deferred rule's output templates, so the
-  missing dependency is reported. A deferred rule with callable outputs is
-  named on `near_miss` and `external` rows (`unchecked` in `--json`).
+  missing dependency is reported. A callable outputs spec is called with a
+  placeholder for each parameter it names to get its templates. A deferred
+  rule whose outputs still can't be read is named once under the findings,
+  and on `near_miss` and `external` rows in `--json` (`unchecked`).
 - **`remake lint` shows where a near miss differs** (soak finding 4): the two
   paths stacked and aligned, the shared prefix collapsed to `…`, the
   difference coloured, or marked with `^` without colour. Compared by

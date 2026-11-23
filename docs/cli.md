@@ -155,9 +155,10 @@ path component) counts as that rule's, so a rule reading it without
 `depends_on` is a missing dependency. A broad template (`data/{name}.nc`) can
 claim an external file of the same shape; such a finding goes away once the
 matrix is ready and the real outputs are known.
-A deferred rule with callable outputs can't be checked this way; `external` and
-near-miss findings then say which deferred rules might produce the input
-(`unchecked` in `--json`).
+A callable outputs spec is called with a placeholder for each parameter it
+names, to get the same templates. A deferred rule whose outputs still can't be
+read (the call raises) is named in a note under the findings (`unchecked` on
+the `near_miss` and `external` rows in `--json`).
 
 ## `dag`
 

@@ -988,11 +988,6 @@ class RemakeCLI:
 
         paint = Painter(args.colour)
 
-        def unchecked(row):
-            names = row.get('unchecked')
-            return (f"\n    (may be produced by deferred rule(s) {', '.join(names)}: "
-                    f"outputs unknown, not checked)") if names else ''
-
         for row in rows:
             if row['kind'] == 'near_miss':
                 ex = row['example']
@@ -1001,8 +996,6 @@ class RemakeCLI:
                       f"{row['other_rule']}'s output")
                 for line in render_path_diff(ex['input'], ex['closest'], paint):
                     print(line)
-                if unchecked(row):
-                    print(unchecked(row).lstrip('\n'))
             elif row['kind'] == 'missing_dependency':
                 print(
                     f"MISSING DEPENDENCY  {row['rule']}: input {row['example']!r} is "
@@ -1024,8 +1017,13 @@ class RemakeCLI:
             else:
                 print(
                     f"external            {row['rule']}: {row['count']} input(s) not "
-                    f"produced by any rule (e.g. {row['example']!r}){unchecked(row)}"
+                    f"produced by any rule (e.g. {row['example']!r})"
                 )
+        unchecked = sorted({name for row in rows for name in row.get('unchecked', ())})
+        if unchecked:
+            print(paint(f"note: deferred rule(s) {', '.join(unchecked)} have outputs lint "
+                        f"can't predict; near-miss and external findings above were not "
+                        f"checked against them", 'dim'))
         if not rows:
             print('all inputs wired to declared dependencies')
         return 1 if problems else 0

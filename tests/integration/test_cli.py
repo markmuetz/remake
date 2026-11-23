@@ -608,8 +608,20 @@ def compare(outputs, case):
 def analyse(inputs, outputs, case):
     pass
 
+def callable_outputs(case):  # the field pattern: a callable outputs spec
+    return {'o': Path('out') / 'cmp2' / f'gathered_{case}.hdf'}
+
+@rule(outputs=callable_outputs, matrix=later)
+def gather2(outputs, case):
+    pass
+
+@rule(inputs={'g': 'out/cmp2/gathered_{case}.hdf'}, outputs={'o': 'out/an2_{case}.png'},
+      matrix={'case': [1, 2]})
+def analyse2(inputs, outputs, case):
+    pass
+
 def opaque_outputs(k):
-    return {'o': f'other/{k}.txt'}
+    return {'o': {'nested': 'not a path'}}  # can't be read: stays unchecked
 
 @rule(outputs=opaque_outputs, matrix=later)
 def opaque(outputs, k):
@@ -627,13 +639,15 @@ rmk.rules_from_current_module()
     rows = json.loads(capsys.readouterr().out)['findings']
     kinds = {(r['kind'], r['rule'], r['other_rule']) for r in rows}
     assert ('missing_dependency', 'analyse', 'gather') in kinds
+    assert ('missing_dependency', 'analyse2', 'gather2') in kinds
     assert not any(r['kind'] == 'near_miss' for r in rows)
     ext = next(r for r in rows if r['kind'] == 'external')
     assert ext['rule'] == 'uses_external' and ext['unchecked'] == ['opaque']
 
     cli('lint', 'p.py')
     out = capsys.readouterr().out
-    assert 'may be produced by deferred rule(s) opaque' in out
+    # Said once, as a footer, not on every finding.
+    assert out.count('opaque') == 1 and "deferred rule(s) opaque have outputs lint" in out
 
 
 def test_ls_tasks(pipeline_dir, capsys):

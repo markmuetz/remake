@@ -76,41 +76,92 @@ def _resource_fields(resources):
 
 
 def _output_patterns(rule, cwd):
-    """Regexes for the canonical paths a rule's outputs can take: each output
-    template with each `{field}` as one path component's text, its fixed leading directory
-    canonicalised as lint's paths are. None if the outputs are not a dict of
-    templates (a callable spec: unknown until the matrix is)."""
+    """Regexes for the canonical paths a rule's outputs can take, for lint
+    to match inputs against while the rule's matrix is deferred. Each output
+    template with each `{field}` as one path component's text, its fixed
+    leading directory canonicalised as lint's paths are. A callable outputs
+    spec is called with a placeholder for each parameter it names (soak
+    recheck, 2026-11-23: callable outputs are the norm in field pipelines).
+    None when the outputs can't be read this way (the call raises, or a
+    token has no path)."""
+    import inspect
     import re
     import string
 
     from .tokens import PathToken
 
-    if not isinstance(rule.outputs, dict):
+    spec = rule.outputs
+    templates = []  # each a list of (literal text, is_field)
+    if callable(spec) and not isinstance(spec, dict):
+        try:
+            params = [p for p in inspect.signature(spec).parameters.values()
+                      if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)]
+            marks = {p.name: f'@@remake-{p.name}@@' for p in params}
+            values = spec(**marks)
+        except Exception:
+            return None
+        if not isinstance(values, dict) or not marks:
+            return None
+        splitter = re.compile('(' + '|'.join(map(re.escape, marks.values())) + ')')
+        field_marks = set(marks.values())
+
+        def parts(text):
+            return [(piece, piece in field_marks)
+                    for piece in splitter.split(text) if piece]
+    elif isinstance(spec, dict):
+        values = spec
+
+        def parts(text):
+            out = []
+            for lit, field, _, _ in string.Formatter().parse(text):
+                if lit:
+                    out.append((lit, False))
+                if field is not None:
+                    out.append(('', True))
+            return out
+    else:
         return None
-    templates = []
-    for value in rule.outputs.values():
+    for value in values.values():
         for item in (value if isinstance(value, (list, tuple)) else [value]):
-            if isinstance(item, str):
-                templates.append(item)
-            elif isinstance(item, PathToken) and not item.remote:
-                templates.append(item.path)
-            elif not is_remote(item):
-                return None  # a token we can't read a template from
+            if isinstance(item, PathToken):
+                if item.remote:
+                    continue
+                text = item.path
+            elif isinstance(item, (str, os.PathLike)):
+                text = os.fspath(item)
+            else:
+                return None  # a token we can't read a path from
+            if is_remote(text):
+                continue
+            try:
+                templates.append(parts(str(text)))
+            except ValueError:  # a malformed format string
+                return None
     patterns = []
-    for template in templates:
-        parts = list(string.Formatter().parse(template))
-        literal_head = parts[0][0] if parts else ''
-        fixed_dir, slash, _ = literal_head.rpartition('/')
-        if slash and not fixed_dir:
-            fixed_dir = '/'
-        # The fixed directory, canonicalised (symlinks, ./, relative): the
-        # rest of the template is matched as written.
-        head = os.path.dirname(canonical_path(os.path.join(fixed_dir or '.', '_'), cwd))
-        rest = template[len(fixed_dir) + (1 if slash and fixed_dir != '/' else 0):] if slash else template
-        # A field matches within one path component: broad enough for
-        # kwargs values, narrow enough not to claim a whole directory tree.
-        regex = ''.join(re.escape(lit) + ('[^/]+' if field is not None else '')
-                        for lit, field, _, _ in string.Formatter().parse(rest))
+    for tpl in templates:
+        # The fixed leading directory (literal text up to the last '/' before
+        # the first field), canonicalised; the rest matched as written.
+        head_lit = ''
+        for text, is_field in tpl:
+            if is_field:
+                break
+            head_lit += text
+        fixed_dir, slash, _ = head_lit.rpartition('/')
+        if slash:
+            consumed = len(fixed_dir) + 1
+            anchor = fixed_dir or '/'
+        else:
+            consumed, anchor = 0, '.'
+        head = os.path.dirname(canonical_path(os.path.join(anchor, '_'), cwd))
+        regex, pos = '', 0
+        for text, is_field in tpl:
+            if is_field:
+                if pos >= consumed:
+                    regex += '[^/]+'
+                continue
+            start = max(consumed - pos, 0)
+            regex += re.escape(text[start:])
+            pos += len(text)
         patterns.append(re.compile(re.escape(head.rstrip('/') + '/') + regex))
     return patterns
 
