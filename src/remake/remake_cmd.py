@@ -26,6 +26,7 @@ from .util import (
     task_log_path as _task_log_path,
 )
 from .util.config import project_metadata_dir
+from .util.table import render_table, terminal_width
 from .util.paths import log_file, metadata_dir, set_metadata_dir, slurm_output_dir, submit_path
 from .version import __version__
 
@@ -88,6 +89,10 @@ def _group_failures(failures):
             'members': [m['task'] for m in members],
         })
     return out
+
+
+def _is_count(v):
+    return isinstance(v, int) and not isinstance(v, bool)
 
 
 def _format_bytes(nbytes):
@@ -557,6 +562,12 @@ class RemakeCLI:
             subparser = subparsers.add_parser(cmd_key, help=cmd_kwargs['help'])
             for argset in cmd_kwargs['args']:
                 add_argset(subparser, argset)
+            # Also accepted after the subcommand (`remake info --colour never
+            # x.py`); SUPPRESS keeps the top-level value when it's absent.
+            subparser.add_argument(
+                '--colour', '--color', dest='colour', choices=['auto', 'always', 'never'],
+                default=argparse.SUPPRESS,
+                help='as `remake --colour`: auto (TTY only), always or never')
 
         return parser
 
@@ -815,14 +826,20 @@ class RemakeCLI:
         header = ('rule', 'tasks', 'up-to-date', 'stale', 'failed', 'pending', 'to run')
         # A rule deferred only by an upstream rule has known tasks: its count
         # and DB failed/pending show, up-to-date vs stale can't (no plan yet).
+        # A deferred rule's to-run is unknown ('?'); lines under TOTAL say why.
         def _row(r):
             if not r['deferred']:
                 return (r['rule'], r['tasks'], r['up_to_date'], r['stale'],
                         r['failed'], r['pending'], r['to_run'])
-            held = f'deferred ({", ".join(r["deferred_by"])})' if r['deferred_by'] else 'deferred'
             if 'tasks' in r:
-                return (r['rule'], r['tasks'], '?', '?', r['failed'], r['pending'], held)
-            return (r['rule'], '?', '?', '?', '?', '?', held)
+                return (r['rule'], r['tasks'], '?', '?', r['failed'], r['pending'], '?')
+            return (r['rule'], '?', '?', '?', '?', '?', '?')
+
+        def _note(r):
+            if not r['deferred']:
+                return ''
+            return (f'held by {", ".join(r["deferred_by"])}' if r['deferred_by']
+                    else 'matrix not ready')
 
         rows = [_row(r) for r in rule_rows]
         totals_row = (
@@ -840,34 +857,15 @@ class RemakeCLI:
                 for row, r in zip(rows, rule_rows)
             ]
             totals_row += (_format_bytes(totals['output_bytes']),)
-        widths = [
-            max(len(str(r[i])) for r in rows + [header, totals_row])
-            for i in range(len(header))
-        ]
+        def styled(style):
+            # Colour a count; '?' and words stay plain (zero is dimmed by
+            # render_table).
+            return lambda v: style if _is_count(v) and v != 0 else None
 
-        # Per-column styling (col_style, above) for the count columns: rule
-        # name, tasks count and sizes are left plain. A zero count is dimmed
-        # so non-zero cells stand out.
-
-        def render_row(row, *, emphasise=False):
-            cells = []
-            for i, (v, w) in enumerate(zip(row, widths)):
-                cell = f'{str(v):<{w}}'  # pad on raw text, colour after
-                style = col_style[i]
-                if style is not None and str(v) not in ('0', '?'):
-                    cell = paint(cell, *style)
-                elif style is not None and str(v) == '0':
-                    cell = paint(cell, 'dim')
-                if emphasise and i == 0:
-                    cell = paint(cell, 'bold')
-                cells.append(cell)
-            return '  '.join(cells)
-
-        # Header row stays uncoloured (it labels the colours below it).
-        print('  '.join(f'{str(v):<{w}}' for v, w in zip(header, widths)))
-        for row in rows:
-            print(render_row(row))
-        print(render_row(totals_row, emphasise=True))
+        styles = [None if st is None else styled(st) for st in col_style]
+        for line in render_table(header, rows, total=totals_row, paint=paint,
+                                 styles=styles, width=terminal_width()):
+            print(line)
         deferred_rows = [r for r in rule_rows if r['deferred']]
         if deferred_rows:
             known = [r for r in deferred_rows if 'tasks' in r]
@@ -875,12 +873,14 @@ class RemakeCLI:
             parts = []
             if known:
                 n = totals['deferred_tasks']
-                parts.append(f'{n} known task{"s" if n != 1 else ""} in {len(known)} '
-                             f'rule{"s" if len(known) != 1 else ""} held by an upstream rule')
+                parts.append(f'{n} task{"s" if n != 1 else ""} in {len(known)} '
+                             f'held rule{"s" if len(known) != 1 else ""}')
             if unknown:
-                parts.append(f'{unknown} rule{"s" if unknown != 1 else ""} '
-                             f'with tasks not known yet')
-            print(paint(f'not in TOTAL (deferred): {"; ".join(parts)}', 'dim'))
+                parts.append(f'{unknown} rule{"s" if unknown != 1 else ""} with tasks unknown')
+            print(paint(f'deferred, not in TOTAL: {"; ".join(parts)}', 'dim'))
+            name_w = max(len(r['rule']) for r in deferred_rows)
+            for r in deferred_rows:
+                print(paint(f'  {r["rule"]:<{name_w}}  {_note(r)}', 'dim'))
         if args.reasons:
             for r in rule_rows:
                 rsn = r.get('reasons')

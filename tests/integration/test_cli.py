@@ -1309,12 +1309,15 @@ rmk.rules_from_current_module()
     assert not cli('info', 'p.py')
     out = capsys.readouterr().out
     line = next(ln for ln in out.splitlines() if ln.startswith('static_down'))
-    assert line.split()[:6] == ['static_down', '3', '?', '?', '0', '3']
-    assert 'deferred (dyn)' in line
-    assert 'not in TOTAL (deferred): 3 known tasks in 1 rule held by an upstream rule; ' \
-        '3 rules with tasks not known yet' in out
+    assert line.split() == ['static_down', '3', '?', '?', '0', '3', '?']
     line = next(ln for ln in out.splitlines() if ln.startswith('dyn_down'))
-    assert line.split()[1:6] == ['?'] * 5 and 'deferred (dyn)' in line
+    assert line.split()[1:] == ['?'] * 6
+    # Why each is deferred, under the table (item 8: no column to truncate).
+    assert 'deferred, not in TOTAL: 3 tasks in 1 held rule; 3 rules with tasks unknown' in out
+    reasons = {ln.split()[0]: ' '.join(ln.split()[1:]) for ln in out.splitlines()
+               if ln.startswith('  ')}
+    assert reasons == {'dyn': 'matrix not ready', 'static_down': 'held by dyn',
+                       'dyn_down': 'held by dyn', 'plain_down': 'held by dyn'}
 
 
 def _write_remakefile(path, name, body='pass'):
