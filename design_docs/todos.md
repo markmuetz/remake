@@ -119,6 +119,16 @@ and rationale: [slurm_already_running.md](designs/slurm_already_running.md)).
   (`info` does show deferred rows). Minor UX gap found while closing the
   deferrable-rules check.
 
+- [ ] **A queued rule blocks submitting its other tasks** (mcs_sahel_models,
+  2026-11-26). `remake run -E slurm` skips a whole rule if any of its tasks
+  are queued (`slurm_executor.py`, "already queued, skipping"), so a second
+  batch of the same rule (other matrix entries, e.g. obs after models) can't
+  be submitted while the first runs. Fix: compare task keys with the queued
+  submission's job spec (`.remake/jobs/<rule>.<run_seq>.json` lists them)
+  and submit only the tasks not queued. Same data would let `_dependency`
+  use `aftercorr` instead of `afterok` on a queued rule (today `sub.tasks`
+  is None there); MM fine with `afterok` for now.
+
 ## UX
 
 - [x] **Missing external inputs: fail fast with a hint** (done 2026-11-21, 0.9.0) (scoped as

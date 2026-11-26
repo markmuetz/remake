@@ -17,6 +17,24 @@
 > [releases/v0.9.0.md](../releases/v0.9.0.md)) supersedes them where they
 > differ.*
 
+## Field request (mcs_sahel_models, 2026-11-26)
+
+Demand for the parked dependency half, from a real project on JASMIN: five
+remakefiles in sequence (tracking_inputs → simple_track_tracking +
+pyflextrkr_tracking → mcs_selection → results), each reading the previous
+stage's outputs by path. MM wants them kept as distinct remakefiles (not
+merged into one pipeline with `rules_from_modules`). Pain points:
+
+1. **Manual ordering**: each stage is submitted by hand once the previous
+   finishes; remake can't add `afterok` on another remakefile's jobs.
+2. **No cross-file staleness**: an upstream rerun or code change doesn't
+   reach downstream remakefiles unless an output's mtime/content does.
+
+Asked for: a way to declare or discover that B consumes A's outputs (a
+project-level list, or matching output paths); `remake run` submitting
+across files with SLURM dependencies; status and staleness across files.
+§Staleness is still the open question to settle before reviving.
+
 ## Motivation
 
 Projects split naturally into pipelines: e.g. a *download* remakefile,
