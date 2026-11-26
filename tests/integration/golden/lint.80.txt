@@ -1,0 +1,10 @@
+NEAR MISS           proc (2 tasks):
+  - input produced by nothing; nearest is gen's output
+  - wants:   …/wrapping/genn_1.txt
+                          ^
+  - nearest: …/wrapping/gen_1.txt
+MISSING DEPENDENCY  agg (2 tasks): reads proc's output but does not depend_on it
+  - input:   out/proc_1.txt
+
+external            agg: 2 inputs (1 file) produced by no rule
+  - e.g.:    raw/shared.txt

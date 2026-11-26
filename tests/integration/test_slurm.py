@@ -121,7 +121,9 @@ def specs_file(rule):
 
 
 def read_specs(rule):
-    return json.loads(specs_file(rule).read_text())
+    """Per-task specs of the rule's latest file, either format."""
+    from remake.executors.slurm_executor import load_job_specs
+    return load_job_specs(specs_file(rule))
 
 
 # --- generation (dry run: writes everything, submits nothing) ---
@@ -136,6 +138,32 @@ def test_dry_run_writes_job_specs(slurm_dir):
     assert specs[3]['kwargs'] == {'n': 3}
     assert len(specs[3]['task_key']) == 40
     assert not sbatch_calls(slurm_dir)
+
+
+def test_job_specs_state_the_submission_once(slurm_dir):
+    """0.11 item 4: format 2 has one header (rule, run_seq, env) and a
+    per-task list; nothing per-submission is repeated per task."""
+    cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')
+    data = json.loads(specs_file('gen').read_text())
+    assert data['v'] == 2 and data['rule'] == 'gen'
+    assert data['run_seq'] is not None and 'env' in data
+    assert len(data['tasks']) == 12
+    assert set(data['tasks'][0]) == {'task_key', 'kwargs', 'reason'}
+
+
+def test_array_task_reads_a_format_1_spec(slurm_dir):
+    """An array job queued by 0.9/0.10 (format 1: a list repeating every
+    field per task) still runs after an upgrade."""
+    cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')
+    path = specs_file('gen')
+    data = json.loads(path.read_text())
+    old = [{'v': 1, 'rule': data['rule'], 'run_seq': data['run_seq'],
+            'env': data['env'], **t} for t in data['tasks']]
+    path.write_text(json.dumps(old))
+    cli('run-array-task', 'pipeline.py', 'gen', '3')
+    key = old[3]['task_key']
+    sidecar = Path(f'.remake/tasks/results/gen/{key[:2]}/{key[2:]}.json')
+    assert json.loads(sidecar.read_text())['run_seq'] == old[3]['run_seq']
 
 
 def test_dry_run_writes_sbatch_scripts(slurm_dir):
@@ -185,8 +213,11 @@ def test_dry_run_writes_submit_sh_wiring(slurm_dir):
         '.remake/slurm/agg.sbatch)' in submit
     )
     # Sidecar writes: one array-form sidecar per rule.
-    assert '> .remake/jobs/gen.jobids.json' in submit
-    assert '> .remake/jobs/agg.jobids.json' in submit
+    # Each record written to a temp file and renamed (0.11): one per
+    # submission, plus the latest-submission pointer.
+    assert 'mv .remake/jobs/gen.1.jobids.tmp .remake/jobs/gen.jobids.json' in submit
+    assert 'mv .remake/jobs/agg.1.jobids.tmp .remake/jobs/agg.jobids.json' in submit
+    assert '.remake/jobs/gen.1.jobids.json' in submit
     assert 'slurm_array_job_id' in submit and 'slurm_job_ids' not in submit
     assert 'continuation' not in submit  # no dynamic rules
 
@@ -206,8 +237,14 @@ def test_submission_writes_jobid_sidecars(slurm_dir):
     gen_sidecar = json.loads(Path('.remake/jobs/gen.jobids.json').read_text())
     agg_sidecar = json.loads(Path('.remake/jobs/agg.jobids.json').read_text())
     run_seq = read_specs('gen')[0]['run_seq']
-    assert gen_sidecar == {'slurm_array_job_id': '1001', 'run_seq': run_seq}
-    assert agg_sidecar == {'slurm_array_job_id': '1003', 'run_seq': run_seq}
+    assert gen_sidecar.pop('submitted') > 1_700_000_000  # epoch seconds
+    assert gen_sidecar == {'v': 1, 'slurm_array_job_id': '1001', 'run_seq': run_seq}
+    assert agg_sidecar['slurm_array_job_id'] == '1003' and agg_sidecar['run_seq'] == run_seq
+    # The per-submission record has the same content and survives the
+    # next submission (0.11, reconcile reads it).
+    record = Path(f'.remake/jobs/gen.{run_seq}.jobids.json')
+    assert json.loads(record.read_text())['slurm_array_job_id'] == '1001'
+    assert not list(Path('.remake/jobs').glob('*.tmp'))
     assert specs_file('gen').name == f'gen.{run_seq}.json'
 
 
@@ -564,9 +601,18 @@ def test_slurm_status_reports_queue_state(slurm_dir, capsys):
     capsys.readouterr()
     cli('slurm-status', 'pipeline.py')
     out = capsys.readouterr().out
-    assert 'PD:1 R:1' in out and '[Dependency]' in out  # gen, job 1001
-    assert 'not in queue' in out  # proc, job 1002, no squeue rows
-    assert 'DependencyNeverSatisfied' in out  # agg, job 1003
+    # A table (soak finding 5): one column per state, the reason last.
+    lines = {ln.split()[0]: ln for ln in out.splitlines()}
+    assert lines['rule'].split() == ['rule', 'job', 'submitted', 'tasks', 'PD', 'R',
+                                     'done', 'failed', 'lost', 'reason']
+    gen = lines['gen'].split()
+    # rule, job, submitted (date time), tasks, PD, R, done, failed, reason
+    assert gen[1] == '1001' and gen[4:9] == ['12', '1', '1', '0', '0']
+    assert gen[-1] == 'Dependency'
+    assert lines['proc'].endswith('not queued')  # job 1002, no squeue rows
+    assert lines['agg'].endswith('DependencyNeverSatisfied')  # job 1003
+    assert lines['TOTAL'].split()[1:3] == [str(sum(int(lines[r].split()[4])
+                                                   for r in ('gen', 'proc', 'agg'))), '2']
 
     cli('slurm-status', 'pipeline.py', '--json')
     payload = json.loads(capsys.readouterr().out)
@@ -574,6 +620,22 @@ def test_slurm_status_reports_queue_state(slurm_dir, capsys):
     by_rule = {row['rule']: row for row in payload['submissions']}
     assert by_rule['gen']['jobid'] == '1001' and by_rule['gen']['states'] == {'PD': 1, 'R': 1}
     assert by_rule['agg']['reasons'] == ['DependencyNeverSatisfied']
+    assert by_rule['gen']['tasks'] == 12 and by_rule['gen']['succeeded'] == 0
+
+
+def test_slurm_status_counts_only_this_submissions_results(slurm_dir, capsys):
+    # Review 2026-11-23: a task that succeeded in an earlier run and is
+    # resubmitted is pending, not done, until this submission records it.
+    cli('run', 'pipeline.py')  # everything succeeds locally (run 1)
+    cli('run', 'pipeline.py', '-E', 'slurm', '-f', '-Q', "rule == 'gen'")
+    (slurm_dir / 'shim/squeue.out').write_text(
+        ''.join(f'1001_{i} PD Priority\n' for i in range(12)))
+    capsys.readouterr()
+    cli('slurm-status', 'pipeline.py', '--json')
+    gen = {r['rule']: r for r in json.loads(capsys.readouterr().out)['submissions']}['gen']
+    assert gen['tasks'] == 12 and gen['states'] == {'PD': 12}
+    assert gen['succeeded'] == 0 and gen['failed'] == 0
+    assert len(gen['submitted']) == 19  # YYYY-MM-DD HH:MM:SS
 
 
 def test_task_info_shows_slurm_submission(slurm_dir, capsys):
@@ -648,7 +710,7 @@ def test_run_array_task_rejects_key_mismatch(slurm_dir, capsys):
     cli('run', 'pipeline.py', '-E', 'slurm', '--dry-run')
     path = specs_file('gen')
     specs = json.loads(path.read_text())
-    specs[3]['kwargs'] = {'n': 99}  # no longer matches task_key
+    specs['tasks'][3]['kwargs'] = {'n': 99}  # no longer matches task_key
     path.write_text(json.dumps(specs))
 
     assert cli('run-array-task', 'pipeline.py', 'gen', '3', '--specs', str(path)) == 2
@@ -817,10 +879,13 @@ def test_info_failed_falls_back_to_slurm_err(slurm_dir):
     from remake.remake_cmd import _failed_line
 
     cli('run', 'pipeline.py', '-E', 'slurm')
-    specs = json.loads(specs_file('gen').read_text())
+    specs = read_specs('gen')
     key = specs[3]['task_key']
-    (Path('.remake/slurm/output/gen') / '3.err').write_text(
+    jobid = json.loads(Path('.remake/jobs/gen.jobids.json').read_text())['slurm_array_job_id']
+    (Path('.remake/slurm/output/gen') / f'{jobid}_3.err').write_text(
         'Traceback (most recent call last):\n  ...\nImportError: no module x\n\n')
+    # A stale pre-0.11 name for index 0 is another submission's: ignored.
+    (Path('.remake/slurm/output/gen') / '0.err').write_text('OldError: not this task\n')
     line = _failed_line({'rule': 'gen', 'key': key, 'exception': '', 'log': 'LOG'})
     assert line['error'] == 'ImportError: no module x'
     assert line['log'] == 'LOG'
@@ -859,7 +924,7 @@ rmk.rules_from_current_module()
     data = json.loads(capsys.readouterr().out)
     assert data['rules'][0]['output_bytes'] == 6
     cli('task-info', 'dirs.py', '-Q', 'rule == "tiles" and n == 2')
-    assert 'size:     d: 2 file(s), 6B' in capsys.readouterr().out
+    assert 'size:\n  - d: 2 files, 6B' in capsys.readouterr().out
 
 
 def test_history_runs_counts_a_submission_as_its_tasks_are_ingested(slurm_dir, capsys):

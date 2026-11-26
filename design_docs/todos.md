@@ -98,12 +98,12 @@ All items shipped; archived verbatim in
   into a `_task_rerun(task, rec, ...) -> (rerun, reason)` helper so `plan` reads
   as orchestration. Behaviour-preserving readability refactor; well covered by
   the planner tests.
-- [ ] No Hypothesis property tests despite the design doc promising them
+- [x] No Hypothesis property tests despite the design doc promising them
   (task key uniqueness/stability, matrix normalisation).
 - [ ] `ZarrStore.is_complete()` checks `.zmetadata` (zarr v2); zarr v3
   consolidated metadata lives in `zarr.json`. Handle both when xarray/zarr
   versions move.
-- [ ] **Per-task log total-file-count budget** — the sharded
+- [x] (0.11: one file per task, stale ones pruned by `history --prune`) **Per-task log total-file-count budget** — the sharded
   `.remake/tasks/log/` tree grows one file per task with no cap; see the
   open question in design_docs/designs/per_task_logging.md.
 
@@ -118,6 +118,16 @@ and rationale: [slurm_already_running.md](designs/slurm_already_running.md)).
   deferrable rule's tasks — it reports only the upstream's own reasons
   (`info` does show deferred rows). Minor UX gap found while closing the
   deferrable-rules check.
+
+- [ ] **A queued rule blocks submitting its other tasks** (mcs_sahel_models,
+  2026-11-26). `remake run -E slurm` skips a whole rule if any of its tasks
+  are queued (`slurm_executor.py`, "already queued, skipping"), so a second
+  batch of the same rule (other matrix entries, e.g. obs after models) can't
+  be submitted while the first runs. Fix: compare task keys with the queued
+  submission's job spec (`.remake/jobs/<rule>.<run_seq>.json` lists them)
+  and submit only the tasks not queued. Same data would let `_dependency`
+  use `aftercorr` instead of `afterok` on a queued rule (today `sub.tasks`
+  is None there); MM fine with `afterok` for now.
 
 ## UX
 

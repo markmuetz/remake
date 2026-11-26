@@ -1,4 +1,5 @@
 """Path-derived task-to-task dependencies (review 2026-09-24 H3, Appendix A)."""
+import os
 from pathlib import Path
 
 import pytest
@@ -91,6 +92,35 @@ def test_template_classification(tmp_path):
     # Resolution agrees with the template shortcut.
     assert ups(a, callable_inputs, n=2) == {tid(n=2)}
     assert ups(a, ordering, n=2) is ALL
+
+
+@pytest.mark.parametrize('spelling', ['dotted', 'relative', 'symlinked'])
+def test_other_spellings_still_match_their_producer(tmp_path, monkeypatch, spelling):
+    """0.11 item 3: an input that spells its producer's output differently
+    (`./` segments, relative vs absolute, through a symlinked directory)
+    links to that one upstream task, not to every task of the rule."""
+    data = tmp_path / 'data'
+    data.mkdir()
+    (tmp_path / 'link').symlink_to(data)
+    monkeypatch.chdir(tmp_path)
+
+    @rule(outputs={'o': str(data / 'a_{year}.txt')}, matrix={'year': YEARS})
+    def a(outputs, year):
+        pass
+
+    def spelt(year):
+        name = f'a_{year - 1}.txt'
+        return {'dotted': str(tmp_path / '.' / 'data' / '.' / name),
+                'relative': os.path.join('data', name),
+                'symlinked': str(tmp_path / 'link' / name)}[spelling]
+
+    @rule(inputs=lambda year: {'prev': spelt(year)},
+          outputs={'o': str(tmp_path / 'b_{year}.txt')},
+          matrix={'year': YEARS[1:]}, depends_on=[a])
+    def b(inputs, outputs, year):
+        pass
+
+    assert ups(a, b, year=2002) == {tid(year=2001)}
 
 
 def test_template_missing_a_key_is_not_elementwise(tmp_path):

@@ -5,8 +5,11 @@ Writes per-rule JSON job specs, per-rule sbatch scripts and a master
 design_docs/design.md (SLURM executor) for the full behaviour.
 
 File layout (all relative to the working directory, like the metadata DB):
-    .remake/jobs/<rule>.<run_seq>.json  array of {task_key, rule, kwargs,
-                                     run_seq}; SLURM array index = position.
+    .remake/jobs/<rule>.<run_seq>.json  {v: 2, rule, run_seq, env, tasks:
+                                     [{task_key, kwargs, reason}]}; SLURM
+                                     array index = position in tasks (format
+                                     1, 0.9-0.10: a list of per-task dicts;
+                                     load_job_specs reads both).
                                      Immutable: written once per submission,
                                      never rewritten — the sbatch script pins
                                      this exact path (--specs), so replans and
@@ -15,13 +18,20 @@ File layout (all relative to the working directory, like the metadata DB):
                                      indices a queued array reads. Pruned
                                      after a week (each rule's last-submitted
                                      spec is kept at any age).
-    .remake/jobs/<rule>.jobids.json  sidecar written at submission; records
-                                     the job id(s) and the submission's
-                                     run_seq (pinning jobids to their spec
-                                     file)
+    .remake/jobs/<rule>.<run_seq>.jobids.json
+                                     written at submission (0.11): the
+                                     job id, run_seq and submit time of
+                                     that one submission; never
+                                     overwritten by a later submission, so
+                                     reconcile can still read it
+    .remake/jobs/<rule>.jobids.json  the rule's latest submission (same
+                                     content; a pointer, overwritten by
+                                     each submission). Pre-0.11: the only
+                                     record, without "submitted".
     .remake/slurm/<rule>.sbatch      per-rule script (safe to rewrite: SLURM
                                      copies it at submission)
-    .remake/slurm/output/<rule>/     job stdout/stderr
+    .remake/slurm/output/<rule>/     job stdout/stderr, <jobid>_<index>.out/.err
+                                     (0.11; <index>.out/.err before)
     .remake/submit.sh                master script; `remake resubmit`
                                      re-executes it without replanning
 
@@ -60,8 +70,8 @@ DEFAULT_SLURM_CONFIG = {
 ARRAY_SBATCH_TPL = """#!/bin/bash
 #SBATCH --job-name={rule_name}
 #SBATCH --array=0-{max_index}{array_throttle}
-#SBATCH -o {output_dir}/%a.out
-#SBATCH -e {output_dir}/%a.err
+#SBATCH -o {output_dir}/%A_%a.out
+#SBATCH -e {output_dir}/%A_%a.err
 #SBATCH --kill-on-invalid-dep=yes
 {opts}
 echo "SLURM RUNNING {rule_name} $SLURM_ARRAY_TASK_ID"
@@ -105,7 +115,7 @@ SQUEUE_TIMEOUT = 60
 INACTIVE_STATES = frozenset(('BF', 'CA', 'CD', 'DL', 'F', 'NF', 'OOM', 'TO'))
 
 
-def squeue_snapshot():
+def squeue_snapshot(timeout=None):
     """{base_jobid: [(element_id, state, reason)]} for this user's queued/
     running jobs, one squeue call. {} means squeue ran and the queue is
     empty; raises SqueueError when squeue is missing, fails or hangs —
@@ -113,13 +123,14 @@ def squeue_snapshot():
     try:
         result = sp.run(
             ['squeue', '-h', '-r', '-u', getpass.getuser(), '-o', '%i %t %r'],
-            capture_output=True, text=True, check=True, timeout=SQUEUE_TIMEOUT,
+            capture_output=True, text=True, check=True, timeout=timeout or SQUEUE_TIMEOUT,
         )
     except FileNotFoundError as e:
         raise SqueueError('squeue not found: cannot check the job queue') from e
     except sp.TimeoutExpired as e:
         raise SqueueError(
-            f'squeue gave no response within {SQUEUE_TIMEOUT}s: queue state unknown'
+            f'squeue gave no response within {timeout or SQUEUE_TIMEOUT}s: '
+            'queue state unknown'
         ) from e
     except sp.CalledProcessError as e:
         detail = (e.stderr or '').strip() or f'exit {e.returncode}'
@@ -191,6 +202,64 @@ def _read_sidecar(sidecar):
         return None
 
 
+def pointer_path(rule_name):
+    """The rule's latest-submission jobids file."""
+    return jobs_dir() / f'{rule_name}.jobids.json'
+
+
+def submission_path(rule_name, run_seq):
+    """The jobids file of one submission (0.11): never overwritten by a
+    later submission of the rule."""
+    return jobs_dir() / f'{rule_name}.{run_seq}.jobids.json'
+
+
+def _split_jobids_name(path):
+    """(rule, run_seq) of a jobids file: run_seq None for a pointer file.
+    Rule names are identifiers (no dots), so the forms can't be confused."""
+    stem = path.name.removesuffix('.jobids.json')
+    rule, _, seq = stem.partition('.')
+    if not seq:
+        return rule, None
+    return (rule, int(seq)) if seq.isdigit() else (None, None)
+
+
+def pointer_files():
+    """{rule: path} of every latest-submission jobids file."""
+    if not jobs_dir().exists():
+        return {}
+    out = {}
+    for path in jobs_dir().glob('*.jobids.json'):
+        rule, seq = _split_jobids_name(path)
+        if rule and seq is None:
+            out[rule] = path
+    return out
+
+
+def submission_files():
+    """{(rule, run_seq): path} of every per-submission jobids file."""
+    if not jobs_dir().exists():
+        return {}
+    out = {}
+    for path in jobs_dir().glob('*.*.jobids.json'):
+        rule, seq = _split_jobids_name(path)
+        if rule and seq is not None:
+            out[(rule, seq)] = path
+    return out
+
+
+def element_output(rule_name, jobid, index, ext, *, legacy=False):
+    """A SLURM element's stdout ('out') or stderr ('err') file:
+    `<jobid>_<index>` for 0.11 submissions; `<index>` alone (reused by every
+    submission) only when `legacy` (the submission's record has no "v", so
+    an older remake wrote it). Never falls back from one to the other: a
+    stale `<index>` file belongs to some earlier submission, maybe another
+    task."""
+    base = slurm_output_dir() / rule_name
+    if legacy or not jobid:
+        return base / f'{index}.{ext}'
+    return base / f'{jobid}_{index}.{ext}'
+
+
 SPEC_MAX_AGE_DAYS = 7
 
 
@@ -206,26 +275,46 @@ def prune_spec_files(max_age_days=SPEC_MAX_AGE_DAYS):
         return
     keep = set()
     skip_rules = set()
-    for sidecar in jobs_dir().glob('*.jobids.json'):
-        rule_name = sidecar.name.removesuffix('.jobids.json')
+    for rule_name, sidecar in pointer_files().items():
         recorded = _read_sidecar(sidecar)
         if recorded is None:
             # Can't tell which spec the submission pins: keep all of them.
             skip_rules.add(rule_name)
             continue
         keep.add(spec_path(rule_name, recorded.get('run_seq')))
+        keep.add(submission_path(rule_name, recorded.get('run_seq')))
     cutoff = time.time() - max_age_days * 86400
     npruned = 0
     for path in jobs_dir().glob('*.json'):
-        if path.name.endswith('.jobids.json') or path in keep:
+        # Per-submission jobids files go with their specs (same age rule);
+        # the latest-submission pointers are never pruned.
+        if path in keep or (path.name.endswith('.jobids.json')
+                            and _split_jobids_name(path)[1] is None):
             continue
         if path.name.split('.')[0] in skip_rules:
             continue
         if path.stat().st_mtime < cutoff:
             path.unlink()
             npruned += 1
+    # Job stdout/stderr of old submissions (0.11 names: <jobid>_<index>;
+    # the old <index> names are reused by every submission: left alone).
+    keep_jobs = {str(_read_sidecar(p).get('slurm_array_job_id'))
+                 for p in pointer_files().values() if _read_sidecar(p)}
+    out_dir = slurm_output_dir()
+    if out_dir.exists():
+        for path in out_dir.glob('*/*_*.*'):
+            jobid = path.name.split('_')[0]
+            if jobid.isdigit() and jobid not in keep_jobs and path.stat().st_mtime < cutoff:
+                path.unlink()
+                npruned += 1
+    # Temp files a killed submit.sh left behind.
+    for path in jobs_dir().glob('*.tmp'):
+        if path.stat().st_mtime < cutoff:
+            path.unlink()
+            npruned += 1
     if npruned:
-        logger.info(f'Pruned {npruned} job-spec file(s) older than {max_age_days} day(s)')
+        logger.info(f'Pruned {npruned} job-spec/record/output file(s) older than '
+                    f'{max_age_days} day(s)')
 
 
 def recorded_jobids(rule_name):
@@ -271,7 +360,10 @@ def check_resubmit_safe(submit_path):
         ) from e
 
     # One sidecar write per rule the script submits.
-    submitted_rules = re.findall(r'> \S*/([^/\s]+)\.jobids\.json', text)
+    # 0.11: `mv <tmp> .../<rule>.jobids.json`; before: `> .../<rule>.jobids.json`.
+    # A quoted path (a metadata dir with a space) ends in a quote.
+    submitted_rules = re.findall(r"^(?:mv .*|.*> .*)/([^/.\s']+)\.jobids\.json'?$", text,
+                                 re.MULTILINE)
     queued = {
         rule: ids for rule in submitted_rules
         if (ids := [j for j in recorded_jobids(rule) if j in active])
@@ -304,6 +396,23 @@ def check_resubmit_safe(submit_path):
         )
 
 
+SPEC_FORMAT = 2
+
+
+def load_job_specs(path):
+    """The per-task job specs in a `.remake/jobs/<rule>.<run_seq>.json` file,
+    in array-index order, each a dict with task_key, rule, kwargs, run_seq,
+    reason and env. Reads format 2 (0.11: one header for the submission,
+    a `tasks` list) and format 1 (0.9-0.10: a list repeating every field
+    per task; reason/env absent before 0.10), so array jobs queued by an
+    older remake still run after an upgrade."""
+    data = json.loads(Path(path).read_text())
+    if isinstance(data, list):
+        return data
+    header = {k: data.get(k) for k in ('rule', 'run_seq', 'env')}
+    return [{**header, **task} for task in data['tasks']]
+
+
 def last_submission(rule_name, task_key=None):
     """(jobids, array_index) from the last submission's sidecar/job spec,
     (None, None) if the rule was never submitted. `array_index` is the task's
@@ -317,7 +426,7 @@ def last_submission(rule_name, task_key=None):
     index = None
     specs_path = spec_path(rule_name, recorded.get('run_seq'))
     if task_key is not None and specs_path.exists():
-        specs = json.loads(specs_path.read_text())
+        specs = load_job_specs(specs_path)
         index = next((i for i, s in enumerate(specs) if s['task_key'] == task_key), None)
     return jobids, index
 
@@ -416,6 +525,8 @@ class SlurmExecutor(Executor):
     # --- generation ---
 
     def run_tasks(self, tasks, deferred_rules=()):
+        # After `run` has reconciled earlier submissions (it does so before
+        # planning): pruning first could remove the evidence reconcile reads.
         prune_spec_files()
         rule_tasks = {}  # rule -> [task], in plan (topological) order
         for task in tasks:
@@ -506,6 +617,13 @@ class SlurmExecutor(Executor):
         if self.dry_run:
             logger.info('Dry run: not submitting')
             return
+        # PENDING until their results arrive: a worker SLURM kills writes
+        # none, and must not leave an older success looking current. Before
+        # submitting, so no job runs unmarked; if sbatch then fails, the
+        # tasks stay pending, which they were planned to rerun anyway.
+        to_mark = [t for sub in submitted.values() if sub.tasks for t in sub.tasks]
+        if to_mark:
+            self.rmk.metadata.mark_submitted(to_mark, run_seq)
         self.submit()
 
     def _write_job_specs(self, rule, tasks, run_seq):
@@ -516,13 +634,14 @@ class SlurmExecutor(Executor):
         # against it and records its environment only if they differ (0.10
         # item 1). Computed once per process (cached).
         env = provenance.current_environment()[0]
-        specs = [
-            # v: the spec format version (bump when fields change meaning;
-            # readers ignore unknown fields). reason/env: 0.10, absent before.
-            {'v': 1, 'task_key': task.key, 'rule': rule.name, 'kwargs': task.kwargs,
-             'run_seq': run_seq, 'reason': task.rerun_reason, 'env': env}
-            for task in tasks
-        ]
+        # Format 2 (0.11 item 4): what one submission shares is stated once
+        # in the header; `tasks` is in array-index order. v: bump when a
+        # field changes meaning; readers ignore unknown fields.
+        specs = {
+            'v': SPEC_FORMAT, 'rule': rule.name, 'run_seq': run_seq, 'env': env,
+            'tasks': [{'task_key': task.key, 'kwargs': task.kwargs,
+                       'reason': task.rerun_reason} for task in tasks],
+        }
         path = spec_path(rule.name, run_seq)
         if path.exists():
             # Queued arrays pin this exact file (--specs): rewriting it is
@@ -572,12 +691,25 @@ class SlurmExecutor(Executor):
 
     def _submit_lines(self, rule, dependency, run_seq):
         sbatch_path = self.slurm_dir / f'{rule.name}.sbatch'
-        sidecar = self.jobs_dir / f'{rule.name}.jobids.json'
+        pointer = self.jobs_dir / f'{rule.name}.jobids.json'
+        record = self.jobs_dir / f'{rule.name}.{run_seq}.jobids.json'
+        # The run_seq in the temp name: SLURM runs take no lock, and two
+        # runs may submit the same rule at once.
+        tmp = self.jobs_dir / f'{rule.name}.{run_seq}.jobids.tmp'
         var = f'JOB_{rule.name}'
+        q = shlex.quote
+        # One record per submission (never overwritten: reconcile reads it
+        # after later submissions) and the latest-submission pointer, each
+        # written to a temp file and renamed (a killed script or full disk
+        # can't leave a truncated record).
         return [
-            f'{var}=$(sbatch --parsable {dependency}{shlex.quote(str(sbatch_path))})',
-            f'echo "{{\\"slurm_array_job_id\\": \\"${var}\\", '
-            f'\\"run_seq\\": {run_seq}}}" > {shlex.quote(str(sidecar))}',
+            f'{var}=$(sbatch --parsable {dependency}{q(str(sbatch_path))})',
+            # `id;cluster` on multi-cluster sites.
+            f'{var}=${{{var}%%;*}}',
+            f'echo "{{\\"v\\": 1, \\"slurm_array_job_id\\": \\"${var}\\", '
+            f'\\"run_seq\\": {run_seq}, \\"submitted\\": $(date +%s)}}" > {q(str(tmp))}',
+            f'cp {q(str(tmp))} {q(str(record))}.tmp && mv {q(str(record))}.tmp {q(str(record))}',
+            f'mv {q(str(tmp))} {q(str(pointer))}',
         ]
 
     def _write_continuation(self):

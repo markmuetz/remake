@@ -6,6 +6,149 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Breaking
+
+- **`-Q` queries use a restricted grammar.** The query is parsed and every
+  node checked against an allowlist before it is evaluated (with no
+  builtins). Allowed: names (matrix kwargs and `rule`), constants, lists and
+  tuples, comparisons (`== != < <= > >= in, not in, is, is not`), `and` /
+  `or` / `not`, and unary minus. Rejected with a `RemakeError` (exit 2):
+  function calls, so the builtins `len`, `range`, `str`, `any`, ... are gone;
+  arithmetic; attributes, subscripts, sets, dicts, comprehensions, lambdas
+  and f-strings. `-Q True` still selects every task.
+
+### Changed
+
+- **SLURM: submitted tasks are pending until their results arrive**
+  (0.11 item 9, soak finding 7). A task killed by SLURM (node failure,
+  time or memory limit) writes no result; it used to keep its older
+  success record, so a killed `run -f` or a killed rerun under
+  `check_outputs='always'` looked up to date, and a killed first run's
+  partial outputs could be adopted. Now it is rerun. While a submission is
+  in flight, `info` shows its tasks as pending; a task you `scancel` is
+  rerun by the next `remake run` (`set-state --success` if not wanted); a
+  failed task's traceback leaves `info --failed` once it is resubmitted;
+  `verify` no longer adopts outputs of a task submitted but never run.
+  In `why`, a pending task reads "no result yet (pending since ...)" if it
+  never ran, "rerun pending since ..., no result yet" if it did (was "last
+  run pending at ...").
+- **SLURM: what happened to a task.** `slurm-status` has a `lost` column
+  (in the last submission, not queued, no result). `why` and `task-info`
+  show the task's SLURM state: queued or running (`squeue`), or the end
+  state, node and elapsed time from `sacct` (`NODE_FAIL on host1234 after
+  13:40`). `--json` gains `lost` (slurm-status), `slurm` (why) and
+  `slurm.state` (task-info).
+- **SLURM records per submission.** `jobs/<rule>.<run_seq>.jobids.json` is
+  written for every submission (atomically, with the submit time), so a
+  later submission no longer erases an earlier one's record; job output
+  files are named `<jobid>_<index>.out/.err`, so `info --failed` never
+  shows another submission's error. Old names are still read for
+  submissions made by an older remake.
+- `rule-dag`, `dag` and `rule-info` no longer create the metadata DB in a
+  fresh checkout (as `lint` since earlier in 0.11): they read no metadata.
+- **Dependency matching between tasks uses canonical paths** (0.11 item 3).
+  An input that spells its producer's output differently (absolute vs
+  relative, `./`, a symlinked directory) now links to the one upstream task
+  that writes it, instead of to every task of the upstream rule. Pipelines
+  that relied on that fallback rerun fewer tasks; never fewer than needed.
+- Canonicalising paths looks up the working directory once per check
+  instead of once per path (`getcwd` costs ~60 µs on macOS): lint and the
+  missing-inputs check over 1e6 paths drop from ~100 s to ~2 s there.
+
+- **SLURM job specs are format 2** (`.remake/jobs/<rule>.<run_seq>.json`):
+  one header (`v`, `rule`, `run_seq`, `env`) and a `tasks` list of
+  `{task_key, kwargs, reason}`, instead of a list repeating every field per
+  task. Format 1 files are still read, so arrays queued by 0.9/0.10 run
+  after an upgrade; a 0.10 remake cannot read a format 2 file (don't
+  downgrade with jobs queued). Tools reading the files directly: use
+  `remake.executors.slurm_executor.load_job_specs`.
+- **`remake history --prune` also deletes stale per-task logs**: those of
+  tasks no longer in the pipeline (a changed matrix, a removed rule). Its
+  `--json` output gains `logs_deleted`. New `Remake.prune_task_logs()`.
+- compatibility.md lists which files under `.remake/` are the on-disk
+  contract and which are scratch.
+
+### Added
+
+- **`remake info` counts rules deferred only by an upstream rule** (soak
+  finding 2, 2026-11-23). A rule with a static matrix that waits on a
+  deferred rule upstream now shows its task count, and failed and pending
+  from the DB, and lines under TOTAL count the deferred tasks and name the
+  rules holding each (`held by process_event`). Its
+  `--json` row gains `tasks`, `succeeded`, `failed` and `pending`; every
+  deferred row gains `deferred_by` (`[]` when its own matrix is the cause),
+  and `totals` gains `deferred_tasks`. A rule whose matrix is callable
+  still shows `?`.
+- **`remake lint` checks inputs against deferred rules' output templates**
+  (soak finding 3). An input that a deferred rule would produce was reported
+  as a near miss of an unrelated file, or as external, hiding a missing
+  `depends_on`. It now matches the deferred rule's output templates, so the
+  missing dependency is reported. A callable outputs spec is called with a
+  placeholder for each parameter it names to get its templates. A deferred
+  rule whose outputs still can't be read is named once under the findings,
+  and on `near_miss` and `external` rows in `--json` (`unchecked`).
+  A rule that waits on a deferred rule is now checked too (it was skipped),
+  and a rule whose inputs can't be resolved yet is skipped with a warning
+  instead of crashing lint.
+- `remake lint` no longer creates `.remake/remake.db` in a fresh checkout: it
+  reads no metadata, so it doesn't open the database.
+- **Readable output across the CLI** (0.11 item 8). One table renderer for
+  `info`, `slurm-status` and `history`: a header row, numbers right-aligned,
+  a TOTAL row, colour that never shifts alignment, empty columns left out,
+  and output fitted to the terminal (`$COLUMNS`) by shortening names and paths
+  with `…` instead of wrapping. `slurm-status` is a table (soak finding 5):
+  job, submitted, tasks, `PD`, `R`, done and failed (from the DB), and the
+  reason or "not queued"; its `--json` gains `submitted`, `tasks`,
+  `succeeded` and `failed`. `info` lists why each deferred rule is deferred
+  under the table (`matrix not ready` / `held by <rule>`, the same words as
+  `run -n`) and heads its `--reasons` tally. `lint` findings are stacked, with
+  paths relative to the project and counts of distinct files (`--json` rows
+  gain `distinct`). `task-info` and `info --failed` fit long paths to the
+  terminal. `why` and `set-state` gain `--json`. A follow-on line that
+  belongs to the line above starts with `- ` (nested where it is nested),
+  and blank lines separate sections. `run -n` lists deferred rules as
+  `info` does. `info --failed` in a terminal drops the (cut) log path for
+  a `remake task-log` footer; piped lines keep it. `task-info` lists the
+  size of each output, including those with no recorded size ("not
+  measured"), and says "no log file" rather than "no log yet". `verify`
+  says when all is well, with the number of tasks checked. `--colour` is also accepted
+  after the subcommand. Golden tests pin every command's text output at 80
+  and 120 columns, check no line overflows, and check colour only adds
+  escape codes.
+- **`remake lint` shows where a near miss differs** (soak finding 4): the two
+  paths stacked and aligned, the shared prefix collapsed to `…`, the
+  difference coloured, or marked with `^` without colour. Compared by
+  directory, so an extra directory doesn't misalign the rest.
+
+### Fixed
+
+- **Editing a remakefile while its tasks run no longer records the wrong
+  rule source.** The source was read when a task's result was recorded, at
+  the line numbers from import time, so an edit that shifted lines made a
+  finished task record a neighbouring function's code and rerun on the next
+  plan. The loader now pins the imported text of the remakefile.
+
+- **`uses` values that refer back to themselves no longer hang the hash**
+  (soak finding, 2026-11-23). An object holding several bound methods of
+  itself, such as `scipy.stats.chi2`, was rendered in time exponential in
+  the depth limit, so loading the remakefile never finished (`remake info`
+  ran >12 min at 10 GB). An object met again inside its own rendering now
+  renders as `<cycle T>`. Rules whose `uses` hold such a self-referencing
+  object get a new hash and rerun once after upgrading from 0.9/0.10;
+  other `uses` values hash as before. Such an object (a library instance
+  whose repr has an address) is still hashed by its whole `__dict__`, so
+  upgrading the library that defines it (scipy, here) may rerun the rule.
+
+### Deprecated
+
+- `Dir.claim()` now warns (`DeprecationWarning`); use `Dir.adopt()`. Removed
+  at 1.0, with `Remake.status_summary()`, `Remake.task_spec()` and the
+  built-in JASMIN SLURM defaults used when no profile is selected (see
+  design_docs/releases/v0.11.0.md item 7).
+- `remake resubmit` now warns; removed in 1.0. Use `remake run -E slurm`,
+  which replans and skips queued rules. A resubmission doesn't mark tasks
+  pending, so a task killed in it keeps its first attempt's result.
+
 ## [0.10.0] — 2026-11-22
 
 Provenance and run history, `remake verify`, list-valued inputs and

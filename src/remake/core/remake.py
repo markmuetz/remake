@@ -75,6 +75,115 @@ def _resource_fields(resources):
     return fields
 
 
+def _output_patterns(rule, cwd):
+    """Regexes for the canonical paths a rule's outputs can take, for lint
+    to match inputs against while the rule's matrix is deferred. Each output
+    template with each `{field}` as one path component's text, its fixed
+    leading directory canonicalised as lint's paths are. A callable outputs
+    spec is called with a placeholder for each parameter it names (soak
+    recheck, 2026-11-23: callable outputs are the norm in field pipelines).
+    None when the outputs can't be read this way (the call raises, or a
+    token has no path)."""
+    import inspect
+    import re
+    import string
+
+    from .tokens import PathToken
+
+    spec = rule.outputs
+    templates = []  # each a list of (literal text, is_field)
+    if callable(spec) and not isinstance(spec, dict):
+        try:
+            params = [p for p in inspect.signature(spec).parameters.values()
+                      if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)]
+            marks = {p.name: f'@@remake-{p.name}@@' for p in params}
+            values = spec(**marks)
+        except Exception:
+            return None
+        if not isinstance(values, dict) or not marks:
+            return None
+        splitter = re.compile('(' + '|'.join(map(re.escape, marks.values())) + ')')
+        field_marks = set(marks.values())
+
+        def parts(text):
+            return [(piece, piece in field_marks)
+                    for piece in splitter.split(text) if piece]
+    elif isinstance(spec, dict):
+        values = spec
+
+        def parts(text):
+            out = []
+            for lit, field, _, _ in string.Formatter().parse(text):
+                if lit:
+                    out.append((lit, False))
+                if field is not None:
+                    out.append(('', True))
+            return out
+    else:
+        return None
+    for value in values.values():
+        for item in (value if isinstance(value, (list, tuple)) else [value]):
+            if isinstance(item, PathToken):
+                if item.remote:
+                    continue
+                text = item.path
+            elif isinstance(item, (str, os.PathLike)):
+                text = os.fspath(item)
+            else:
+                return None  # a token we can't read a path from
+            if is_remote(text):
+                continue
+            try:
+                templates.append(parts(str(text)))
+            except ValueError:  # a malformed format string
+                return None
+    patterns = []
+    for tpl in templates:
+        # The fixed leading directory (literal text up to the last '/' before
+        # the first field), canonicalised; the rest matched as written.
+        head_lit = ''
+        for text, is_field in tpl:
+            if is_field:
+                break
+            head_lit += text
+        fixed_dir, slash, _ = head_lit.rpartition('/')
+        if slash:
+            consumed = len(fixed_dir) + 1
+            anchor = fixed_dir or '/'
+        else:
+            consumed, anchor = 0, '.'
+        head = os.path.dirname(canonical_path(os.path.join(anchor, '_'), cwd))
+        regex, pos = '', 0
+        for text, is_field in tpl:
+            if is_field:
+                if pos >= consumed:
+                    regex += '[^/]+'
+                continue
+            start = max(consumed - pos, 0)
+            regex += re.escape(text[start:])
+            pos += len(text)
+        patterns.append(re.compile(re.escape(head.rstrip('/') + '/') + regex))
+    return patterns
+
+
+def deferred_roots(dag, deferred):
+    """{rule: sorted names of the rules holding it} for each deferred rule:
+    [] when its own matrix is the cause, else the root deferred rules
+    upstream (plan() never tries a rule's matrix while a dependency is
+    deferred, so those are what hold it). Shared by info and run -n."""
+    import networkx as nx
+
+    deferred = set(deferred)
+    roots = {}
+    for rule in nx.topological_sort(dag):
+        if rule not in deferred:
+            continue
+        dep_roots = set().union(*(roots[d] or {d.name} for d in rule.depends_on
+                                  if d in roots))
+        roots[rule] = dep_roots
+    return {rule: sorted(r) for rule, r in roots.items()}
+
+
 def _blocked_reason(rule):
     """Why a rule is still deferred when a local run has nothing left to
     try: its matrix's Defer paths if it still can't expand, else (it would
@@ -701,8 +810,19 @@ class Remake:
         Returns {'rules': [...], 'totals': {...}} plus 'tasks' (when
         list_tasks) and 'failures' (when list_failures). Rendering, failure
         grouping and JSON serialisation are the caller's job; this method only
-        gathers. Rules are in dependency (topological) order; deferred rules
-        appear as {'rule', 'deferred': True} with no counts.
+        gathers. Rules are in dependency (topological) order.
+
+        A deferred rule's row is {'rule', 'deferred': True, 'deferred_by'}.
+        'deferred_by' is [] when its own matrix is the cause (it raised Defer,
+        or it is deferrable and an upstream reruns); otherwise it names the
+        rules upstream whose own matrices hold it (the planner never tries
+        this rule's matrix). A rule held by upstream rules whose matrix is
+        static (a dict, list or None, not a callable) has known tasks, so its
+        row adds 'tasks' and the DB's view of them, 'succeeded', 'failed' and
+        'pending' (up to date vs stale needs the plan, which can't run it
+        yet). Deferred rules are left out of the totals, which partition the
+        planned rules; 'deferred_tasks' in the totals counts their known
+        tasks (soak finding 2, 2026-11-23).
 
         Counts are a four-state partition of each rule's tasks —
         up_to_date + stale + failed + pending == tasks — where a *stale* task
@@ -747,10 +867,20 @@ class Remake:
                     bucket[r.category] += 1
 
         rule_rows, task_rows, failures = [], [], []
+        # A deferred rule's root causes: the deferred rules upstream of it
+        # (or itself) whose own matrix held them, as rule names. plan() defers
+        # a rule with a deferred dependency without trying its matrix, so
+        # such a rule takes its dependencies' roots.
+        held_by = deferred_roots(self.dag, deferred)
         for rule in nx.topological_sort(self.dag):
-            if rule.name in deferred_names:
-                rule_rows.append({'rule': rule.name, 'deferred': True})
-                continue
+            if rule in held_by:
+                # Only a static matrix can be expanded now: a callable one
+                # (deferrable or not) may read upstream outputs that don't
+                # exist yet, or exist but are about to be rewritten.
+                if not held_by[rule] or callable(rule.matrix):
+                    rule_rows.append({'rule': rule.name, 'deferred': True,
+                                      'deferred_by': held_by[rule]})
+                    continue
             tasks = expand_rule(rule, predicate)
             records = cache.get_tasks_status(tasks)
             statuses = {
@@ -759,6 +889,20 @@ class Remake:
                 else 'pending'
                 for t in tasks
             }
+            if rule in held_by:
+                by_status = Counter(statuses.values())
+                rule_rows.append({
+                    'rule': rule.name,
+                    'deferred': True,
+                    'deferred_by': held_by[rule],
+                    'tasks': len(tasks),
+                    'succeeded': by_status['success'],
+                    'failed': by_status['failed'],
+                    'pending': len(tasks) - by_status['success'] - by_status['failed'],
+                })
+                self._info_task_rows(rule, tasks, records, statuses, list_tasks,
+                                     list_failures, task_rows, failures)
+                continue
             # Status (DB history) crossed with the plan: a success the plan
             # reruns is stale, not up to date; a pending task the plan skips
             # (adopted outputs) is up to date, not pending.
@@ -778,23 +922,8 @@ class Remake:
             if reasons:
                 row['reasons'] = dict(reasons_by_rule.get(rule.name, {}))
             rule_rows.append(row)
-            if list_tasks:
-                task_rows.extend(
-                    {'task': str(t), 'key': t.key, 'status': statuses[t.key]} for t in tasks
-                )
-            if list_failures:
-                failures.extend(
-                    {
-                        'task': str(t),
-                        'key': t.key,
-                        'rule': rule.name,
-                        'timestamp': records[t.key].timestamp,
-                        'exception': records[t.key].exception,
-                        'log': str(task_log_path(t)),
-                    }
-                    for t in tasks
-                    if t.key in records and records[t.key].status == TASK_STATUS_FAILED
-                )
+            self._info_task_rows(rule, tasks, records, statuses, list_tasks,
+                                 list_failures, task_rows, failures)
 
         # Bytes of recorded outputs per rule: one aggregate query.
         output_bytes = self.metadata.get_rule_output_bytes([r.name for r in self.rules])
@@ -809,6 +938,8 @@ class Remake:
             for field in ('tasks', 'up_to_date', 'stale', 'failed', 'pending', 'to_run',
                           'output_bytes')
         }
+        totals['deferred_tasks'] = sum(r.get('tasks', 0) for r in rule_rows
+                                       if r['deferred'])
         out = {'rules': rule_rows, 'totals': totals}
         if list_tasks:
             out['tasks'] = task_rows
@@ -816,12 +947,36 @@ class Remake:
             out['failures'] = failures
         return out
 
+    @staticmethod
+    def _info_task_rows(rule, tasks, records, statuses, list_tasks, list_failures,
+                        task_rows, failures):
+        if list_tasks:
+            task_rows.extend(
+                {'task': str(t), 'key': t.key, 'status': statuses[t.key]} for t in tasks
+            )
+        if list_failures:
+            failures.extend(
+                {
+                    'task': str(t),
+                    'key': t.key,
+                    'rule': rule.name,
+                    'timestamp': records[t.key].timestamp,
+                    'exception': records[t.key].exception,
+                    'log': str(task_log_path(t)),
+                }
+                for t in tasks
+                if t.key in records and records[t.key].status == TASK_STATUS_FAILED
+            )
+
     @anchored
     def task_info(self, task):
         """Detail view of one task as a dict — the data behind `remake
         task-info`: status/timestamp/exception, kwargs, key, input and output
         paths (with exists/complete flags), the per-task log path, and the last
-        SLURM submission's job ids + array index."""
+        SLURM submission's job ids + array index. For a task without a
+        success in a SLURM submission, `slurm.state` is what SLURM says now:
+        this calls squeue and maybe sacct (short timeouts)."""
+        from ..executors.slurm_accounting import tasks_slurm_state
         from ..executors.slurm_executor import last_submission
 
         if not self._finalized:
@@ -869,7 +1024,14 @@ class Remake:
             # successful run; '*' sums the plain file outputs.
             'output_stats': self.metadata.get_output_stats(task),
             'log': {'path': str(log_path), 'exists': log_path.exists()},
-            'slurm': {'jobids': jobids, 'array_index': array_index},
+            'slurm': {'jobids': jobids, 'array_index': array_index,
+                      # What SLURM says now, for a task without a success
+                      # (display only; squeue, then sacct).
+                      'state': (tasks_slurm_state([(task.rule.name, task.key,
+                                                    record.run_seq if record else None)])
+                                .get(task.key)
+                                if jobids and not (record and record.status
+                                                   == TASK_STATUS_SUCCESS) else None)},
             # 0.10 items 1/3: the last execution's history row and the
             # provenance of the run that recorded it.
             'last_execution': self._last_execution(task, record),
@@ -1086,22 +1248,42 @@ class Remake:
         inside a rule's `Dir` counts as produced by that rule; 'dir_nested'
         (a Dir inside another rule's Dir) and 'file_in_dir' (a plain output
         inside another rule's Dir) are wiring errors too. Two tasks declaring
-        one Dir raise RemakeError. Materialises all tasks; rules with an unresolved (deferred) matrix are
-        skipped with a warning."""
+        one Dir raise RemakeError. Materialises all tasks; rules with an
+        unresolved (deferred) matrix are skipped with a warning, as is a rule
+        whose tasks raise while expanding (e.g. an inputs callable reading an
+        output a deferred rule hasn't written yet).
+
+        A deferred rule's outputs are unknown, but their templates are not:
+        an input that matches one (each `{field}` any text within one path
+        component) counts as
+        produced by that rule, so reading it without depends_on is a
+        missing_dependency, not a near miss or external (soak finding 3,
+        2026-11-23). When a deferred rule's outputs have no template (a
+        callable spec), 'near_miss' and 'external' rows carry 'unchecked':
+        the names of those rules, which might produce the input."""
         import difflib
 
-        if not self._finalized:
-            self.finalize()
+        # Read-only and metadata-free: no finalize(), which would create the
+        # database in a fresh checkout (soak note 6). Config and scope checks
+        # still run (their warnings are wiring news too). The rule DAG is
+        # built here, as finalize() would: it resolves depends_on given as
+        # rule names (a string avoids a circular import) to Rule objects.
+        build_rule_dag(self.rules)
+        self.effective_config
+        self._check_scopes()
         self._check_duplicate_dirs()
 
         # Paths are matched by their canonical spelling (tokens.canonical:
-        # `./a`, `a` and `/abs/a` are one file) and shown as declared.
+        # `./a`, `a` and `/abs/a` are one file) and shown as declared. One
+        # getcwd for the whole check (anchored: fixed while it runs).
+        cwd = os.getcwd()
         producers = {}  # canonical output path -> set of rule names
         rule_outputs = {}  # rule name -> [output paths, as declared]
         dir_owner = {}  # canonical Dir path -> rule name
         file_outputs = {}  # canonical plain output path -> rule name
         shown = {}  # canonical path -> the path as declared
         deferred = set()
+        unresolved = set()  # rules whose tasks raised while expanding
         for rule in self.rules:
             paths = []
             try:
@@ -1111,28 +1293,53 @@ class Remake:
                             continue
                         paths.append(str(token))
                         if isinstance(token, Dir):
-                            for key in dir_keys(token.path):
+                            for key in dir_keys(token.path, cwd):
                                 dir_owner[key] = rule.name
                                 shown.setdefault(key, token.path)
                         elif hasattr(token, '__fspath__'):  # any local path-like token, as 0.9
-                            key = canonical_path(os.fspath(token))
+                            key = canonical_path(os.fspath(token), cwd)
                             file_outputs[key] = rule.name
                             shown.setdefault(key, os.fspath(token))
             except Defer:
                 deferred.add(rule.name)
                 logger.warning('{}: matrix not ready, outputs unknown — skipped', rule.name)
                 continue
+            except Exception as e:
+                # e.g. an inputs callable reading an upstream output that a
+                # deferred rule hasn't written yet: report, don't crash.
+                unresolved.add(rule.name)
+                logger.warning('{}: tasks not resolvable ({}: {}) — skipped',
+                               rule.name, type(e).__name__, e)
+                continue
             rule_outputs[rule.name] = paths
             for path in paths:
-                producers.setdefault(canonical(path), set()).add(rule.name)
+                producers.setdefault(canonical(path, cwd), set()).add(rule.name)
+
+        # Deferred rules: match inputs against their output templates instead.
+        deferred_templates = []  # (rule name, compiled pattern)
+        unchecked = set()  # deferred rules with no usable templates
+        for rule in self.rules:
+            if rule.name in deferred:
+                patterns = _output_patterns(rule, cwd)
+                if patterns is None:
+                    unchecked.add(rule.name)
+                else:
+                    deferred_templates += [(rule.name, pat) for pat in patterns]
+        unchecked = sorted(unchecked)
 
         findings = {}  # (kind, rule, other) -> {'count': n, 'example': ...}
 
+        distinct = {}  # (kind, rule, other) -> set of the paths behind count
+
         def record(kind, rule_name, other, example):
-            entry = findings.setdefault(
-                (kind, rule_name, other), {'count': 0, 'example': example}
-            )
+            key = (kind, rule_name, other)
+            entry = findings.setdefault(key, {'count': 0, 'example': example})
             entry['count'] += 1
+            distinct.setdefault(key, set()).add(
+                example if isinstance(example, str)
+                else example.get('input') or repr(sorted(example.items())))
+            if unchecked and kind in ('near_miss', 'external'):
+                entry['unchecked'] = unchecked
 
         def enclosing_dir(path, *, proper=False):
             """The nearest Dir output that contains `path` (or is it, unless
@@ -1161,23 +1368,35 @@ class Remake:
                        {'file': shown.get(path, path), 'inside': outer[0]})
 
         for rule in self.rules:
-            if rule.inputs is None or rule.name in deferred:
+            if rule.inputs is None or rule.name in deferred | unresolved:
                 continue
+            # A rule held only by a deferred upstream is checked too (its own
+            # tasks expanded above), as info counts it (soak recheck,
+            # 2026-11-23: fixing a depends_on made lint check less).
             dep_names = {dep.name for dep in rule.depends_on}
-            if dep_names & deferred:
-                logger.warning('{}: upstream matrix not ready — skipped', rule.name)
-                continue
             candidates = [p for name in dep_names for p in rule_outputs.get(name, [])]
-            for task in iter_expand_rule(rule):
-                for value in flat_values(task.inputs):
+            try:
+                # Resolve every input first: an inputs callable may read an
+                # output a deferred rule hasn't written yet (then skip the
+                # rule, with no half-recorded findings).
+                task_inputs = [flat_values(task.inputs) for task in iter_expand_rule(rule)]
+            except Exception as e:
+                logger.warning('{}: inputs not resolvable ({}: {}) — skipped',
+                               rule.name, type(e).__name__, e)
+                continue
+            for values in task_inputs:
+                for value in values:
                     if is_remote(value):
                         continue  # not a local file: nothing to match
                     path = str(value)
-                    key = canonical(value)
+                    key = canonical(value, cwd)
                     made_by = producers.get(key)
                     if not made_by and dir_owner and (inside := enclosing_dir(key)):
                         # An input inside another rule's Dir is that rule's.
                         made_by = {inside[1]}
+                    if not made_by and deferred_templates:
+                        made_by = {name for name, pat in deferred_templates
+                                   if pat.fullmatch(key)}
                     if made_by:
                         if not made_by & (dep_names | {rule.name}):
                             record('missing_dependency', rule.name, min(made_by), path)
@@ -1187,7 +1406,7 @@ class Remake:
                         continue
                     close = difflib.get_close_matches(path, candidates, n=1, cutoff=0.9)
                     if close:
-                        producer = min(producers[canonical(close[0])])
+                        producer = min(producers[canonical(close[0], cwd)])
                         record(
                             'near_miss', rule.name, producer,
                             {'input': path, 'closest': close[0]},
@@ -1195,6 +1414,10 @@ class Remake:
                     else:
                         record('external', rule.name, None, path)
 
+        # 'distinct': how many different paths the count covers (one input
+        # read by 12 tasks counts 12, distinct 1; soak recheck, item 8 g).
+        for key, entry in findings.items():
+            entry['distinct'] = len(distinct[key])
         return [
             {'kind': kind, 'rule': rule_name, 'other_rule': other, **entry}
             for (kind, rule_name, other), entry in sorted(
@@ -1323,6 +1546,44 @@ class Remake:
         return self.metadata.get_history(task, limit=limit)
 
     @anchored
+    def prune_task_logs(self):
+        """Delete per-task logs of tasks no longer in the pipeline (0.11
+        item 4, decision Q4; run by `remake history --prune`).
+
+        A task's log is overwritten each time it runs, so the logs are
+        bounded by the number of tasks; what grows without bound is the
+        logs of tasks a changed matrix or a removed rule left behind. A
+        rule whose matrix is not ready keeps all its logs (its tasks are
+        unknown). Empty shard directories go too. Returns the number of
+        log files deleted."""
+        from ..util.paths import task_log_root
+
+        if not self._finalized:
+            self.finalize()
+        root = task_log_root()
+        if not root.is_dir():
+            return 0
+        rules = {rule.name: rule for rule in self.rules}
+        deleted = 0
+        for rule_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+            rule = rules.get(rule_dir.name)
+            try:
+                # A removed rule: none of its logs is current.
+                keys = {t.key for t in iter_expand_rule(rule)} if rule else set()
+            except Defer:
+                continue
+            for shard in [p for p in rule_dir.iterdir() if p.is_dir()]:
+                for log in shard.glob('*.log'):
+                    if shard.name + log.stem not in keys:
+                        log.unlink()
+                        deleted += 1
+                if not any(shard.iterdir()):
+                    shard.rmdir()
+            if not any(rule_dir.iterdir()):
+                rule_dir.rmdir()
+        return deleted
+
+    @anchored
     def verify(self, query=None, *, outputs=True, adopt=True, apply=False):
         """Reconcile the DB with what is on disk (0.10 item 2; `remake verify`).
 
@@ -1339,7 +1600,8 @@ class Remake:
         Read-only unless apply. Completion is checked in batches
         (tokens.complete_many). Tasks of rules whose matrix is not ready are
         not examined. Returns {'missing': [tasks], 'adoptable': [tasks],
-        'applied': bool, 'cascaded': [tasks]}."""
+        'applied': bool, 'cascaded': [tasks], 'checked': number of tasks
+        examined}."""
         if not self._finalized:
             self.finalize()
         tasks = [t for t in self.tasks(query=query) if t.outputs]
@@ -1381,6 +1643,7 @@ class Remake:
                     self.metadata.update_tasks(adoptable + cascaded, TASK_STATUS_SUCCESS)
                 self.metadata.finish_run({'n_planned': len(missing) + len(adoptable)})
         return {'missing': missing, 'adoptable': adoptable, 'applied': bool(apply),
+                'checked': len(tasks),
                 'cascaded': cascaded}
 
     def _cascade_descendants(self, selected_tasks):
@@ -1479,7 +1742,10 @@ class Remake:
 
         # The same file spelled two ways (relative vs absolute, `./`, a
         # symlinked root) must match (ultrareview 2026-11-21).
-        canon = canonical
+        cwd = os.getcwd()
+
+        def canon(value):
+            return canonical(value, cwd)
 
         produced = set()
         produced_dirs = set()
@@ -1491,7 +1757,7 @@ class Remake:
                         norm = canon(tok)
                         produced.add(norm)
                         if isinstance(tok, Dir):
-                            produced_dirs.update(dir_keys(tok.path))
+                            produced_dirs.update(dir_keys(tok.path, cwd))
             except Exception:
                 # Deferred, or an output spec that can't be resolved now:
                 # its producers are unknown, so don't blame its consumers.

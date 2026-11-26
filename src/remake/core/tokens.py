@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import unicodedata
+import warnings
 import re
 import time
 from dataclasses import dataclass
@@ -55,23 +56,56 @@ class OutputStat:
 _URL_RE = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]+:/')
 
 
+_POSIX = os.sep == '/' and os.altsep is None
+
+
 @lru_cache(maxsize=65536)
 def _real_dir(directory):
     return os.path.realpath(directory)
 
 
-def canonical_path(path):
+def _absolute(path, cwd=None):
+    """os.path.abspath, with the working directory passed in: `getcwd` costs
+    ~60 us on macOS, so callers canonicalising many paths look it up once
+    (0.11 item 3: per path it made 1e6 paths take 100 s instead of 3)."""
+    path = os.fspath(path)
+    if os.path.isabs(path):
+        return os.path.normpath(path)
+    return os.path.normpath(os.path.join(os.getcwd() if cwd is None else cwd, path))
+
+
+def canonical_path(path, cwd=None):
     """The one canonical spelling of a local path (0.10 item 5a): absolute,
     normalised, with symlinks in its *directory* resolved (one realpath per
     distinct directory, cached). A symlinked final component is kept as is,
     so a link output is the link, not its target. Used by lint, the
-    missing-inputs check and Dir ownership. Not (yet) by dependency matching
-    between tasks (deps._norm, planner._norm_paths compare normpath'd
-    strings), where two spellings of one file make a task depend on every
-    upstream task: conservative, never a missed rerun."""
-    absolute = os.path.abspath(os.fspath(path))
+    missing-inputs check, Dir ownership and, since 0.11, dependency matching
+    between tasks (deps._norm, planner._norm_paths).
+
+    `cwd`: the working directory relative paths are taken against, for a
+    caller that canonicalises many paths (default: os.getcwd() per call)."""
+    path = os.fspath(path)
+    if _POSIX and type(path) is str:
+        # Fast path (1e6 paths per plan): one cached lookup per distinct
+        # (directory as written, cwd); the final name needs no normalising.
+        raw_dir, slash, name = path.rpartition('/')
+        if name and name != '.' and name != '..':
+            if slash and not raw_dir:
+                raw_dir = '/'
+            base = None if raw_dir.startswith('/') else (os.getcwd() if cwd is None else cwd)
+            real = _real_raw_dir(raw_dir, base)
+            return real + name if real.endswith('/') else real + '/' + name
+    absolute = _absolute(path, cwd)
     directory, name = os.path.split(absolute)
     return os.path.join(_real_dir(directory), name) if name else _real_dir(directory)
+
+
+@lru_cache(maxsize=65536)
+def _real_raw_dir(raw_dir, base):
+    """realpath of a directory as written, taken against `base` if relative
+    (None: it is absolute)."""
+    joined = raw_dir if base is None else os.path.join(base, raw_dir)
+    return _real_dir(os.path.normpath(joined))
 
 
 def _fold(name):
@@ -79,24 +113,30 @@ def _fold(name):
     return unicodedata.normalize('NFC', name).casefold()
 
 
-def dir_keys(path):
+def dir_keys(path, cwd=None):
     """The spellings a Dir output is matched under: `canonical_path` (the
     link, if the Dir is a symlink) and its full realpath (the target). A Dir
     symlinked to scratch must still contain the files read through it,
     whose canonical form resolves the link (review 2026-11-22, finding 1)."""
-    absolute = os.path.abspath(os.fspath(path))
+    absolute = _absolute(path, cwd)
     return {canonical_path(absolute), os.path.realpath(absolute)}
 
 
-def canonical(value):
+def canonical(value, cwd=None):
     """The canonical identity of an input or output value: a token's
-    `canonical()`, a URL string unchanged, a local path `canonical_path`."""
+    `canonical()`, a URL string unchanged, a local path `canonical_path`.
+
+    `cwd` as for canonical_path. A token whose class keeps PathToken's
+    canonical() is canonicalised here with it; one that overrides
+    canonical() is asked, and takes no cwd."""
     if isinstance(value, OutputToken):
+        if isinstance(value, PathToken) and type(value).canonical is PathToken.canonical:
+            return canonical_path(value.path, cwd)
         return value.canonical()
     text = os.fspath(value) if isinstance(value, os.PathLike) else str(value)
     if _URL_RE.match(text):
         return text
-    return canonical_path(text)
+    return canonical_path(text, cwd)
 
 
 def is_remote(value):
@@ -520,7 +560,9 @@ class Dir(PathToken):
         os.replace(tmp, self.manifest_path)  # atomic: complete or absent
 
     def claim(self, write=True):
-        """Deprecated alias of adopt() (0.9.0 name)."""
+        """Deprecated alias of adopt() (0.9.0 name; removed at 1.0)."""
+        warnings.warn('Dir.claim() is deprecated; use Dir.adopt() (removed at 1.0)',
+                      DeprecationWarning, stacklevel=2)
         return self.adopt(write=write)
 
     def adopt(self, write=True):

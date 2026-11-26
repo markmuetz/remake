@@ -9,13 +9,20 @@ remake <command> pipeline.py [options]
 
 ## Global options
 
-These go *before* the command name (`remake -D run pipeline.py`):
+These go *before* the command name (`remake -D run pipeline.py`); `--colour`
+may also go after it (`remake info --colour never pipeline.py`):
 
 | Option | Meaning |
 |---|---|
 | `-T, --trace` / `-D, --debug` / `-I, --info` / `-W, --warning` | console log level (default: info) |
 | `--profile NAME` | config profile (e.g. `jasmin`); beats `$REMAKE_PROFILE` and config files — see [Configuration](guide/configuration.md) |
 | `--colour {auto,always,never}` | colourise output; `auto` (the default) colours TTYs only and honours `NO_COLOR`/`FORCE_COLOR` |
+
+Tables (`info`, `slurm-status`, `history`) have a header row, numbers
+right-aligned, and leave out a column with nothing in it. Output is fitted to
+the terminal: a long name or path is shortened with `…` rather than wrapped.
+The width is `$COLUMNS` if set (piped output too), else the terminal's; piped
+output with no `$COLUMNS` is not shortened.
 
 ## Commands
 
@@ -38,7 +45,7 @@ These go *before* the command name (`remake -D run pipeline.py`):
 | `run-all` | Run every remakefile found in a directory |
 | `slurm-status` | Live SLURM queue state of the last submission, per rule |
 | `check-env` | Check a SLURM job would import the same code as this process (`--srun`, `--json`) |
-| `resubmit` | Re-execute `.remake/submit.sh` without replanning |
+| `resubmit` | Re-execute `.remake/submit.sh` without replanning (deprecated, removed in 1.0: use `run -E slurm`) |
 | `version` | Print remake version |
 
 `run-task` and `run-array-task` also exist but are invoked by remake itself
@@ -107,15 +114,58 @@ always satisfy `up-to-date + stale + failed + pending = tasks` and
 | `pending` | never run, or a run is in flight |
 | `to run` | what `remake run` would do now = `stale + failed + pending` |
 
+Deferred rules are not in `TOTAL`; lines under it count them and say why
+each is deferred: `matrix not ready` (its own `@deferrable` matrix, or its
+upstream reruns) or `held by <rule>` (it waits on that deferred rule; `run -n`
+uses the same words). A deferred rule's `to run` is `?`. If a held rule's
+matrix is static (a dict, a list or none), its tasks are known: it shows the
+task count, and `failed` and `pending` from the DB, with `up-to-date` and
+`stale` as `?` (they need the plan). A callable matrix there stays `?`.
+
+In `--json` every deferred row has `deferred_by` (`[]` when its own matrix is
+the cause); one with known tasks adds `tasks`, `succeeded`, `failed` and
+`pending` (DB status, not crossed with the plan), and
+`totals.deferred_tasks` sums them. `totals.failed` counts planned rules only:
+failures in deferred rules show in their rows and in `--failed`.
+
 | Option | Meaning |
 |---|---|
 | `-Q, --query` | filter tasks |
 | `-t, --tasks` | list individual tasks with status |
 | `-F, --show-failures` | show failures grouped by unique traceback signature + count |
 | `--all-failures` | with `-F`, show every failed task individually (not grouped) |
-| `--failed` | one line per failed task (and nothing else): rule, short key, last line of its error, log path. The error is the stored exception's last line; if none is stored, the last non-empty line of the task's SLURM `.err` (`.remake/slurm/output/<rule>/<index>.err`). With `--json`, `{"format": 1, "failures": [{rule, key, error, log}, ...]}` |
+| `--failed` | one line per failed task: rule, short key, last line of its error, and, when piped, the log path (in a terminal, a footer line says to use `remake task-log <key>` instead). The error is the stored exception's last line; if none is stored, the last non-empty line of the task's SLURM `.err` (`.remake/slurm/output/<rule>/<index>.err`). With `--json`, `{"format": 1, "failures": [{rule, key, error, log}, ...]}` |
 | `--reasons` | per-rule tally of *why* the to-run tasks would rerun |
 | `--json` | machine-readable output |
+
+## `lint`
+
+`remake lint REMAKEFILE` checks that every input of a rule is produced by one
+of the rules it `depends_on`. Exit 1 if it finds a problem:
+
+| Finding | Meaning |
+|---|---|
+| `NEAR MISS` | nothing produces the input, but a dependency produces a near-identical path (a likely typo) |
+| `MISSING DEPENDENCY` | another rule produces the input, but it is not in `depends_on` |
+| `DIR NESTED`, `FILE IN DIR` | an output inside another rule's `Dir` |
+| `external` | no rule produces the input (information, not a problem) |
+
+A near miss shows the two paths stacked, the shared leading directories
+collapsed to `…`, and the difference in colour (red in the input, green in the
+nearest output), or marked with `^` when colour is off (`--colour never`, or
+not a terminal). Paths are compared directory by directory, so an extra
+directory is one difference.
+
+A rule whose matrix is deferred (not ready) has unknown outputs, but its output
+templates are known: an input matching one (each `{field}` any text within one
+path component) counts as that rule's, so a rule reading it without
+`depends_on` is a missing dependency. A broad template (`data/{name}.nc`) can
+claim an external file of the same shape; such a finding goes away once the
+matrix is ready and the real outputs are known.
+A callable outputs spec is called with a placeholder for each parameter it
+names, to get the same templates. A deferred rule whose outputs still can't be
+read (the call raises) is named in a note under the findings (`unchecked` on
+the `near_miss` and `external` rows in `--json`).
 
 ## `dag`
 
@@ -169,7 +219,7 @@ remake history pipeline.py --prune --keep 3  # trim the history now
 | `<key>` / `-Q, --query` | the task, as for `task-info`: a key prefix, or a query matching exactly one task |
 | `--runs` | list recent runs (one line each: run number, start time, command, tasks run and failed, short git commit with `+dirty`, and the run it continues) instead of one task's executions |
 | `--limit N` | show at most N rows (default 20) |
-| `--prune` | apply the per-task cap to every task now |
+| `--prune` | apply the per-task cap to every task now, and delete the per-task logs of tasks no longer in the pipeline (a changed matrix, a removed rule; 0.11) |
 | `--keep N` | with `--prune`: keep N executions per task instead of `history.keep` (an error without `--prune`) |
 | `--json` | machine-readable output |
 
@@ -231,13 +281,16 @@ keys per command:
 | `info` | `rules`, `totals`; plus `tasks` with `-t`, `failures` with `-F` |
 | `info --failed` | `failures` (list of `{rule, key, error, log}`) |
 | `ls-tasks` | `tasks` (list of `{key, rule, kwargs}`, plus `inputs`/`outputs` with `-i`/`-o`) |
-| `lint` | `findings` (list of rows, each with a `kind`) |
+| `lint` | `findings` (list of rows, each with a `kind`, `count` and `distinct`) |
 | `rule-dag` | `order`, `edges`; plus `rules` with `-N`/`-M` |
 | `rule-info` | the rule's detail fields (`rule`, `docstring`, `matrix`, `outputs`, `uses`, ...) |
-| `task-info` | the task's detail fields (`status`, `kwargs`, `inputs`, `outputs`, `slurm`, ...) |
+| `task-info` | the task's detail fields (`status`, `kwargs`, `inputs`, `outputs`, `slurm`, ...); `slurm.state` as `why`'s `slurm`, for a task without a success |
 | `history` | `executions` (with `task` and `key`); `runs` with `--runs`; `deleted` with `--prune` |
 | `config` | `profile`, `profile_source`, `files`, `config`, `provenance` |
-| `slurm-status` | `submissions` (list of `{rule, jobid, states, reasons}`) |
+| `slurm-status` | `submissions`: one per rule's last submission, `{rule, jobid, states, reasons, submitted, tasks, succeeded, failed, lost}`; `submitted` is local time `YYYY-MM-DD HH:MM:SS`; `tasks` and the counts (results recorded by this submission) are `null` when unknown; `lost` (not queued, no result) is `null` in the first minute after submission |
+| `why` | `tasks` (list of `{task, key, will_run, reasons: [{category, message}], slurm}`); `slurm` (a pending or failed last run in a SLURM submission, else `null`): `{jobid, index, run_seq, element, summary}` |
+| `set-state` | `state`, `dry_run`, `skipped`, `tasks` (list of `{task, key, cascade}`) |
+| `verify` | see [`verify`](#verify) |
 | `check-env` | `planning`, `job`, `mismatches` |
 
 Compatibility: after 1.0, adding a key is not a breaking change, so ignore
@@ -263,7 +316,8 @@ whole runnable set.
 
 ## Queries
 
-`-Q` takes a Python expression evaluated over each task's matrix kwargs:
+`-Q` takes a small restricted expression evaluated over each task's matrix
+kwargs (and `rule`, the rule name):
 
 ```bash
 remake info pipeline.py -Q "rule == 'process' and year >= 2015"
@@ -271,6 +325,15 @@ remake run  pipeline.py -Q "rule in ['extract', 'process']"
 ```
 
 `-Q True` matches every task.
+
+The grammar is deliberately small: names (matrix kwargs and `rule`), literals
+(numbers, strings, `True`/`False`/`None`, lists and tuples of them),
+comparisons (`==  !=  <  <=  >  >=  in  not in  is  is not`), `and` / `or` /
+`not`, parentheses and a unary minus (`year > -5`). Anything else (function
+calls such as `len(x)` or `range(...)`, attributes, subscripts, arithmetic,
+sets, dicts, comprehensions, lambdas, f-strings) is rejected before the query
+is evaluated, with exit code 2 and a message naming the construct. A name that
+is no rule's matrix key (and not `rule`) is an error too, which catches typos.
 
 A query that names a kwarg a rule doesn't have simply doesn't match that
 rule's tasks — it is not an error. `-Q "site == 'oxford' and year < 2015"`

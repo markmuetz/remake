@@ -221,16 +221,22 @@ def _has_address(text):
     return ' at 0x' in text or 'object at ' in text
 
 
-def canonical_value(value, *, project_dir=None, _depth=0):
+def canonical_value(value, *, project_dir=None, _depth=0, _active=()):
     """A deterministic text for a `uses` value (see the module docstring).
 
     Plain values render as their repr, with dict keys and set elements
     sorted; most other objects as their repr too, as long as it is stable
     (no memory address). Types can opt in to their own rendering with a
-    `__remake_hash__(self) -> str` method."""
+    `__remake_hash__(self) -> str` method.
+
+    An object met again inside its own rendering renders as `<cycle ^N T>`,
+    N levels back up the path (containers and `__dict__`s count as
+    levels), so cycles to different ancestors render differently. `_active` is the tuple of ids of the objects on the current
+    path, outermost first (alive while on it, so the ids are unique). Without it an object holding several
+    bound methods of itself (scipy.stats.chi2) rendered in time exponential
+    in _MAX_DEPTH (soak finding, 2026-11-23)."""
     if _depth > _MAX_DEPTH:
         return '<too deep>'
-    kw = {'project_dir': project_dir, '_depth': _depth + 1}
     t = type(value)
     hook = getattr(t, '__remake_hash__', None)
     if hook is not None and not isinstance(value, type):
@@ -239,6 +245,11 @@ def canonical_value(value, *, project_dir=None, _depth=0):
         return repr(value)
     if isinstance(value, enum.Enum):
         return f'{_qualname(t)}.{value.name}'
+    if id(value) in _active:
+        back = len(_active) - _active.index(id(value))
+        return f'<cycle ^{back} {_qualname(t)}>'
+    kw = {'project_dir': project_dir, '_depth': _depth + 1,
+          '_active': _active + (id(value),)}
     if t is list:
         return '[' + ', '.join(canonical_value(v, **kw) for v in value) + ']'
     if t is tuple:
@@ -266,7 +277,7 @@ def canonical_value(value, *, project_dir=None, _depth=0):
         if rendered is not None:
             return rendered
     if root == 'pandas':
-        rendered = _pandas_rendering(value)
+        rendered = _pandas_rendering(value, kw)
         if rendered is not None:
             return rendered
     if (inspect.isfunction(value) or inspect.ismethod(value) or inspect.isclass(value)
@@ -303,8 +314,8 @@ def canonical_value(value, *, project_dir=None, _depth=0):
 
 def _callable_rendering(fn, kw=None):
     if inspect.ismethod(fn):
-        # Pass the depth on: an object holding a bound method of itself
-        # would otherwise recurse without limit.
+        # Pass the depth and the active path on: an object holding a bound
+        # method of itself renders as a cycle, not without limit.
         return f'method {_qualname(fn)} of {canonical_value(fn.__self__, **(kw or {}))}'
     src = callable_source_ast(fn)
     if src is not None:
@@ -338,7 +349,7 @@ def _numpy_rendering(value, kw):
     return None
 
 
-def _pandas_rendering(value):
+def _pandas_rendering(value, kw):
     import pandas as pd
 
     if isinstance(value, (pd.DataFrame, pd.Series, pd.Index)):
@@ -354,7 +365,7 @@ def _pandas_rendering(value):
                 data = {'index': list(value.index), 'data': list(value)}
             else:
                 data = list(value)
-            digest = hashlib.sha256(canonical_value(data).encode()).hexdigest()
+            digest = hashlib.sha256(canonical_value(data, **kw).encode()).hexdigest()
         if isinstance(value, pd.DataFrame):
             meta = repr([(str(c), str(d)) for c, d in value.dtypes.items()])
         else:

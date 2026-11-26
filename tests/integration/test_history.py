@@ -89,7 +89,9 @@ def test_history_keeps_every_execution_with_its_reason(project, capsys):
     assert data['format'] == 1 and len(data['executions']) == 2
     assert cli('history', 'pipeline.py', '--runs') == 0
     out = capsys.readouterr().out
-    assert len(out.strip().splitlines()) == 2
+    lines = out.strip().splitlines()
+    assert lines[0].split()[:4] == ['run', 'started', 'command', 'tasks']  # a header row
+    assert len(lines) == 3
 
 
 def _load_tasks():

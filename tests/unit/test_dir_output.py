@@ -408,3 +408,15 @@ def test_lint_prefix_matching_and_nesting(tmp_path):
     rows = {(r['kind'], r['rule']): r for r in rmk.lint()}
     assert rows[('dir_nested', 'nested')]['other_rule'] == 'make_tiles'
     assert rows[('file_in_dir', 'stray')]['other_rule'] == 'make_tiles'
+
+
+def test_claim_is_a_deprecated_alias_of_adopt(tmp_path):
+    """0.11 item 7: Dir.claim() (the 0.9 name) warns, and goes at 1.0."""
+    from remake import Dir
+
+    d = tmp_path / 'd'
+    d.mkdir()
+    (d / 'f.txt').write_text('x')
+    with pytest.warns(DeprecationWarning, match='adopt'):
+        Dir(str(d)).claim()
+    assert Dir(str(d)).is_complete()

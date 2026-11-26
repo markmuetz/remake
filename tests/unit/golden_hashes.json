@@ -1,0 +1,160 @@
+{
+  "g_callable_dict": {
+    "io": "#remake-canonical-v2\n{\"inputs\": \"callable Module(body=[FunctionDef(name='dict_spec', args=arguments(), body=[Expr(value=Constant(value='A callable inputs spec returning a plain mapping.')), Return(value=Dict(keys=[Constant(value='x')], values=[Constant(value='data/g/dict_spec.txt')]))])])\", \"outputs\": \"dict Module(body=[Expr(value=Dict(keys=[Constant(value='o')], values=[Constant(value='out/g_dict_spec.txt')]))])\"}",
+    "tasks": {
+      "7a5ea8733bace91ffac646e0bd6067cff887d5b6": {
+        "kwargs": "{}",
+        "paths_digest": "1:1:45e78817fdbd15dbcfd01471040797b52980de9d"
+      }
+    },
+    "uses": ""
+  },
+  "g_callable_list": {
+    "io": "#remake-canonical-v2\n{\"inputs\": \"callable Module(body=[FunctionDef(name='list_spec', args=arguments(), body=[Expr(value=Constant(value='A callable inputs spec whose value is a list of Paths.')), Return(value=Dict(keys=[Constant(value='files')], values=[ListComp(elt=Call(func=Name(id='Path', ctx=Load()), args=[Call(func=Attribute(value=Constant(value='data/g/{}.txt'), attr='format', ctx=Load()), args=[Name(id='i', ctx=Load())])]), generators=[comprehension(target=Name(id='i', ctx=Store()), iter=Call(func=Name(id='range', ctx=Load()), args=[Constant(value=2)]), is_async=0)])]))])])\", \"outputs\": \"dict Module(body=[Expr(value=Dict(keys=[Constant(value='o')], values=[Constant(value='out/g_list_spec.txt')]))])\"}",
+    "tasks": {
+      "0063aa181b2a6d3a1b97ae7bf67375416528a51c": {
+        "kwargs": "{}",
+        "paths_digest": "1:1:ee50cc3b64bf5989f7d94c033128b60f82459049"
+      }
+    },
+    "uses": ""
+  },
+  "g_cartesian": {
+    "io": "#remake-canonical-v2\n{\"inputs\": \"\", \"outputs\": \"dict Module(body=[Expr(value=Dict(keys=[Constant(value='o')], values=[Constant(value='out/g_cart_{a}_{b}.txt')]))])\"}",
+    "tasks": {
+      "192ccc80e66eba1c75be00396ccf304cefb42835": {
+        "kwargs": "{'a': 1, 'b': 'x'}",
+        "paths_digest": "0:1:d8b41d43d398076d6e0eb1ebca0e4d4d7e2f7cbf"
+      },
+      "20675d3ee6ec3003134ff1f28631fa20535b7f2c": {
+        "kwargs": "{'a': 2, 'b': 'x'}",
+        "paths_digest": "0:1:48d07c51aa3b2e5931f2d2673d1707e57d066624"
+      },
+      "936e216d78966954a7d6a1f7c4162bd36aa50d92": {
+        "kwargs": "{'a': 2, 'b': 'y'}",
+        "paths_digest": "0:1:97a1cfd5df9f3d2eec0392f123748484bc0a187c"
+      },
+      "e8791fb6313b27e439706f8fcc8ad480470b0884": {
+        "kwargs": "{'a': 1, 'b': 'y'}",
+        "paths_digest": "0:1:ef7ece38a4572aabc18a4cfd69ead85a24a03e7f"
+      }
+    },
+    "uses": ""
+  },
+  "g_dir": {
+    "io": "#remake-canonical-v2\n{\"inputs\": \"\", \"outputs\": \"dict Module(body=[Expr(value=Dict(keys=[Constant(value='d')], values=[Call(func=Name(id='Dir', ctx=Load()), args=[Constant(value='out/g_dir_{k}')])]))])\"}",
+    "tasks": {
+      "46b6399ec0d66bcf00139c93ba8f7e382a5b35c2": {
+        "kwargs": "{'k': 2}",
+        "paths_digest": "0:1:7cea094e223ea5495378ca35a5b2034afbb08ab3"
+      },
+      "a477bd755989f495d46d51b2f46e79a66b222f05": {
+        "kwargs": "{'k': 1}",
+        "paths_digest": "0:1:5c04d18c7268276462cf2b4fc55dccd15ef8f785"
+      }
+    },
+    "uses": ""
+  },
+  "g_ensure": {
+    "io": "#remake-canonical-v2\n{\"inputs\": \"\", \"outputs\": \"dict Module(body=[Expr(value=Dict(keys=[Constant(value='o')], values=[Constant(value='out/g_ensure_{k}.txt')]))])\"}",
+    "tasks": {
+      "ae4f8adca3a0f6421d44db4bf77067417fa4c7b0": {
+        "kwargs": "{'k': 2}",
+        "paths_digest": "0:1:629f6073bd8acff363c2484be42dfd819e767665"
+      },
+      "e8c4dcec5d497d0b7af0f50af03f7527d474b7fa": {
+        "kwargs": "{'k': 1}",
+        "paths_digest": "0:1:0fa0bda1e53f52e3c826ea9fd4fead34b8fe1544"
+      }
+    },
+    "uses": ""
+  },
+  "g_inputs_outputs": {
+    "io": "#remake-canonical-v2\n{\"inputs\": \"dict Module(body=[Expr(value=Dict(keys=[Constant(value='i')], values=[Constant(value='in/g_{n}.txt')]))])\", \"outputs\": \"dict Module(body=[Expr(value=Dict(keys=[Constant(value='o')], values=[Constant(value='out/g_float_{n}_{f}.txt')]))])\"}",
+    "tasks": {
+      "0dd16c5741247269b42f3bb0a1d32e5262510a02": {
+        "kwargs": "{'f': 1.5, 'n': 1}",
+        "paths_digest": "1:1:56689bbf326e188dcdbea1ae0acd7e40d9dfb086"
+      },
+      "a7c843584029bd9575af935ba48f9eaac702f2c7": {
+        "kwargs": "{'f': 0.5, 'n': 2}",
+        "paths_digest": "1:1:5bb0810150a0e73ccf94416b98e9b5bedea2715d"
+      },
+      "b680a8dc76ca1dd8501d5bf3b65051214ae5eca1": {
+        "kwargs": "{'f': 0.5, 'n': 1}",
+        "paths_digest": "1:1:9af9f2cae0a0a070a272e13f1bf5d47663c55d44"
+      },
+      "cd4394080a8b38cfbc1998fd34f3e8aa0e498542": {
+        "kwargs": "{'f': 1.5, 'n': 2}",
+        "paths_digest": "1:1:ea7d4a8d07fae9f79f9fa11badcd15e772f46615"
+      }
+    },
+    "uses": ""
+  },
+  "g_list_values": {
+    "io": "#remake-canonical-v2\n{\"inputs\": \"dict Module(body=[Expr(value=Dict(keys=[Constant(value='both')], values=[List(elts=[Constant(value='in/g_{k}_a.txt'), Constant(value='in/g_{k}_b.txt')], ctx=Load())]))])\", \"outputs\": \"dict Module(body=[Expr(value=Dict(keys=[Constant(value='files'), Constant(value='one')], values=[List(elts=[Constant(value='out/g_lv_{k}_a.txt'), Constant(value='out/g_lv_{k}_b.txt')], ctx=Load()), Constant(value='out/g_lv_{k}.txt')]))])\"}",
+    "tasks": {
+      "5b4618916e007f839dead4881f5163010496fd4f": {
+        "kwargs": "{'k': 2}",
+        "paths_digest": "1:2:8427c70c74e8ad987eb55e70e274ffb4e4e4752c"
+      },
+      "fcb502456308974b39a7c6a39010277d3c7e0414": {
+        "kwargs": "{'k': 1}",
+        "paths_digest": "1:2:cb5c486beef5f74aa771127ab847bba71ba570f9"
+      }
+    },
+    "uses": ""
+  },
+  "g_no_matrix": {
+    "io": "#remake-canonical-v2\n{\"inputs\": \"dict Module(body=[Expr(value=Dict(keys=[Constant(value='x')], values=[Constant(value='in/g_noinput.txt')]))])\", \"outputs\": \"dict Module(body=[Expr(value=Dict(keys=[Constant(value='o')], values=[Constant(value='out/g_none.txt')]))])\"}",
+    "tasks": {
+      "1f970223528eb60755a936fc478e1f8a34b7d401": {
+        "kwargs": "{}",
+        "paths_digest": "1:1:d99f926160d8d1302cfa8258d6aa3805ecc02be3"
+      }
+    },
+    "uses": ""
+  },
+  "g_row_list": {
+    "io": "#remake-canonical-v2\n{\"inputs\": \"\", \"outputs\": \"dict Module(body=[Expr(value=Dict(keys=[Constant(value='o')], values=[Constant(value='out/g_rows_{a}_{b}.txt')]))])\"}",
+    "tasks": {
+      "25d36261c81b7f66705bbd872a006417908b6dfb": {
+        "kwargs": "{'a': 2, 'b': 'z'}",
+        "paths_digest": "0:1:f3e80294974749c9df487b8522b109f48fda7014"
+      },
+      "2af57ca39c9b0dcfc7cb51c7a4e2a9c0dea190b5": {
+        "kwargs": "{'a': 1, 'b': 'x'}",
+        "paths_digest": "0:1:ca64e1e6ebfeb0c8b27de05ff0931bb914092fdd"
+      }
+    },
+    "uses": ""
+  },
+  "g_tuple_key": {
+    "io": "#remake-canonical-v2\n{\"inputs\": \"\", \"outputs\": \"dict Module(body=[Expr(value=Dict(keys=[Constant(value='o')], values=[Constant(value='out/g_tuple_{a}_{b}.txt')]))])\"}",
+    "tasks": {
+      "4ba285d77e968750aa740758c824d69a1e247b60": {
+        "kwargs": "{'a': 1, 'b': 'x'}",
+        "paths_digest": "0:1:e645e4a13f239182b30bdd684b572cd9b79f28c1"
+      },
+      "87a7a6b03b3d67dc62b4fa64f0eeb7d73157e3c7": {
+        "kwargs": "{'a': 2, 'b': 'y'}",
+        "paths_digest": "0:1:decb9df708a5af554126a61e0bf49807caae8758"
+      }
+    },
+    "uses": ""
+  },
+  "g_uses": {
+    "io": "#remake-canonical-v2\n{\"inputs\": \"\", \"outputs\": \"dict Module(body=[Expr(value=Dict(keys=[Constant(value='o')], values=[Constant(value='out/g_uses_{k}.txt')]))])\"}",
+    "tasks": {
+      "6bcc8e78107e54957699133af03e50405a4ad8d7": {
+        "kwargs": "{'k': 'a'}",
+        "paths_digest": "0:1:68101faba4b4652b20e5619b5886b54b28c35049"
+      },
+      "7678ed443a3b3f5d1ba087f6645f6be2541b4394": {
+        "kwargs": "{'k': 'b'}",
+        "paths_digest": "0:1:ba7df4e676091eb2c2d693a4d873b1274a65efa5"
+      }
+    },
+    "uses": "#remake-canonical-v2\n{\"FACTOR\": \"{'a': 1, 'b': 2}\", \"SCALE\": \"3\", \"helper\": \"source Module(body=[FunctionDef(name='helper', args=arguments(args=[arg(arg='x')]), body=[Expr(value=Constant(value='A helper tracked through uses=.')), Return(value=BinOp(left=Name(id='x', ctx=Load()), op=Mult(), right=Name(id='SCALE', ctx=Load())))])])\"}"
+  }
+}

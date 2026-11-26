@@ -23,7 +23,7 @@ from .dag import expand_rule
 from .exceptions import Defer
 from .rule import _template_fields
 from .task import Task, flat_values
-from .tokens import OutputToken
+from .tokens import OutputToken, canonical
 
 # Can't tell precisely: the task depends on every upstream task.
 ALL = 'all'
@@ -35,8 +35,12 @@ def task_id(task):
     return frozenset(task.kwargs.items())
 
 
-def _norm(value):
-    return os.path.normpath(str(value))
+def _norm(value, cwd=None):
+    """The key an input or output is matched under between tasks: its
+    canonical identity (0.11 item 3), so an input spelled differently from
+    its producer's output (absolute vs relative, `./`, a symlinked directory)
+    still links the two tasks instead of falling back to ALL."""
+    return canonical(value, cwd)
 
 
 def _templates(spec):
@@ -133,6 +137,7 @@ class Edge:
         self._kind = _classify(dep, rule)
         self._producer = None
         self._shared = None
+        self._cwd = None  # set by _index
 
     def _index(self):
         if self._producer is None:
@@ -144,6 +149,7 @@ class Edge:
             if dep_tasks is None:
                 self._kind = _ORDERING
             else:
+                cwd = self._cwd = os.getcwd()
                 for t in dep_tasks:
                     tid = task_id(t)
                     try:
@@ -151,7 +157,7 @@ class Edge:
                     except Exception:
                         continue  # its own resolution error is reported elsewhere
                     for tok in outputs:
-                        p = _norm(tok)
+                        p = _norm(tok, cwd)
                         if producer.get(p, tid) != tid:
                             shared.add(p)
                         producer[p] = tid
@@ -168,7 +174,8 @@ class Edge:
         if self._kind == _ORDERING:
             return ALL
         try:
-            paths = {_norm(p) for p in flat_values(task.inputs)}
+            # The cwd the index was built under (one plan or run: fixed).
+            paths = {_norm(p, self._cwd) for p in flat_values(task.inputs)}
         except Exception:
             return ALL  # the task fails on its own spec; stay conservative
         hits = paths & producer.keys()

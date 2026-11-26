@@ -539,6 +539,24 @@ def test_lint_clean_pipeline(pipeline_dir, capsys):
     assert 'all inputs wired' in capsys.readouterr().out
 
 
+@pytest.mark.parametrize('args', [
+    ('lint',), ('rule-dag',), ('rule-info', 'process'), ('dag',), ('dag', '--tasks'),
+    ('info',), ('ls-tasks',), ('run', '-n')])
+def test_read_only_commands_resolve_string_depends_on(pipeline_dir, args, capsys):
+    """depends_on given as rule names (to avoid a circular import) is
+    resolved by every command, including those that skip finalize() (lint
+    crashed: 'str' object has no attribute 'name'; JASMIN soak,
+    2026-11-23), in a fresh directory with no .remake/."""
+    Path('pipeline.py').write_text(
+        PIPELINE.replace('depends_on=[generate]', "depends_on=['generate']"))
+    assert cli(args[0], 'pipeline.py', *args[1:]) in (None, 0)
+    if args[0] in ('lint', 'rule-dag', 'rule-info', 'dag'):
+        # Static commands read no metadata: no DB in a fresh checkout.
+        assert not Path('.remake/remake.db').exists()
+    if args == ('lint',):
+        assert 'external' not in capsys.readouterr().out
+
+
 def test_lint_flags_near_miss_and_missing_dependency(pipeline_dir, capsys):
     Path('miswired.py').write_text('''
 from pathlib import Path
@@ -564,10 +582,17 @@ rmk.rules_from_current_module()
 ''')
     assert cli('lint', 'miswired.py') == 1
     out = capsys.readouterr().out
-    assert "NEAR MISS           proc: input 'data/genn_1.txt'" in out
-    assert "gen produces 'data/gen_1.txt'" in out and '(2 task(s))' in out
-    assert 'MISSING DEPENDENCY  agg' in out and 'produced by proc' in out
-    assert 'external            gen: 2 input(s)' in out  # not a problem, exit 1 is from above
+    assert "NEAR MISS           proc (2 tasks): input produced by nothing; " \
+        "nearest is gen's output" in out
+    # Stacked, aligned, the difference marked (soak finding 4).
+    assert '  - wants:   data/genn_1.txt\n' \
+           '                    ^\n' \
+           '  - nearest: data/gen_1.txt\n' in out
+    # Stacked, not one long line (item 8 e).
+    assert "MISSING DEPENDENCY  agg (2 tasks): reads proc's output but does not " \
+        "depend_on it\n  - input:   data/proc_1.txt\n" in out
+    assert 'external            gen: 2 inputs produced by no rule\n' \
+        '  - e.g.:    data/src_1.txt' in out  # not a problem, exit 1 is from above
 
     import json
 
@@ -575,6 +600,96 @@ rmk.rules_from_current_module()
     payload = json.loads(capsys.readouterr().out)
     assert list(payload)[0] == 'format' and payload['format'] == 1
     assert {r['kind'] for r in payload['findings']} == {'near_miss', 'missing_dependency', 'external'}
+
+
+def test_lint_matches_inputs_against_deferred_rules_templates(tmp_path, monkeypatch, capsys):
+    # Soak finding 3 (2026-11-23): an input made by a rule whose matrix is
+    # deferred was reported as a near miss of an unrelated sibling, hiding a
+    # missing depends_on. Its output template is known: match it.
+    monkeypatch.chdir(tmp_path)
+    Path('p.py').write_text('''
+from pathlib import Path
+from remake import Remake, rule, deferrable, Defer
+
+@deferrable
+def later():
+    raise Defer('brackets missing')
+
+@rule(outputs={'o': 'out/cmp/gathered_{case}.hdf'}, matrix=later)
+def gather(outputs, case):
+    pass
+
+@rule(outputs={'o': 'out/compare_{case}.hdf'}, matrix={'case': [1, 2]})
+def compare(outputs, case):
+    pass
+
+@rule(inputs={'g': 'out/cmp/gathered_{case}.hdf', 'c': 'out/compare_{case}.hdf'},
+      outputs={'o': 'out/analyse_{case}.png'}, matrix={'case': [1, 2]},
+      depends_on=[compare])  # gather missing
+def analyse(inputs, outputs, case):
+    pass
+
+def callable_outputs(case):  # the field pattern: a callable outputs spec
+    return {'o': Path('out') / 'cmp2' / f'gathered_{case}.hdf'}
+
+@rule(outputs=callable_outputs, matrix=later)
+def gather2(outputs, case):
+    pass
+
+@rule(inputs={'g': 'out/cmp2/gathered_{case}.hdf'}, outputs={'o': 'out/an2_{case}.png'},
+      matrix={'case': [1, 2]})
+def analyse2(inputs, outputs, case):
+    pass
+
+def opaque_outputs(k):
+    return {'o': {'nested': 'not a path'}}  # can't be read: stays unchecked
+
+@rule(outputs=opaque_outputs, matrix=later)
+def opaque(outputs, k):
+    pass
+
+@rule(inputs={'g': 'out/cmp/gathered_{case}.hdf', 'z': 'out/compre_{case}.hdf'},
+      outputs={'o': 'out/held_{case}.png'}, matrix={'case': [1, 2]},
+      depends_on=[gather])  # held by deferred gather; compare missing, typo'd
+def held(inputs, outputs, case):
+    pass
+
+def unresolvable(case):
+    return {'g': Path(f'out/cmp/gathered_{case}.hdf').read_text()}
+
+@rule(inputs=unresolvable, outputs={'o': 'out/u_{case}.png'}, matrix={'case': [1]},
+      depends_on=[gather])
+def held_unresolvable(inputs, outputs, case):
+    pass
+
+@rule(inputs={'x': 'ext/{case}.txt'}, outputs={'o': 'out/e_{case}.txt'},
+      matrix={'case': [1]})
+def uses_external(inputs, outputs, case):
+    pass
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    assert cli('lint', '--json', 'p.py') == 1
+    assert not Path('.remake/remake.db').exists()  # read-only: no DB in a fresh checkout
+    rows = json.loads(capsys.readouterr().out)['findings']
+    kinds = {(r['kind'], r['rule'], r['other_rule']) for r in rows}
+    assert ('missing_dependency', 'analyse', 'gather') in kinds
+    assert ('missing_dependency', 'analyse2', 'gather2') in kinds
+    # A rule held only by a deferred upstream is still checked: its input
+    # from gather is fine (depends_on), the typo'd compare input is external
+    # (compare isn't in its depends_on, so no near miss is looked for).
+    assert any(r['rule'] == 'held' and r['kind'] == 'external'
+               and r['example'] == 'out/compre_1.hdf' for r in rows)
+    assert not any(r['rule'] == 'held_unresolvable' for r in rows)
+    assert not any(r['kind'] == 'near_miss' for r in rows)
+    ext = next(r for r in rows if r['kind'] == 'external' and r['rule'] == 'uses_external')
+    assert ext['unchecked'] == ['opaque']
+
+    cli('lint', 'p.py')
+    out = capsys.readouterr().out
+    # Said once, as a footer, not on every finding.
+    assert out.count('opaque') == 1 and "deferred rule(s) opaque have outputs lint" in out
 
 
 def test_ls_tasks(pipeline_dir, capsys):
@@ -615,7 +730,7 @@ def test_task_info_text_and_json(pipeline_dir, capsys):
     assert data['format'] == 1
     assert data['status'] == 'success' and data['kwargs'] == {'n': 1}
     assert all(o['complete'] for o in data['outputs'].values())
-    assert data['slurm'] == {'jobids': None, 'array_index': None}  # never submitted
+    assert data['slurm'] == {'jobids': None, 'array_index': None, 'state': None}  # never submitted
 
 
 RULE_INFO_PIPELINE = '''
@@ -1153,6 +1268,79 @@ rmk.rules_from_current_module()
     assert '"total:' in out and '-> "dyn"' in out
 
 
+def test_info_counts_rules_deferred_only_by_upstream(tmp_path, monkeypatch, capsys):
+    # Soak finding 2 (2026-11-23): a static-matrix rule deferred only because
+    # an upstream rule is shows its known tasks, naming the upstream; a rule
+    # whose own deferrable matrix is held stays unknown.
+    monkeypatch.chdir(tmp_path)
+    Path('p.py').write_text('''
+from pathlib import Path
+from remake import Remake, rule, deferrable, Defer
+
+@rule(outputs={'o': 'a_{s}.txt'}, matrix={'s': [1, 2]})
+def a(outputs, s):
+    Path(outputs['o']).write_text(str(s))
+
+@deferrable
+def later():
+    raise Defer('not yet')
+
+@rule(inputs=a.outputs, outputs={'o': 'd_{k}.txt'}, matrix=later, depends_on=[a])
+def dyn(inputs, outputs, k):
+    pass
+
+@rule(outputs={'o': 'b_{case}.txt'}, matrix={'case': [1, 2, 3]}, depends_on=[dyn])
+def static_down(outputs, case):
+    pass
+
+@deferrable
+def later2():
+    return [{'j': 1}]
+
+@rule(outputs={'o': 'e_{j}.txt'}, matrix=later2, depends_on=[static_down])
+def dyn_down(outputs, j):
+    pass
+
+def plain():  # not @deferrable; reads an upstream output (review 2026-11-23)
+    return {'n': Path('a_1.txt').read_text().split()}
+
+@rule(outputs={'o': 'f_{n}.txt'}, matrix=plain, depends_on=[dyn])
+def plain_down(outputs, n):
+    pass
+
+rmk = Remake()
+rmk.rules_from_current_module()
+''')
+    assert not cli('info', '--json', 'p.py')
+    data = json.loads(capsys.readouterr().out)
+    rows = {r['rule']: r for r in data['rules']}
+    assert rows['dyn'] == {'rule': 'dyn', 'deferred': True, 'deferred_by': []}
+    assert rows['static_down'] == {
+        'rule': 'static_down', 'deferred': True, 'deferred_by': ['dyn'],
+        'tasks': 3, 'succeeded': 0, 'failed': 0, 'pending': 3,
+    }
+    # A callable matrix below a deferred rule (deferrable or not) is never
+    # called: its task set is not known, and the root is still named.
+    assert rows['dyn_down'] == {'rule': 'dyn_down', 'deferred': True, 'deferred_by': ['dyn']}
+    assert rows['plain_down'] == {'rule': 'plain_down', 'deferred': True,
+                                  'deferred_by': ['dyn']}
+    assert data['totals']['tasks'] == 2  # only the planned rule, a
+    assert data['totals']['deferred_tasks'] == 3
+
+    assert not cli('info', 'p.py')
+    out = capsys.readouterr().out
+    line = next(ln for ln in out.splitlines() if ln.startswith('static_down'))
+    assert line.split() == ['static_down', '3', '?', '?', '0', '3', '?']
+    line = next(ln for ln in out.splitlines() if ln.startswith('dyn_down'))
+    assert line.split()[1:] == ['?'] * 6
+    # Why each is deferred, under the table (item 8: no column to truncate).
+    assert 'deferred, not in TOTAL: 3 tasks in 1 held rule; 3 rules with tasks unknown' in out
+    reasons = {ln.split()[1]: ' '.join(ln.split()[2:]) for ln in out.splitlines()
+               if ln.startswith('  - ')}
+    assert reasons == {'dyn': 'matrix not ready', 'static_down': 'held by dyn',
+                       'dyn_down': 'held by dyn', 'plain_down': 'held by dyn'}
+
+
 def _write_remakefile(path, name, body='pass'):
     path.write_text(f'''
 from pathlib import Path
@@ -1244,3 +1432,38 @@ rmk.rules_from_current_module()
     monkeypatch.chdir(tmp_path)
     assert cli('export-task', 'pipes/p.py', '-Q', 'True', '-o', 'spec.json') in (0, None)
     assert (tmp_path / 'spec.json').exists()
+
+
+def test_task_info_size_lists_every_output(tmp_path, monkeypatch, capsys):
+    # MM's snapshot review 2026-11-23: plain files are summed, a Dir has its
+    # own entry, and an output with no recorded size says so (else one
+    # file's size reads as the whole task's).
+    monkeypatch.chdir(tmp_path)
+    Path('mixed.py').write_text('''
+from pathlib import Path
+from remake import Dir, Remake, ZarrStore, rule
+
+rmk = Remake()
+
+
+@rule(outputs={'a': 'out/a.txt', 'b': 'out/b.txt', 'maps': Dir('out/maps'),
+               'store': ZarrStore('out/s.zarr')})
+def mixed(outputs):
+    for k in ('maps', 'store'):
+        Path(outputs[k]).mkdir(parents=True, exist_ok=True)
+    for k in ('a', 'b'):
+        Path(outputs[k]).write_text('xx')
+    Path(outputs['maps'], 'm1').write_text('123')
+    Path(outputs['store'], '.zmetadata').write_text('{}')
+
+
+rmk.rules_from_current_module()
+''')
+    assert cli('run', 'mixed.py') == 0
+    capsys.readouterr()
+    cli('task-info', 'mixed.py', '-Q', "rule == 'mixed'")
+    out = capsys.readouterr().out
+    assert ('size:\n'
+            '  - maps: 1 file, 3B\n'
+            '  - other files: 2 files, 4B\n'
+            '  - store: not measured (ZarrStore)\n') in out
