@@ -122,6 +122,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Editing a remakefile while its tasks run no longer records the wrong
+  rule source.** The source was read when a task's result was recorded, at
+  the line numbers from import time, so an edit that shifted lines made a
+  finished task record a neighbouring function's code and rerun on the next
+  plan. The loader now pins the imported text of the remakefile.
+
 - **`uses` values that refer back to themselves no longer hang the hash**
   (soak finding, 2026-11-23). An object holding several bound methods of
   itself, such as `scipy.stats.chi2`, was rendered in time exponential in

@@ -1,4 +1,5 @@
 import importlib.util
+import linecache
 import os
 import sys
 from pathlib import Path
@@ -31,6 +32,13 @@ def load_module(local_filename: Union[str, Path], module_attrs=None):
     # name — a remakefile called json.py must not break stdlib imports.
     if module_name not in sys.modules:
         sys.modules[module_name] = module
+    # Pin the text being imported in linecache, so inspect.getsource keeps
+    # returning it if the file is edited later in this process (a long SLURM
+    # task records its rule's source when it finishes). checkcache skips
+    # entries whose mtime is None.
+    text = module_path.read_text()
+    linecache.cache[str(module_path)] = (
+        len(text), None, text.splitlines(keepends=True), str(module_path))
     try:
         spec.loader.exec_module(module)
     except ModuleNotFoundError as e:
